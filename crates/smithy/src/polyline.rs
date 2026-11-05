@@ -76,18 +76,27 @@ impl Moments {
         self.sz += other.sz;
     }
 
-    /// lambda*, unclamped; `None` with fewer than two pairs, or when s or the blend does not vary.
-    fn lambda(&self) -> Option<f64> {
+    /// Var(s), Var(z) and Cov(s, z); `None` with fewer than two pairs.
+    fn spreads(&self) -> Option<(f64, f64, f64)> {
         if self.n < 2 {
             return None;
         }
         let n = self.n as f64;
         let (mean_s, mean_z) = (self.s / n, self.z / n);
-        let var_s = self.ss / n - mean_s * mean_s;
-        let var_z = self.zz / n - mean_z * mean_z;
-        let cov = self.sz / n - mean_s * mean_z;
+        Some((self.ss / n - mean_s * mean_s, self.zz / n - mean_z * mean_z, self.sz / n - mean_s * mean_z))
+    }
+
+    /// lambda*, unclamped; `None` with fewer than two pairs, or when s or the blend does not vary.
+    fn lambda(&self) -> Option<f64> {
+        let (var_s, var_z, cov) = self.spreads()?;
         let total = var_s + var_z - 2.0 * cov;
         (var_s > 0.0 && total > 0.0).then(|| (var_s - cov) / total)
+    }
+
+    /// The slope of z on s, `Cov / Var(s)`: above 1, s is squeezed. `None` as `lambda`.
+    fn slope(&self) -> Option<f64> {
+        let (var_s, _, cov) = self.spreads()?;
+        (var_s > 0.0).then(|| cov / var_s)
     }
 }
 
@@ -231,6 +240,116 @@ pub(crate) fn read(path: &str) -> Option<Polyline> {
     Polyline::parse(&fs::read_to_string(path).ok()?).map(|(polyline, _)| polyline)
 }
 
+/// The hand-run, read-only look at what the clamp hides: `smithy polyline-diagnose <buckets> [one-in]`.
+/// Not in the usage line.
+pub(crate) const DIAGNOSE_COMMAND: &str = "polyline-diagnose";
+
+/// The bins of s in a diagnosis, over [-1, 1].
+const S_BINS: usize = 20;
+
+/// The bin of `s`, the top one closed at 1.
+fn s_bin(s: f32) -> usize {
+    (((f64::from(s) + 1.0) * S_BINS as f64 / 2.0).floor() as usize).min(S_BINS - 1)
+}
+
+/// One bucket of progress in a diagnosis: the sums of `measure`, the same without `s = z = 0`, which
+/// is mostly the tables' draws and hides nothing else's sign, and mean z by bin of s. On the diagonal,
+/// mean z equals mean s; steeper, s is squeezed. The bins are believed over the slope, which the caps
+/// at 1 and -1 distort.
+#[derive(Clone, Copy, Default)]
+struct Diagnosis {
+    all: Moments,
+    without_draws: Moments,
+    bins: [Moments; S_BINS],
+}
+
+impl Diagnosis {
+    fn add(&mut self, s: f32, z: f32) {
+        self.all.add(f64::from(s), f64::from(z));
+        if s != 0.0 || z != 0.0 {
+            self.without_draws.add(f64::from(s), f64::from(z));
+        }
+        self.bins[s_bin(s)].add(f64::from(s), f64::from(z));
+    }
+
+    fn merge(&mut self, other: &Diagnosis) {
+        self.all.merge(&other.all);
+        self.without_draws.merge(&other.without_draws);
+        self.bins.iter_mut().zip(&other.bins).for_each(|(mine, theirs)| mine.merge(theirs));
+    }
+
+    /// One line of sums, then one per bin that holds positions.
+    fn text(&self, bucket: usize) -> String {
+        let number = |value: Option<f64>| value.map_or("-".to_string(), |value| format!("{value:.4}"));
+        let line = |moments: &Moments| {
+            let spreads = moments.spreads();
+            format!(
+                "{} positions, mean s {:.4}, mean z {:.4}, Var(s) {}, Var(z) {}, Cov {}, lambda* {}, slope {}",
+                progress::grouped(moments.n),
+                moments.s / moments.n.max(1) as f64,
+                moments.z / moments.n.max(1) as f64,
+                number(spreads.map(|spreads| spreads.0)),
+                number(spreads.map(|spreads| spreads.1)),
+                number(spreads.map(|spreads| spreads.2)),
+                number(moments.lambda()),
+                number(moments.slope()),
+            )
+        };
+        let mut text = format!("bucket {bucket}: {}\n  without s = z = 0: {}\n", line(&self.all), line(&self.without_draws));
+        for bin in self.bins.iter().filter(|bin| bin.n > 0) {
+            let (mean_s, mean_z) = (bin.s / bin.n as f64, bin.z / bin.n as f64);
+            text.push_str(&format!("  mean s {mean_s:>7.4}  mean z {mean_z:>7.4}  {:>15}\n", progress::grouped(bin.n)));
+        }
+        text
+    }
+}
+
+/// The diagnosis of one in `one_in` of the buckets `dir`, their positions already shuffled across
+/// the files, a fair sample. What `measure` leaves out, it leaves out.
+fn diagnose(dir: &str, one_in: usize, threads: usize) -> [Diagnosis; BUCKETS] {
+    let files: Vec<usize> = (0..buckets::BUCKETS).step_by(one_in).collect();
+    let next = AtomicUsize::new(0);
+    let total = Mutex::new([Diagnosis::default(); BUCKETS]);
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, files.len()) {
+            scope.spawn(|| {
+                let mut sums = [Diagnosis::default(); BUCKETS];
+                while let Some(&file) = files.get(next.fetch_add(1, Ordering::SeqCst)) {
+                    buckets::for_each_pair(dir, file, |s, z, position| {
+                        if !is_certainty(s, z) {
+                            sums[bucket(usize::from(position.i), usize::from(position.n))].add(s, z);
+                        }
+                    });
+                }
+                let mut total = total.lock().expect("the sums' lock");
+                total.iter_mut().zip(&sums).for_each(|(mine, theirs)| mine.merge(theirs));
+            });
+        }
+    });
+    total.into_inner().expect("the sums' lock")
+}
+
+/// `DIAGNOSE_COMMAND`: prints the diagnosis of a directory of buckets, writing nothing.
+pub(crate) fn run_diagnose(args: &[String]) {
+    fn fail(message: String) -> ! {
+        eprintln!("{message}");
+        std::process::exit(1);
+    }
+    let [dir, rest @ ..] = args else { fail(format!("usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100]")) };
+    let one_in = match rest {
+        [] => 100,
+        [value] => value.parse().ok().filter(|&value| value > 0).unwrap_or_else(|| fail(format!("{value:?} is not a positive number"))),
+        _ => fail("too many arguments".to_string()),
+    };
+    if let Err(error) = buckets::committed_records(dir) {
+        fail(error);
+    }
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    for (bucket, diagnosis) in diagnose(dir, one_in, threads).iter().enumerate() {
+        print!("{}", diagnosis.text(bucket));
+    }
+}
+
 /// The ten values, for the log.
 pub(crate) fn show(polyline: &Polyline) -> String {
     polyline.values.iter().map(|value| format!("{value:.3}")).collect::<Vec<_>>().join(" ")
@@ -253,6 +372,33 @@ mod tests {
             }
         }
         assert!((moments.lambda().unwrap() - 0.2).abs() < 1e-12);
+    }
+
+    /// A squeezed s, `s = c v`: lambda* negative though s has an error, the slope 1 / c.
+    #[test]
+    fn a_squeezed_score_reads_as_a_slope_above_1_and_a_negative_lambda() {
+        let mut moments = Moments::default();
+        for v in [-0.6, -0.2, 0.2, 0.6] {
+            for noise in [-0.3, 0.3] {
+                moments.add(0.8 * v, v + noise);
+            }
+        }
+        assert!((moments.slope().unwrap() - 1.25).abs() < 1e-12);
+        assert!(moments.lambda().unwrap() < 0.0);
+    }
+
+    #[test]
+    fn the_bins_of_s_cover_its_range() {
+        assert_eq!((s_bin(-1.0), s_bin(0.0), s_bin(1.0)), (0, 10, S_BINS - 1));
+    }
+
+    #[test]
+    fn a_diagnosis_sets_the_drawn_pairs_apart() {
+        let mut diagnosis = Diagnosis::default();
+        diagnosis.add(0.0, 0.0);
+        diagnosis.add(0.5, 1.0);
+        assert_eq!((diagnosis.all.n, diagnosis.without_draws.n), (2, 1));
+        assert!(diagnosis.text(3).starts_with("bucket 3: 2 positions"), "{}", diagnosis.text(3));
     }
 
     #[test]

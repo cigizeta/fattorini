@@ -1,6 +1,7 @@
 # Is Lc0's late lambda of 0 right? A measurement first
 
-**Status:** proposed 2026-11-05, nothing built. An open question on lambda-polyline.md, for after the
+**Status:** the measurement built 2026-11-05 as `smithy polyline-diagnose <buckets> [one-in]`, not yet
+run; it prints the 20 bins and leaves out the logit-space slope, the bins answering that. An open question on lambda-polyline.md, for after the
 running `lc0-psq-threats-screlu` run. Only the measurement is proposed here; any change to the
 labels is decided from its numbers.
 
