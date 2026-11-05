@@ -226,6 +226,12 @@ pub(crate) fn committed_records(dir: &str) -> Result<u64, String> {
     Ok(State::read(dir)?.ok_or_else(|| format!("{dir} holds no buckets"))?.records())
 }
 
+/// The paths of the training files scattered into `dir`.
+pub(crate) fn scattered_paths(dir: &str) -> Result<Vec<String>, String> {
+    let state = State::read(dir)?.ok_or_else(|| format!("{dir} holds no buckets"))?;
+    Ok(state.files.into_iter().map(|(path, _)| path).collect())
+}
+
 /// Every record of bucket `bucket` of `dir`, as its labels at lambda 0 and 1, its progress and its
 /// pieces besides the kings: what `polyline` measures.
 pub(crate) fn for_each_pair(dir: &str, bucket: usize, mut visit: impl FnMut(f32, f32, Progress, usize)) {

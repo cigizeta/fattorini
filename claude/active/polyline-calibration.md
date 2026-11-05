@@ -68,6 +68,49 @@ size.
   miscalibrated in endings, and the fix is a curve `E[z | s, pieces]`; if it flattens, the late 0 is
   harmless and the polyline stays, its comment corrected.
 
+## Second result: by pieces, about 12M positions (2026-11-05)
+
+- **The S survives, smaller.** 10 to 12 pieces besides the kings maps s 0.25, 0.35, 0.75, 0.85 to z
+  0.13, 0.24, 0.83, 0.92; 7 to 9 pieces 0.11, 0.21, 0.82, 0.92. Bucket 8 by progress gave 0.75 to 0.92,
+  so its extreme part was hindsight, and a real part remains, crossing the diagonal near 0.55 to 0.65.
+- **It grows as pieces leave:** nearly straight at 25 or more, clear from about 20 down.
+- **The opening's large gap was mostly hindsight too:** at 28 to 30 pieces, 0.25 gives 0.19, where
+  bucket 0 gave 0.14.
+- **Side to move:** s is about 0.02 high at 28 to 30 pieces (0.039 gives 0.016, -0.039 gives -0.041),
+  fading to nothing by 4 to 6.
+- **0 to 3 pieces hold only `s = z = 0`:** the tables answer them all, and their wins and losses are
+  left out as certainties.
+- **Decisions from this:** no squeeze, so `s' = b s` and the model of s are dropped. The late 0 is not
+  shown wrong, but `polyline.rs`'s "squeezed, which no blend corrects" is to be corrected: a blend
+  moves a label's expected value toward the S's true side.
+- **Next, no new code:** after the baseline, a constant lambda well above the polyline (0.1 or so) on
+  the same config, which straightens the S in proportion to lambda, judged in play. The S is monotone,
+  so it barely changes which of two similar positions looks better, and the gain may be small; a
+  curve `E[z | s, pieces]` only if that test shows one.
+
+## The shape wanted (the developer, 2026-11-05)
+
+lambda higher at the end of a game and smaller at the beginning, with no constant chosen by hand.
+A proposal under test: with independent errors `Var(z - s) = noise(s) + noise(z)`, so lambda is
+`noise(s) / Var(z - s)`, and only the numerator of lambda* is broken. At the game's end z has no
+noise left, so `Var(z - s)` there is s's noise, n. With each ply left adding its own variance,
+`Var(z - s at k plies left) = n + k sigma^2`, and `lambda(k) = n / (n + k sigma^2)`, both measured.
+`polyline-diagnose <buckets> 100 plies` prints the table and the fitted lines. The check: on PeSTO,
+where lambda* is valid (0.11 to 0.97), the new curve must come out about the same. It assumes s's
+noise constant through a game, and a table that is close to a line.
+
+## Third result: by plies left, about 12M positions (2026-11-05)
+
+`Var(z - s)` is a clean line up to about 40 plies left, slope 0.0033 a ply, flattening near 0.21 past
+60 as results cap at 1. The intercept is 0.0625 (0.078 without `s = z = 0`), which cannot be s's
+noise: it would give lambda near 0.28 through most of a game, where round robins chose 0.02. z is
+not free of s's bias at the end, so `Var(z - s)` counts the S as noise. Odd plies left read about
+0.0025 above even ones, unexplained.
+
+So n is taken from steps instead, s flipping sign each ply: `Var(s[t] + s[t + 1]) = 2 n + sigma^2`,
+`n = (Var - sigma^2) / 2`, a constant bias cancelling; `polyline-diagnose <buckets> 100 steps` reads
+the games. With `n = sigma^2`, lambda would be `1 / (1 + k)`: 0.02 at 50 plies left, 0.5 at the last.
+
 ## How to read it
 
 - **b and the bins near the diagonal:** Lc0's scores are about right, and a late lambda of 0 does

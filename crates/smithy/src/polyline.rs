@@ -35,7 +35,12 @@ use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+use temper_chess::labels::{Curve, LOGISTIC};
+
 use super::buckets;
+use super::cache::Progress;
+use super::game_labels::{self_play_game_labels, SelfPlaySegmentReader};
+use super::lc0;
 
 /// The buckets of progress.
 pub(crate) const BUCKETS: usize = 10;
@@ -241,7 +246,7 @@ pub(crate) fn read(path: &str) -> Option<Polyline> {
 }
 
 /// The hand-run, read-only look at what the clamp hides: `smithy polyline-diagnose <buckets> [one-in]
-/// [progress | pieces]`. Not in the usage line.
+/// [progress | pieces | plies | steps]`. Not in the usage line.
 pub(crate) const DIAGNOSE_COMMAND: &str = "polyline-diagnose";
 
 /// The bins of s in a diagnosis, over [-1, 1].
@@ -332,30 +337,206 @@ impl Diagnosis {
 /// The diagnosis of one in `one_in` of the buckets `dir`, their positions already shuffled across
 /// the files, a fair sample. What `measure` leaves out, it leaves out.
 fn diagnose(dir: &str, one_in: usize, threads: usize, by: GroupBy) -> [Diagnosis; BUCKETS] {
+    scan(
+        dir,
+        one_in,
+        threads,
+        [Diagnosis::default(); BUCKETS],
+        |sums, s, z, position, pieces| {
+            let group = match by {
+                GroupBy::Progress => bucket(usize::from(position.i), usize::from(position.n)),
+                GroupBy::Pieces => pieces_group(pieces),
+            };
+            sums[group].add(s, z);
+        },
+        |total, sums| total.iter_mut().zip(sums).for_each(|(mine, theirs)| mine.merge(theirs)),
+    )
+}
+
+/// Sums over one in `one_in` of the buckets `dir`, each thread its own, every pair `measure` would
+/// count visited.
+fn scan<T: Copy + Send + Sync>(
+    dir: &str,
+    one_in: usize,
+    threads: usize,
+    empty: T,
+    visit: impl Fn(&mut T, f32, f32, Progress, usize) + Sync,
+    merge: impl Fn(&mut T, &T) + Sync,
+) -> T {
     let files: Vec<usize> = (0..buckets::BUCKETS).step_by(one_in).collect();
     let next = AtomicUsize::new(0);
-    let total = Mutex::new([Diagnosis::default(); BUCKETS]);
+    let total = Mutex::new(empty);
     std::thread::scope(|scope| {
         for _ in 0..threads.clamp(1, files.len()) {
             scope.spawn(|| {
-                let mut sums = [Diagnosis::default(); BUCKETS];
+                let mut sums = empty;
                 while let Some(&file) = files.get(next.fetch_add(1, Ordering::SeqCst)) {
                     buckets::for_each_pair(dir, file, |s, z, position, pieces| {
                         if !is_certainty(s, z) {
-                            let group = match by {
-                                GroupBy::Progress => bucket(usize::from(position.i), usize::from(position.n)),
-                                GroupBy::Pieces => pieces_group(pieces),
-                            };
-                            sums[group].add(s, z);
+                            visit(&mut sums, s, z, position, pieces);
                         }
                     });
                 }
-                let mut total = total.lock().expect("the sums' lock");
-                total.iter_mut().zip(&sums).for_each(|(mine, theirs)| mine.merge(theirs));
+                merge(&mut total.lock().expect("the sums' lock"), &sums);
             });
         }
     });
     total.into_inner().expect("the sums' lock")
+}
+
+/// The most plies left a table of `PliesLeft` tells apart; every position further from the end shares
+/// its last line.
+const MOST_PLIES_LEFT: usize = 100;
+
+/// `Var(z - s)` by plies left in the game. At the game's end z has no noise left, so with s's noise
+/// constant through a game and each ply left adding its own variance, `Var(z - s at k) = n + k sigma^2`:
+/// the intercept is s's noise and the inverse-variance lambda is `n / (n + k sigma^2)`. With and
+/// without `s = z = 0`, since the tables' draws, which have no noise at all, gather at the end.
+#[derive(Clone, Copy)]
+struct PliesLeft {
+    all: [Moments; MOST_PLIES_LEFT + 1],
+    without_draws: [Moments; MOST_PLIES_LEFT + 1],
+}
+
+impl Moments {
+    /// `Var(z - s)`; `None` as `spreads`.
+    fn gap(&self) -> Option<f64> {
+        self.spreads().map(|(var_s, var_z, cov)| var_s + var_z - 2.0 * cov)
+    }
+}
+
+impl PliesLeft {
+    fn add(&mut self, s: f32, z: f32, left: usize) {
+        let k = left.min(MOST_PLIES_LEFT);
+        self.all[k].add(f64::from(s), f64::from(z));
+        if s != 0.0 || z != 0.0 {
+            self.without_draws[k].add(f64::from(s), f64::from(z));
+        }
+    }
+
+    fn merge(&mut self, other: &PliesLeft) {
+        self.all.iter_mut().zip(&other.all).for_each(|(mine, theirs)| mine.merge(theirs));
+        self.without_draws.iter_mut().zip(&other.without_draws).for_each(|(mine, theirs)| mine.merge(theirs));
+    }
+
+    fn text(&self) -> String {
+        let number = |value: Option<f64>| value.map_or("-".to_string(), |value| format!("{value:.4}"));
+        let mut text = "plies left, Var(z - s), positions; without s = z = 0, the same\n".to_string();
+        for k in 1..=MOST_PLIES_LEFT {
+            text.push_str(&format!(
+                "{k:>4}  {:>7} {:>11}  {:>7} {:>11}\n",
+                number(self.all[k].gap()),
+                progress::grouped(self.all[k].n),
+                number(self.without_draws[k].gap()),
+                progress::grouped(self.without_draws[k].n),
+            ));
+        }
+        for last in [20, 40, MOST_PLIES_LEFT - 1] {
+            let (all, without) = (fitted(&self.all, last), fitted(&self.without_draws, last));
+            let show = |fit: Option<(f64, f64)>| fit.map_or("-".to_string(), |(n, step)| format!("n {n:.4}, sigma^2 {step:.5}"));
+            text.push_str(&format!("fitted over 1 to {last} plies left: {}; without s = z = 0: {}\n", show(all), show(without)));
+        }
+        text
+    }
+}
+
+/// The line through `Var(z - s)` over plies left 1 to `last`, weighted by positions: its intercept,
+/// s's noise, and its slope. `None` when the lines are too few.
+fn fitted(moments: &[Moments], last: usize) -> Option<(f64, f64)> {
+    let points: Vec<(f64, f64, f64)> =
+        (1..=last).filter_map(|k| moments[k].gap().map(|gap| (k as f64, gap, moments[k].n as f64))).collect();
+    let weight: f64 = points.iter().map(|point| point.2).sum();
+    let mean_k = points.iter().map(|point| point.0 * point.2).sum::<f64>() / weight;
+    let mean_gap = points.iter().map(|point| point.1 * point.2).sum::<f64>() / weight;
+    let spread: f64 = points.iter().map(|point| point.2 * (point.0 - mean_k).powi(2)).sum();
+    if points.len() < 2 || spread <= 0.0 {
+        return None;
+    }
+    let slope = points.iter().map(|point| point.2 * (point.0 - mean_k) * (point.1 - mean_gap)).sum::<f64>() / spread;
+    Some((mean_gap - slope * mean_k, slope))
+}
+
+/// `Var(s[t] + s[t + 1])` by progress, split by whether the plies left at t are odd or even. s flips
+/// sign each ply, being its mover's, so the sum is one step of the score: two searches' errors and
+/// one ply of real change, `2 n + sigma^2`, a constant bias cancelling, which the intercept of
+/// `PliesLeft` cannot do. A pair with a certainty in it is left out. Consecutive positions are only
+/// neighbours in the games, so this reads them, not the shuffled buckets.
+#[derive(Clone, Copy, Default)]
+struct Steps {
+    groups: [[Moments; 2]; BUCKETS],
+}
+
+impl Steps {
+    /// One game's scores, in order, for their movers.
+    fn add_game(&mut self, scores: &[f32]) {
+        let n = scores.len();
+        for (i, pair) in scores.windows(2).enumerate() {
+            if pair[0].abs() < 1.0 && pair[1].abs() < 1.0 {
+                self.groups[bucket(i, n)][(n - i) % 2].add(f64::from(pair[0] + pair[1]), 0.0);
+            }
+        }
+    }
+
+    fn merge(&mut self, other: &Steps) {
+        for (mine, theirs) in self.groups.iter_mut().flatten().zip(other.groups.iter().flatten()) {
+            mine.merge(theirs);
+        }
+    }
+
+    fn text(&self) -> String {
+        let number = |moments: &Moments| moments.spreads().map_or("-".to_string(), |spreads| format!("{:.5}", spreads.0));
+        let mut text = "progress bucket: Var(s[t] + s[t + 1]) and pairs, plies left at t even; the same, odd\n".to_string();
+        for (group, [even, odd]) in self.groups.iter().enumerate() {
+            text.push_str(&format!(
+                "{group}  {} {:>11}  {} {:>11}\n",
+                number(even),
+                progress::grouped(even.n),
+                number(odd),
+                progress::grouped(odd.n)
+            ));
+        }
+        text
+    }
+}
+
+/// The steps of one in `one_in` of the files scattered into `dir`, read in the games themselves, and
+/// through Google Drive for a source's. Their scores read through `curve`, as the buckets' were.
+fn steps(dir: &str, one_in: usize, threads: usize, curve: &Curve) -> Result<Steps, String> {
+    let paths: Vec<String> = buckets::scattered_paths(dir)?.into_iter().step_by(one_in).collect();
+    let next = AtomicUsize::new(0);
+    let total = Mutex::new(Steps::default());
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, paths.len().max(1)) {
+            scope.spawn(|| {
+                let mut sums = Steps::default();
+                loop {
+                    let index = next.fetch_add(1, Ordering::SeqCst);
+                    let Some(path) = paths.get(index) else { break };
+                    eprintln!("{} of {}: {path}", index + 1, paths.len());
+                    let mut reader = SelfPlaySegmentReader::open(path);
+                    while let Some((game_index, game)) = reader.next_game(path) {
+                        let labels = self_play_game_labels(&game, 0.0, game_index, curve);
+                        sums.add_game(&labels[..game.scores_pawns().len()]);
+                    }
+                }
+                total.lock().expect("the sums' lock").merge(&sums);
+            });
+        }
+    });
+    Ok(total.into_inner().expect("the sums' lock"))
+}
+
+/// The table of plies left of one in `one_in` of the buckets `dir`.
+fn plies_left(dir: &str, one_in: usize, threads: usize) -> PliesLeft {
+    let empty = PliesLeft { all: [Moments::default(); MOST_PLIES_LEFT + 1], without_draws: [Moments::default(); MOST_PLIES_LEFT + 1] };
+    scan(
+        dir,
+        one_in,
+        threads,
+        empty,
+        |sums, s, z, position, _| sums.add(s, z, usize::from(position.n) - usize::from(position.i)),
+        PliesLeft::merge,
+    )
 }
 
 /// `DIAGNOSE_COMMAND`: prints the diagnosis of a directory of buckets, writing nothing.
@@ -365,7 +546,7 @@ pub(crate) fn run_diagnose(args: &[String]) {
         std::process::exit(1);
     }
     let [dir, rest @ ..] = args else {
-        fail(format!("usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100] [progress | pieces]"))
+        fail(format!("usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100] [progress | pieces | plies | steps]"))
     };
     let (one_in, by) = match rest {
         [] => (None, "progress"),
@@ -376,15 +557,29 @@ pub(crate) fn run_diagnose(args: &[String]) {
     let one_in = one_in.map_or(100, |value| {
         value.parse::<usize>().ok().filter(|&value| value > 0).unwrap_or_else(|| fail(format!("{value:?} is not a positive number")))
     });
-    let by = match by {
-        "progress" => GroupBy::Progress,
-        "pieces" => GroupBy::Pieces,
-        other => fail(format!("{other:?} is neither progress nor pieces")),
-    };
     if let Err(error) = buckets::committed_records(dir) {
         fail(error);
     }
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    if by == "steps" {
+        // Only Lc0's corpus has a curve of its own; every other teacher's scores are logistic.
+        let curve = if dir.ends_with("pesto") { Ok(LOGISTIC) } else { lc0::rewrite::corpus_curve() };
+        match curve.and_then(|curve| steps(dir, one_in, threads, &curve)) {
+            Ok(steps) => print!("{}", steps.text()),
+            Err(error) => fail(error),
+        }
+        return;
+    }
+    let by = match by {
+        "progress" => Some(GroupBy::Progress),
+        "pieces" => Some(GroupBy::Pieces),
+        "plies" => None,
+        other => fail(format!("{other:?} is none of progress, pieces, plies and steps")),
+    };
+    let Some(by) = by else {
+        print!("{}", plies_left(dir, one_in, threads).text());
+        return;
+    };
     for (group, diagnosis) in diagnose(dir, one_in, threads, by).iter().enumerate() {
         print!("{}", diagnosis.text(&by.name(group)));
     }
@@ -439,6 +634,40 @@ mod tests {
         diagnosis.add(0.5, 1.0);
         assert_eq!((diagnosis.all.n, diagnosis.without_draws.n), (2, 1));
         assert!(diagnosis.text("group").starts_with("group: 2 positions"), "{}", diagnosis.text("group"));
+    }
+
+    /// Each step's sum falls in the bucket of its first position, split by plies left, a certainty
+    /// leaving out both of its pairs.
+    #[test]
+    fn a_step_sums_two_neighbours_and_skips_a_certainty() {
+        let mut steps = Steps::default();
+        steps.add_game(&[0.5, -0.25, 1.0, 0.0]);
+        assert_eq!(steps.groups[0][0].n, 1, "i = 0, 4 left");
+        assert_eq!(steps.groups[0][0].s, 0.25);
+        assert_eq!(steps.groups.iter().flatten().map(|moments| moments.n).sum::<u64>(), 1);
+    }
+
+    /// `Var(z - s) = 0.01 + 0.002 k`, from pairs whose gap is exactly that spread.
+    #[test]
+    fn the_line_through_the_gaps_finds_the_noise_and_the_step() {
+        let mut moments = [Moments::default(); 11];
+        for (k, line) in moments.iter_mut().enumerate().skip(1) {
+            let spread = (0.01 + 0.002 * k as f64).sqrt();
+            line.add(0.0, spread);
+            line.add(0.0, -spread);
+        }
+        let (noise, step) = fitted(&moments, 10).unwrap();
+        assert!((noise - 0.01).abs() < 1e-12 && (step - 0.002).abs() < 1e-12, "{noise} {step}");
+    }
+
+    #[test]
+    fn plies_left_cap_at_the_last_line_and_set_the_drawn_pairs_apart() {
+        let mut table = PliesLeft { all: [Moments::default(); MOST_PLIES_LEFT + 1], without_draws: [Moments::default(); MOST_PLIES_LEFT + 1] };
+        table.add(0.0, 0.0, 1);
+        table.add(0.5, 1.0, 1);
+        table.add(0.5, 1.0, 500);
+        assert_eq!((table.all[1].n, table.without_draws[1].n, table.all[MOST_PLIES_LEFT].n), (2, 1, 1));
+        assert!(table.text().contains("fitted over 1 to 20"));
     }
 
     #[test]
