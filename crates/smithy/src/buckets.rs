@@ -226,15 +226,15 @@ pub(crate) fn committed_records(dir: &str) -> Result<u64, String> {
     Ok(State::read(dir)?.ok_or_else(|| format!("{dir} holds no buckets"))?.records())
 }
 
-/// Every record of bucket `bucket` of `dir`, as its labels at lambda 0 and 1 and its progress: what
-/// `polyline` measures, the positions skipped over.
-pub(crate) fn for_each_pair(dir: &str, bucket: usize, mut visit: impl FnMut(f32, f32, Progress)) {
+/// Every record of bucket `bucket` of `dir`, as its labels at lambda 0 and 1, its progress and its
+/// pieces besides the kings: what `polyline` measures.
+pub(crate) fn for_each_pair(dir: &str, bucket: usize, mut visit: impl FnMut(f32, f32, Progress, usize)) {
     let decompressed = decompressed(dir, bucket);
     let mut bytes = decompressed.as_slice();
     while !bytes.is_empty() {
-        cache::read_position(&mut bytes);
+        let pieces = cache::read_position(&mut bytes).pieces.len();
         let (at_zero, at_one, progress) = read_tail(&mut bytes);
-        visit(at_zero, at_one, progress);
+        visit(at_zero, at_one, progress, pieces);
     }
 }
 
@@ -850,7 +850,7 @@ mod tests {
         assert_eq!(committed_records(&buckets), Ok(25));
         let mut read = 0;
         for bucket in 0..BUCKETS {
-            for_each_pair(&buckets, bucket, |_, _, progress| {
+            for_each_pair(&buckets, bucket, |_, _, progress, _| {
                 assert!(progress.i < progress.n);
                 read += 1;
             });

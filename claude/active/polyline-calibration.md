@@ -51,6 +51,23 @@ buckets lose decisive positions and keep drawn ones; and game length depends on 
 buckets of progress are partly selected by z. A variant leaving out `s = z = 0` shows the first's
 size.
 
+## First result (2026-11-05, 1 in 100 of Lc0's bucket files, about 12M positions)
+
+- **The tables' draws do not matter:** without `s = z = 0`, lambda* agrees to three decimals.
+- **Slopes near 1:** 0.64 in bucket 0, 0.97 in bucket 4, 1.07 at most. Yet lambda* reaches -0.27: the
+  small `Var(s) - Cov` makes it very sensitive, so it is a poor instrument here.
+- **Late, an S, not a squeeze:** bucket 8 maps s 0.15, 0.25, 0.45, 0.55, 0.75, 0.86 to z 0.03, 0.10,
+  0.41, 0.64, 0.92, 0.97, crossing the diagonal near 0.5. So one slope cannot describe it, and "`s' = b
+  s`" below would stretch the small values the wrong way.
+- **Early, z below s:** bucket 0 maps 0.24 to 0.14, 0.97 to 0.80: overconfidence, or Lc0's exploration
+  moves spoiling good positions in its own games.
+- **Side to move:** mean s about +0.015 early, mean z about 0.
+- **The S may be hindsight.** Progress uses the game's final length, which depends on the result:
+  a position late by progress is one whose game was about to end. So the same command now also groups
+  by pieces on the board, which the position knows. If the S survives there, Lc0's scores are
+  miscalibrated in endings, and the fix is a curve `E[z | s, pieces]`; if it flattens, the late 0 is
+  harmless and the polyline stays, its comment corrected.
+
 ## How to read it
 
 - **b and the bins near the diagonal:** Lc0's scores are about right, and a late lambda of 0 does

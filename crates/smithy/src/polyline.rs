@@ -181,7 +181,7 @@ pub(crate) fn measure(dir: &str, threads: usize, stop: &AtomicBool, bar: &progre
                         break;
                     }
                     let mut read = 0;
-                    buckets::for_each_pair(dir, index, |s, z, position| {
+                    buckets::for_each_pair(dir, index, |s, z, position, _| {
                         read += 1;
                         if !is_certainty(s, z) {
                             sums[bucket(usize::from(position.i), usize::from(position.n))].add(f64::from(s), f64::from(z));
@@ -240,8 +240,8 @@ pub(crate) fn read(path: &str) -> Option<Polyline> {
     Polyline::parse(&fs::read_to_string(path).ok()?).map(|(polyline, _)| polyline)
 }
 
-/// The hand-run, read-only look at what the clamp hides: `smithy polyline-diagnose <buckets> [one-in]`.
-/// Not in the usage line.
+/// The hand-run, read-only look at what the clamp hides: `smithy polyline-diagnose <buckets> [one-in]
+/// [progress | pieces]`. Not in the usage line.
 pub(crate) const DIAGNOSE_COMMAND: &str = "polyline-diagnose";
 
 /// The bins of s in a diagnosis, over [-1, 1].
@@ -252,10 +252,35 @@ fn s_bin(s: f32) -> usize {
     (((f64::from(s) + 1.0) * S_BINS as f64 / 2.0).floor() as usize).min(S_BINS - 1)
 }
 
-/// One bucket of progress in a diagnosis: the sums of `measure`, the same without `s = z = 0`, which
-/// is mostly the tables' draws and hides nothing else's sign, and mean z by bin of s. On the diagonal,
-/// mean z equals mean s; steeper, s is squeezed. The bins are believed over the slope, which the caps
-/// at 1 and -1 distort.
+/// How a diagnosis groups its positions.
+#[derive(Clone, Copy, PartialEq)]
+enum GroupBy {
+    /// Progress through the game, as the polyline does. It knows the game's final length, which
+    /// the position does not, and that length depends on the result: a position late by progress
+    /// is one whose game was about to end. Bins here can show what hindsight alone explains.
+    Progress,
+    /// The pieces on the board, which the position itself knows, so nothing of the future.
+    Pieces,
+}
+
+/// The group of pieces besides the kings, in threes from a full board down, the last taking 0 to 3.
+fn pieces_group(pieces: usize) -> usize {
+    (30usize.saturating_sub(pieces) / 3).min(BUCKETS - 1)
+}
+
+impl GroupBy {
+    fn name(self, group: usize) -> String {
+        match self {
+            GroupBy::Progress => format!("progress bucket {group}"),
+            GroupBy::Pieces if group == BUCKETS - 1 => "0 to 3 pieces besides the kings".to_string(),
+            GroupBy::Pieces => format!("{} to {} pieces besides the kings", 28 - 3 * group, 30 - 3 * group),
+        }
+    }
+}
+
+/// One group of a diagnosis: the sums of `measure`, the same without `s = z = 0`, mostly the tables'
+/// draws, and mean z by bin of s. On the diagonal, mean z equals mean s. The bins are believed over
+/// the slope, which a curve across the diagonal hides and the caps at 1 and -1 distort.
 #[derive(Clone, Copy, Default)]
 struct Diagnosis {
     all: Moments,
@@ -279,7 +304,7 @@ impl Diagnosis {
     }
 
     /// One line of sums, then one per bin that holds positions.
-    fn text(&self, bucket: usize) -> String {
+    fn text(&self, name: &str) -> String {
         let number = |value: Option<f64>| value.map_or("-".to_string(), |value| format!("{value:.4}"));
         let line = |moments: &Moments| {
             let spreads = moments.spreads();
@@ -295,7 +320,7 @@ impl Diagnosis {
                 number(moments.slope()),
             )
         };
-        let mut text = format!("bucket {bucket}: {}\n  without s = z = 0: {}\n", line(&self.all), line(&self.without_draws));
+        let mut text = format!("{name}: {}\n  without s = z = 0: {}\n", line(&self.all), line(&self.without_draws));
         for bin in self.bins.iter().filter(|bin| bin.n > 0) {
             let (mean_s, mean_z) = (bin.s / bin.n as f64, bin.z / bin.n as f64);
             text.push_str(&format!("  mean s {mean_s:>7.4}  mean z {mean_z:>7.4}  {:>15}\n", progress::grouped(bin.n)));
@@ -306,7 +331,7 @@ impl Diagnosis {
 
 /// The diagnosis of one in `one_in` of the buckets `dir`, their positions already shuffled across
 /// the files, a fair sample. What `measure` leaves out, it leaves out.
-fn diagnose(dir: &str, one_in: usize, threads: usize) -> [Diagnosis; BUCKETS] {
+fn diagnose(dir: &str, one_in: usize, threads: usize, by: GroupBy) -> [Diagnosis; BUCKETS] {
     let files: Vec<usize> = (0..buckets::BUCKETS).step_by(one_in).collect();
     let next = AtomicUsize::new(0);
     let total = Mutex::new([Diagnosis::default(); BUCKETS]);
@@ -315,9 +340,13 @@ fn diagnose(dir: &str, one_in: usize, threads: usize) -> [Diagnosis; BUCKETS] {
             scope.spawn(|| {
                 let mut sums = [Diagnosis::default(); BUCKETS];
                 while let Some(&file) = files.get(next.fetch_add(1, Ordering::SeqCst)) {
-                    buckets::for_each_pair(dir, file, |s, z, position| {
+                    buckets::for_each_pair(dir, file, |s, z, position, pieces| {
                         if !is_certainty(s, z) {
-                            sums[bucket(usize::from(position.i), usize::from(position.n))].add(s, z);
+                            let group = match by {
+                                GroupBy::Progress => bucket(usize::from(position.i), usize::from(position.n)),
+                                GroupBy::Pieces => pieces_group(pieces),
+                            };
+                            sums[group].add(s, z);
                         }
                     });
                 }
@@ -335,18 +364,29 @@ pub(crate) fn run_diagnose(args: &[String]) {
         eprintln!("{message}");
         std::process::exit(1);
     }
-    let [dir, rest @ ..] = args else { fail(format!("usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100]")) };
-    let one_in = match rest {
-        [] => 100,
-        [value] => value.parse().ok().filter(|&value| value > 0).unwrap_or_else(|| fail(format!("{value:?} is not a positive number"))),
+    let [dir, rest @ ..] = args else {
+        fail(format!("usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100] [progress | pieces]"))
+    };
+    let (one_in, by) = match rest {
+        [] => (None, "progress"),
+        [value] => (Some(value), "progress"),
+        [value, by] => (Some(value), by.as_str()),
         _ => fail("too many arguments".to_string()),
+    };
+    let one_in = one_in.map_or(100, |value| {
+        value.parse::<usize>().ok().filter(|&value| value > 0).unwrap_or_else(|| fail(format!("{value:?} is not a positive number")))
+    });
+    let by = match by {
+        "progress" => GroupBy::Progress,
+        "pieces" => GroupBy::Pieces,
+        other => fail(format!("{other:?} is neither progress nor pieces")),
     };
     if let Err(error) = buckets::committed_records(dir) {
         fail(error);
     }
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
-    for (bucket, diagnosis) in diagnose(dir, one_in, threads).iter().enumerate() {
-        print!("{}", diagnosis.text(bucket));
+    for (group, diagnosis) in diagnose(dir, one_in, threads, by).iter().enumerate() {
+        print!("{}", diagnosis.text(&by.name(group)));
     }
 }
 
@@ -398,7 +438,16 @@ mod tests {
         diagnosis.add(0.0, 0.0);
         diagnosis.add(0.5, 1.0);
         assert_eq!((diagnosis.all.n, diagnosis.without_draws.n), (2, 1));
-        assert!(diagnosis.text(3).starts_with("bucket 3: 2 positions"), "{}", diagnosis.text(3));
+        assert!(diagnosis.text("group").starts_with("group: 2 positions"), "{}", diagnosis.text("group"));
+    }
+
+    #[test]
+    fn the_groups_of_pieces_cover_a_game() {
+        assert_eq!((pieces_group(30), pieces_group(28), pieces_group(27), pieces_group(3), pieces_group(0)), (0, 0, 1, 9, 9));
+        assert_eq!(GroupBy::Pieces.name(0), "28 to 30 pieces besides the kings");
+        assert_eq!(GroupBy::Pieces.name(1), "25 to 27 pieces besides the kings");
+        assert_eq!(GroupBy::Pieces.name(8), "4 to 6 pieces besides the kings");
+        assert_eq!(GroupBy::Pieces.name(9), "0 to 3 pieces besides the kings");
     }
 
     #[test]
