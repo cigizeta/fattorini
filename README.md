@@ -14,7 +14,8 @@ Temper Chess's account on Lichess is [temper-chess](https://lichess.org/@/temper
 
 ## Running Temper
 
-Download `temper-chess.exe` and add it to any UCI GUI.
+There is no release yet, so there is no `temper-chess.exe` to download. Until the first one, Temper
+has to be built from source, as [DEV.md](DEV.md) describes, and then added to any UCI GUI.
 
 Requirements:
 
