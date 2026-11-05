@@ -122,6 +122,13 @@ fn to_shakmaty_color(color: Color) -> shakmaty::Color {
 /// negative the bottom one, of a move that loses within it.
 const MAX_DTZ: i32 = 1 << 18;
 
+/// The last `dtz + clock` a label takes as decided, the win's limit in the ranks.
+const LAST_DECIDED_PLY: i32 = 99;
+
+/// How close `dtz + clock` may come to `LAST_DECIDED_PLY` before `label_result` stops trusting the
+/// root's DTZ, which the tables may round, and ranks the moves. A wide margin costs only probes.
+const LABEL_MARGIN: i32 = 4;
+
 /// Thin wrapper around `shakmaty_syzygy::Tablebase<Chess>`, adapting Temper's own `Board` to the
 /// `shakmaty::Chess` position it expects (`to_shakmaty`).
 pub struct SyzygyTablebase {
@@ -232,6 +239,63 @@ impl SyzygyTablebase {
         Some(result_of_rank(best))
     }
 
+    /// The result at `board` as a training label: a win or a loss when it is decided within the
+    /// fifty-move clock (`dtz + clock <= LAST_DECIDED_PLY`, the same limit for both sides, so that a
+    /// line of best play keeps its value from one ply to the next), a draw otherwise; also a draw
+    /// after a repetition since the last zeroing move, for both sides. `root_result` differs at a
+    /// loss, by the search's move ordering: it takes a loss of 50 plies or more for a draw, while
+    /// the same ending seen from the winner's side is a win. `None` as `root_ranks` gives it, or
+    /// where the root has no legal move.
+    ///
+    /// One DTZ probe of the root rather than `root_ranks`' one per legal move, which cost a scatter
+    /// a table read for each: `probe_dtz` answers a drawn position from the WDL table alone. Only
+    /// when a rule can matter move by move, or the DTZ is close enough to the limit for its rounding
+    /// to matter (`LABEL_MARGIN`), does it rank the moves (`label_by_ranks`), whose answer it always
+    /// equals.
+    pub fn label_result(&self, board: &Board, ancestors: &[u64]) -> Option<TbResult> {
+        if !self.root_rankable(board) || legal_moves(board, board.side_to_move()).is_empty() {
+            return None;
+        }
+        let cnt50 = board.halfmove_clock() as i32;
+        // From clock 98 a child can reach the fifty-move draw, and a repetition can make a child a
+        // threefold: neither shows in the root's DTZ.
+        if cnt50 >= 98 || repeated_since_zeroing(board, ancestors) {
+            return self.label_by_ranks(board, ancestors);
+        }
+        let dtz = self.inner.probe_dtz(&to_shakmaty(board)?).ok()?.ignore_rounding().0;
+        if dtz == 0 {
+            return Some(TbResult::Draw);
+        }
+        let last = dtz.abs() + cnt50;
+        if (last - LAST_DECIDED_PLY).abs() <= LABEL_MARGIN {
+            return self.label_by_ranks(board, ancestors);
+        }
+        Some(if last > LAST_DECIDED_PLY {
+            TbResult::Draw
+        } else if dtz > 0 {
+            TbResult::Win
+        } else {
+            TbResult::Loss
+        })
+    }
+
+    /// `label_result` from every root move's DTZ: the moves' ranks for a win, and for a loss, every
+    /// move losing, the longest defence against the limit.
+    fn label_by_ranks(&self, board: &Board, ancestors: &[u64]) -> Option<TbResult> {
+        let ranked = self.root_ranks(board, ancestors)?;
+        let best_dtz = ranked.iter().map(|ranked| ranked.dtz).max()?;
+        if best_dtz > 0 {
+            let best = ranked.iter().map(|ranked| ranked.rank).max()?;
+            return Some(result_of_rank(best));
+        }
+        if best_dtz == 0 {
+            return Some(TbResult::Draw);
+        }
+        let longest = ranked.iter().map(|ranked| ranked.dtz).min()?;
+        let decided = -longest + board.halfmove_clock() as i32 <= LAST_DECIDED_PLY && !repeated_since_zeroing(board, ancestors);
+        Some(if decided { TbResult::Loss } else { TbResult::Draw })
+    }
+
     /// `root_result` and a best move by the same ranking, ranked once, for the replay's label of a
     /// position the tables know: one of the moves of the best rank, the moves the search itself
     /// chooses among in play (`excluded_root_moves`), so the label never prefers what play does not.
@@ -256,21 +320,23 @@ impl SyzygyTablebase {
         Some((result_of_rank(best), moves))
     }
 
+    /// Whether the tables can rank `board`: no more pieces than they cover, and no castling right.
+    fn root_rankable(&self, board: &Board) -> bool {
+        let rights = board.castling_rights();
+        let any_castling = [Color::White, Color::Black].iter().any(|&color| rights.kingside(color) || rights.queenside(color));
+        board.all_occupancy().count() as usize <= self.inner.max_pieces() && !any_castling
+    }
+
     /// Every legal move at `board` with its rank (`excluded_root_moves`' comment), or `None` where
     /// the root is not ranked.
     fn root_ranks(&self, board: &Board, ancestors: &[u64]) -> Option<Vec<RankedMove>> {
-        let pieces = board.all_occupancy().count() as usize;
-        let rights = board.castling_rights();
-        let any_castling = [Color::White, Color::Black].iter().any(|&color| rights.kingside(color) || rights.queenside(color));
-        if pieces > self.inner.max_pieces() || any_castling {
+        if !self.root_rankable(board) {
             return None;
         }
 
-        // The positions since the last zeroing move, root included: what a repetition can match.
         let cnt50 = board.halfmove_clock() as i32;
-        let mut window: Vec<u64> = ancestors[ancestors.len().saturating_sub(cnt50 as usize)..].to_vec();
-        window.push(board.hash());
-        let repeated = window.iter().enumerate().any(|(index, hash)| window[..index].contains(hash));
+        let window = repetition_window(board, ancestors);
+        let repeated = repeated_since_zeroing(board, ancestors);
 
         let mover = board.side_to_move();
         let moves = legal_moves(board, mover);
@@ -310,6 +376,20 @@ impl SyzygyTablebase {
         }
         Some(ranks)
     }
+}
+
+/// The positions since the last zeroing move, root included: what a repetition can match.
+fn repetition_window(board: &Board, ancestors: &[u64]) -> Vec<u64> {
+    let cnt50 = board.halfmove_clock() as usize;
+    let mut window = ancestors[ancestors.len().saturating_sub(cnt50)..].to_vec();
+    window.push(board.hash());
+    window
+}
+
+/// Whether a position has repeated since the last zeroing move.
+fn repeated_since_zeroing(board: &Board, ancestors: &[u64]) -> bool {
+    let window = repetition_window(board, ancestors);
+    window.iter().enumerate().any(|(index, hash)| window[..index].contains(hash))
 }
 
 /// A root move, its rank by the DTZ tables (`excluded_root_moves`' comment), and the DTZ the rank
@@ -401,6 +481,105 @@ mod tests {
         let excluded = tables.excluded_root_moves(&board, &[]).expect("KQ vs K is in the tables");
         let kept: Vec<Move> = legal_moves(&board, Color::White).into_iter().filter(|mv| !excluded.contains(mv)).collect();
         assert_eq!(names(&kept), ["h7a7", "h7b7", "h7g8", "h7h8"].map(String::from).to_vec());
+    }
+
+    /// `label_result`'s one probe answers as ranking every move does: random walks through endings,
+    /// long ones among them (KBN vs K, KRB vs KR), from clocks on both sides of the limits. A fixed
+    /// generator, so a failure repeats.
+    #[test]
+    fn the_label_from_one_probe_agrees_with_the_label_from_every_move() {
+        let Some(tables) = local_tables() else { return };
+        for (placement, side) in LABEL_FENS {
+            for clock in [0, 30, 45, 60, 75, 85, 92, 96] {
+                for seed in 1..=8u64 {
+                    let (mut board, _) = Board::from_fen(&format!("{placement} {side} - - {clock} 1")).unwrap();
+                    let mut random = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                    let mut ancestors = Vec::new();
+                    for _ in 0..24 {
+                        let fen = board.to_fen(1);
+                        assert_eq!(tables.label_result(&board, &ancestors), tables.label_by_ranks(&board, &ancestors), "{fen}");
+                        let moves = legal_moves(&board, board.side_to_move());
+                        if moves.is_empty() {
+                            break;
+                        }
+                        random ^= random << 13;
+                        random ^= random >> 7;
+                        random ^= random << 17;
+                        ancestors.push(board.hash());
+                        board.make_move(moves[(random % moves.len() as u64) as usize]);
+                    }
+                }
+            }
+        }
+    }
+
+    const LABEL_FENS: [(&str, &str); 7] = [
+        ("8/8/8/4k3/8/8/8/1Q2K3", "b"),
+        ("8/8/8/4k3/8/8/8/BN2K3", "b"),
+        ("8/8/2r5/4k3/8/8/8/RB2K3", "w"),
+        ("8/4p3/8/4k3/8/8/4P3/4K3", "w"),
+        ("8/2p5/8/4k3/8/8/1N6/1N2K3", "w"),
+        ("7q/8/8/4k3/8/8/1P6/1Q2K3", "b"),
+        ("8/6r1/8/4k3/8/8/1P6/1R2K3", "w"),
+    ];
+
+    /// A loss the clock leaves time for is a loss, whatever the DTZ against half the clock, and every
+    /// move of the loser leaves the winner a win: `root_result` would read the same position as a
+    /// draw from this clock on, the case the label exists for. KQ vs K wins in at most 20 plies.
+    #[test]
+    fn a_loss_within_the_clock_is_labelled_as_its_win_is() {
+        let Some(tables) = local_tables() else { return };
+        let (board, _) = Board::from_fen("8/8/8/4k3/8/8/8/1Q2K3 b - - 75 80").unwrap();
+        assert_eq!(tables.label_result(&board, &[]), Some(TbResult::Loss));
+        for mv in legal_moves(&board, board.side_to_move()) {
+            let mut child = board;
+            child.make_move(mv);
+            assert_eq!(tables.label_result(&child, &[]), Some(TbResult::Win));
+        }
+    }
+
+    /// A repetition reads as a draw for both sides, and a label has `root_ranks`' `None`s.
+    #[test]
+    fn the_label_of_a_repetition_or_an_unranked_root() {
+        let Some(tables) = local_tables() else { return };
+        for fen in ["8/8/8/4k3/8/8/8/1Q2K3 w - - 3 10", "8/8/8/4k3/8/8/8/1Q2K3 b - - 3 10"] {
+            let (board, _) = Board::from_fen(fen).unwrap();
+            assert_eq!(tables.label_result(&board, &[board.hash()]), Some(TbResult::Draw), "{fen}");
+        }
+        let (mated, _) = Board::from_fen("k7/1Q6/1K6/8/8/8/8/8 b - - 0 1").unwrap();
+        assert_eq!(tables.label_result(&mated, &[]), None);
+        let (castling, _) = Board::from_fen("8/8/8/4k3/8/8/8/R3K3 w Q - 0 1").unwrap();
+        assert_eq!(tables.label_result(&castling, &[]), None);
+    }
+
+    /// The speed of one probe against ranking every move, printed. Not a pass or a fail: run it by
+    /// hand, on the machine holding the tables, idle:
+    /// `cargo test -p temper-chess --release label_speed -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn label_speed() {
+        let Some(tables) = local_tables() else { return };
+        let mut boards = Vec::new();
+        for (placement, side) in LABEL_FENS {
+            for clock in 0..40 {
+                let (board, _) = Board::from_fen(&format!("{placement} {side} - - {clock} 1")).unwrap();
+                for &mv in &legal_moves(&board, board.side_to_move()) {
+                    let mut child = board;
+                    child.make_move(mv);
+                    boards.push(child);
+                }
+            }
+        }
+        let start = std::time::Instant::now();
+        boards.iter().for_each(|board| {
+            std::hint::black_box(tables.label_by_ranks(board, &[]));
+        });
+        let by_ranks = start.elapsed();
+        let start = std::time::Instant::now();
+        boards.iter().for_each(|board| {
+            std::hint::black_box(tables.label_result(board, &[]));
+        });
+        println!("{} positions: every move {by_ranks:?}, one probe {:?}", boards.len(), start.elapsed());
     }
 
     /// The root's result follows the clock: KQ vs K is won at clock 0, still won at 98 (the mates in

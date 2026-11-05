@@ -505,7 +505,7 @@ pub(crate) fn self_play_game_kept(collected: &CollectedSelfPlayGame, game_index:
 const TABLEBASE_PIECES: u32 = 6;
 
 /// One game's tablebase labels, one per training position as `self_play_game_labels`: the tables'
-/// result under the fifty-move rule (`root_result`, given every earlier position of the game), from
+/// result under the fifty-move rule (`label_result`, given every earlier position of the game), from
 /// the side to move, 1 a win, 0 a draw, -1 a loss; `None` where a position has more pieces than the
 /// tables cover, or they cannot answer (castling rights, a missing table). Within the tables the true
 /// value is known, so it replaces the label at every lambda, the search's score and the game's result
@@ -521,7 +521,7 @@ pub(crate) fn self_play_game_tablebase(
     for ply in 0..=collected.moves.len() {
         if ply >= collected.book {
             let label = (board.all_occupancy().count() <= TABLEBASE_PIECES)
-                .then(|| tablebase.root_result(&board, &ancestors))
+                .then(|| tablebase.label_result(&board, &ancestors))
                 .flatten()
                 .map(|result| match result {
                     TbResult::Win => 1.0,
