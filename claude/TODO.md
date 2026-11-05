@@ -516,6 +516,8 @@ Commits may be waiting for a push: GitHub's Git Operations were degraded on 2026
 - **The 512 run resumed 2026-10-27** on a smithy built with indicatif's removal (indicatif-removal.md,
   step 4): whether the frozen set's read showed as a live bar on the page at the resume, to confirm.
 
+- **The repository went public 2026-11-05 (temper-games, one first commit).** What remains below is
+  the first binary release's.
 - **Going public, not yet (the developer, 2026-10-24); not before the width 512 experiment
   (psq-threats-screlu-512.md) has settled which network ships, nothing wider tried, and that
   network is SPSA-tuned; then `0.1.0`, and the version bumped to `0.2.0` (the developer,

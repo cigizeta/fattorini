@@ -1,8 +1,8 @@
 # The restart as temper-games
 
-**Status:** decided 2026-11-05 (the developer). The old repository is renamed `temper-chess-archive`,
-archived and private. Everything below is still to do. Replaces the remaining steps of
-temper-chess-rename.md.
+**Status:** decided 2026-11-05 (the developer). The old repository is `temper-chess-archive`, archived
+and private. `temper-games` is created, public from the start, with one first commit. Steps 1 to 5
+done on one machine; steps 6 to 8 next. Replaces the remaining steps of temper-chess-rename.md.
 
 ## Why
 
