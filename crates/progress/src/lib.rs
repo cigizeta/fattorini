@@ -142,7 +142,8 @@ pub struct LiveBar {
     pub position: u64,
     /// Always some since every bar has a length; kept optional for the page, which reads it so.
     pub length: Option<u64>,
-    pub percent: Option<u64>,
+    /// To one decimal (`percent_done`).
+    pub percent: Option<f64>,
     pub eta: Option<String>,
     pub rate: String,
 }
@@ -212,6 +213,13 @@ fn grouped(n: u64) -> String {
     text
 }
 
+/// `position` of `length` in percent, to one decimal, rounded down so that only a finished bar reads
+/// 100.0; a bar of no length is done.
+fn percent_done(position: u64, length: u64) -> f64 {
+    let tenths = (1000 * u128::from(position.min(length))).checked_div(u128::from(length)).unwrap_or(1000);
+    tenths as f64 / 10.0
+}
+
 /// A bar as `live` lists it.
 fn snapshot(bar: &Shared) -> LiveBar {
     let (position, length, elapsed) = (bar.position.load(Ordering::Relaxed), bar.length, bar.made.elapsed());
@@ -226,7 +234,7 @@ fn snapshot(bar: &Shared) -> LiveBar {
         counts,
         position,
         length: Some(length),
-        percent: Some((100 * position.min(length)).checked_div(length).unwrap_or(100)),
+        percent: Some(percent_done(position, length)),
         eta: Some(eta_text(observed, length.saturating_sub(position), elapsed)),
         rate: rate_text(observed, elapsed, bar.unit),
     }
@@ -316,11 +324,21 @@ mod tests {
     }
 
     #[test]
+    fn the_percentage_has_one_decimal_and_reads_100_only_when_done() {
+        assert_eq!(percent_done(1, 3), 33.3);
+        assert_eq!(percent_done(9_999, 10_000), 99.9);
+        assert_eq!(percent_done(10_000, 10_000), 100.0);
+        assert_eq!(percent_done(130, 100), 100.0);
+        assert_eq!(percent_done(0, 0), 100.0);
+        assert_eq!(percent_done(u64::MAX - 1, u64::MAX), 99.9);
+    }
+
+    #[test]
     fn a_bar_made_is_live_until_finished_or_dropped() {
         let train = resumed(30, 100, Unit::Count("steps"), "live train");
         train.set_position(80);
         let shown = listed("live train").expect("listed");
-        assert_eq!((shown.counts.as_str(), shown.position, shown.length, shown.percent), ("80/100 steps", 80, Some(100), Some(80)));
+        assert_eq!((shown.counts.as_str(), shown.position, shown.length, shown.percent), ("80/100 steps", 80, Some(100), Some(80.0)));
         assert!(shown.eta.is_some());
         train.finish();
         assert_eq!(listed("live train"), None, "finished, left out");

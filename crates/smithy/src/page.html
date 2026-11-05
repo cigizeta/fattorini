@@ -1290,7 +1290,7 @@ function liveLine(b) {
   const head = `${b.label ? b.label + ": " : ""}${b.counts}`;
   if (b.length === null) return `<div>${escape(b.rate ? `${head}, ${b.rate}` : head)}</div>`;
   const eta = clockSeconds(b.eta);
-  const text = `${head} (${b.percent}%), ${b.rate}${eta === null ? "" : `, ETA about ${duration(eta)}`}`;
+  const text = `${head} (${number(b.percent, 1)}%), ${b.rate}${eta === null ? "" : `, ETA about ${duration(eta)}`}`;
   return `<div>${escape(text)}</div>${bar(b.position, b.length)}`;
 }
 
