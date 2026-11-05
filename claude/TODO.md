@@ -26,6 +26,15 @@ old Drive root and play from a build of the archive, so step 4's duel against em
 match. A clear loss cannot be reverted, the new repository having one commit: the old training comes
 back by hand from the archive. Atan support stays until that verdict.
 
+**The experiment's verdict (2026-11-05):** `lc0-psq-threats-screlu-g1-r1` passed its gate, 36.5 to 3.5
+against PeSTO, 173 of 179 rounds in 1h08m, test loss 0.624559, labels and frozen set by the tables
+(scatter-tablebase-speed.md). Against emily's generation 1, CuteChess, 10+0.1, one thread, 64 MB, UHO
+book, both untuned, different builds: stopped by the developer at 375 games, 114 - 103 - 158, 51.5%,
++10.2 +/- 26.8 Elo, LOS 77%, llr 0.278. Not a win and no SPRT result: about the same strength, and
+the new pipeline stays, one arm trained in about an hour against nine and a round robin. It says
+nothing about lambda, the two being almost alike on Lc0 (polyline-calibration.md). The build check
+of PeSTO against PeSTO was skipped. Atan support may go. Next, not decided: generation 2 or a tune.
+
 Branch `fabio` carries two experiments, judged together by one duel:
 
 - **The training corrections** (training-corrections.md): Lc0's Q read through Lc0's own curve, the
