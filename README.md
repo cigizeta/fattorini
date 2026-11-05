@@ -63,7 +63,7 @@ trust each in inverse proportion to how noisy it is. Neither error can be seen d
 search's noise. That gives the best weight:
 
 ```text
-lambda* = (Var(s) - Cov(s, z)) / (Var(s) + Var(z) - 2 Cov(s, z))
+lambda* = (Var(s) - Cov(s, z)) / (Var(s) + Var(z) - 2 * Cov(s, z))
 ```
 
 It is measured in ten stages of the game, by progress from the first position to the last, and
