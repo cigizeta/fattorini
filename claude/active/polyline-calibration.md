@@ -111,6 +111,41 @@ So n is taken from steps instead, s flipping sign each ply: `Var(s[t] + s[t + 1]
 `n = (Var - sigma^2) / 2`, a constant bias cancelling; `polyline-diagnose <buckets> 100 steps` reads
 the games. With `n = sigma^2`, lambda would be `1 / (1 + k)`: 0.02 at 50 plies left, 0.5 at the last.
 
+## Fourth result, and the design proposed (2026-11-05, not applied)
+
+**Steps, 14 of Lc0's segments.** `Var(s[t] + s[t + 1])`, plies left even, then odd, by bucket of
+progress: 0.00242, 0.00205; 0.00479, 0.00347; 0.00505, 0.00415; 0.00466, 0.00439; 0.00360, 0.00423;
+0.00296, 0.00406; 0.00233, 0.00394; 0.00194, 0.00403; 0.00152, 0.00423; 0.00114, 0.00340.
+
+- Late, the steps' mean, about 0.003, agrees with the slope of `Var(z - s)`, 0.0033: the score moves
+  as a random walk there, and the step is all real change, so n cannot be read late.
+- Early, `Var(z - s)` grows by about 0.0002 a ply while the score moves 0.0045 a step. Movement that
+  never reaches the result is search noise: `n` is about `(0.0045 - 0.0002) / 2 = 0.002`; bucket 0
+  gives about 0.001. Rough: the cap at 1 flattens that slope too, so part of it may be real change.
+- The even and odd lines differ, by who moves last, which plies left ties to who won. Probably that
+  selection, not shown.
+
+**The formula.** The intercept of `Var(z - s)` is bias plus n, the bias being the S's:
+
+```text
+Var(z - s at k) = bias + n + remaining(k)
+remaining(k)    = Var(z - s at k) - intercept
+lambda(k)       = n / (n + remaining(k))
+```
+
+On Lc0, n 0.002, intercept 0.0625, by plies left 1, 5, 10, 20, 40, 60, 100 or more: 0.25, 0.10, 0.06,
+0.03, 0.016, 0.014, 0.012. Small through most of a game, rising to the end, never negative, nothing
+chosen: the far end, not fitted, lands on the polyline's first value and near emily's 0.02.
+
+**In the code, once validated:** a table by plies left, or a line and its cap, in place of the ten
+values by progress, in `polyline.rs`; `polyline.txt`'s format, and the frozen polyline label set,
+change with it. Lambda is computed from k at batch time, so no rescatter.
+
+**The validation:** lambda* cannot judge this on Lc0, where it fails, so PeSTO does: its lambda* is
+valid in every bucket (0.11 to 0.97), and the formula, run on PeSTO's own games, must come out close
+to it, by progress. PeSTO has about 1.9M positions on Drive, no buckets, so `polyline-diagnose` needs
+to read games from a folder. If it disagrees, the formula is not used. Only play judges it on Lc0.
+
 ## How to read it
 
 - **b and the bins near the diagonal:** Lc0's scores are about right, and a late lambda of 0 does

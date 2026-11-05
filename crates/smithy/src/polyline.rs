@@ -36,10 +36,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use temper_chess::labels::{Curve, LOGISTIC};
+use temper_chess::pipeline::segments::SEGMENT_SUFFIX;
 
 use super::buckets;
 use super::cache::Progress;
-use super::game_labels::{self_play_game_labels, SelfPlaySegmentReader};
+use super::game_labels::{self_play_game_labels, CollectedSelfPlayGame, SelfPlaySegmentReader};
 use super::lc0;
 
 /// The buckets of progress.
@@ -246,7 +247,8 @@ pub(crate) fn read(path: &str) -> Option<Polyline> {
 }
 
 /// The hand-run, read-only look at what the clamp hides: `smithy polyline-diagnose <buckets> [one-in]
-/// [progress | pieces | plies | steps]`. Not in the usage line.
+/// [progress | pieces | plies | steps]`, or from a corpus not scattered, `<games> <one-in> games`. Not
+/// in the usage line.
 pub(crate) const DIAGNOSE_COMMAND: &str = "polyline-diagnose";
 
 /// The bins of s in a diagnosis, over [-1, 1].
@@ -503,27 +505,114 @@ impl Steps {
 /// through Google Drive for a source's. Their scores read through `curve`, as the buckets' were.
 fn steps(dir: &str, one_in: usize, threads: usize, curve: &Curve) -> Result<Steps, String> {
     let paths: Vec<String> = buckets::scattered_paths(dir)?.into_iter().step_by(one_in).collect();
+    Ok(read_games(
+        &paths,
+        threads,
+        Steps::default(),
+        |sums, game, game_index| {
+            let labels = self_play_game_labels(game, 0.0, game_index, curve);
+            sums.add_game(&labels[..game.scores_pawns().len()]);
+        },
+        Steps::merge,
+    ))
+}
+
+/// Sums over the games of the segments `paths`, each thread its own.
+fn read_games<T: Copy + Send + Sync>(
+    paths: &[String],
+    threads: usize,
+    empty: T,
+    visit: impl Fn(&mut T, &CollectedSelfPlayGame, u64) + Sync,
+    merge: impl Fn(&mut T, &T) + Sync,
+) -> T {
     let next = AtomicUsize::new(0);
-    let total = Mutex::new(Steps::default());
+    let total = Mutex::new(empty);
     std::thread::scope(|scope| {
         for _ in 0..threads.clamp(1, paths.len().max(1)) {
             scope.spawn(|| {
-                let mut sums = Steps::default();
+                let mut sums = empty;
                 loop {
                     let index = next.fetch_add(1, Ordering::SeqCst);
                     let Some(path) = paths.get(index) else { break };
                     eprintln!("{} of {}: {path}", index + 1, paths.len());
                     let mut reader = SelfPlaySegmentReader::open(path);
                     while let Some((game_index, game)) = reader.next_game(path) {
-                        let labels = self_play_game_labels(&game, 0.0, game_index, curve);
-                        sums.add_game(&labels[..game.scores_pawns().len()]);
+                        visit(&mut sums, &game, game_index);
                     }
                 }
-                total.lock().expect("the sums' lock").merge(&sums);
+                merge(&mut total.lock().expect("the sums' lock"), &sums);
             });
         }
     });
-    Ok(total.into_inner().expect("the sums' lock"))
+    total.into_inner().expect("the sums' lock")
+}
+
+/// All three tables at once, read from games with no scatter: for a corpus too small or too
+/// incomplete to scatter. Labels straight from the games, the tables' rescoring left out.
+#[derive(Clone, Copy)]
+struct FromGames {
+    progress: [Diagnosis; BUCKETS],
+    plies: PliesLeft,
+    steps: Steps,
+}
+
+impl FromGames {
+    fn add_game(&mut self, game: &CollectedSelfPlayGame, game_index: u64, curve: &Curve) {
+        let scores = self_play_game_labels(game, 0.0, game_index, curve);
+        let results = self_play_game_labels(game, 1.0, game_index, curve);
+        let n = game.scores_pawns().len();
+        for (i, (&s, &z)) in scores.iter().zip(&results).take(n).enumerate() {
+            if !is_certainty(s, z) {
+                self.progress[bucket(i, n)].add(s, z);
+                self.plies.add(s, z, n - i);
+            }
+        }
+        self.steps.add_game(&scores[..n]);
+    }
+
+    fn merge(&mut self, other: &FromGames) {
+        self.progress.iter_mut().zip(&other.progress).for_each(|(mine, theirs)| mine.merge(theirs));
+        self.plies.merge(&other.plies);
+        self.steps.merge(&other.steps);
+    }
+
+    fn text(&self) -> String {
+        let by_progress: String =
+            self.progress.iter().enumerate().map(|(group, diagnosis)| diagnosis.text(&GroupBy::Progress.name(group))).collect();
+        format!("{by_progress}{}{}", self.plies.text(), self.steps.text())
+    }
+}
+
+/// Every segment under `dir`, sorted.
+fn segment_paths(dir: &str) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    let mut pending = vec![std::path::PathBuf::from(dir)];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).map_err(|error| format!("{}: {error}", directory.display()))? {
+            let path = entry.map_err(|error| format!("{}: {error}", directory.display()))?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Some(text) = path.to_str().filter(|text| text.ends_with(SEGMENT_SUFFIX)) {
+                paths.push(text.replace('\\', "/"));
+            }
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+/// The tables of one in `one_in` of the segments under `dir`.
+fn from_games(dir: &str, one_in: usize, threads: usize, curve: &Curve) -> Result<FromGames, String> {
+    let paths: Vec<String> = segment_paths(dir)?.into_iter().step_by(one_in).collect();
+    if paths.is_empty() {
+        return Err(format!("{dir} holds no segments"));
+    }
+    let empty = FromGames {
+        progress: [Diagnosis::default(); BUCKETS],
+        plies: PliesLeft { all: [Moments::default(); MOST_PLIES_LEFT + 1], without_draws: [Moments::default(); MOST_PLIES_LEFT + 1] },
+        steps: Steps::default(),
+    };
+    Ok(read_games(&paths, threads, empty, |sums, game, game_index| sums.add_game(game, game_index, curve), FromGames::merge))
 }
 
 /// The table of plies left of one in `one_in` of the buckets `dir`.
@@ -546,7 +635,10 @@ pub(crate) fn run_diagnose(args: &[String]) {
         std::process::exit(1);
     }
     let [dir, rest @ ..] = args else {
-        fail(format!("usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100] [progress | pieces | plies | steps]"))
+        fail(format!(
+            "usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100] [progress | pieces | plies | steps]\n       \
+             smithy {DIAGNOSE_COMMAND} <directory of games> <one-in> games"
+        ))
     };
     let (one_in, by) = match rest {
         [] => (None, "progress"),
@@ -557,10 +649,18 @@ pub(crate) fn run_diagnose(args: &[String]) {
     let one_in = one_in.map_or(100, |value| {
         value.parse::<usize>().ok().filter(|&value| value > 0).unwrap_or_else(|| fail(format!("{value:?} is not a positive number")))
     });
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    if by == "games" {
+        let curve = if dir.contains("pesto") { Ok(LOGISTIC) } else { lc0::rewrite::corpus_curve() };
+        match curve.and_then(|curve| from_games(dir, one_in, threads, &curve)) {
+            Ok(tables) => print!("{}", tables.text()),
+            Err(error) => fail(error),
+        }
+        return;
+    }
     if let Err(error) = buckets::committed_records(dir) {
         fail(error);
     }
-    let threads = std::thread::available_parallelism().map_or(1, usize::from);
     if by == "steps" {
         // Only Lc0's corpus has a curve of its own; every other teacher's scores are logistic.
         let curve = if dir.ends_with("pesto") { Ok(LOGISTIC) } else { lc0::rewrite::corpus_curve() };
@@ -634,6 +734,19 @@ mod tests {
         diagnosis.add(0.5, 1.0);
         assert_eq!((diagnosis.all.n, diagnosis.without_draws.n), (2, 1));
         assert!(diagnosis.text("group").starts_with("group: 2 positions"), "{}", diagnosis.text("group"));
+    }
+
+    #[test]
+    fn segments_are_found_at_any_depth_and_sorted() {
+        let dir = std::env::temp_dir().join(format!("smithy-polyline-segments-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("20261104")).unwrap();
+        std::fs::write(dir.join("20261104").join(format!("b{SEGMENT_SUFFIX}")), "").unwrap();
+        std::fs::write(dir.join(format!("a{SEGMENT_SUFFIX}")), "").unwrap();
+        std::fs::write(dir.join("20261104").join(format!("b{SEGMENT_SUFFIX}.meta")), "").unwrap();
+        let paths = segment_paths(dir.to_str().unwrap()).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert!(paths[0].ends_with(&format!("20261104/b{SEGMENT_SUFFIX}")), "digits sort first: {paths:?}");
     }
 
     /// Each step's sum falls in the bucket of its first position, split by plies left, a certainty
