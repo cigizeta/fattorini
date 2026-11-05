@@ -247,7 +247,7 @@ pub(crate) fn read(path: &str) -> Option<Polyline> {
 }
 
 /// The hand-run, read-only look at what the clamp hides: `smithy polyline-diagnose <buckets> [one-in]
-/// [progress | pieces | plies | steps]`, or from a corpus not scattered, `<games> <one-in> games`. Not
+/// [progress | pieces | plies | steps | whole]`, or from a corpus not scattered, `<games> <one-in> games`. Not
 /// in the usage line.
 pub(crate) const DIAGNOSE_COMMAND: &str = "polyline-diagnose";
 
@@ -636,7 +636,7 @@ pub(crate) fn run_diagnose(args: &[String]) {
     }
     let [dir, rest @ ..] = args else {
         fail(format!(
-            "usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100] [progress | pieces | plies | steps]\n       \
+            "usage: smithy {DIAGNOSE_COMMAND} <buckets directory> [one-in, default 100] [progress | pieces | plies | steps | whole]\n       \
              smithy {DIAGNOSE_COMMAND} <directory of games> <one-in> games"
         ))
     };
@@ -670,11 +670,16 @@ pub(crate) fn run_diagnose(args: &[String]) {
         }
         return;
     }
+    if by == "whole" {
+        let whole = scan(dir, one_in, threads, Diagnosis::default(), |sums, s, z, _, _| sums.add(s, z), Diagnosis::merge);
+        print!("{}", whole.text("the whole corpus"));
+        return;
+    }
     let by = match by {
         "progress" => Some(GroupBy::Progress),
         "pieces" => Some(GroupBy::Pieces),
         "plies" => None,
-        other => fail(format!("{other:?} is none of progress, pieces, plies and steps")),
+        other => fail(format!("{other:?} is none of progress, pieces, plies, steps and whole")),
     };
     let Some(by) = by else {
         print!("{}", plies_left(dir, one_in, threads).text());
