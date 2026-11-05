@@ -500,6 +500,10 @@ pub(crate) fn self_play_game_kept(collected: &CollectedSelfPlayGame, game_index:
     (positions, kept)
 }
 
+/// How labels made by `self_play_game_tablebase` are recorded, in `buckets.tsv` and a frozen set's
+/// manifest. `tablebase-2`: plain `tablebase` took a long loss for a draw (`label_result`).
+pub(crate) const TABLEBASE_LABELS: &str = "tablebase-2";
+
 /// The most pieces the Syzygy sets `bin/syzygy.sh` downloads cover: a position with more is never
 /// probed, which keeps the replay below cheap.
 const TABLEBASE_PIECES: u32 = 6;

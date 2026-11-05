@@ -9,7 +9,8 @@
 //! sees them.
 //!
 //! ```text
-//! manifest.txt                 the seed, the segments read, their games and positions, the rows
+//! manifest.txt                 the seed, how it was labelled, the segments read, their games and
+//!                              positions, the rows
 //! test.positions               cache.rs position records, one zstd stream
 //! lambda-0.95/test.labels      one f32 per position, in the same order
 //! lambda-0.95/manifest.txt     the positions' manifest again: this label set is complete
@@ -34,12 +35,14 @@ use std::io::{BufReader, BufWriter, Write};
 
 use temper_chess::features::CanonicalPosition;
 use temper_chess::labels::Curve;
+use temper_chess::pipeline::data_root;
 use temper_chess::pipeline::preprocessing_config::{lambda_dir_name, lambdas_text, ArmLambda};
 use temper_chess::pipeline::segments::SEGMENT_SUFFIX;
+use temper_chess::tablebase::SyzygyTablebase;
 
 use super::buckets::{blend, Labelling};
 use super::cache::{is_bare_kings, read_label, read_position, write_label, write_position, CacheHeader, CacheRecord, LabelHeader, Progress};
-use super::game_labels::{self_play_game_kept, self_play_game_labels, SelfPlaySegmentReader, KEPT};
+use super::game_labels::{self_play_game_kept, self_play_game_labels, self_play_game_tablebase, SelfPlaySegmentReader, KEPT, TABLEBASE_LABELS};
 use super::pgn_stream::{splitmix64, StreamFile};
 
 /// Fixed, never process-seeded: a label set added later must draw the same slots as the first freeze.
@@ -55,13 +58,39 @@ const COMPRESSION_LEVEL: i32 = 19;
 /// segments its manifest names. Every score read through `curve`, the teacher's (Lc0's curve for
 /// Lc0's corpus, `labels::LOGISTIC` for PeSTO and our networks). The curve is not recorded: a set
 /// labelled under another curve is deleted by hand and frozen again. An error when the set was frozen
-/// at another size or keeping other positions, or the games hold too few positions kept.
+/// at another size or keeping other positions, or the games hold too few positions kept. Every
+/// position the Syzygy tables answer is labelled by them, as the scatter labels the training set, so
+/// the test set judges a network on the labels it trained on; the tables are required.
 pub(crate) fn ensure(
     dir: &str, games_dir: &str, files: impl FnOnce() -> Result<Vec<StreamFile>, String>, rows: u64, labelling: &Labelling, curve: &Curve,
 ) -> Result<(), String> {
+    let tablebase = SyzygyTablebase::from_directories(&data_root::syzygy_directories())?;
+    ensure_labelled(dir, games_dir, files, rows, labelling, curve, Some(&tablebase))
+}
+
+/// How a set is labelled, as its manifest records it: by the tables where they answer, or without
+/// them (the tests alone).
+fn labels_kind(tablebase: Option<&SyzygyTablebase>) -> &'static str {
+    if tablebase.is_some() { TABLEBASE_LABELS } else { "plain" }
+}
+
+/// `ensure`, with the tables given or, in the tests, none.
+fn ensure_labelled(
+    dir: &str,
+    games_dir: &str,
+    files: impl FnOnce() -> Result<Vec<StreamFile>, String>,
+    rows: u64,
+    labelling: &Labelling,
+    curve: &Curve,
+    tablebase: Option<&SyzygyTablebase>,
+) -> Result<(), String> {
+    let labels = labels_kind(tablebase);
     if let Some(manifest) = read_manifest(dir, rows)? {
         if manifest.keep != KEPT {
             return Err(format!("{dir} was frozen keeping the {} positions, not the {KEPT}: another set's directory", manifest.keep));
+        }
+        if manifest.labels != labels {
+            return Err(format!("{dir} was labelled {}, not {labels}: delete it, and the next training freezes it again", manifest.labels));
         }
         check_polyline(dir, labelling)?;
         let missing = missing(dir, labelling);
@@ -71,7 +100,7 @@ pub(crate) fn ensure(
         let missing = Labelling::new(&missing, labelling.polyline().copied())?;
         log::info!("frozen test set {dir}: adding the labels of lambda {} from {games_dir}", lambdas_text(missing.arms()));
         // At the frozen size, whatever a run asks: its labels sit beside every frozen position.
-        let sample = sample(games_dir, &manifest.segments, manifest.positions, manifest.rows, false, &missing, curve);
+        let sample = draw(games_dir, &manifest.segments, manifest.positions, manifest.rows, false, &missing, curve, tablebase);
         if (sample.games, sample.searched()) != (manifest.games, manifest.positions) {
             return Err(format!(
                 "the frozen segments of {games_dir} now hold {} games and {} searched positions, but {} and {} were frozen into {dir}",
@@ -102,7 +131,7 @@ pub(crate) fn ensure(
         progress::grouped(positions),
         segments.len()
     );
-    let sample = sample(games_dir, &segments, positions, rows, true, labelling, curve);
+    let sample = draw(games_dir, &segments, positions, rows, true, labelling, curve, tablebase);
     // `files` lists searched positions, the `.meta` ones less one final position a game.
     if sample.searched() != positions {
         return Err(format!("the segments of {games_dir} hold {} searched positions, but their .meta say {positions}", sample.searched()));
@@ -113,7 +142,7 @@ pub(crate) fn ensure(
             "{games_dir} holds only {kept} {KEPT} positions besides K vs K, fewer than the {rows} of its test set: it needs more test games"
         ));
     }
-    let manifest = Manifest { seed: FREEZE_SEED, keep: KEPT.to_string(), games: sample.games, positions, rows, segments };
+    let manifest = Manifest { seed: FREEZE_SEED, keep: KEPT.to_string(), labels: labels.to_string(), games: sample.games, positions, rows, segments };
     std::fs::create_dir_all(dir).map_err(|error| format!("failed to create {dir}: {error}"))?;
     write_positions(dir, sample.positions.as_deref().expect("a first freeze samples positions"));
     write_label_sets(dir, labelling, &sample.labels, &manifest);
@@ -251,6 +280,9 @@ fn read_manifest(dir: &str, rows: u64) -> Result<Option<Manifest>, String> {
              next training freezes it again"
         ));
     }
+    if manifest.labels.is_empty() {
+        return Err(format!("{dir} was frozen before the tables labelled test sets: delete it, and the next training freezes it again"));
+    }
     if manifest.rows < rows {
         return Err(format!(
             "{dir} was frozen at {} positions, fewer than the run's test_positions of {}",
@@ -293,6 +325,9 @@ struct Manifest {
     /// The positions of a game it drew from (`KEPT`); empty in a set frozen before it was
     /// recorded, which kept the final positions and is refused (`read_manifest`).
     keep: String,
+    /// How its labels were made (`labels_kind`); empty in a set frozen before it was recorded, whose
+    /// labels the tables never touched, which is refused (`read_manifest`).
+    labels: String,
     games: u64,
     /// Every position read, K vs K included: the `.meta` files' count. The reservoir drew from all
     /// of them but K vs K.
@@ -306,8 +341,8 @@ struct Manifest {
 impl Manifest {
     fn text(&self) -> String {
         let mut text = format!(
-            "seed\t{}\nkeep\t{}\ngames\t{}\npositions\t{}\nrows\t{}\n",
-            self.seed, self.keep, self.games, self.positions, self.rows
+            "seed\t{}\nkeep\t{}\nlabels\t{}\ngames\t{}\npositions\t{}\nrows\t{}\n",
+            self.seed, self.keep, self.labels, self.games, self.positions, self.rows
         );
         for segment in &self.segments {
             text.push_str(&format!("segment\t{segment}\n"));
@@ -317,7 +352,7 @@ impl Manifest {
 
     /// Panics on anything malformed: a frozen manifest is written by this module alone.
     fn parse(text: &str, path: &str) -> Manifest {
-        let mut manifest = Manifest { seed: 0, keep: String::new(), games: 0, positions: 0, rows: 0, segments: Vec::new() };
+        let mut manifest = Manifest { seed: 0, keep: String::new(), labels: String::new(), games: 0, positions: 0, rows: 0, segments: Vec::new() };
         let mut seen = [false; 4];
         for line in text.lines() {
             let (key, value) = line.split_once('\t').unwrap_or_else(|| panic!("{path}: malformed line {line:?}"));
@@ -325,6 +360,7 @@ impl Manifest {
             match key {
                 "seed" => (manifest.seed, seen[0]) = (number(), true),
                 "keep" => manifest.keep = value.to_string(),
+                "labels" => manifest.labels = value.to_string(),
                 "games" => (manifest.games, seen[1]) = (number(), true),
                 "positions" => (manifest.positions, seen[2]) = (number(), true),
                 "rows" => (manifest.rows, seen[3]) = (number(), true),
@@ -413,14 +449,22 @@ impl Sample {
 /// Reads `segments` of `games_dir` in order, drawing `capacity` of their searched positions with
 /// `FREEZE_SEED`, their labels for each of `labelling`'s arms (a polyline arm's blended at the
 /// polyline's lambda for the position's progress), and, with `with_positions`, the positions
-/// themselves. `expected` sizes the progress bar.
+/// themselves. `expected` sizes the progress bar. A position `tablebase` answers takes its answer at
+/// every arm, as in the scatter (`self_play_game_tablebase`).
 ///
 /// K vs K, and each game's final position, is skipped before the reservoir, so it never takes a slot
 /// or an index. Every pass skips the same positions, so a label pass added later still draws the same
 /// slots as the first.
 #[allow(clippy::too_many_arguments)]
-fn sample(
-    games_dir: &str, segments: &[String], expected: u64, capacity: u64, with_positions: bool, labelling: &Labelling, curve: &Curve,
+fn draw(
+    games_dir: &str,
+    segments: &[String],
+    expected: u64,
+    capacity: u64,
+    with_positions: bool,
+    labelling: &Labelling,
+    curve: &Curve,
+    tablebase: Option<&SyzygyTablebase>,
 ) -> Sample {
     let mut reservoir = Reservoir::new(capacity, FREEZE_SEED);
     let mut positions: Vec<CanonicalPosition> = Vec::new();
@@ -435,7 +479,7 @@ fn sample(
             let count = collected.position_count();
             // Every pass needs the positions now, to know which are K vs K.
             let (game_positions, keeps) = self_play_game_kept(&collected, game_index);
-            let game_labels: Vec<Vec<f32>> = labelling
+            let mut game_labels: Vec<Vec<f32>> = labelling
                 .arms()
                 .iter()
                 .map(|&arm| match arm {
@@ -458,6 +502,13 @@ fn sample(
                     }
                 })
                 .collect();
+            if let Some(tablebase) = tablebase {
+                for (ply, label) in self_play_game_tablebase(&collected, tablebase, game_index).into_iter().enumerate() {
+                    if let Some(label) = label {
+                        game_labels.iter_mut().for_each(|set| set[ply] = label);
+                    }
+                }
+            }
             for ply in 0..count {
                 if !keeps[ply] || is_bare_kings(&game_positions[ply]) {
                     skipped += 1;
@@ -580,11 +631,26 @@ mod tests {
         }
     }
 
+    /// `ensure` without the tables, which the fixtures' games have no need of.
+    fn ensure(
+        dir: &str, games_dir: &str, files: impl FnOnce() -> Result<Vec<StreamFile>, String>, rows: u64, labelling: &Labelling, curve: &Curve,
+    ) -> Result<(), String> {
+        ensure_labelled(dir, games_dir, files, rows, labelling, curve, None)
+    }
+
+    /// `draw` without the tables.
+    fn sample(
+        games_dir: &str, segments: &[String], expected: u64, capacity: u64, with_positions: bool, labelling: &Labelling, curve: &Curve,
+    ) -> Sample {
+        draw(games_dir, segments, expected, capacity, with_positions, labelling, curve, None)
+    }
+
     #[test]
     fn a_manifest_reads_back_what_it_wrote() {
         let manifest = Manifest {
             seed: FREEZE_SEED,
             keep: "quiet".to_string(),
+            labels: TABLEBASE_LABELS.to_string(),
             games: 70_123,
             positions: 7_000_456,
             rows: 4_194_304,
@@ -778,6 +844,15 @@ mod tests {
         }
         std::fs::remove_dir_all(&games_dir).ok();
         std::fs::remove_dir_all(std::path::Path::new(&dir).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_set_frozen_before_the_tables_labelled_it_is_refused() {
+        let dir = fixture_dir("no-labels-manifest");
+        std::fs::write(manifest_path(&dir), "seed\t20261017\nkeep\tsearched\ngames\t1\npositions\t3\nrows\t1\nsegment\tgamma-1\n").unwrap();
+        let Err(refused) = read(&dir, 1, &at(&[0.5])) else { panic!("an old set is refused") };
+        assert!(refused.contains("before the tables"), "{refused}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

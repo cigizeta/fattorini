@@ -8,6 +8,11 @@ the agreement test's reference, not `root_result`; and buckets are scattered aga
 tablebase-rescoring.md, which judged the probes to cost almost nothing at the scatter. On the
 training machine the scatter was slowed by them, and was stopped to apply this.
 
+**Added the same day (the developer):** the frozen test set is labelled by the tables too, through
+the same `self_play_game_tablebase`, ending tablebase-rescoring.md's "not in scope": that exclusion
+kept test losses comparable with old networks, a reason the restart removed. Its manifest records
+`labels`, the same `TABLEBASE_LABELS`; a set without it is refused, to be deleted and frozen again.
+
 ## Why
 
 `self_play_game_tablebase` labels every position of at most 6 pieces with

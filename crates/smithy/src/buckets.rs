@@ -47,7 +47,7 @@ use temper_chess::pipeline::preprocessing_config::ArmLambda;
 
 use super::cache::{self, CacheRecord, Progress};
 use super::polyline::Polyline;
-use super::game_labels::KEPT;
+use super::game_labels::{KEPT, TABLEBASE_LABELS};
 use super::pgn_stream::{splitmix64, PgnStream, StreamFile, StreamOptions};
 use super::train_stream::TrainStream;
 
@@ -270,10 +270,9 @@ pub(crate) fn prepare(
 /// How a scatter labelled its positions, as `buckets.tsv` records it: by the tables where they answer,
 /// or without them (the tests alone), and the curve its scores were read through
 /// (`Curve::describe`), and `progress`: every record carries its progress. Buckets labelled
-/// otherwise, a line recording no curve or no progress included, are scattered again. `tablebase-2`:
-/// plain `tablebase` took a long loss for a draw (`label_result`).
+/// otherwise, a line recording no curve or no progress included, are scattered again.
 fn labels_kind(tablebase: &Option<Arc<SyzygyTablebase>>, curve: &Curve) -> String {
-    let kind = if tablebase.is_some() { "tablebase-2" } else { "plain" };
+    let kind = if tablebase.is_some() { TABLEBASE_LABELS } else { "plain" };
     format!("{kind} {} progress", curve.describe())
 }
 
