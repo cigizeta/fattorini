@@ -1,0 +1,35 @@
+# zelda's alpha_pieces transformer on Lc0's games, the experiments' fifth shape: data/lc0, each score
+# Lc0's best_q after an 800-visit search. No teacher and only generation 1: it starts from random
+# weights. No gate: the engine cannot run a transformer, so a lambda's run ends at its candidate.txt,
+# and its lambdas and the NNUE shapes are compared by test loss on the same frozen test set.
+labels: lc0
+
+# zelda's: [CLS] and one token per piece, at most 33, width 64, 4 blocks of 4 heads 16 wide, the
+# feed-forward part 4 times the width. Full attention, dropout at BERT's rate while training only,
+# and a value head reading [CLS] through one hidden layer of 32. Value only, no policy.
+architecture:
+  kind: transformer
+  embedding_dim: 64
+  num_layers: 4
+  num_heads: 4
+  feedforward_dim: 256
+  dropout: 0.1
+  value_head:
+    hidden_dim: [32]
+
+# As lc0-psq's: 0.05 to 0.95 in steps of 0.1, no 1.00.
+label:
+  lambda: [0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95]
+
+training:
+  attention: full   # full | kings-only
+  # lc0-psq's, field for field, but for zelda's rates: 3e-3 is high for a post-norm transformer.
+  # shuffle_buffer is the total of the buffers, one per piece count, each sized by its share of the
+  # first fill.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  shuffle_buffer: 2097152
+  learning_rate: [1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6

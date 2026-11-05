@@ -1,0 +1,35 @@
+# psq_threats_stack on Temper's self-play, as self-psq is psq's: generation 1 taught by
+# caroline-0001 (smithy teacher self-psq-threats-stack caroline-0001), on the same games as every
+# self- shape, from random weights.
+labels: self
+
+# (4876 -> 256) x 2, each perspective's clipped transform, threats included, split in two halves of
+# 128 multiplied element-wise, both concatenated to 256; then hilda's head, every layer one of
+# several weight sets: 256 -> 16 by our king's square (64 sets), 16 -> 16 by their king's (64),
+# 16 -> 1 by the material at 1/3/3/5/9 (78). Trained factorised, each set a shared part plus its own
+# delta, summed at export.
+architecture:
+  kind: psq_threats_stack
+  embedding_dim: 256
+  value_head:
+    hidden_dim: [16, 16]
+
+# As self-psq's.
+label:
+  lambda: [0.95, 0.96, 0.97, 0.98, 0.99]
+
+training:
+  # self-psq's, field for field.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6
+
+selection:
+  depth: 9
+  round_robin_pairs: 400
+  gate:
+    rule: sprt
+    elo_d: 35

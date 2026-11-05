@@ -1,0 +1,22 @@
+# HTTP/1.1 between the smithy and its arenas, shared by `arena` and `smithy`. Its own crate so that
+# `tiny_http`, `ureq` and what they pull in (`url`, `idna`, the ICU crates) never enter the `temper-chess`
+# engine's dependencies, which a release's notices are generated from.
+[package]
+name = "lan-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# The protocol's constants the control request needs (`LOOPBACK`, `STOP_PATH`).
+temper-chess.workspace = true
+# A small synchronous server and client, no async runtime, so neither binary writes HTTP by hand.
+tiny_http.workspace = true
+ureq.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+bench = false

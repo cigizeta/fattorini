@@ -1,0 +1,11 @@
+# A smoke test of `smithy start --forge` on Lc0's corpus (2026-10-22): lc0-psq-smoke's tiny
+# training, a small test set and a round robin of 4 pairs a pairing, every phase in minutes, nothing
+# about strength. Its winner plays as gen-lc0-psq-smoke-0001.
+
+network: lc0-psq-smoke
+
+grid_center: 0.05
+
+test_positions: 32768
+
+round_robin_pairs: 4

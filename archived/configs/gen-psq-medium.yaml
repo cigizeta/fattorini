@@ -1,0 +1,17 @@
+# gen-psq sized for a quality test on one machine without a GPU (2026-10-21): not whether generation 1
+# beats PeSTO, but whether the gap narrows as failed gates add data, read from each attempt's gate
+# games and score in generations.tsv. About 75 minutes of play an attempt at PeSTO's 3,700
+# positions/s, about 3 to 3.5 hours in all.
+
+network: self-psq-medium
+
+grid_center: 0.95
+
+# 16 x 1024 x 1024 training positions an attempt adds; 512 x 1024 for the frozen test set.
+training_positions: 16777216
+test_positions: 524288
+
+round_robin_pairs: 100
+gate_elo_d: 35
+
+max_failed_gates: 3

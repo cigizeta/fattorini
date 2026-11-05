@@ -1,0 +1,42 @@
+# Everything that touches tensors and training data: the training server (`server start --forge`),
+# `lc0` and `install`. The one crate that needs libtorch.
+[package]
+name = "smithy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+temper-chess.workspace = true
+pgn-replay.workspace = true
+progress.workspace = true
+# The claim, the work, the page and the control, over HTTP with the arenas (`smithy.rs`).
+lan-http.workspace = true
+ctrlc.workspace = true
+# `smithy start`'s events, on stdout (`progress::log_events`); its progress is the page's alone.
+log.workspace = true
+pgn-reader.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+# The smithy's status page polls its state as JSON (`smithy.rs`, `/state.json`).
+serde_json.workspace = true
+time.workspace = true
+# Compresses the feature cache files (`cache.rs`, `framed.rs`).
+zstd.workspace = true
+# Gunzips Lc0's training games (`lc0/`).
+flate2.workspace = true
+# Replays Lc0's games to write them as PGN, checking every board (`lc0/convert.rs`).
+shakmaty.workspace = true
+# `tch`'s build script (`torch-sys`) searches for a real `libtorch` install at build time. Only this
+# crate depends on it, so `temper-chess` and `arena` never need `libtorch` to build.
+tch = "0.24"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "smithy"
+path = "src/main.rs"
+bench = false

@@ -1,0 +1,34 @@
+# lc0-psq, field for field, at lambda 0 alone: every label is Lc0's best_q for its own position, the
+# game's future never blended in (2026-10-20). lc0-psq's, lc0-psq768's and lc0-psq-threats' grids came
+# out flat from 0.05, the winner changing from run to run and the longest horizons worse every time:
+# an 800-visit best_q may need no averaging over the game at all. Judged by one duel against
+# lc0-psq-0001-0.15, lc0-psq's winner; a draw or a win makes lambda 0 the rule on Lc0's labels, one
+# arm instead of ten and no lambda select.
+labels: lc0
+
+# (780 -> 256) x 2 -> 1, amanda's.
+architecture:
+  kind: psq
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+label:
+  lambda: [0.00]
+
+training:
+  # lc0-psq's, field for field.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6
+
+# lc0-psq's: a one-value grid names its one lambda.
+selection:
+  depth: 9
+  round_robin_pairs: 400
+  gate:
+    rule: sprt
+    elo_d: 35

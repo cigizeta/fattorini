@@ -1,0 +1,27 @@
+# self-psq-direct's training made tiny, for gen-psq-smoke's smoke test (2026-10-21): rounds of 32
+# steps and a patience of 2, so a CPU trains a generation's 9 lambdas in minutes.
+labels: self
+
+architecture:
+  kind: psq
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+label:
+  lambda: [0.95]
+
+training:
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 32
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 2
+
+selection:
+  depth: 9
+  round_robin_pairs: 4
+  gate:
+    rule: sprt
+    elo_d: 35

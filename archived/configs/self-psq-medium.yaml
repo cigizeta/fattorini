@@ -1,0 +1,27 @@
+# self-psq-direct's training sized for gen-psq-medium, a quality test on a CPU (2026-10-21): rounds of
+# 512 steps, an eighth of a 16 x 1024 x 1024 corpus, so patience reacts within half an epoch.
+labels: self
+
+architecture:
+  kind: psq
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+label:
+  lambda: [0.95]
+
+training:
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 512
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 4
+
+selection:
+  depth: 9
+  round_robin_pairs: 100
+  gate:
+    rule: sprt
+    elo_d: 35

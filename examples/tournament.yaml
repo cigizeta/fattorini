@@ -1,0 +1,30 @@
+name: stockfish-skill-ladder
+format: single-elimination
+
+participants:
+  - stockfish-skill-20
+  - stockfish-skill-19
+  - stockfish-skill-18
+  - stockfish-skill-17
+  - stockfish-skill-16
+  - stockfish-skill-15
+  - stockfish-skill-14
+  - stockfish-skill-13
+  - stockfish-skill-12
+  - stockfish-skill-11
+  - stockfish-skill-10
+  - stockfish-skill-9
+  - stockfish-skill-8
+  - stockfish-skill-7
+  - stockfish-skill-6
+  - stockfish-skill-5
+  - stockfish-skill-4
+  - stockfish-skill-3
+  - stockfish-skill-2
+  - stockfish-skill-1
+  - stockfish-skill-0
+
+match:
+  base_time_control: 180+2
+  tiebreak_time_control: 120+1
+  best_of: 2

@@ -1,0 +1,30 @@
+# RETIRED (2026-10-22): `smithy loop-server` is gone, and nothing reads this config any more. Kept
+# until it is reviewed.
+#
+# loop-psq made small, for a test of the loop's mechanics on a machine without a GPU (2026-10-21):
+# the server training on its CPU, the rounds short. Its strength means nothing.
+
+# No forge first: the hand-crafted evaluation teaches until a student beats it, the students start
+# from random weights, and the window grows from the loop's own games. A test start only; the real run
+# starts from self-psq-direct, forged to convergence.
+bootstrap: hand-crafted
+architecture: self-psq-direct
+
+window:
+  positions: 262144
+  new_positions: 65536
+  test_positions: 16384
+
+training:
+  batch_size: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  patience_rounds: 4
+
+ladder:
+  gamma: 2.0
+  start_upper_rung: 2
+
+gate:
+  pairs: 4
+  elo_delta: 30
+  h: 0.55

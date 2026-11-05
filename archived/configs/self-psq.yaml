@@ -1,0 +1,40 @@
+# psq on Temper's self-play: the teacher's games in data/self, streamed by forge. Generation 1 is
+# taught by caroline-0001 (smithy teacher self-psq caroline-0001), whose games every self- shape
+# trains on, so the shapes differ in nothing else; lc0-psq is the same shape on Lc0's games. It
+# starts from random weights, and its gate is against the hand-crafted evaluation, as every
+# generation 1's.
+labels: self
+
+# (780 -> 256) x 2 -> 1, amanda's.
+architecture:
+  kind: psq
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+# Caroline's: self-play's round robins never ranked lower lambdas near the top. No 1.00, the game's
+# result alone (the developer, 2026-10-18): an optimistic bet that the teacher's scores always help.
+label:
+  lambda: [0.95, 0.96, 0.97, 0.98, 0.99]
+
+training:
+  # lc0-psq's, field for field.
+  #
+  # The training fields are read-only once a run has started: the first invocation freezes them in
+  # run_config.txt and a later one that disagrees is refused.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  # 2^21 positions resident in front of the stream -- about 200 MB: 512 batches' worth.
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6
+
+# A round robin of the lambdas' candidates at depth 9, then the gate at 10+0.1.
+selection:
+  depth: 9
+  # 400 pairs a pairing: about +/-1.4% a lambda over its 4 opponents.
+  round_robin_pairs: 400
+  gate:
+    rule: sprt
+    elo_d: 35

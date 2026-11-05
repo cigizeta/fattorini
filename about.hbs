@@ -1,0 +1,36 @@
+# Third-party notices
+
+`temper-chess.exe` is free software under the GNU Affero General Public License, version 3 only (`LICENSE`).
+It is built with the crates below, each under the license it is listed with.
+
+## Overview
+
+{{#each overview}}
+- {{name}}: {{count}}
+{{/each}}
+
+## Training data
+
+Temper's network was trained on positions from the training data of
+[Leela Chess Zero](https://lczero.org) (its test91 run, storage.lczero.org), made available under the
+[Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/), its contents
+under the [Database Contents License (DbCL) 1.0](https://opendatacommons.org/licenses/dbcl/1-0/).
+The conversion of that data into Temper's training positions is Temper's own, in `crates/smithy/src/lc0/`
+of the release's source.
+
+## Licenses
+
+{{#each licenses}}
+### {{name}}
+
+Used by:
+
+{{#each used_by}}
+- [{{crate.name}} {{crate.version}}]({{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}})
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}

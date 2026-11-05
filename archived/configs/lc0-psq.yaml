@@ -1,0 +1,54 @@
+# psq on Lc0's games (labels-lc0.md, lc0-data.md): data/lc0, test91's tars from 2026-01-01,
+# converted by smithy lc0, each score Lc0's best_q after an 800-visit search. No teacher and only
+# generation 1: it starts from random weights, and its gate is against the hand-crafted evaluation,
+# as every generation 1's. self-psq is the same shape on Temper's self-play, so the two rank the
+# shapes twice.
+labels: lc0
+
+# (780 -> 256) x 2 -> 1, amanda's.
+architecture:
+  kind: psq
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+# A label is an exponentially weighted average of the scores from its position to the game's end,
+# lambda the decay a ply, so its horizon is about 1 / (1 - lambda) plies: 2, 4, 10, 20 and 50 here
+# (the developer, 2026-10-18). Self-play's depth-9 scores did best around 50 plies (0.98), on a grid
+# of 0.95 to 0.99 in steps of 0.01; Lc0's, from a far stronger search, need less averaging over the
+# game, so the grid reaches down to short horizons instead of refining near 0.98. 0.05 to 0.95 in
+# steps of 0.1, judged by a tournament: loss alone cannot rank the lambdas, each having its own
+# labels. On lc0-psq768 (psq without castling and en passant, since retired) this grid came out flat from 0.05 to 0.85, only 0.95 clearly worse, so no
+# finer grid follows; the ten lambdas stay, ten independent runs of which the best is kept
+# (2026-10-18). No 1.00, the game's result alone: an optimistic bet that the scores always help.
+label:
+  lambda: [0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95]
+
+training:
+  # Every experiment's, field for field, so the shapes and the corpora differ in nothing else. The
+  # rounds and patience are zelda's, 4096 steps (16.8M positions) a round and 6 rounds, so a
+  # transformer compares with these round for round; the rest is amanda's.
+  #
+  # The training fields are read-only once a run has started: the first invocation freezes them in
+  # run_config.txt and a later one that disagrees is refused.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  # 2^21 positions resident in front of the stream -- about 200 MB: 512 batches' worth.
+  # From random weights 3e-3 helps (caroline's generation 1); the rest as amanda's.
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6
+
+# As the self-play networks': a round robin of the lambdas' candidates at depth 9, then the gate
+# against the hand-crafted evaluation at 10+0.1.
+selection:
+  depth: 9
+  # 400 pairs a pairing: about +/-0.9% a lambda over its 9 opponents; 45 pairings, 36,000 games.
+  round_robin_pairs: 400
+  # No stage round robin (stage_round_robin_pairs left out): on lc0-psq768, since retired, all ten lambdas ranked
+  # their stages in order, the last first, and test loss picked the same stage every time
+  # (2026-10-18), so each lambda goes on with its lowest-loss candidate.
+  gate:
+    rule: sprt
+    elo_d: 35

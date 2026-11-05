@@ -1,0 +1,8 @@
+# Every machine, highest rank first, written once on Google Drive, as data/machines.yaml under the
+# remote root, so every machine reads the same copy; no local copy is read. Each name is a machine's
+# own, as its data/machine.yaml says it and as the LAN resolves it.
+#
+# A smithy, on any machine, claims the arena of every machine listed (`arena start` on each that
+# should play). Between two jobs of the same kind, full or scaled, the smithy ranked higher keeps the
+# arenas; a smithy on a machine not listed ranks after every listed one.
+machines: [firstname, secondname]

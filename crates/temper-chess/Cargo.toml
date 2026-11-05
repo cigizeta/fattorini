@@ -1,0 +1,78 @@
+[package]
+name = "temper-chess"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# Never on crates.io: Temper is released as a binary on its own repository, and `cargo-about` leaves
+# unpublished crates out of the release's third-party notices.
+publish = false
+# Every bench is declared below via `[[bench]]`.
+autobenches = false
+
+[dependencies]
+num_enum.workspace = true
+# The pipeline contract's YAML files (`pipeline/preprocessing_config.rs`, `pipeline/self_config.rs`).
+# A real YAML library rather than a hand-rolled parser, deliberately: unlike FEN (this project's own
+# domain-specific format), YAML is a generic, well-established format with no reason to reimplement
+# here. Pure Rust, so no extra build-time system requirement.
+serde.workspace = true
+serde_yaml.workspace = true
+shakmaty.workspace = true
+# The one sanctioned exception to "no chess crates as a dependency": hand-writing a Syzygy WDL parser
+# from scratch is a binary-format/compression exercise, not a chess-engine-internals one, so this one
+# subsystem depends on niklasf's own pure-Rust prober instead. Nothing else in the shipped `temper-chess`
+# binary depends on a chess crate.
+#
+# `mmap`: the tables are read through memory maps (`tablebase.rs`), not one system call per read.
+shakmaty-syzygy = { version = "0.28.1", features = ["mmap"] }
+# The machine's memory (`pipeline/system_memory.rs`), and `--lichess`'s core groups, reserved by named
+# mutexes (`core_pinning.rs`, which needs `Win32_Foundation` and `Win32_Security` for `CreateMutexW`).
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+# `nnue_bench` reads PGN games, resolving them through the `pgn-replay` source it includes, and reads
+# zstd-compressed segments.
+[dev-dependencies]
+pgn-reader.workspace = true
+zstd.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Records, at every main-search node, each quiet move's history score and what became of it, for
+# `benches/move_stats.rs`. Off in every real build: the search is unchanged without it.
+move-stats = []
+# Counts accumulator updates, the ones an evaluation reads, and evaluations of positions the TT
+# holds, for `nnue_bench --search-only`. Off in every real build: the search is unchanged without it.
+node-stats = []
+
+[lib]
+bench = false
+
+[[bin]]
+name = "temper-chess"
+path = "src/main.rs"
+bench = false
+
+[[bench]]
+name = "search_bench"
+harness = false
+
+[[bench]]
+name = "nnue_bench"
+harness = false
+# In-process, unlike `search_bench` above, which drives a real UCI engine: this measures the cost of
+# one `evaluate` call rather than what a search does with it, and a process boundary would bury a
+# microsecond-scale number. Needs no libtorch -- the whole point of `temper_chess::nnue` is that running a
+# trained network never touches `tch`/`libtorch`.
+
+[[bench]]
+name = "move_stats"
+harness = false
+required-features = ["move-stats"]

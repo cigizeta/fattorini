@@ -1,0 +1,41 @@
+# The Lc0 route, psq_threats_screlu_hidden (2026-10-26, lc0-psq-threats-screlu with one hidden layer
+# of 16 beside its output: every square through the hidden layer, its input detached in training,
+# then one output over its values clipped and squared and every square, SCReLU's own output kept as
+# a skip; lc0-psq-threats-screlu-kings without the king). Generation 1 trains on Lc0's labels, about
+# 1B positions, direct blend, nine lambdas centred as lc0-psq's at 0.05, the direct blend's peak on
+# psq (direct-blend.md); its winner is gated against PeSTO, as a sanity check, once. From generation
+# 2 on, self-play, as pesto-psq. Differs from lc0-psq-threats-screlu by its head alone.
+
+# The forge. Generation 1's grid: 0.01 to 0.09.
+grid_center: 0.05
+# From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
+# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+training_positions: 1073741824
+# From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
+test_positions: 4194304
+round_robin_pairs: 400
+gate_elo_d: 35
+
+# The tune of each generation that passed its gate, started by hand, at 10+0.1: the default
+# length, 16,384 pairs, every one from the default parameters.
+tune:
+  length: default
+  control: 10+0.1
+
+# The network: (4876 -> 256) x 2, each lane squared after the clip; 512 -> 16, clipped and squared;
+# 32 + 512 -> 1.
+labels: lc0
+
+architecture:
+  kind: psq_threats_screlu_hidden
+  embedding_dim: 256
+  value_head:
+    hidden_dim: [16]
+
+training:
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6

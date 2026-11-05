@@ -1,0 +1,14 @@
+# gen-psq made tiny, a smoke test of `smithy start --forge` on one machine without a GPU
+# (2026-10-21): every phase in minutes, nothing about strength.
+
+network: self-psq-smoke
+
+grid_center: 0.95
+
+training_positions: 262144
+test_positions: 32768
+
+round_robin_pairs: 4
+gate_elo_d: 35
+
+max_failed_gates: 2

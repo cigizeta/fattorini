@@ -1,0 +1,25 @@
+# Normalize text files to LF in the repository; a checkout gets the OS's native endings, CRLF on
+# Windows, since core.eol defaults to native.
+* text=auto
+
+# Everything Bash or awk reads must stay LF on every OS, or Bash fails with "bad interpreter"
+# and awk sees a stray \r at the end of every line. bin/ holds the extensionless wrappers
+# (bin/temper-chess, bin/arena, bin/smithy) next to the .sh and .awk scripts.
+bin/** text eol=lf
+*.sh text eol=lf
+*.awk text eol=lf
+
+# Windows batch and PowerShell scripts need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binaries: networks, compressed games, opening books, images.
+*.nnue binary
+*.zst binary
+*.gz binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary

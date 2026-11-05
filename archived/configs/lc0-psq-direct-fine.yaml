@@ -1,0 +1,15 @@
+# lc0-psq-direct with lambdas 0.01 to 0.09 (2026-10-22), run by `smithy start --forge`:
+# lc0-psq-direct's training on the same corpus, nine lambdas near its peak at 0.05. AB(lambda)'s
+# label noise spreads its runs and best-of-ten harvests that luck; nine direct runs near the peak buy
+# the same luck without the noise. Its winner, lc0-psq-direct-fine-0001, then duels lc0-psq-0001-0.15
+# at 10+0.1.
+
+network: lc0-psq-direct
+
+# 0.01 to 0.09.
+grid_center: 0.05
+
+# 4 x 1024 x 1024 positions from data/lc0/test, as a frozen set held.
+test_positions: 4194304
+
+round_robin_pairs: 400

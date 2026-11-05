@@ -1,0 +1,15 @@
+{
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+  "files.trimTrailingWhitespace": true,
+  "python.defaultInterpreterPath": "${workspaceFolder}/.temper-games/Scripts/python.exe",
+  "remote.autoForwardPorts": false,
+  "remote.autoForwardPortsFallback": 0,
+  "terminal.integrated.rightClickBehavior": "default",
+  "workbench.editor.enablePreview": false,
+  "workbench.editor.enablePreviewFromQuickOpen": false,
+  "editor.inlayHints.enabled": "off",
+  "[plaintext][markdown]": {
+    "editor.guides.indentation": false
+  }
+}

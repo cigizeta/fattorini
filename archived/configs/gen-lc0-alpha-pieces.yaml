@@ -1,0 +1,15 @@
+# lc0-alpha-pieces, the transformer, run by `smithy start --forge` (2026-10-22) as any other
+# architecture: nine lambdas 0.01 apart, the same test set as lc0-psq-direct-fine. The engine cannot
+# play a transformer until MCTS, so the run ends at its training: no round robin, its lambdas compared
+# by their history.tsv.
+
+network: lc0-alpha-pieces
+
+# 0.01 to 0.09, as lc0-psq-direct-fine.
+grid_center: 0.05
+
+# 4 x 1024 x 1024 positions from data/lc0/test, as lc0-psq-direct-fine.
+test_positions: 4194304
+
+# Unused until the engine plays a transformer; as lc0-psq-direct-fine.
+round_robin_pairs: 400

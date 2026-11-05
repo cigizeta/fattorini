@@ -1,0 +1,59 @@
+# Its teacher's self-play games, streamed, since generation 3 was decided on the archives.
+labels: self
+
+# Betty: amanda's architecture plus a hidden layer of 16. From generation 2 amanda trains on the same
+# corpus with these same training fields, so the two differ in the hidden layer alone; from
+# generation 3 betty's lambda grid is the top of amanda's, where amanda's winners have always been.
+# Caroline and dorothy are the same two with psq_threats, so the four cross the hidden layer with the
+# threats. No preprocessing section: an NNUE network trains on self-play games only.
+#
+# (780 -> 256) x 2 -> 16 -> 1: 768 piece-square rows plus castling rights and the en passant file,
+# seen from both sides through one shared transform of width 256, concatenated to 512, then a hidden
+# layer of 16, then the output. Built for an incremental accumulator.
+architecture:
+  kind: psq
+  embedding_dim: 256
+  value_head:
+    hidden_dim: [16]
+
+# 0.95 to 1.00 (the developer, 2026-10-16): amanda's round robins put 0.90 to 0.94 at the bottom every
+# time (her generation 3: 7th to 11th of 11), so they are dropped, which also trains fewer arms and
+# leaves the round robin's games to the contenders. 1.00 ignores the teacher's scores entirely: it is
+# the canary, never promoted, its winning a red flag. If 0.95 ever wins, the grid widens again.
+label:
+  lambda: [0.95, 0.96, 0.97, 0.98, 0.99, 1.00]
+
+training:
+  # Amanda's too, so the two architectures compare on equal terms. The hidden layer may want lower
+  # rates; these are amanda's, kept so the comparison holds.
+  #
+  # The training fields are read-only once a run has started: the cursor and the round boundary are
+  # derived from the step count, so the first invocation freezes them in run_config.txt and a later
+  # one that disagrees is refused.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 1024
+  # 2^21 positions resident in front of the cyclic read -- about 200 MB: 512 batches' worth.
+  # Trained in data/networks/betty/gen-NNNN/ from the first rate, after one warmup round, moving
+  # abruptly to the next rate once 5 rounds pass without a new best test loss, and stopping when the
+  # last rate runs out of patience. The best checkpoint of the whole run is the generation's
+  # challenger. `smithy promote` makes it the champion, and the next generation starts from its
+  # weights.
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 5
+
+# As amanda's: a round robin among the lambdas' candidates, ranked by points; then the challenger
+# plays the champion, and only its win promotes. The round robin at one fixed depth, so every core
+# can play a game at once without weakening any player; the gate at 10+0.1, the control its margin
+# was tuned at.
+selection:
+  depth: 9
+  # Colour-reversed game pairs between every two candidates: 400 pairs, 800 games a pairing, 4,000
+  # a lambda over its 5 opponents (about +/-1.25%); 15 pairings, 12,000 games in all, about the
+  # 11,000 of 0.90 to 1.00 at 100 pairs. Closer lambdas are interchangeable.
+  round_robin_pairs: 400
+  # The challenger promotes only when an SPRT shows it at least 35 Elo stronger than the champion.
+  gate:
+    rule: sprt
+    elo_d: 35

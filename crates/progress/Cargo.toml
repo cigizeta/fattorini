@@ -1,0 +1,20 @@
+# The progress of `arena` and `smithy` as their page shows it, with elapsed time, ETA and rate, and
+# their event log. Its own crate so that none of it links into the `temper-chess` engine.
+[package]
+name = "progress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# The live bars as the smithy's page reads them (`live`).
+serde.workspace = true
+# The event log of `smithy start` and `arena start` (`log_events`).
+env_logger.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+bench = false

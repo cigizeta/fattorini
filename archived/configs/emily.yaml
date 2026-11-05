@@ -1,0 +1,51 @@
+# Emily: lc0-psq-threats-screlu as it trained on the old Lc0 corpus (275 tars, 999,893,639 training
+# positions, no visit counts, deleted since; today's `data/lc0` is the newer corpus with visit
+# counts), kept as a historical record (the developer, 2026-11-02). Her run,
+# `data/networks/emily/run-1`, is lc0-psq-threats-screlu's first, moved there once its generation 2
+# had ended its gate, so that the config's name passed to its run on the new corpus; her winners play
+# as `emily-g1-r1`, `emily-g2-r1`. Generation 1's winner was lambda 0.02, passing its sanity gate
+# against PeSTO 42 of 48. Generation 2 (self-play from g1, 402,653,184 positions, no filter) was won
+# by lambda 0.06, the round robin flat (49.0% to 50.7%, +/- 0.9%), and passed its gate against
+# generation 1, 918.5 of 1,720 games, 53.4%, about +24 Elo at depth 9. The run ended there, no
+# generation 3. Never a forge again: archived/ is never listed.
+#
+# psq_threats_screlu (2026-10-24, lc0-psq-threats with the accumulator squared after its clipped
+# ReLU). Generation 1 trains on Lc0's labels, about 1B positions, direct blend, nine lambdas centred
+# as lc0-psq's at 0.05, the direct blend's peak on psq (direct-blend.md); its winner is gated against
+# PeSTO, as a sanity check, once. From generation 2 on, self-play, as pesto-psq. Differs from
+# lc0-psq-threats by the square alone.
+
+# The forge. Generation 1's grid: 0.01 to 0.09.
+grid_center: 0.05
+# From generation 2 on: 4 x 96 x 1024 x 1024 training positions an attempt adds (raised from
+# 96 x 1024 x 1024 on 2026-10-31, before generation 2's self-play: closer to generation 1's volume).
+# Generation 1's are Lc0's corpus (lc0.yaml).
+training_positions: 402653184
+# From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
+test_positions: 4194304
+round_robin_pairs: 400
+gate_elo_d: 35
+max_failed_gates: 3
+
+# The tune of each generation that passed its gate, once the run has ended, at 10+0.1: the default
+# length, 16,384 pairs, every one from the default parameters.
+tune:
+  length: default
+  control: 10+0.1
+
+# The network: (4876 -> 256) x 2 -> 1, caroline's, each lane squared after the clip.
+labels: lc0
+
+architecture:
+  kind: psq_threats_screlu
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+training:
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6

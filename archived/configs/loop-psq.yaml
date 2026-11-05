@@ -1,0 +1,40 @@
+# RETIRED (2026-10-22): `smithy loop-server` is gone, and nothing reads this config any more. Kept
+# until it is reviewed.
+#
+# The self-training loop (`smithy loop-server loop-psq`, clients `arena loop-client`), 2026-10-21. Each round:
+# self-play with the teacher until N new positions, a slide of the window, one shuffled pass of two
+# students over it at adjacent rungs of the lambda ladder (direct blend), each student against the
+# teacher, and the CUSUM controller's decision.
+#
+# Not a forge config: its schema is smithy loop-server's own, and the architecture is the bootstrap's.
+
+# The forge network whose promoted generation 1 starts the loop: its champion the first teacher, the
+# newest window.positions of its games the first window.
+bootstrap: self-psq-direct
+
+window:
+  # W, 4096 x 4096: one of forge's rounds.
+  positions: 16777216
+  # N, 1024 x 4096: W / N = 4, each position learned in four rounds.
+  new_positions: 4194304
+  # The test set, N / 16: the current teacher's games held out from training, played at the start and
+  # after every promotion. A student's new best loss on it keeps the rate's patience from growing.
+  test_positions: 262144
+
+training:
+  batch_size: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  # Rounds without a promotion before the rate steps down. A placeholder, until the simulation over the
+  # first rounds' pair counts: about 1.3 times the rounds a +30 Elo gain takes to detect at 16 pairs.
+  patience_rounds: 36
+
+ladder:
+  gamma: 2.0
+  # Rungs 2 and 3, lambdas 0.98 and 0.96: the bootstrap's lambda, and one step more trust.
+  start_upper_rung: 2
+
+gate:
+  pairs: 16
+  elo_delta: 30
+  # A placeholder, until the simulation: 1.09 at 8 pairs and a draw rate of 0.5, halved at 16.
+  h: 0.55

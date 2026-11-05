@@ -1,0 +1,8 @@
+lc0-test91-229828019.gz is one game of Leela Chess Zero's training data, unmodified: the member
+training-run2-test91-20261017-0417/training.229828019.gz of
+https://storage.lczero.org/files/training_data/test91/training-run2-test91-20261017-0417.tar,
+downloaded 2026-10-17. It is the test input of smithy's Lc0 converter.
+
+Its licence, test91's LICENSE.txt (https://storage.lczero.org/files/training_data/LICENSE.txt):
+
+This collection of training data for Leela Chess Zero is made available under the Open Database License: http://opendatacommons.org/licenses/odbl/1.0/. Any rights in individual contents of the database are licensed under the Database Contents License: http://opendatacommons.org/licenses/dbcl/1.0/

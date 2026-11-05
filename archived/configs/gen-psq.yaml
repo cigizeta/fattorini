@@ -1,0 +1,23 @@
+# The simplified self-training route, psq: `smithy start --forge gen-psq` on the machine with
+# the GPU, `arena start` on every machine. Generation 1 is taught
+# by PeSTO; each generation plays its training set, trains 9 lambdas to convergence, picks one by round
+# robin and gates it against its teacher.
+
+# The forge config whose architecture and training every generation uses: psq, rates 3e-3 to 3e-5,
+# patience 6 rounds of 4096 steps of 4096 positions. Its own lambdas are ignored.
+network: self-psq-direct
+
+# Generation 1's grid: 0.91 to 0.99. Later generations centre on the previous winner.
+grid_center: 0.95
+
+# 96 x 1024 x 1024 training positions an attempt adds; a failed gate adds as many again.
+training_positions: 100663296
+# 4 x 1024 x 1024: each teacher's frozen test set.
+test_positions: 4194304
+
+round_robin_pairs: 400
+gate_elo_d: 35
+
+# Consecutive failed gates for one teacher before the lineage stops: a first guess, to revise from
+# how the attempts' gate scores move.
+max_failed_gates: 3

@@ -1,0 +1,19 @@
+# (780 -> 256) x 2 -> 1: 768 piece-square rows plus castling rights and the en passant file, seen
+# from both sides through one shared transform of width 256, concatenated to 512, straight to the
+# output.
+architecture:
+  kind: psq
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+training:
+  # Training starts at the first rate and moves to the next after 8 rounds without a new best test
+  # loss, counted from the latest of the last best, the last switch and the end of warmup; the last
+  # rate running out of patience ends the run. A scalar is a single rate.
+  learning_rate: [1.0e-3, 3.0e-4, 1.0e-4]
+  training_batch_size: 1024
+  test_batch_size: 16384
+  steps_per_round: 8192
+  warmup_rounds: 2         # the rate ramps up linearly over the first 2 rounds
+  patience_rounds: 8

@@ -1,0 +1,11 @@
+# RETIRED (2026-10-22): `arena self` is gone, and nothing reads this config any more. Kept until it
+# is reviewed.
+train:
+  positions: 1000000000
+
+test:
+  games: 65536
+
+# A segment closes at the first game boundary past this many positions,
+# for compression; its game count varies.
+segment: 1000000

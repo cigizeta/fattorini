@@ -1,0 +1,4 @@
+# A first tune (2026-10-22): 16,384 pairs from the default parameters at 10+0.1, the planned
+# `--first`. Started from the smithy's page with the network it tunes.
+length: first
+control: 10+0.1

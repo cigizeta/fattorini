@@ -1,0 +1,50 @@
+# The archives (deprecated): zelda trains on amanda-0002's dataset, built from them, until the
+# transformer streams; then self or lc0, as every other network.
+labels: archives
+
+# alpha_pieces, the first feasibility test: can a small piece-centric
+# transformer learn the value at least as well as amanda? Value head only, no search, no policy.
+# Compared with amanda by test loss at equal positions seen.
+#
+# Generation 1 from amanda-0002, as caroline and dorothy started: smithy teacher zelda amanda-0002,
+# then smithy regroup amanda-0002 for the length buckets of its built dataset. The dataset amanda's generation 3 trains on, so the two see the same positions,
+# labels and test half. Every lambda trains at once, in lockstep and stacked, as amanda's grid does:
+# her best lambda against amanda's. No gate: the engine cannot run a transformer, so a lambda's run
+# ends at its candidate.txt, and zelda is never promoted.
+
+# amanda's grid, every label set of the dataset built.
+label:
+  lambda: [0.90, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.00]
+
+# Small: [CLS] and one token per piece, at most 33, width 64, 4 blocks of 4 heads 16 wide, the
+# feed-forward part 4 times the width. About 6.5M multiply-adds an evaluation. Full attention, so
+# the idea gets its best chance: at 33 tokens attention is under a tenth of the work, the
+# projections and feed-forward the rest, so kings-only would save little and could only lose
+# information. Dropout at BERT's rate, on while training only. The value head reads [CLS] through
+# one hidden layer of 32.
+architecture:
+  kind: transformer
+  embedding_dim: 64
+  num_layers: 4
+  num_heads: 4
+  feedforward_dim: 256
+  dropout: 0.1
+  value_head:
+    hidden_dim: [32]
+
+training:
+  attention: full   # full | kings-only
+  # amanda's batch, so zelda's history.tsv and hers count positions alike (steps x 4096). The
+  # round and patience of the Lc0 runs instead of amanda's: a round of 16 x 2^20
+  # positions, so 6 rounds make one Lc0 epoch of 96 x 2^20, and a patience of one such epoch, so
+  # test-loss noise cannot end a stage early on plentiful data. A round that long keeps the test
+  # pass (all 4.19M test rows) a small share of it. Every round boundary of zelda's falls on one of
+  # amanda's (4 x 2^20), so the comparison at equal positions holds; only the stopping rule
+  # differs, later than hers. Her rates without amanda's first: 3e-3 is high even
+  # for an NNUE starting from its champion, and a post-norm transformer is less forgiving.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6

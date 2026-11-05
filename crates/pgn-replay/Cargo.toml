@@ -1,0 +1,18 @@
+# SAN-to-Temper-move resolution, shared by `arena` and `smithy`. Its own crate so that `shakmaty`'s SAN
+# parsing never links into the `temper-chess` engine.
+[package]
+name = "pgn-replay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+temper-chess.workspace = true
+shakmaty.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+bench = false

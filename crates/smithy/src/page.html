@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Temper smithy</title>
+<style>
+  :root {
+    --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4; --panel: #ffffff;
+    --accent: #2563eb; --good: #15803d; --bad: #b91c1c;
+    /* A new best, as the terminal's bold green (Windows Terminal's ANSI green). */
+    --best: #13a10e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --fg: #e7e5e4; --muted: #a8a29e; --line: #2e2c2a; --panel: #1c1b1a;
+      --accent: #60a5fa; --good: #4ade80; --bad: #f87171;
+      --best: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .sub { color: var(--muted); margin-bottom: 16px; }
+  .sub .bad { color: var(--bad); }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 14px; overflow-x: auto;
+  }
+  /* As wide as its content, so each header sits over its own numbers. */
+  table { border-collapse: collapse; font-variant-numeric: tabular-nums; margin: 0 auto; }
+  th, td { text-align: right; padding: 4px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { text-align: center; }
+  th:first-child, td:first-child { text-align: left; }
+  /* Cells in the terminal's font, so columns align and bold costs no width; headers stay sans. */
+  td { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  td .loss, td .at, td .of, td .share, td .margin { display: inline-block; }
+  td .share { min-width: 6ch; text-align: right; }
+  td .margin { min-width: 7ch; text-align: right; }
+  td .loss.fresh { color: var(--best); font-weight: 700; }
+  td .at { min-width: 5ch; text-align: right; }
+  td .of { min-width: 5ch; text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  /* The tests' log fits the page: its long cells (what was played, the verdict) wrap, never scroll. */
+  .log table { width: 100%; }
+  .log td { white-space: normal; vertical-align: top; }
+  .log td:nth-child(3), .log td:nth-child(7) { min-width: 18ch; text-align: left; }
+  .log td:first-child { white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .bar { display: flex; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin: 4px 0 10px; }
+  .bar > div { height: 100%; background: var(--accent); }
+  /* The accent at 40%, over the track: a lighter blue on the light theme, a dimmer one on the dark. */
+  .bar > div.tentative { opacity: 0.4; }
+  .gauge { display: flex; align-items: center; gap: 10px; max-width: 520px; margin: 4px auto 12px; }
+  .gauge .end { color: var(--muted); font-size: 13px; }
+  .gauge .track { position: relative; flex: 1; height: 8px; background: var(--line); border-radius: 4px; }
+  .gauge .zero { position: absolute; top: -3px; width: 2px; height: 14px; margin-left: -1px; background: var(--muted); }
+  .gauge .mark { position: absolute; top: -4px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--accent); }
+  .gauge .mark.failed { background: var(--bad); }
+  .gauge .mark.passed { background: var(--good); }
+  .muted { color: var(--muted); }
+  .bad { color: var(--bad); }
+  form { display: grid; gap: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .row > label:first-child { min-width: 96px; color: var(--muted); }
+  input, select, button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  input[type="radio"] { padding: 0; }
+  button { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; padding: 6px 14px; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.plain { background: var(--bg); border-color: var(--line); color: var(--fg); }
+  .hidden { display: none; }
+  .row h2 { margin: 0; }
+  .run { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .run:last-of-type { border-bottom: none; }
+  .tunes { padding-left: 24px; }
+  .newrun { margin-top: 12px; }
+  section.current { border-color: var(--accent); }
+  #viewBody section { border: none; padding: 8px 0 0; margin: 0; }
+  .boxes { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .box {
+    display: block; text-align: left; background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px 14px; cursor: pointer; font: inherit;
+  }
+  .box:hover { border-color: var(--accent); }
+  .box.running { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .box b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .box .tag { color: var(--accent); font-weight: 600; }
+  .head { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .head h1 { margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <div id="home">
+    <h1>Temper smithy</h1>
+    <div class="sub" id="sub">waiting for the smithy</div>
+    <section class="live hidden"></section>
+    <div id="boxes"></div>
+    <div id="arenas"></div>
+  </div>
+  <div id="page" class="hidden">
+    <div class="head"><h1 id="pageTitle"></h1><button class="plain" id="back">Back</button></div>
+    <div class="sub" id="pageSub"></div>
+    <section class="live hidden"></section>
+    <section id="job" class="hidden"></section>
+    <section id="work" class="hidden"></section>
+    <div id="forge"></div>
+    <div id="config"></div>
+    <section id="view" class="hidden"><div id="viewHead"></div><div id="viewBody"></div></section>
+  </div>
+</main>
+<script>
+"use strict";
+const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+// Blank for a value the state sends as null: a `NaN`, as round 0's train loss, which has none.
+const number = (value, digits) => value === null ? "" : value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+const whole = (value) => value.toLocaleString();
+const percent = (value) => number(100 * value, 1) + "%";
+
+// `done` of `total` in the accent; with `reached`, the stretch from `done` to it lighter, progress
+// that may still be taken back (a training's patience).
+function bar(done, total, reached = done) {
+  const width = (value) => total > 0 ? Math.min(100, 100 * value / total) : 0;
+  const tentative = width(reached) - width(done);
+  return `<div class="bar"><div style="width:${width(done)}%"></div>`
+    + (tentative > 0 ? `<div class="tentative" style="width:${tentative}%"></div>` : "") + `</div>`;
+}
+
+// The gate's progress, which no count of games can give, an SPRT ending whenever its evidence is
+// enough: its LLR marked between the fail bound, left, and the pass bound, right, a tick where it starts.
+// Once a bound is reached the mark takes the verdict's colour, red failed and green passed. A duel's
+// gauge, whose ends are its two players, is given its `won` instead: green the challenger, red the
+// champion, the accent while undecided or drawn.
+function gauge(llr, lower, upper, left = "fail", right = "pass", tick = 0, won = null) {
+  const at = (value) => 100 * Math.min(1, Math.max(0, (value - lower) / (upper - lower || 1)));
+  const verdict = left === "fail" && right === "pass" ? (llr <= lower ? " failed" : llr >= upper ? " passed" : "")
+    : won === "challenger" ? " passed" : won === "champion" ? " failed" : "";
+  return `<div class="gauge"><span class="end">${escape(left)}</span><div class="track"><div class="zero" style="left:${at(tick)}%"></div>`
+    + `<div class="mark${verdict}" style="left:${at(llr)}%"></div></div><span class="end">${escape(right)}</span></div>`;
+}
+
+// Seconds as `5d 13h 07m`, `1h 05m`, `4m` or `35s`: whole minutes from 90 s, so never `1m`, the
+// seconds below it; days once the hours reach 24.
+function duration(seconds) {
+  if (seconds < 90) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  const d = Math.floor(minutes / 1440), h = Math.floor(minutes / 60) % 24, m = minutes % 60;
+  const mm = String(m).padStart(2, "0");
+  if (d > 0) return `${d}d ${String(h).padStart(2, "0")}h ${mm}m`;
+  return h > 0 ? `${h}h ${mm}m` : `${m}m`;
+}
+
+// A test's title: its kind and settings, then its two sides by role, the champion first as on the
+// form and the gauge, each a player whose name says the parameters it plays (`@t1`, `@default`).
+function testTitle(view) {
+  const settings = view.test === "match" ? ` of ${view.settings} pairs` : view.test === "sprt" ? ` [${view.settings.replace(",", ", ")}]` : "";
+  return `${view.test}${settings}: champion ${view.champion} against challenger ${view.challenger}`;
+}
+
+// Sets `element`'s html, keeping the horizontal scroll of it and of each section in it, by position: a
+// narrow screen scrolls a wide table sideways, and a poll's redraw would bring it back to the left.
+function redraw(element, html) {
+  if (element.innerHTML === html) return;
+  const scrolled = [element, ...element.querySelectorAll("section")].map((e) => e.scrollLeft);
+  element.innerHTML = html;
+  [element, ...element.querySelectorAll("section")].forEach((e, i) => { if (scrolled[i]) e.scrollLeft = scrolled[i]; });
+}
+
+// `muted[i]` greys row i: a finished lambda.
+function table(headers, rows, muted = []) {
+  const head = headers.map((h) => `<th>${escape(h)}</th>`).join("");
+  // A cell is text, or `{ html }` already escaped.
+  const body = rows.map((row, i) => `<tr${muted[i] ? ' class="muted"' : ""}>${row.map((cell) => `<td>${typeof cell === "string" ? escape(cell) : cell.html}</td>`).join("")}</tr>`).join("");
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// A games-a-second rate as the text bars write it: games a second from one a second, seconds a game
+// below, so a slow test under a clock reads as a number rather than `0.0 games/s`.
+function rate(perSecond) {
+  return perSecond >= 1 ? `${number(perSecond, 1)} games/s` : `${number(1 / perSecond, 1)} s/game`;
+}
+
+// A phase's time as its record gives it, after its count: `, 11m elapsed, 7.3 games/s, ETA about
+// 54m`; each part only once its record gives it.
+function times(view) {
+  const t = view.time;
+  return (t.elapsed_seconds === null ? "" : `, elapsed ${duration(t.elapsed_seconds)}`)
+    + (t.games_per_second === null ? "" : `, ${rate(t.games_per_second)}`)
+    + (t.eta_seconds === null ? "" : `, ETA about ${duration(t.eta_seconds)}`);
+}
+
+// `stop`, a test's Stop beside its title, while it runs on its own screen.
+function work(view, waiting, stop = "") {
+  switch (view.kind) {
+    case "self_play": {
+      // Each set as the round robin's games. Its pace in positions, which its targets count, rather
+      // than games, whose length varies. Elapsed, pace and ETA on the set being played alone, the test
+      // set's first: its ETA that set's own, the training set's waiting until it is played.
+      const t = view.time;
+      const pace = t && t.positions_per_second !== null ? t.positions_per_second : null;
+      const time = (left) => !t ? ""
+        : (t.time.elapsed_seconds === null ? "" : `, elapsed ${duration(t.time.elapsed_seconds)}`)
+          + (pace === null ? "" : `, ${whole(Math.round(pace))} positions/s`)
+          + (pace === null || left === 0 ? "" : `, ETA about ${duration(Math.round(left / pace))}`);
+      const set = (name, got, wanted, timed) =>
+        `<div>${name}: ${whole(got)} of ${whole(wanted)} positions (${percent(wanted > 0 ? Math.min(1, got / wanted) : 0)})`
+        + `${timed ? time(Math.max(0, wanted - got)) : ""}</div>${bar(got, wanted)}`;
+      const testing = view.test_got < view.test_wanted;
+      return `<h2>Self-play with ${escape(view.teacher)}</h2>`
+        + set("Test set", view.test_got, view.test_wanted, testing)
+        + set("Training set", view.train_got, view.train_wanted, !testing);
+    }
+    case "round_robin": {
+      // Games, not pairings complete: a tournament chore plays every pairing at once, the one furthest
+      // behind first, so pairings complete only near the end. Each game counts in both its players'.
+      const played = view.standings.reduce((sum, s) => sum + s.games, 0) / 2, total = view.pairings * view.wanted * 2;
+      return `<h2>Round robin: ${view.wanted} pairs a pairing</h2><div class="muted">${escape(view.limit)}</div>`
+        + `<div>${whole(played)} of ${whole(total)} games (${percent(total > 0 ? played / total : 0)})${times(view)}</div>${bar(played, total)}`
+        + table(["rank", "lambda", "points", "games", "score"],
+          // The score and its margin each in a slot of its own width, so both align whatever their digits.
+          view.standings.map((s, i) => [String(i + 1), number(s.lambda, 2), number(s.points, 1), whole(s.games),
+            { html: `<span class="share">${escape(percent(s.score))}</span> <span class="margin">±${escape(percent(s.margin))}</span>` }]));
+    }
+    case "gate":
+      // Its search, then its time, the leading comma of `times` dropped: no count before it.
+      return `<h2>Gate</h2><div class="muted">${escape(view.limit)}${times(view).replace(/^, /, "; ")}</div>`
+        + gauge(view.llr, view.lower, view.upper)
+        // Both sides' points and shares, as a test's.
+        + table(["champion", "challenger", "games", "LLR", "bounds"],
+          [[`${number(view.champion_points, 1)} (${percent(1 - view.challenger_share)})`,
+            `${number(view.challenger_points, 1)} (${percent(view.challenger_share)})`, whole(view.games),
+            number(view.llr, 2), `${number(view.lower, 2)} to ${number(view.upper, 2)}`]]);
+    case "test": {
+      // A match knows its length and a duel projects it: a bar of its games with its ETA. A duel's and
+      // an SPRT's gauge too, which end whenever the evidence is enough: a duel's starting at an even
+      // score, an SPRT's at zero; a match's would only repeat its bar.
+      const length = view.expected_games === null ? ""
+        : `<div>${whole(view.games)} of ${view.test === "duel" ? "about " : ""}${whole(view.expected_games)} games${times(view)}</div>`
+          + bar(view.games, view.expected_games);
+      const evidence = view.test === "match" ? ""
+        : gauge(view.gauge.value, view.gauge.lower, view.gauge.upper, view.gauge.left, view.gauge.right, view.test === "duel" ? 0.5 : 0,
+          view.verdict === "won by the challenger" ? "challenger" : view.verdict === "won by the champion" ? "champion" : null);
+      const progress = length + evidence;
+      // A side's points and their share of the games: `452.0 (48.5%)`.
+      const side = (points) => `${number(points, 1)} (${percent(view.games > 0 ? points / view.games : 0.5)})`;
+      const mixed = view.mixed ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
+      const title = `<h2>${escape(testTitle(view))}</h2>`;
+      return (stop ? `<div class="row">${title}${stop}</div>` : title) + `<div class="muted">${escape(view.limit)}</div>${mixed}`
+        + progress
+        // Both sides' points and shares, so neither reads as the score: one alone was ambiguous.
+        + table(["games", "champion", "challenger", "state"],
+          [[whole(view.games), side(view.games - view.challenger_points), side(view.challenger_points), view.status]])
+        + (view.verdict ? `<div><b>${escape(view.verdict)}</b></div>` : "");
+    }
+    case "pairs":
+      return `<h2>Pairs: ${whole(view.played)} played, ${view.pairings} pairings of ${view.wanted}</h2>`;
+    case "tune":
+      return `<h2>Tune of ${escape(view.player)}: ${whole(view.done)} of ${whole(view.pairs)} pairs</h2>${bar(view.done, view.pairs)}`
+        + (view.reference_nps ? `<div class="muted">Bench: ${whole(Math.round(view.reference_nps))} nodes/s per thread on this machine, every arena's clock scaled to it</div>` : "")
+        + table(["parameter", "start", "now"], view.theta.map((p) => [p.name, String(p.start), number(p.now, 1)]));
+    default:
+      return `<h2>Nothing dealt</h2><div class="muted">${escape(waiting)}</div>`;
+  }
+}
+
+// The training's progress in patience rounds: a lambda's run ends when patience runs out at its last
+// stage, so it stands at (stage - 1) x patience + waiting of stages x patience, a finished one at all of
+// it, one yet to record a round at none; summed over the grid. A new best resets a lambda's patience,
+// so the bar steps back, never below the start of its stage: training is then still improving.
+function trainingProgress(lambdas, round) {
+  const shape = lambdas.map((l) => l.last).find(Boolean);
+  // A fresh run, no round recorded: its first round's pass alone.
+  if (!shape) return roundLine(round);
+  const share = shape.stages * shape.patience;
+  // Settled: a finished lambda's share and every stage it left behind, which no new best takes back,
+  // its current one too once its patience has run out: the stage ends at the next switch. Waiting: its
+  // current stage's patience, which a new best resets.
+  const settled = lambdas.reduce((sum, l) => {
+    const r = l.last;
+    if (!r) return sum;
+    if (r.finished) return sum + share;
+    if (!r.stage) return sum;
+    return sum + (r.stage - 1) * r.patience + (r.waiting >= r.patience ? r.patience : 0);
+  }, 0);
+  const done = settled + lambdas.reduce((sum, l) => {
+    const r = l.last;
+    // An exhausted stage is in `settled` already.
+    return r && !r.finished && r.stage && r.waiting < r.patience ? sum + r.waiting : sum;
+  }, 0);
+  const total = share * lambdas.length;
+  // The training's elapsed time as its histories record it, the longest one's: the lambdas train in
+  // lockstep, and the last to finish has every round. The ETA at its average pace, approximate, the
+  // bar not moving at an even pace.
+  const elapsed = Math.max(...lambdas.filter((l) => l.last).map((l) => l.last.elapsed_seconds));
+  const eta = done > 0 && done < total ? `, ETA about ${duration(Math.round(elapsed * (total - done) / done))}` : "";
+  return `${roundLine(round)}<div>${whole(done)} of ${whole(total)} patience rounds (${percent(done / total)}), `
+    + `elapsed ${duration(Math.round(elapsed))}${eta}</div>${bar(settled, total, done)}`;
+}
+
+// The round under way, as the text bar has it: its half, done of total, rate, and that half's ETA.
+function roundLine(round) {
+  if (!round) return "";
+  const half = round.half === "test" ? "testing" : "training";
+  const rate = round.rate === null ? "" : `, ${number(round.rate, 1)} ${round.unit}/s`;
+  const eta = round.eta_seconds === null ? "" : `, ETA about ${duration(Math.round(round.eta_seconds))}`;
+  // Worded and styled as the patience rounds' line above the bar.
+  return `<div>${round.round ? `${escape(round.round)}, ` : ""}${half}: ${whole(round.done)} of ${whole(round.total)} ${round.unit} `
+    + `(${percent(round.done / Math.max(1, round.total))})${rate}${eta}</div>`;
+}
+
+// An arm's lambda: a constant's number, or the string "polyline".
+function lambdaText(lambda) {
+  return typeof lambda === "string" ? lambda : number(lambda, 2);
+}
+
+// The training's lambdas, each at its latest round, and a polyline run's ten values once measured.
+function training(list, round = null, polyline = null) {
+  // Rows by lambda, so each stays put, ranked by best loss; lambdas yet to record a round unranked.
+  // The polyline after every constant.
+  const key = (lambda) => (typeof lambda === "string" ? Infinity : lambda);
+  const lambdas = [...list].sort((a, b) => key(a.lambda) - key(b.lambda));
+  const ranked = lambdas.filter((l) => l.last).sort((a, b) => a.last.best_loss - b.last.best_loss);
+  // The latest round's time, alike for every lambda trained in it: they train in lockstep. Only
+  // while training goes on: once every lambda has finished, the last round's time says nothing.
+  const latest = lambdas.filter((l) => l.last).map((l) => l.last).sort((a, b) => b.round - a.round)[0];
+  const ongoing = lambdas.some((l) => !l.last || !l.last.finished);
+  const took = latest && ongoing
+    ? `<div class="muted">round ${whole(latest.round)} took ${number(latest.train_seconds + latest.test_seconds, 1)}s: `
+      + `training ${number(latest.train_seconds, 1)}s, test ${number(latest.test_seconds, 1)}s</div>`
+    : "";
+  const values = polyline ? `<div class="muted">lambda by progress, tenth by tenth: ${escape(polyline)}</div>` : "";
+  return `<h2>Training</h2>${values}${trainingProgress(lambdas, round)}${took}`
+    + (lambdas.length === 0 ? "" : table(["lambda", "rank", "learning rate", "train loss", "test loss", "best loss", "round", "stage", "patience"],
+      lambdas.map((l) => {
+        const r = l.last;
+        if (!r) {
+          return [lambdaText(l.lambda), "", "not started", "", "", "", "", "", ""];
+        }
+        // Green when the best is this very round's. Not patience at 0: a stage's warmup round counts no
+        // patience, so a warmup worse than the best would show green too.
+        const best = `<span class="loss${!r.finished && r.best_round === r.round ? " fresh" : ""}">${escape(number(r.best_loss, 6))}</span>`;
+        // The best's round and the latest, each in a slot of its own width, so the slashes align.
+        const round = `<span class="at">${escape(whole(r.best_round))}</span> / <span class="of">${escape(whole(r.round))}</span>`;
+        return [lambdaText(l.lambda), String(ranked.indexOf(l) + 1), r.learning_rate.toExponential(0), number(r.train_loss, 6), number(r.test_loss, 6),
+          { html: best }, { html: round },
+          r.finished ? "finished" : (r.stage ? `${r.stage} of ${r.stages}` : ""),
+          r.finished ? "" : `${r.waiting} of ${r.patience}`];
+      }),
+      lambdas.map((l) => l.last && l.last.finished)));
+}
+
+// A phase as the page words it, as its section's heading does; the state file's name ("train",
+// "round-robin") stays as it is, since earlier runs are read back by it.
+function phaseName(phase) {
+  return { play: "playing", train: "training", "round-robin": "round robin", stopped: "stopped by its gate" }[phase] || phase;
+}
+
+// A forge's generation, every phase it has reached, latest first, each in its own section; while `live`,
+// the first of them is the one under way, bordered in blue.
+function forge(view, live = false) {
+  const phases = [view.gate && work(view.gate), view.round_robin && work(view.round_robin), (view.training || view.round) && training(view.training || [], view.round, view.polyline),
+    view.play && work(view.play)].filter(Boolean);
+  return phases.map((html, i) => `<section${live && i === 0 ? ' class="current"' : ""}>${html}</section>`).join("");
+}
+
+// The machines the smithy claims arenas on, then the arenas joined to the job, each in its own box.
+function arenas(list, machines) {
+  const claimed = `<section><h2>Machines</h2>` + table(["machine", "state", "held to send"],
+    machines.map((m) => [m.machine || m.target, m.state, m.outbox ? whole(m.outbox) : ""])) + `</section>`;
+  if (list.length === 0) {
+    const none = state.no_arena ? "no arena: this job waits for one, each held by another smithy or not answering (Machines above)" : "no arena";
+    return claimed + `<section><h2>Arenas</h2><div class="muted">${none}</div></section>`;
+  }
+  return claimed + `<section><h2>Arenas</h2>` + table(["session", "workers", "chore", "in play", "done", "rate", "seen", "commit"],
+    list.map((c) => [c.session, String(c.workers), c.chore || "none", c.in_play === null ? "" : whole(c.in_play), whole(c.done),
+      c.per_hour === null ? "" : `${whole(Math.round(c.per_hour))}/h`, `${c.seen_seconds_ago} s ago`, c.commit.slice(0, 12)])) + `</section>`;
+}
+
+// The control token of the latest poll, on the page opened on the smithy's own machine alone: the
+// buttons that start or stop a job show only then. A restarted smithy has a new one.
+let token = null;
+// Whether a job is running, from the latest poll: every start button waits for its end.
+let running = false;
+// `catalog.json`, and the text the config's page was last drawn from: drawn again only when it
+// changes, so a button being pressed is never replaced under the pointer.
+let catalog = null;
+let catalogDrawn = "";
+// The latest poll's state.
+let state = null;
+// The run being viewed and its generation; null when none is.
+let viewing = null;
+// The config whose page is open, from the address's `#<config>`; null on the main page.
+let current = null;
+// The run whose screen is open, from the address's `#<config>/<run>`, or a tune's job (`tuneScreen`);
+// null on the config's own screen.
+let currentRun = null;
+// New run pressed: its config and how many runs it had, so the page opens the new run's screen once
+// the catalog lists it; the job is named `<config>, a new run` until then.
+let pendingNew = null;
+// Start pressed on New test: the test's screen opens once it plays and its number is known.
+let pendingTest = false;
+// The boxes' sections, one a source, in this order, each its source's box first, then the forges
+// trained on it; a forge of no source known here, last, under Other.
+const SECTIONS = [["pesto", "PeSTO"], ["lc0", "Lc0"]];
+// The sources, each with its own box beside the forges: lc0's Convert runs in the source slot,
+// beside the arena job; pesto's Play in the arena slot.
+const SOURCES = ["lc0", "pesto"];
+// The tests' screen, and the config a test's job is of (the smithy's `TESTS_SCREEN`).
+const TESTS = "tests";
+// The books' screen, and the config a book job is of (the smithy's `BOOKS_SCREEN`).
+const BOOKS = "books";
+// The install's screen: what each claimed machine has installed for lichess-bot, and Install.
+const INSTALL = "install";
+// The New test form's choices, kept across its redraws.
+const testForm = {
+  kind: "duel", pairs: "500", elo0: "0", elo1: "5", challenger: "", champion: "pesto",
+  challengerParameters: "default", championParameters: "default", limit: "depth", depth: "9", clock: "10+0.1",
+};
+
+const option = (value, label, selected) => `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
+
+async function send(path, body) {
+  const response = await fetch(path, { method: "POST", headers: { "X-Temper-Token": token }, body });
+  return response.ok ? "" : (await response.text()).trim() || `refused (${response.status})`;
+}
+
+// Starts the job of `words`, its refusal said beside the button pressed; once started, opens the
+// screen the button names (`data-screen`), if any.
+async function start(words, button) {
+  const error = await send("control/job", words.join("\n"));
+  const said = button.parentElement.querySelector(".said");
+  if (said) said.textContent = error;
+  if (error) return;
+  catalogDrawn = "";
+  if (button.dataset.screen) location.hash = screenHash(current, button.dataset.screen);
+}
+
+// The address of a config's screen, or of one of its runs' screens.
+function screenHash(config, run) {
+  return "#" + encodeURIComponent(config) + (run ? "/" + encodeURIComponent(run) : "");
+}
+
+// A tune's screen: its job's name, as the smithy names it.
+const tuneScreen = (player) => `tune of ${player}`;
+
+// The screen of the smithy's job: its run's name, a tune's job name; null for a source's job (Play,
+// Convert), shown on its source's own screen, and for a new run not yet in the catalog.
+function jobScreen() {
+  if (!state || !state.job || !catalog) return null;
+  if (state.job.startsWith("tune of ")) return state.job;
+  // A test's, by its number, while it plays: `#tests/<number>`.
+  if (state.config === TESTS) return state.work && state.work.kind === "test" ? String(state.work.number) : null;
+  const config = catalog.configs.find((c) => c.name === state.config);
+  if (!config) return null;
+  if (state.job === `${config.name}, a new run`) {
+    const last = config.runs[config.runs.length - 1];
+    const listed = last && !(pendingNew && pendingNew.config === config.name && config.runs.length <= pendingNew.runs);
+    return listed ? last.name : null;
+  }
+  return state.job;
+}
+
+// Whether the open screen is the job's own.
+function jobHere() {
+  return currentRun !== null && state.config === current && jobScreen() === currentRun;
+}
+
+function tuneText(tune) {
+  if (!tune) return "not tuned";
+  return tune[0] >= tune[1] ? `tuned, ${whole(tune[1])} pairs` : `tune at ${whole(tune[0])} of ${whole(tune[1])} pairs`;
+}
+
+// A player's tune: where it stands, and, on this machine, Tune for a tune not finished, as its
+// config's tune: says.
+function tuneRow(player) {
+  const done = player.tune && player.tune[0] >= player.tune[1];
+  const controls = token && !done
+    ? ` <button data-tune="${escape(player.name)}" data-screen="${escape(tuneScreen(player.name))}"${running ? " disabled" : ""}>${player.tune ? "Resume tune" : "Tune"}</button><span class="said bad"></span>`
+    : "";
+  return `<div class="row"><span>${escape(player.name)}: ${escape(tuneText(player.tune))}</span>${controls}</div>`;
+}
+
+function runWhere(run) {
+  const scaled = run.scale ? `scaled 1/${run.scale}, ` : "";
+  if (run.generation === null) return `${scaled}not started`;
+  const where = `generation ${run.generation}, ${phaseName(run.phase)}`;
+  return scaled + (run.finished ? `ended at ${where}` : where);
+}
+
+// ", scaled 1/<s>" after a scaled run's name `name`, as the catalog has its scale; nothing for any
+// other name, a full run's, a test's or a tune's.
+function scaledMark(name) {
+  if (!catalog) return "";
+  for (const config of catalog.configs) {
+    const run = config.runs.find((r) => r.name === name);
+    if (run) return run.scale ? `, scaled 1/${run.scale}` : "";
+  }
+  return "";
+}
+
+// A full run needs a CUDA GPU: on a machine without one, its buttons are disabled, saying why; a
+// scaled run trains on the CPU. The smithy's `NO_GPU`, which refuses the job too.
+const NO_GPU = "no CUDA GPU on this machine: training is not available here";
+
+function noGpu() {
+  return state && state.gpu === false;
+}
+
+// A forge's button's attributes past its data: disabled while a job runs, or without a GPU when it
+// would train a full run (`full`): a new one, or one resumed at its training.
+function forgeDisabled(full) {
+  const blocked = full && noGpu();
+  return (running || blocked ? " disabled" : "") + (blocked ? ` title="${NO_GPU}"` : "");
+}
+
+// A run's Resume, on this machine, for a run not finished; it opens the run's screen. The smithy
+// asks the other smithies first (`lease.rs`), and a refusal comes back as any job's.
+function resumeButton(config, run) {
+  if (run.finished || !token) return "";
+  const data = `data-forge="${escape(config.name)}" data-run="${run.number}" data-screen="${escape(run.name)}"`;
+  return ` <button ${data}${forgeDisabled(!run.scale && run.phase === "train")}>Resume</button>`;
+}
+
+// One run: where it stands, View or Open, Resume; the tune of each generation that passed its gate,
+// started by hand, whether the run has ended or waits (the developer, 2026-11-02).
+function runBlock(config, run) {
+  const resume = resumeButton(config, run);
+  // The running job's own run opens its job's screen; every other run is viewed, a job running or not.
+  const mine = running && state.config === config.name && jobScreen() === run.name;
+  const view = mine ? ` <span class="tag">running</span> <button class="plain" data-screen-open="${escape(run.name)}">Open</button>`
+    : run.generations.length > 0 ? ` <button class="plain" data-screen-open="${escape(run.name)}">View</button>` : "";
+  const tunes = run.generations.filter((g) => g.passed).map((g) => tuneRow(g.player)).join("");
+  return `<div class="run"><div class="row"><b>${escape(run.name)}</b><span class="muted">${escape(runWhere(run))}</span>${view}${resume}<span class="said bad"></span></div>`
+    + (tunes ? `<div class="tunes">${tunes}</div>` : "")
+    + `</div>`;
+}
+
+// The boxes, by section: `[title, names]`, each source's box first, then its forges by name, which
+// orders them from the simplest features to the richest (psq, psq-threats, psq-threats-pairwise, psq-threats-screlu,
+// psq-threats-screlu-material, psq-threats-screlu-phase).
+function boxSections() {
+  const known = SECTIONS.map(([source]) => source);
+  const forges = (source) => catalog.configs.filter((config) => config.source === source).map((config) => config.name).sort();
+  const sections = SECTIONS.map(([source, title]) => [title, [source, ...forges(source)]]);
+  const other = catalog.configs.filter((config) => !known.includes(config.source)).map((config) => config.name).sort();
+  return [...sections, ...(other.length > 0 ? [["Other", other]] : []), ["Books", [BOOKS]], ["Tests", [TESTS]], ["Install", [INSTALL]]];
+}
+
+// Whether Lc0's Convert holds the source slot, beside the arena job.
+function converting() {
+  return Boolean(state && state.slot.kind === "convert");
+}
+
+// Whether a book job holds the source slot, beside the arena job.
+function makingBook() {
+  return Boolean(state && state.slot.kind === "book");
+}
+
+// The claimed machines whose arena is installing, by name.
+function installing() {
+  return state ? state.machines.filter((m) => m.machine && m.install === "running").map((m) => m.machine) : [];
+}
+
+// Whether a job of config `name` runs: the arena job, or lc0's conversion or a book job beside it,
+// or an install on some machine.
+function isRunning(name) {
+  if (!state) return false;
+  return (state.running && state.config === name) || (name === "lc0" && converting()) || (name === BOOKS && makingBook())
+    || (name === INSTALL && installing().length > 0);
+}
+
+function source(name) {
+  return catalog.sources.find((s) => s.name === name);
+}
+
+// A box's one line: the running job when it is this config's, else its latest run, or a source's corpus.
+function boxLine(name) {
+  if (name === "lc0" && converting()) {
+    return `<span class="tag">running</span> Lc0's conversion`;
+  }
+  if (name === BOOKS) {
+    if (makingBook()) return `<span class="tag">running</span> ${escape(state.slot.holder || "")}`;
+    const count = catalog.books.length;
+    return count === 0 ? `<span class="muted">no source yet</span>` : count === 1 ? "1 source" : `${count} sources`;
+  }
+  if (name === INSTALL) {
+    const busy = installing();
+    if (busy.length > 0) return `<span class="tag">running</span> installing on ${escape(busy.join(", "))}`;
+    // What a machine has installed is known only from its arena's answer to a poll, so only of an
+    // arena held.
+    if (claimedMachines().length === 0) return `<span class="muted">no machine claimed: what each has installed is unknown</span>`;
+    const count = state.machines.filter((m) => m.installed.length > 0).length;
+    return count === 0 ? `<span class="muted">nothing installed on a claimed machine</span>` : count === 1 ? "1 machine installed" : `${count} machines installed`;
+  }
+  if (isRunning(name)) {
+    const where = state.phase ? `: generation ${state.generation}, ${phaseName(state.phase)}` : "";
+    return `<span class="tag">running</span> ${escape(state.job || "")}${escape(where)}`;
+  }
+  if (name === TESTS) {
+    const last = catalog.tests[catalog.tests.length - 1];
+    return last ? `last: ${escape(last.kind)}, ${escape(last.verdict)}` : `<span class="muted">no test yet</span>`;
+  }
+  if (SOURCES.includes(name)) {
+    const line = escape(source(name).summary);
+    return name === "pesto" ? `${line}; ${escape(tuneText(catalog.pesto.tune))}` : line;
+  }
+  const config = catalog.configs.find((c) => c.name === name);
+  // Only the count: no run is singled out, the latest being not always the one that matters.
+  const runs = config ? config.runs.length : 0;
+  if (runs === 0) return `<span class="muted">no run yet</span>`;
+  return runs === 1 ? "1 run" : `${runs} runs`;
+}
+
+function drawBoxes() {
+  const element = document.getElementById("boxes");
+  const box = (name) => `<button class="box${isRunning(name) ? " running" : ""}" data-open="${escape(name)}"><b>${escape(name)}</b><span>${boxLine(name)}</span></button>`;
+  element.innerHTML = boxSections().map(([title, names]) => `<h2>${escape(title)}</h2><div class="boxes">${names.map(box).join("")}</div>`).join("");
+  element.querySelectorAll("[data-open]").forEach((box) => {
+    box.onclick = () => { location.hash = encodeURIComponent(box.dataset.open); };
+  });
+}
+
+// A source's corpus: its state, and its job's button on this machine: lc0's Convert, beside the
+// arena job, disabled once its corpus is complete (a raised cap needs complete.txt deleted by hand
+// first) or while a book job holds the source slot; pesto's Play, an arena job, until its corpus is
+// complete.
+function corpusSection(name) {
+  const entry = source(name);
+  let button = "";
+  if (token && name === "lc0" && !converting()) {
+    button = `<button data-source="--convert"${entry.complete || state.slot.running ? " disabled" : ""}>Convert</button>`;
+  }
+  if (token && name === "pesto" && !entry.complete) {
+    button = `<button data-source="--play"${running ? " disabled" : ""}>Play</button>`;
+  }
+  // Lc0's Convert, under way, drawn into its own place at each poll (`drawConvertProgress`).
+  const progress = name === "lc0" ? `<div id="convertProgress"></div>` : "";
+  return `<section><h2>Corpus</h2><div class="row"><span>${escape(entry.summary)}</span>${button}<span class="said bad"></span></div>${progress}</section>`;
+}
+
+// The open config's page below its live sections: its runs and New run, or a source's corpus, and
+// pesto's tune.
+function drawConfig() {
+  const text = current + currentRun + JSON.stringify(catalog) + running + state.slot.running + state.slot.kind + state.job + jobScreen() + !!token
+    + claimedMachines().join();
+  if (text === catalogDrawn) return;
+  catalogDrawn = text;
+  const element = document.getElementById("config");
+  if (current === TESTS && currentRun !== null) {
+    element.innerHTML = testScreen();
+    bindTestForm(element);
+  } else if (currentRun !== null) {
+    element.innerHTML = runScreen();
+  } else if (current === TESTS) {
+    element.innerHTML = testsScreen();
+    bindTestForm(element);
+  } else if (current === BOOKS) {
+    element.innerHTML = booksScreen();
+  } else if (current === INSTALL) {
+    element.innerHTML = installScreen();
+  } else if (current === "pesto") {
+    element.innerHTML = corpusSection("pesto") + `<section><h2>Tune</h2>${tuneRow(catalog.pesto)}</section>`;
+  } else if (current === "lc0") {
+    element.innerHTML = corpusSection("lc0");
+  } else {
+    const config = catalog.configs.find((c) => c.name === current);
+    if (!config) {
+      element.innerHTML = `<section class="bad">no config ${escape(current)} in configs/chess/</section>`;
+      return;
+    }
+    const runs = config.runs.map((run) => runBlock(config, run)).join("") || `<div class="muted">no run yet</div>`;
+    const fresh = token
+      ? `<div class="row newrun"><button data-forge="${escape(config.name)}" data-run="new"${forgeDisabled(true)}>New run</button>`
+        + ` <button data-forge="${escape(config.name)}" data-run="new" data-scaled${forgeDisabled(false)}>New scaled run</button>`
+        + `<span class="said bad"></span></div>`
+      : "";
+    const gpu = token && noGpu() ? `<div class="muted">no CUDA GPU on this machine: a full run's training is not available here, its other phases are; a scaled run trains on the CPU</div>` : "";
+    element.innerHTML = `<section><h2>Runs</h2>${gpu}${runs}${fresh}</section>`;
+  }
+  element.querySelectorAll("[data-forge]").forEach((button) => {
+    button.onclick = () => {
+      if (button.dataset.run === "new") {
+        const config = catalog.configs.find((c) => c.name === button.dataset.forge);
+        pendingNew = { config: button.dataset.forge, runs: config ? config.runs.length : 0 };
+      }
+      const words = ["--forge", button.dataset.forge, button.dataset.run];
+      // The smithy's fixed factor, `scale::DEFAULT`.
+      if (button.dataset.scaled !== undefined) words.push("scaled");
+      start(words, button);
+    };
+  });
+  element.querySelectorAll("[data-screen-open]").forEach((button) => {
+    button.onclick = () => { location.hash = screenHash(current, button.dataset.screenOpen); };
+  });
+  element.querySelectorAll("[data-tune]").forEach((button) => {
+    button.onclick = () => start(["--tune", button.dataset.tune], button);
+  });
+  element.querySelectorAll("[data-source]").forEach((button) => {
+    button.onclick = () => start([button.dataset.source, current], button);
+  });
+  element.querySelectorAll("[data-book]").forEach((button) => {
+    const weights = button.parentElement.querySelector("select");
+    button.onclick = () => start(["--book", button.dataset.book, "--weights", weights.value], button);
+  });
+  const install = document.getElementById("installButton");
+  if (install) {
+    install.onclick = async () => {
+      const value = (field) => element.querySelector(`[data-install="${field}"]`).value;
+      const machine = value("machine");
+      sayPending(install, `claiming ${machine}'s arena if this smithy does not hold it, then asking its install...`);
+      const error = await send("control/install", [machine, value("player"), value("book")].join("\n"));
+      const said = install.parentElement.querySelector(".said");
+      said.classList.toggle("bad", Boolean(error));
+      said.textContent = error || `asked of ${machine}: it builds temper-chess and installs, its last install above says how it went`;
+    };
+  }
+}
+
+// The machines whose arena this smithy holds, by name.
+function claimedMachines() {
+  return state.machines.filter((m) => m.machine).map((m) => m.machine);
+}
+
+// Says `text` beside `button`, in progress rather than an error.
+function sayPending(button, text) {
+  const said = button.parentElement.querySelector(".said");
+  said.classList.remove("bad");
+  said.textContent = text;
+}
+
+// The install's screen: each claimed machine's install, drawn at each poll (`drawInstall`), then
+// Install on this machine: a machine, a player (every network a test may name, PeSTO first), and a
+// book (kept, none, or one written on the books' screen). The arena builds and installs on its own,
+// its workers playing on, and says how it went at the next polls.
+function installScreen() {
+  const machines = `<section id="installMachines"></section>`;
+  if (!token) return machines;
+  // Every listed machine: an arena this smithy does not hold is claimed for the install, refused
+  // while another smithy's job holds it.
+  const listed = state.machines.map((m) => m.target);
+  // PeSTO and each generation's winner alone; the catalog leaves scaled runs out already.
+  const players = catalog.networks.filter((n) => n.winner || n.name === PESTO_NAME).map((n) => option(n.name, n.name, n.name === PESTO_NAME)).join("");
+  const books = option("keep", "keep the installed book", true) + option("none", "no book", false)
+    + catalog.books.flatMap((source) => source.books.map((book) => option(book.path, `${source.name}: n${book.n} ${book.weights}`, false))).join("");
+  return machines + `<section><h2>Install</h2>`
+    + `<div class="row"><label>Machine</label><select data-install="machine">${listed.map((m) => option(m, m, false)).join("")}</select></div>`
+    + `<div class="row"><label>Player</label><select data-install="player">${players}</select></div>`
+    + `<div class="row"><label>Book</label><select data-install="book">${books}</select></div>`
+    + `<div class="row"><label></label><button id="installButton">Install</button><span class="said bad"></span></div></section>`;
+}
+
+// The player a new install offers first.
+const PESTO_NAME = "pesto";
+
+// Each claimed machine's install, on the install's screen: how its last install went, and its
+// `temper-chess.txt`'s network, book, commit and time. Drawn at each poll into its own place.
+function drawInstall() {
+  const section = document.getElementById("installMachines");
+  if (!section) return;
+  const held = state.machines.filter((m) => m.machine);
+  if (held.length === 0) {
+    redraw(section, `<h2>Installed</h2><div class="muted">no machine claimed</div>`);
+    return;
+  }
+  const field = (m, name) => (m.installed.find(([key]) => key === name) || [name, ""])[1];
+  const said = (m) => m.install === "-" ? "" : m.install;
+  redraw(section, `<h2>Installed</h2>` + table(["machine", "network", "book", "commit", "installed", "last install"],
+    held.map((m) => m.installed.length === 0 ? [m.machine, { html: `<span class="muted">nothing yet</span>` }, "", "", "", said(m)]
+      : [m.machine, field(m, "network"), field(m, "book"), field(m, "commit").slice(0, 12), field(m, "installed"), said(m)])));
+}
+
+// The books' screen: the job beside the arena job while a book job runs, then one section a source
+// on the remote, its PGN and how far its stages have gone, with Make book on this machine. Make book
+// runs the stages missing, in order; one already done is kept, redoing it is deleting its file.
+function booksScreen() {
+  const progress = `<section id="bookProgress" class="hidden"></section>`;
+  if (catalog.books.length === 0) {
+    return progress + `<section class="muted">no source yet: a source is a folder of data/chess/books/ on the remote holding its PGN, `
+      + `&lt;source&gt;.pgn or &lt;source&gt;.pgn.zst</section>`;
+  }
+  const sources = catalog.books.map((source) => {
+    const fit = source.alpha === null ? `<span class="muted">not yet</span>` : `alpha ${number(source.alpha, 4)}`;
+    const graph = source.graph === null ? `<span class="muted">not yet</span>` : `N = ${source.graph.n}, from ${whole(source.graph.games)} games`;
+    const books = source.books.length === 0 ? `<span class="muted">none yet</span>`
+      : source.books.map((book) => escape(`n${book.n} ${book.weights}`)).join(", ");
+    const make = source.pgn === null
+      ? `<div class="muted">its PGN is no longer on the remote: its books install, but none can be made</div>`
+      : token
+      ? `<div class="row"><select>${option("points", "points", true)}${option("counts", "counts", false)}</select>`
+        + `<button data-book="${escape(source.name)}"${state.slot.running ? " disabled" : ""}>Make book</button><span class="said bad"></span></div>`
+      : "";
+    return `<section><h2>${escape(source.name)}</h2><div class="muted">${escape(source.pgn || "no PGN")}</div>`
+      + table(["stage", "on the remote"], [["fit", { html: fit }], ["graph", { html: graph }], ["books", { html: books }]]) + make + `</section>`;
+  }).join("");
+  return progress + sources;
+}
+
+// A book job, on the books' screen while it runs: its name with Stop (on this machine alone), then
+// its pass, a line over its bar; once it ends, how it ended. Drawn at each poll into its own place,
+// as Convert's progress.
+function drawBookProgress() {
+  const section = document.getElementById("bookProgress");
+  if (!section) return;
+  const slot = state.slot;
+  const ended = !slot.running && slot.finished && slot.finished.startsWith("the book of ");
+  section.classList.toggle("hidden", !makingBook() && !ended);
+  if (ended) {
+    redraw(section, `<h2>Last book job</h2><div class="muted">ended: ${escape(slot.finished)}</div>`);
+    return;
+  }
+  if (!makingBook()) return;
+  const stopping = slot.stopping;
+  const stop = token ? `<button id="stopBook"${stopping ? " disabled" : ""}>${stopping ? "Stopping" : "Stop"}</button>` : "";
+  const pass = slot.book;
+  // Worded as Convert's places: `{pass}: {done} of {total} ({percent}), {rate}, ETA about {eta}`.
+  const said = (pass) => {
+    const rate = pass.rate === null ? "" : `, ${bytes(Math.round(pass.rate))}/s`;
+    const eta = pass.eta_seconds === null ? "" : `, ETA about ${duration(Math.round(pass.eta_seconds))}`;
+    return `${pass.pass}: ${bytes(pass.done)} of ${bytes(pass.total)} (${percent(pass.done / Math.max(1, pass.total))})${rate}${eta}`;
+  };
+  const line = pass === null ? `<div class="muted">between passes</div>` : `<div>${escape(said(pass))}</div>` + bar(pass.done, pass.total);
+  redraw(section, `<div class="row"><h2>Running now: ${escape(slot.holder || "")}</h2>${stop}</div>${line}`);
+  const button = document.getElementById("stopBook");
+  if (button) button.onclick = () => send("control/job/stop", BOOKS);
+}
+
+// A network's config, from its run's name, `<config>-r<n>`.
+const configOf = (network) => network.run.replace(/-r\d+$/, "");
+// A run's number, so the latest is the highest.
+const runNumber = (run) => Number((run.match(/-r(\d+)$/) || [0, 0])[1]);
+// Each distinct value of `key` among `list`, in order.
+const distinct = (list, key) => [...new Set(list.map(key))];
+
+// The network a cascade's step chooses: at `level` (config, run, generation), `value`'s latest run,
+// then its latest generation, then that generation's winner, or its first candidate without one; at
+// network, `value` itself. PeSTO is a config of its own.
+function cascade(level, value, network) {
+  if (level === "network" || value === "pesto") return value;
+  const trained = catalog.networks.filter((n) => n.run !== null);
+  let list = trained.filter((n) => configOf(n) === (level === "config" ? value : configOf(network)));
+  const run = level === "config" ? Math.max(...list.map((n) => runNumber(n.run))) : runNumber(level === "run" ? value : network.run);
+  list = list.filter((n) => runNumber(n.run) === run);
+  const generation = level === "generation" ? Number(value) : Math.max(...list.map((n) => n.generation));
+  list = list.filter((n) => n.generation === generation);
+  const chosen = list.find((n) => n.winner) || list[0];
+  return chosen ? chosen.name : "pesto";
+}
+
+// One side's choices, a cascade of short selects: the config (PeSTO among them), its run, the run's
+// generation, the generation's network, each narrowed by the one before, a new choice taking the
+// latest winner below it (`cascade`); then its parameters, tuned only where it has a tune.
+function sideRow(label, side) {
+  // A choice no longer offered (its network gone) falls back to PeSTO, the catalog's first.
+  const network = catalog.networks.find((n) => n.name === testForm[side]) || catalog.networks[0];
+  testForm[side] = network.name;
+  const trained = catalog.networks.filter((n) => n.run !== null);
+  const step = (level, choices) => `<select data-cascade="${side}" data-level="${level}">${choices}</select>`;
+  const configs = option("pesto", "PeSTO", network.run === null)
+    + distinct(trained, configOf).map((c) => option(c, c, network.run !== null && configOf(network) === c)).join("");
+  let steps = step("config", configs);
+  if (network.run !== null) {
+    const ofConfig = trained.filter((n) => configOf(n) === configOf(network));
+    const ofRun = ofConfig.filter((n) => n.run === network.run);
+    const ofGeneration = ofRun.filter((n) => n.generation === network.generation);
+    steps += step("run", distinct(ofConfig, (n) => n.run).map((r) => option(r, `run ${runNumber(r)}`, r === network.run)).join(""))
+      + step("generation", distinct(ofRun, (n) => n.generation).map((g) => option(String(g), `generation ${g}`, g === network.generation)).join(""))
+      + step("network", ofGeneration.map((n) => {
+        // The winner's lambda beside it, which its name leaves out.
+        const what = n.winner ? `winner (l${lambdaText(n.lambda)})` : `lambda ${lambdaText(n.lambda)}`;
+        return option(n.name, `${what}${n.tuned ? ", tuned" : ""}`, n.name === network.name);
+      }).join(""));
+  }
+  const tunable = network.tuned;
+  if (!tunable) testForm[side + "Parameters"] = "default";
+  const parameters = option("default", "default parameters", testForm[side + "Parameters"] === "default")
+    + (tunable ? option("t1", "its tune", testForm[side + "Parameters"] === "t1") : "");
+  return `<div class="row"><label>${label}</label>${steps}<select data-field="${side}Parameters">${parameters}</select></div>`;
+}
+
+// The job's words for the form's test (`matches::Spec::parse`).
+function testWords() {
+  const f = testForm;
+  const settings = f.kind === "match" ? f.pairs.trim() : f.kind === "sprt" ? `${f.elo0.trim()},${f.elo1.trim()}` : "-";
+  const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${f.clock.trim()}`;
+  // Each side a player, its parameters after its `@`: `default` or `t1`.
+  return ["--test", f.kind, settings, `${f.challenger}@${f.challengerParameters}`, `${f.champion}@${f.championParameters}`, limit];
+}
+
+// The tests' screen: New test (on this machine alone), then the log, newest first.
+function testsScreen() {
+  // The challenger, at first, the winner of the latest config's latest run's latest generation.
+  if (!testForm.challenger) {
+    const configs = distinct(catalog.networks.filter((n) => n.run !== null), configOf);
+    testForm.challenger = configs.length > 0 ? cascade("config", configs[configs.length - 1]) : "pesto";
+  }
+  const f = testForm;
+  const kinds = [["duel", "duel"], ["match", "match"], ["sprt", "SPRT"]].map(([value, label]) => option(value, label, f.kind === value)).join("");
+  const settings = f.kind === "match"
+    ? `<div class="row"><label>Pairs</label><input data-field="pairs" size="6" value="${escape(f.pairs)}"></div>`
+    : f.kind === "sprt"
+      ? `<div class="row"><label>Elo</label>elo0 <input data-field="elo0" size="5" value="${escape(f.elo0)}"> elo1 <input data-field="elo1" size="5" value="${escape(f.elo1)}"></div>`
+      : `<div class="row"><label></label><span class="muted">arena's rule, per pair: won past 0.5 + 3.09 &times; &sigma; / &radic;P, drawn at 400 pairs (800 games)</span></div>`;
+  const limit = `<div class="row"><label>Search</label>`
+    + `<select data-field="limit">${option("depth", "fixed depth", f.limit === "depth")}${option("clock", "clock", f.limit === "clock")}</select>`
+    + (f.limit === "depth" ? `<input data-field="depth" size="4" value="${escape(f.depth)}">` : `<input data-field="clock" size="8" value="${escape(f.clock)}"> <span class="muted">base+increment, in seconds</span>`)
+    + `</div>`;
+  const mixed = f.challengerParameters !== f.championParameters ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
+  const form = token
+    ? `<section><h2>New test</h2><form onsubmit="return false">`
+      + `<div class="row"><label>Kind</label><select data-field="kind">${kinds}</select></div>${settings}`
+      + sideRow("Champion", "champion") + sideRow("Challenger", "challenger") + limit + mixed
+      + `<div class="row"><button id="startTest"${running ? " disabled" : ""}>Start</button><span class="said bad"></span></div>`
+      + `</form></section>`
+    : "";
+  const rows = [...catalog.tests].reverse().map((t) => [
+    // A stopped test, still kept, resumes from its pairs, on this machine: first, where it is seen.
+    { html: `${t.number} <button class="plain" data-screen-open="${t.number}">View</button>`
+      + `${token && t.verdict.startsWith("stopped") ? ` <button data-resume-test="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span>` : ""}` },
+    t.ended,
+    testTitle({ test: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion }),
+    t.limit, whole(t.games), t.games > 0 ? percent(t.challenger_points / t.games) : "", (t.mixed ? "mixed; " : "") + t.verdict,
+  ]);
+  const log = rows.length > 0 ? `<div class="log">${table(["test", "ended", "what", "search", "games", "challenger", "verdict"], rows)}</div>` : `<div class="muted">no test yet</div>`;
+  return form + `<section><h2>Tests</h2>${log}<div class="muted">the latest 20 are kept, each with its games; a stopped one may be resumed while it is kept</div></section>`;
+}
+
+// A test's own screen, `#tests/<number>`: while it plays, its live card alone (`drawLive`); else the
+// same card from its record, its log line, and Resume for a stopped one.
+function testScreen() {
+  if (jobHere()) return "";
+  const t = catalog.tests.find((test) => String(test.number) === currentRun);
+  if (!t) return running ? "" : `<section class="muted">test ${escape(currentRun)} is not kept</section>`;
+  const view = { test: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion };
+  const resume = token && t.verdict.startsWith("stopped")
+    ? `<div class="row"><button data-resume-test="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span></div>` : "";
+  // Its block as it played, rebuilt from its record, then its dates and Resume.
+  if (t.view) {
+    return `<section>${work(t.view)}</section>`
+      + `<section><div class="muted">started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
+      // A stopped test has no verdict in its block: its stop is said here.
+      + (t.verdict.startsWith("stopped") ? `<div><b>stopped</b></div>` : "") + `${resume}</section>`;
+  }
+  const score = t.games > 0 ? `, the champion ${percent(1 - t.challenger_points / t.games)}` : "";
+  return `<section><h2>${escape(testTitle(view))}</h2><div class="muted">${escape(t.limit)}; started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
+    + (t.mixed ? `<div class="bad">mixed: one side tuned, the other not</div>` : "")
+    + `<div>${whole(t.games)} games${score}</div><div><b>${escape(t.verdict)}</b></div>${resume}</section>`;
+}
+
+// The New test form's fields write their choice into `testForm`; a change that alters the form redraws it.
+function bindTestForm(element) {
+  element.querySelectorAll("[data-field]").forEach((field) => {
+    field.oninput = field.onchange = () => {
+      const redraw = field.tagName === "SELECT";
+      testForm[field.dataset.field] = field.value;
+      if (redraw) {
+        catalogDrawn = "";
+        drawConfig();
+      }
+    };
+  });
+  // A side's cascade: each step chooses the network anew (`cascade`), and the form is redrawn.
+  element.querySelectorAll("[data-cascade]").forEach((select) => {
+    select.onchange = () => {
+      const side = select.dataset.cascade;
+      const network = catalog.networks.find((n) => n.name === testForm[side]);
+      testForm[side] = cascade(select.dataset.level, select.value, network);
+      catalogDrawn = "";
+      drawConfig();
+    };
+  });
+  const button = document.getElementById("startTest");
+  // A new test's number is known once it plays: its screen opens then (`draw`).
+  if (button) button.onclick = () => { pendingTest = true; start(testWords(), button); };
+  element.querySelectorAll("[data-resume-test]").forEach((resume) => {
+    resume.dataset.screen = resume.dataset.resumeTest;
+    resume.onclick = () => start(["--resume-test", resume.dataset.resumeTest], resume);
+  });
+}
+
+// A run's screen below its job and its view: Resume when no job runs; a tune's, only that it is not
+// running; while another job runs, that it does.
+function runScreen() {
+  if (jobHere()) return "";
+  if (running) return `<section class="muted">${escape(state.job)} is running: no other run is viewed meanwhile</section>`;
+  const config = catalog.configs.find((c) => c.name === current);
+  const run = config && config.runs.find((r) => r.name === currentRun);
+  if (!run) {
+    return currentRun.startsWith("tune of ") ? "" : `<section class="bad">no run ${escape(currentRun)} of ${escape(current)}</section>`;
+  }
+  const resume = resumeButton(config, run);
+  return resume ? `<section><div class="row"><span>${escape(runWhere(run))}</span>${resume}<span class="said bad"></span></div></section>` : "";
+}
+
+function findRun(name) {
+  for (const config of catalog.configs) {
+    const run = config.runs.find((r) => r.name === name);
+    if (run) return run;
+  }
+  return null;
+}
+
+// The view on a run's screen, opened on its latest generation, where a job just ended; none
+// elsewhere, nor on the running job's own run, whose screen is the live job's. Another run is viewed
+// while a job runs: the smithy reads a closed generation from its files.
+function syncView() {
+  const config = currentRun !== null && catalog.configs.find((c) => c.name === current);
+  const run = config && config.runs.find((r) => r.name === currentRun);
+  const wanted = run && run.generations.length > 0 && !(running && jobHere());
+  if (!wanted) {
+    if (viewing) {
+      viewing = null;
+      drawViewHead();
+    }
+    return;
+  }
+  if (viewing && viewing.run === run.name) return;
+  const last = run.generations[run.generations.length - 1];
+  viewing = { run: run.name, generation: last.generation };
+  drawViewHead();
+  drawViewBody();
+}
+
+// The view's heading and its generation choice, drawn as the view opens or the choice changes.
+function drawViewHead() {
+  const head = document.getElementById("viewHead");
+  const section = document.getElementById("view");
+  const run = viewing && findRun(viewing.run);
+  section.classList.toggle("hidden", !run);
+  if (!run) {
+    viewing = null;
+    return;
+  }
+  const generation = run.generations.find((g) => g.generation === viewing.generation) || run.generations[run.generations.length - 1];
+  viewing.generation = generation.generation;
+  const generations = run.generations.map((g) => option(String(g.generation), `generation ${g.generation}${g.passed ? ", passed" : ""}`, g.generation === viewing.generation)).join("");
+  head.innerHTML = `<div class="row"><h2>Viewing</h2><select id="viewGeneration">${generations}</select></div>`;
+  document.getElementById("viewGeneration").onchange = (event) => {
+    viewing.generation = Number(event.target.value);
+    drawViewHead();
+    drawViewBody();
+  };
+}
+
+async function drawViewBody() {
+  if (!viewing) return;
+  const asked = { ...viewing };
+  const body = document.getElementById("viewBody");
+  try {
+    const response = await fetch(`view/${encodeURIComponent(asked.run)}/${asked.generation}`, { cache: "no-store" });
+    if (!viewing || viewing.run !== asked.run || viewing.generation !== asked.generation) return;
+    if (!response.ok) {
+      body.innerHTML = `<div class="bad">${escape((await response.text()).trim())}</div>`;
+      return;
+    }
+    const html = forge(await response.json());
+    body.innerHTML = html || `<div class="muted">nothing recorded yet</div>`;
+  } catch (error) {
+    body.innerHTML = `<div class="bad">the smithy is not answering</div>`;
+  }
+}
+
+// Lc0's conversion, on lc0's page: running with Stop (on this machine alone), or how the source
+// slot's last job ended, which names itself.
+function drawConversion() {
+  const section = document.getElementById("job");
+  const slot = state.slot;
+  const shown = converting() || (!slot.running && slot.finished);
+  section.classList.toggle("hidden", !shown);
+  if (!shown) return;
+  const mode = !slot.running ? "ended" : slot.stopping ? "stopping" : "running";
+  const key = mode + (slot.finished || "") + !!token;
+  if (section.dataset.key === key) return;
+  section.dataset.key = key;
+  if (mode === "ended") {
+    section.innerHTML = `<h2>Last job beside the arena job</h2><div class="muted">ended: ${escape(slot.finished)}</div>`;
+    return;
+  }
+  const stop = token ? `<button id="stopJob"${mode === "stopping" ? " disabled" : ""}>${mode === "stopping" ? "Stopping" : "Stop"}</button>` : "";
+  section.innerHTML = `<div class="row"><h2>Running now: Lc0's conversion</h2>${stop}</div><div class="muted">its lines go to the smithy's terminal</div>`;
+  if (token) document.getElementById("stopJob").onclick = () => send("control/job/stop", "lc0");
+}
+
+// The job: on its own screen (a run's, a tune's, or a source's for Play), running with Stop (on this
+// machine alone), or how it ended; on its config's screen, while it runs, a line opening its screen.
+function drawJob() {
+  if (current === "lc0" && currentRun === null) {
+    drawConversion();
+    return;
+  }
+  const section = document.getElementById("job");
+  const here = currentRun !== null ? jobHere() : Boolean((SOURCES.includes(current) || current === TESTS) && state.job && state.config === current && !jobScreen());
+  const elsewhere = currentRun === null && !here && state.running && state.config === current && jobScreen() !== null;
+  // A test's own screen has no box: its card names the players and holds its Stop.
+  const shown = (here && !(current === TESTS && currentRun !== null)) || elsewhere;
+  section.classList.toggle("hidden", !shown);
+  if (!shown) return;
+  const where = state.phase ? `generation ${state.generation}, phase ${phaseName(state.phase)}` : "";
+  const mode = !state.running ? "ended" : state.job_stopping ? "stopping" : "running";
+  const key = (elsewhere ? "open " + jobScreen() : "") + mode + state.job + where + (state.finished || "") + !!token;
+  if (section.dataset.key === key) return;
+  section.dataset.key = key;
+  if (elsewhere) {
+    section.innerHTML = `<div class="row"><h2>Running now: ${escape(state.job)}</h2><button id="openJob">Open</button></div><div class="muted">${escape(where)}</div>`;
+    document.getElementById("openJob").onclick = () => { location.hash = screenHash(current, jobScreen()); };
+    return;
+  }
+  if (mode === "ended") {
+    // A gate ends the job with the state already moved on, to the next generation or to stopped, and
+    // its line says so: the phase would read as one under way. A job stopped mid-phase keeps it, its
+    // only record of where it stopped.
+    const atBoundary = /waits for Resume|the run stops here/.test(state.finished || "");
+    const tail = where && !atBoundary ? `; ${escape(where)}` : "";
+    section.innerHTML = `<h2>Ended</h2><div class="muted">${escape(state.finished || "")}${tail}</div>`;
+    return;
+  }
+  section.innerHTML = `<div class="row"><h2>Running now</h2>${stopButton()}</div><div class="muted">${escape(where)}</div>`;
+  bindStop();
+}
+
+// The job's Stop, on this machine alone: its box's, or a test's card's.
+function stopButton() {
+  if (!token) return "";
+  const stopping = state.job_stopping;
+  return `<button id="stopJob"${stopping ? " disabled" : ""}>${stopping ? "Stopping at its next safe point" : "Stop"}</button>`;
+}
+
+function bindStop() {
+  const button = document.getElementById("stopJob");
+  if (button) button.onclick = () => send("control/job/stop", current);
+}
+
+// The job's live sections, on its own screen alone: a tune's work, or PeSTO's play on its source's
+// screen; a forge's phases while it runs, its view showing them once it ends.
+function drawLive() {
+  const section = document.getElementById("work");
+  const shown = currentRun !== null
+    ? jobHere() && (state.work.kind === "tune" || state.work.kind === "test")
+    : Boolean(current === "pesto" && state.job && state.config === "pesto" && !jobScreen() && state.work.kind === "self_play");
+  const stop = shown && state.work.kind === "test" && state.running ? stopButton() : "";
+  redraw(section, shown ? work(state.work, state.waiting, stop) : "");
+  bindStop();
+  section.classList.toggle("hidden", !shown);
+  // A running test's section is its phase under way, as a forge's is.
+  section.classList.toggle("current", shown && state.work.kind === "test");
+  redraw(document.getElementById("forge"), jobHere() && state.running && state.forge ? forge(state.forge, true) : "");
+}
+
+// Draws the open page from the latest poll and catalog.
+function draw() {
+  document.getElementById("home").classList.toggle("hidden", current !== null);
+  document.getElementById("page").classList.toggle("hidden", current === null);
+  if (!state) return;
+  const smithy = "Temper smithy";
+  document.title = current ? `${current} - ${smithy}` : smithy;
+  document.querySelector("h1").textContent = smithy;
+  const stopping = (state.slot.running ? `; beside it, ${state.slot.holder || "a job"}` : "") + (state.stopping ? "; the smithy is stopping" : "");
+  const job = state.job ? state.job + scaledMark(state.job) : state.job;
+  const status = (state.running ? `running ${job}` : state.job ? `no job running; the last, ${job}, ended` : "no job yet");
+  const updated = ` <span class="muted">(updated ${new Date().toLocaleTimeString()})</span>`;
+  if (current === null) {
+    document.getElementById("sub").innerHTML = `${escape(status + stopping)}${state.running ? "" : `: <span class="muted">${escape(state.waiting)}</span>`}${updated}`;
+    redraw(document.getElementById("arenas"), arenas(state.arenas, state.machines));
+    if (catalog) drawBoxes();
+    return;
+  }
+  document.getElementById("pageTitle").textContent =
+    currentRun === null ? current : current === TESTS ? `test ${currentRun}` : currentRun + scaledMark(currentRun);
+  // New test pressed: its screen, once it plays; forgotten if it never did.
+  if (pendingTest && catalog) {
+    const screen = state.config === TESTS ? jobScreen() : null;
+    if (screen !== null) {
+      pendingTest = false;
+      location.hash = screenHash(TESTS, screen);
+      return;
+    }
+    if (!state.running) pendingTest = false;
+  }
+  // On the job's own screen its state alone: the screen's title and boxes name it.
+  const own = jobHere() ? (!state.running ? "ended" : state.job_stopping ? "stopping" : "running") : status;
+  document.getElementById("pageSub").innerHTML = `${escape(own + stopping)}${updated}`;
+  if (!catalog) return;
+  // New run pressed: its screen, once the catalog lists the run; forgotten if the job ended first.
+  if (pendingNew) {
+    const config = catalog.configs.find((c) => c.name === pendingNew.config);
+    if (config && config.runs.length > pendingNew.runs) {
+      pendingNew = null;
+      location.hash = screenHash(config.name, config.runs[config.runs.length - 1].name);
+      return;
+    }
+    // A scaled one's job is named "<config>, a new run scaled 1/<s>".
+    if (!state.running && state.job && state.job.startsWith(`${pendingNew.config}, a new run`)) pendingNew = null;
+  }
+  drawJob();
+  drawLive();
+  drawConfig();
+  drawConvertProgress();
+  drawBookProgress();
+  drawInstall();
+  syncView();
+}
+
+// Bytes as the corpus's line has them, in binary units: `27.87 MiB`.
+function bytes(value) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return unit === 0 ? `${value} B` : `${number(value, 2)} ${units[unit]}`;
+}
+
+// Lc0's Convert's download connections, `lc0::CONNECTIONS`: the blank places while none runs, whose
+// report gives them otherwise.
+const CONVERT_CONNECTIONS = 2;
+
+// One place of Lc0's Convert, worded as the training's round: `{what} {tar}: {done} of {total}
+// ({percent}), {rate}, ETA about {eta}`; `of max` for the cap, which the run stops short of.
+function convertLine(what, line) {
+  const rate = line.rate === null ? "" : `, ${bytes(Math.round(line.rate))}/s`;
+  const eta = line.eta_seconds === null ? "" : `, ETA about ${duration(Math.round(line.eta_seconds))}`;
+  const tar = line.tar ? ` ${line.tar}` : "";
+  const of = line.tar ? "of" : "of max";
+  return `<div>${escape(`${what}${tar}: ${bytes(line.done)} ${of} ${bytes(line.total)} (${percent(line.done / Math.max(1, line.total))})${rate}${eta}`)}</div>`;
+}
+
+// Lc0's Convert in its Corpus section, while it runs, in fixed places so the page keeps its height:
+// each connection's download, then the conversion, a line each, blank while there is none; under
+// them, as the training box's lines over its bar, the corpus towards the cap, the one graphical bar.
+// While none runs, the same places blank over the corpus's line and bar, from `tars.tsv`, so the
+// section keeps its height when a Convert starts or ends.
+function drawConvertProgress() {
+  const element = document.getElementById("convertProgress");
+  if (!element) return;
+  const live = state.slot.progress;
+  const blank = `<div>&nbsp;</div>`;
+  const corpus = (line) => convertLine("corpus", line) + bar(line.done, line.total);
+  if (live === null) {
+    const cap = catalog && source("lc0").cap;
+    redraw(element, cap ? blank.repeat(CONVERT_CONNECTIONS + 1) + corpus({ tar: "", done: cap[0], total: cap[1], rate: null, eta_seconds: null }) : "");
+    return;
+  }
+  const place = (what, line) => line === null ? blank : convertLine(what, line);
+  redraw(element, live.downloads.map((line) => place("downloading", line)).join("") + place("converting", live.conversion) + corpus(live.cap));
+}
+
+// Opens the screen the address names: `#<config>`, or `#<config>/<run>`.
+function route() {
+  const [name, run] = location.hash.slice(1).split("/").map(decodeURIComponent);
+  current = name || null;
+  currentRun = (current && run) || null;
+  viewing = null;
+  catalogDrawn = "";
+  document.getElementById("job").dataset.key = "";
+  document.getElementById("view").classList.add("hidden");
+  window.scrollTo(0, 0);
+  draw();
+}
+
+async function poll() {
+  try {
+    state = await (await fetch("state.json", { cache: "no-store" })).json();
+    token = state.control;
+    running = state.running;
+    try {
+      catalog = await (await fetch("catalog.json", { cache: "no-store" })).json();
+    } catch (error) {
+      // Drawn from the last catalog until the next poll.
+    }
+    draw();
+    if (current !== null && viewing) drawViewBody();
+  } catch (error) {
+    const said = `<span class="bad">the smithy is not answering</span> <span class="muted">(${new Date().toLocaleTimeString()})</span>`;
+    document.getElementById(current === null ? "sub" : "pageSub").innerHTML = said;
+  }
+}
+
+// A `progress` bar's `HH:MM:SS` in seconds, none for anything else.
+function clockSeconds(text) {
+  const parts = /^(\d+):(\d\d):(\d\d)$/.exec(text || "");
+  return parts ? 3600 * Number(parts[1]) + 60 * Number(parts[2]) + Number(parts[3]) : null;
+}
+
+// One live bar, worded as the training box's lines over a graphical bar: `{label}: {counts}
+// ({percent}%), {rate}, ETA about {eta}`; a counter, with no end, its line alone; a notice, with no
+// rate either (a read waiting for Google Drive), its text alone.
+function liveLine(b) {
+  const head = `${b.label ? b.label + ": " : ""}${b.counts}`;
+  if (b.length === null) return `<div>${escape(b.rate ? `${head}, ${b.rate}` : head)}</div>`;
+  const eta = clockSeconds(b.eta);
+  const text = `${head} (${b.percent}%), ${b.rate}${eta === null ? "" : `, ETA about ${duration(eta)}`}`;
+  return `<div>${escape(text)}</div>${bar(b.position, b.length)}`;
+}
+
+
+// The smithy's live bars, drawn nowhere else, as graphical bars, four times a second; each poll waits
+// for the last, so a slow answer never piles them up.
+async function pollLive() {
+  try {
+    const bars = await (await fetch("progress.json", { cache: "no-store" })).json();
+    // No "nothing in progress": every phase's progress is its own box, the live bars only the few
+    // steps that have none.
+    const html = bars.map(liveLine).join("");
+    // Not on a forge config's own screen: its job's screen shows them.
+    // Not on the tests' screens either: a test draws its own bar on its own. On a run's screen, only
+    // the running job's own: on another run's, viewed while it runs, they would read as that run's.
+    const shown = html !== "" && current !== TESTS && (current === null || (currentRun !== null && jobHere()) || SOURCES.includes(current));
+    for (const section of document.querySelectorAll("section.live")) {
+      redraw(section, html);
+      section.classList.toggle("hidden", !shown);
+    }
+  } catch (error) {
+    // The state's poll says when the smithy is not answering.
+  }
+  setTimeout(pollLive, 250);
+}
+
+// One level up: a run's screen to its config's, a config's to the main page.
+document.getElementById("back").onclick = () => { location.hash = currentRun === null ? "" : screenHash(current); };
+window.onhashchange = route;
+route();
+poll();
+setInterval(poll, 2000);
+pollLive();
+</script>
+</body>
+</html>

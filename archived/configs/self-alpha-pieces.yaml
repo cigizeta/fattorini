@@ -1,0 +1,31 @@
+# zelda's alpha_pieces transformer on Temper's self-play, as lc0-alpha-pieces is on Lc0's games:
+# generation 1 taught by caroline-0001 (smithy teacher self-alpha-pieces caroline-0001), on the same
+# games as every self- shape, from random weights. No gate: the engine cannot run a transformer, so a
+# lambda's run ends at its candidate.txt.
+labels: self
+
+# lc0-alpha-pieces', zelda's shape.
+architecture:
+  kind: transformer
+  embedding_dim: 64
+  num_layers: 4
+  num_heads: 4
+  feedforward_dim: 256
+  dropout: 0.1
+  value_head:
+    hidden_dim: [32]
+
+# As self-psq's.
+label:
+  lambda: [0.95, 0.96, 0.97, 0.98, 0.99]
+
+training:
+  attention: full   # full | kings-only
+  # self-psq's, field for field, but for zelda's rates, as lc0-alpha-pieces'.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  shuffle_buffer: 2097152
+  learning_rate: [1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6

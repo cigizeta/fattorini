@@ -1,0 +1,32 @@
+# psq_threats on Temper's self-play, as self-psq is psq's: generation 1 taught by caroline-0001
+# (smithy teacher self-psq-threats caroline-0001), on the same games as every self- shape. Caroline's
+# own generation 2 trains this shape on these games too, from her champion's weights; this one starts
+# from random weights, as every shape of the experiments does.
+labels: self
+
+# (4876 -> 256) x 2 -> 1, caroline's: psq's rows plus each perspective's own threats.
+architecture:
+  kind: psq_threats
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+# As self-psq's.
+label:
+  lambda: [0.95, 0.96, 0.97, 0.98, 0.99]
+
+training:
+  # self-psq's, field for field.
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6
+
+selection:
+  depth: 9
+  round_robin_pairs: 400
+  gate:
+    rule: sprt
+    elo_d: 35

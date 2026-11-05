@@ -1,0 +1,28 @@
+# The CPU level Temper requires, x86-64-v3 (BMI2, AVX2, FMA and what every CPU having them also has),
+# by its standard name rather than as those three features: the same machines, and the compiler free
+# to use the rest of the level. `main` refuses a CPU below it.
+[build]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+# How `tch-rs`'s own build script locates libtorch. Here rather than in `~/.bashrc` so that nothing
+# outside this repository is affected, and so a fresh clone builds without a setup step. `[env]`
+# reaches build scripts and `rustc` but not the binaries Cargo then executes: the `runner` below is
+# the hook that does reach them.
+[env]
+LIBTORCH_USE_PYTORCH = "1"
+
+# Wraps every binary Cargo executes (`cargo run`, `cargo test`), putting torch's lib directory first
+# on PATH, through which Windows finds DLLs, and keeping the rest. Through Git Bash's own `bash`, the
+# project's one shell; Cargo appends the binary and its arguments, which reach the script as `$0` and
+# `$@`. A CPU-only torch (a machine without a GPU) needs nothing more: `build.rs` links
+# `torch_cuda.dll` only when it exists.
+#
+# The venv is found by walking up from `$PWD` to the first directory holding `.temper-games`: `cargo run`
+# starts in the repository root, but `cargo test` runs each crate's tests from that crate's own
+# directory, `crates/<name>/`.
+#
+# `cygpath -u`: under Cargo, `$PWD` can arrive as `C:/dev/temper-chess` (seen 2026-10-07), and
+# its drive letter's colon would split the `PATH` entry in two, so torch's lib directory was never
+# searched and the test binary died on `c10.dll`.
+[target.x86_64-pc-windows-msvc]
+runner = ["bash", "-c", "root=\"$(cygpath -u \"$PWD\")\"; while [ \"$root\" != / ] && [ ! -d \"$root/.temper-games\" ]; do root=\"$(dirname \"$root\")\"; done; PATH=\"$root/.temper-games/Lib/site-packages/torch/lib:$PATH\" exec \"$0\" \"$@\""]

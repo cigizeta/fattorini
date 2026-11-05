@@ -1,0 +1,4 @@
+# A smoke test of a tune (2026-10-22): 100 pairs at depth 2, minutes on one machine, nothing about
+# strength.
+length: {pairs: 100}
+control: {depth: 2}

@@ -1,0 +1,34 @@
+# RETIRED (2026-10-22): `smithy loop-server` is gone, and nothing reads this config any more. Kept
+# until it is reviewed.
+#
+# A quality test of the loop on one machine alone, no GPU (2026-10-21): loop-psq's window and rounds at a
+# quarter of their size, W / N still 4, so a round is a few minutes of self-play and about a minute of training on the
+# CPU. The hand-crafted evaluation teaches until a student beats it: whether, and when, one does is
+# the first quality signal, and the first promotion exercises the path the mechanics test never
+# reached. The rate's patience counts both promotions and new best test losses.
+
+bootstrap: hand-crafted
+architecture: self-psq-direct
+
+window:
+  # 1024 x 4096: a pass of 1024 steps.
+  positions: 4194304
+  # 256 x 4096.
+  new_positions: 1048576
+  test_positions: 65536
+
+training:
+  batch_size: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  # Rounds with neither a promotion nor a new best test loss: about forge's own patience.
+  patience_rounds: 5
+
+ladder:
+  gamma: 2.0
+  start_upper_rung: 2
+
+gate:
+  pairs: 16
+  elo_delta: 30
+  # A placeholder, as loop-psq's.
+  h: 0.55

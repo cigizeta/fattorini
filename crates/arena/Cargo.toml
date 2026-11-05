@@ -1,0 +1,52 @@
+# Everything that plays games: self-play, the gate, matches, tournaments. No libtorch, so it runs on
+# every generating machine. Release builds only in practice -- performance matters at self-play's
+# scale.
+[package]
+name = "arena"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+temper-chess.workspace = true
+pgn-replay.workspace = true
+progress.workspace = true
+# The claim, the work and the control, over HTTP with the smithy (`chores.rs`).
+lan-http.workspace = true
+ctrlc.workspace = true
+# `arena start`'s events, on stdout (`progress::log_events`); its progress is on the smithy's page.
+log.workspace = true
+pgn-reader.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+shakmaty.workspace = true
+# Names self-play's segment files by their start time (`self_play.rs`'s own `YYYYMMDD-HHMMSS`
+# convention). Default features only (no `local-offset`, a real historical soundness footgun in this
+# crate -- CVE-2020-26235 -- and unneeded regardless, since this is UTC-only):
+# `OffsetDateTime::now_utc()` plus its own plain numeric getters, formatted by hand with `format!`.
+time.workspace = true
+# Reads compressed PGN sources (`book.rs`).
+zstd.workspace = true
+# `bundled` compiles SQLite from its own vendored C source (via `libsqlite3-sys`) rather than
+# linking against a system install, so the arena builds the same way regardless of what's already
+# on the machine -- only a C compiler is needed at build time.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+# The arena's global allocator (`main.rs`). Self-play runs one thread per logical core in one
+# process, and the system allocator was the bottleneck, every thread sharing one process heap:
+# measured with 16 threads at depth 9, 2,505 positions per second with `mimalloc` against
+# 2,215 without, after the search's per-node allocations had already been removed. Compiled from C
+# source, with the same C compiler `rusqlite` already needs.
+mimalloc = "0.1.52"
+# The machine's cores and CPU pinning (`cpu_topology.rs`), engine processes in their own process
+# group (`uci_client.rs`).
+windows-sys = { workspace = true, features = ["Win32_System_SystemInformation", "Win32_System_Threading"] }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "arena"
+path = "src/main.rs"
+bench = false
