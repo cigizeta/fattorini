@@ -804,7 +804,7 @@ fn summary_line(rows: &[TarRow], staged: Option<usize>, complete: bool) -> Strin
             "the Convert's {LC0_ROOT}, with visit counts, {state}: {} tars downloaded, {tars} converted",
             rows.len() + staged
         ),
-        None => format!("the Convert's {LC0_ROOT}, with visit counts, {state}: {tars} tars converted"),
+        None => format!("the Convert's {LC0_ROOT}, with visit counts, {state}: {} tars converted", progress::grouped(tars)),
     }
 }
 

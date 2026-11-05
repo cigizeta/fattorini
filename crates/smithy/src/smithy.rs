@@ -2936,7 +2936,7 @@ impl Status {
                 format!("pairs: {played} of {} played, {} pairings of {wanted}", pairings.len() * wanted as usize, pairings.len())
             }
             Work::Tune { .. } => match &shared.tune {
-                Some(tune) => format!("a tune of {}: {} of {} pairs", tune.player, tune.k_done, tune.pairs),
+                Some(tune) => format!("a tune of {}: {} of {} pairs", tune.player, progress::grouped(tune.k_done), progress::grouped(tune.pairs)),
                 None => "a tune".to_string(),
             },
         };
@@ -3118,7 +3118,7 @@ impl Run<'_> {
         let remote_root = remote_run_dir(&self.name);
         let (files, bytes) = tree::copy(&self.dirs.root, &remote_root, &keep, false)?;
         if files > 0 {
-            log::info!("{}: {files} files, {bytes} bytes copied to the remote", self.name);
+            log::info!("{}: {} files, {} bytes copied to the remote", self.name, progress::grouped(files), progress::grouped(bytes));
         }
         let removed = remove_remote_open_files(&format!("{remote_root}/{generation_dir}"))?;
         if removed > 0 {
@@ -3295,7 +3295,12 @@ impl Run<'_> {
         };
         let labelling = Labelling::new(arms, polyline)?;
         test.freeze(&labelling, &curve)?;
-        log::info!("training: lambda {} on {train_rows} positions, {} training set files", lambdas_text(arms), files.len());
+        log::info!(
+            "training: lambda {} on {} positions, {} training set files",
+            lambdas_text(arms),
+            progress::grouped(train_rows),
+            progress::grouped(files.len())
+        );
         if let Some(on) = on_source {
             record_corpus(&self.dirs, on, train_rows, test.rows)?;
         }
@@ -3452,7 +3457,13 @@ impl Run<'_> {
         let pairings: Vec<(String, String)> = players.iter().map(|&(i, j)| (names[i].clone(), names[j].clone())).collect();
         let wanted = self.config.round_robin_pairs;
         let total_games = pairings.len() as u64 * u64::from(wanted) * 2;
-        log::info!("round robin: {} lambdas, {} pairings of {wanted} pairs, {total_games} games", lambdas.len(), pairings.len());
+        log::info!(
+            "round robin: {} lambdas, {} pairings of {} pairs, {} games",
+            lambdas.len(),
+            pairings.len(),
+            progress::grouped(wanted),
+            progress::grouped(total_games)
+        );
         let started = Instant::now();
         let record = self.dirs.round_robin(state.generation);
         // Its progress is its section's graphical bar alone, timed from its record (`round_robin_view`).
@@ -4055,7 +4066,7 @@ fn sync_down(run: &str) -> Result<(), String> {
     log::info!("{run}: the remote holds its newest state, copying it here");
     let keep = |relative: &str| tree::in_open_generation(relative, &generation_dir, lease::FILE);
     let (files, bytes) = tree::copy(&remote_dir, &local, &keep, true)?;
-    log::info!("{run}: {files} files, {bytes} bytes copied from the remote");
+    log::info!("{run}: {} files, {} bytes copied from the remote", progress::grouped(files), progress::grouped(bytes));
     Ok(())
 }
 
@@ -4565,7 +4576,7 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
     begin(&status.shared, &format!("{dir}/chores.txt"), None)?;
     mark_start(&record)?;
     let mixed = if spec.mixed() { ", one side tuned and the other not" } else { "" };
-    let resumed = if resumed_games > 0 { format!(", resumed at {resumed_games} games") } else { String::new() };
+    let resumed = if resumed_games > 0 { format!(", resumed at {} games", progress::grouped(resumed_games)) } else { String::new() };
     log::info!(
         "test {number}: {} ({}), {} against {}, {}{mixed}{resumed}",
         spec.kind.name(),
@@ -4694,7 +4705,7 @@ fn run_tune(shared: &Arc<Mutex<Shared>>, tune: Tune, stop: &AtomicBool) -> Resul
     }
     tune.finish()?;
     tune.hand_over()?;
-    Ok(format!("{} pairs done, theta rounded into {}, its folder moved to {}", tune.pairs, tune.parameters_path(), remote::this_root()))
+    Ok(format!("{} pairs done, theta rounded into {}, its folder moved to {}", progress::grouped(tune.pairs), tune.parameters_path(), remote::this_root()))
 }
 
 /// Whether libtorch sees a CUDA device here, probed once. Training would otherwise fall back to the
@@ -4878,7 +4889,7 @@ fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
         let training_set = if let Some(source) = run.config.on_source(state.generation) {
             source.corpus().to_string()
         } else {
-            format!("{} positions", run.config.training_positions())
+            format!("{} positions", progress::grouped(run.config.training_positions()))
         };
         log::info!("generation {}: lambda {}, {training_set}", state.generation, lambdas_text(&arms));
         if state.phase == Phase::Play {

@@ -272,7 +272,7 @@ fn judge_duel(pairs: &[i32]) -> Judged {
         } else if side.count >= DUEL_MAX_PAIRS {
             Some("drawn at the cap".to_string())
         } else if !side.can_still_win() && !side.other_side().can_still_win() {
-            Some(format!("drawn, curtailed: neither can pass its bound by {DUEL_MAX_PAIRS} pairs"))
+            Some(format!("drawn, curtailed: neither can pass its bound by {} pairs", progress::grouped(DUEL_MAX_PAIRS)))
         } else {
             None
         };
@@ -342,7 +342,7 @@ fn judge_match(total: u32, pairs: &[i32]) -> Judged {
         pairs: counted,
         games,
         challenger_points,
-        status: format!("{counted} of {total} pairs, challenger {:.1}%, {estimate}", 100.0 * score),
+        status: format!("{} of {} pairs, challenger {:.1}%, {estimate}", progress::grouped(counted), progress::grouped(total), 100.0 * score),
         // Not a gauge but progress: the page draws it as a bar of pairs.
         gauge: Gauge { value: counted as f64, lower: 0.0, upper: f64::from(total), left: "", right: "" },
         expected_games: Some(2 * u64::from(total)),
@@ -366,7 +366,7 @@ fn judge_sprt(elo0: f64, elo1: f64, pairs: &[i32]) -> Judged {
     let verdict = match sprt.verdict() {
         Verdict::Promote => Some(format!("H1: the challenger is stronger by {elo1} Elo or more")),
         Verdict::Fail => Some(format!("H0: the challenger is not stronger by more than {elo0} Elo")),
-        Verdict::Continue if counted as u32 >= SPRT_MAX_PAIRS => Some(format!("inconclusive after {SPRT_MAX_PAIRS} pairs")),
+        Verdict::Continue if counted as u32 >= SPRT_MAX_PAIRS => Some(format!("inconclusive after {} pairs", progress::grouped(SPRT_MAX_PAIRS))),
         Verdict::Continue => None,
     };
     Judged {

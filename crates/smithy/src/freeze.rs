@@ -94,9 +94,14 @@ pub(crate) fn ensure(
     }
     let positions: u64 = files.iter().map(|file| file.positions).sum();
     if positions < rows {
-        return Err(format!("{games_dir} holds {positions} positions, fewer than the {rows} of its test set"));
+        return Err(format!("{games_dir} holds {} positions, fewer than the {} of its test set", progress::grouped(positions), progress::grouped(rows)));
     }
-    log::info!("freezing the test set of {games_dir} into {dir}: {rows} of {positions} positions, {} segment(s)", segments.len());
+    log::info!(
+        "freezing the test set of {games_dir} into {dir}: {} of {} positions, {} segment(s)",
+        progress::grouped(rows),
+        progress::grouped(positions),
+        segments.len()
+    );
     let sample = sample(games_dir, &segments, positions, rows, true, labelling, curve);
     // `files` lists searched positions, the `.meta` ones less one final position a game.
     if sample.searched() != positions {
@@ -247,7 +252,11 @@ fn read_manifest(dir: &str, rows: u64) -> Result<Option<Manifest>, String> {
         ));
     }
     if manifest.rows < rows {
-        return Err(format!("{dir} was frozen at {} positions, fewer than the run's test_positions of {rows}", manifest.rows));
+        return Err(format!(
+            "{dir} was frozen at {} positions, fewer than the run's test_positions of {}",
+            progress::grouped(manifest.rows),
+            progress::grouped(rows)
+        ));
     }
     Ok(Some(manifest))
 }

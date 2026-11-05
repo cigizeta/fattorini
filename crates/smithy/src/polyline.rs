@@ -201,11 +201,11 @@ pub(crate) fn measure(dir: &str, threads: usize, stop: &AtomicBool, bar: &progre
 pub(crate) fn ensure(path: &str, dir: &str, threads: usize, stop: &AtomicBool, say: &dyn Fn(String)) -> Result<Option<Polyline>, String> {
     if let Ok(text) = fs::read_to_string(path) {
         let (polyline, positions) = Polyline::parse(&text).ok_or_else(|| format!("{path}: not a polyline; delete it to measure again"))?;
-        say(format!("lambda by progress from {path}, measured on {positions} positions: {}", show(&polyline)));
+        say(format!("lambda by progress from {path}, measured on {} positions: {}", progress::grouped(positions), show(&polyline)));
         return Ok(Some(polyline));
     }
     let records = buckets::committed_records(dir)?;
-    say(format!("measuring lambda by progress on the {records} positions of {dir}"));
+    say(format!("measuring lambda by progress on the {} positions of {dir}", progress::grouped(records)));
     let bar = progress::resumed(0, records, progress::Unit::Count("positions"), "measuring lambda by progress");
     let measured = measure(dir, threads, stop, &bar);
     bar.finish();
@@ -222,7 +222,7 @@ pub(crate) fn ensure(path: &str, dir: &str, threads: usize, stop: &AtomicBool, s
     let tmp = format!("{path}.partial");
     fs::write(&tmp, polyline.text(positions)).map_err(|error| format!("failed to write {tmp}: {error}"))?;
     fs::rename(&tmp, path).map_err(|error| format!("failed to rename {tmp}: {error}"))?;
-    say(format!("lambda by progress, measured on {positions} positions: {}", show(&polyline)));
+    say(format!("lambda by progress, measured on {} positions: {}", progress::grouped(positions), show(&polyline)));
     Ok(Some(polyline))
 }
 

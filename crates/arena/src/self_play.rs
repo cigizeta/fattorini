@@ -345,10 +345,10 @@ mod tests {
                 std::thread::sleep(Duration::from_secs(60.min(seconds - (minute - 1) * 60)));
                 let elapsed = started.elapsed().as_secs_f64();
                 println!(
-                    "{:>4.0} s: {:>8.0} positions/s, {} games",
+                    "{:>4.0} s: {:>10} positions/s, {} games",
                     elapsed,
-                    positions.load(Ordering::SeqCst) as f64 / elapsed,
-                    games.load(Ordering::SeqCst)
+                    progress::grouped((positions.load(Ordering::SeqCst) as f64 / elapsed).round() as u64),
+                    progress::grouped(games.load(Ordering::SeqCst))
                 );
             }
             stop.store(true, Ordering::SeqCst);

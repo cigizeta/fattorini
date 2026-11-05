@@ -74,6 +74,13 @@ pub fn eta_text(observed: u64, remaining: u64, elapsed: Duration) -> String {
     duration_text(Duration::from_secs_f64(remaining as f64 * seconds / observed as f64))
 }
 
+/// A positive `value` to one decimal, its whole part `grouped`.
+fn one_decimal(value: f64) -> String {
+    let text = format!("{value:.1}");
+    let (whole, tenths) = text.split_once('.').expect("one decimal always prints a point");
+    format!("{}.{tenths}", grouped(whole))
+}
+
 /// This run's average rate: `observed` units in `elapsed`. A count under one a second is given as
 /// seconds per unit, as tqdm does, so a slow bar (an SPSA's pairs, seconds apart) reads as a number
 /// rather than `0.0/s`; its noun singular, the plural's final `s` dropped.
@@ -84,8 +91,8 @@ pub fn rate_text(observed: u64, elapsed: Duration, unit: Unit) -> String {
     }
     let per_second = observed as f64 / seconds;
     match unit {
-        Unit::Count(noun) if per_second >= 1.0 => format!("{per_second:.1} {noun}/s"),
-        Unit::Count(noun) => format!("{:.1} s/{}", 1.0 / per_second, noun.strip_suffix('s').unwrap_or(noun)),
+        Unit::Count(noun) if per_second >= 1.0 => format!("{} {noun}/s", one_decimal(per_second)),
+        Unit::Count(noun) => format!("{} s/{}", one_decimal(1.0 / per_second), noun.strip_suffix('s').unwrap_or(noun)),
         Unit::Bytes => format!("{}/s", bytes_text(per_second as u64)),
     }
 }
@@ -200,8 +207,9 @@ pub fn notice(text: String) -> Notice {
     Notice(shared)
 }
 
-/// `n` with its thousands grouped by commas, `1,199,290,155`, as the page shows every other count.
-fn grouped(n: u64) -> String {
+/// `n`, any whole number, with its thousands grouped by commas, `1,199,290,155`, as the page shows
+/// every other count. For what people read: never for a file, UCI, or anything else parsed.
+pub fn grouped(n: impl std::fmt::Display) -> String {
     let digits = n.to_string();
     let mut text = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {
@@ -321,6 +329,13 @@ mod tests {
         assert_eq!(grouped(999), "999");
         assert_eq!(grouped(1000), "1,000");
         assert_eq!(grouped(1_199_290_155), "1,199,290,155");
+        assert_eq!(grouped(1_024_usize), "1,024");
+    }
+
+    #[test]
+    fn a_rate_groups_its_thousands() {
+        assert_eq!(rate_text(1_234_500, Duration::from_secs(10), Unit::Count("positions")), "123,450.0 positions/s");
+        assert_eq!(rate_text(1, Duration::from_secs(1500), Unit::Count("games")), "1,500.0 s/game");
     }
 
     #[test]

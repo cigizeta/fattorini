@@ -405,7 +405,7 @@ fn prepare_in_batches(
         state.buckets = outputs.iter().map(|output| output.committed).collect();
         state.files.extend(batch.iter().map(|file| (file.path.clone(), file.positions)));
         state.write(dir)?;
-        say(format!("{dir}: batch {} of {} committed, {} records", index + 1, batches.len(), state.records()));
+        say(format!("{dir}: batch {} of {} committed, {} records", index + 1, batches.len(), progress::grouped(state.records())));
     }
     bar.finish();
     let bytes: u64 = state.buckets.iter().map(|committed| committed.bytes).sum();

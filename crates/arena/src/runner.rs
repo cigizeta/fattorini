@@ -949,7 +949,7 @@ fn record_pair<T: SequentialTest>(
             state.resolved = Some(outcome);
             let status = state.test.status();
             let status = if status.is_empty() { String::new() } else { format!(", {status}") };
-            say(run, format!("{prefix}: resolved at {} games{status} -- {}", state.test.games(), run.labels.line(outcome)));
+            say(run, format!("{prefix}: resolved at {} games{status} -- {}", progress::grouped(state.test.games()), run.labels.line(outcome)));
             // Every game in progress sees this within a move and abandons. Those games are not part of
             // the verdict, so playing them out would be waste -- and recording them would be worse, see
             // above.
