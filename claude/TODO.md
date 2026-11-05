@@ -33,7 +33,8 @@ book, both untuned, different builds: stopped by the developer at 375 games, 114
 +10.2 +/- 26.8 Elo, LOS 77%, llr 0.278. Not a win and no SPRT result: about the same strength, and
 the new pipeline stays, one arm trained in about an hour against nine and a round robin. It says
 nothing about lambda, the two being almost alike on Lc0 (polyline-calibration.md). The build check
-of PeSTO against PeSTO was skipped. Atan support may go. Next, not decided: generation 2 or a tune.
+of PeSTO against PeSTO was skipped. Atan support and lockstep training of several arms are deprecated
+by this, and stay in the code for now (the developer). Next, not decided: generation 2 or a tune.
 
 Branch `fabio` carries two experiments, judged together by one duel:
 

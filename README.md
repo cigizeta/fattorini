@@ -36,16 +36,50 @@ Requirements:
 ## How Temper learns
 
 Temper improves one generation at a time. The teacher, at first the PeSTO evaluation, then each
-generation's winner, plays games against itself, searching every position, and those searches
-become the training labels. Nine networks are trained on them, one per blend of label; they play a
-round robin, and the winner replaces the teacher only if it beats it over the board.
+generation's network, plays games against itself, searching every position, and those searches
+become the training labels. One network is trained on them, and it replaces the teacher only if it
+beats it over the board.
 
 Along the other route, the first generation trains on Leela Chess Zero's published training games,
 from its test91 run, each position with the score of Leela's search; its winner must beat the PeSTO
 evaluation over the board, and from there on it teaches the next generation as above.
 
-Each label blends one position's search score with the game's result, as Leela's own training
-does.
+### Lambda by progress
+
+Each label blends two opinions about a position: `s`, the teacher's search score, and `z`, the game's
+result, with a weight lambda on the result:
+
+```text
+label = (1 - lambda) * s + lambda * z
+```
+
+How much should the result count? It depends on how far through the game the position is, and on
+how good the teacher is. So Temper does not pick a lambda: it measures one from the teacher's own
+games, before training.
+
+Think of `s` and `z` as two witnesses to the position's true value, each with its own errors, and
+trust each in inverse proportion to how noisy it is. Neither error can be seen directly, but what
+`s` and `z` have in common can only be the true value, so whatever `s` does not share with `z` is the
+search's noise. That gives the best weight:
+
+```text
+lambda* = (Var(s) - Cov(s, z)) / (Var(s) + Var(z) - 2 Cov(s, z))
+```
+
+It is measured in ten stages of the game, by progress from the first position to the last, and
+each position takes its lambda from a line through the ten, never below 0 or above 1.
+
+The shape belongs to the teacher:
+
+- **A weak teacher,** such as PeSTO, stays about equally wrong all game, while the result gets more
+  certain as the game ends. Lambda rises from 0.11 to 0.97: early the search is trusted, late the
+  result.
+- **A strong teacher,** such as Leela Chess Zero, is already accurate. Lambda stays near 0.03, and
+  from mid-game it is 0: the formula finds no noise left to correct, the scores being right about who
+  is winning and only a little timid about how much.
+
+So as Temper's own networks improve, their lambda is measured afresh each generation and should move
+from the first shape toward the second, with no schedule to design.
 
 ## Inside
 
