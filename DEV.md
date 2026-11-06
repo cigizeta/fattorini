@@ -389,14 +389,3 @@ Before starting the smithy, the current profile should be the Private one:
 ```bash
 netsh advfirewall show currentprofile
 ```
-
-## Lichess
-
-To play PeSTO or a full run's generation winner through
-[lichess-bot](https://github.com/lichess-bot-devs/lichess-bot), use the page's Install screen: pick
-a machine with a running arena and the player. A candidate or a scaled run's network is
-refused.
-
-The arena installs `temper-chess.exe` with that network, and its `parameters.txt` if it has one, in
-`%LOCALAPPDATA%\kalo-games\bin`. The screen's Installed table shows the outcome; point lichess-bot's
-`config.yml` at the installed engine.
