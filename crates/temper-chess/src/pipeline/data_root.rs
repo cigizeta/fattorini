@@ -3,14 +3,14 @@
 //! `bin/lichess-book.sh` and `bin/syzygy.sh`) and the engine `smithy install` sets up for
 //! lichess-bot, in `bin/`. The project's own data stays in the repository (`configs/chess/`, `data/`).
 //!
-//! One fixed place, with no variable to move it: `%LOCALAPPDATA%\temper-games` (native Windows usually has
+//! One fixed place, with no variable to move it: `%LOCALAPPDATA%\kalo-games` (native Windows usually has
 //! no `HOME` outside Git Bash). The two scripts compute the same root in shell, and the two must
 //! agree.
 
 use std::process;
 
 const BASE_VARIABLE: &str = "LOCALAPPDATA";
-const UNDER_BASE: &str = "temper-games";
+const UNDER_BASE: &str = "kalo-games";
 
 /// The data root, exiting when `LOCALAPPDATA` is unset.
 pub fn data_root() -> String {
@@ -52,7 +52,7 @@ mod tests {
     fn the_data_root_is_under_local_app_data() {
         assert_eq!(
             data_root_from(some(r"C:\Users\me\AppData\Local")).unwrap(),
-            "C:/Users/me/AppData/Local/temper-games"
+            "C:/Users/me/AppData/Local/kalo-games"
         );
     }
 

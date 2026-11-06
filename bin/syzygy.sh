@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Downloads the Syzygy tables into the data root's chess/syzygy/ directory, regardless of where this
 # script is invoked from. The data root holds the third-party downloads development and deployment
-# share: %LOCALAPPDATA%\temper-games. The same rule is in
+# share: %LOCALAPPDATA%\kalo-games. The same rule is in
 # src/pipeline/data_root.rs, and the two must agree.
 #
 # Downloads both parts of Syzygy, 3 to 6 pieces: WDL (.rtbw), complete on its own, and DTZ (.rtbz),
@@ -17,7 +17,7 @@
 # table resumed under its final name would change under the map.
 set -euo pipefail
 
-DATA_ROOT="$(cygpath -u "$LOCALAPPDATA")/temper-games"
+DATA_ROOT="$(cygpath -u "$LOCALAPPDATA")/kalo-games"
 SYZYGY="$DATA_ROOT/chess/syzygy"
 
 BASE="https://tablebase.lichess.ovh/tables/standard"

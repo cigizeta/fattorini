@@ -11,7 +11,12 @@ documents use the old name: `rotor`, `ROTOR_*`, `.rotor`.
 `temper-games`, the engine Temper Chess; `data/` and `configs/` gained a `chess/` level, the roots and
 the venv are named `temper-games`, and older entries here use the older paths and names.
 
+**Kalo Games from 2026-11-06 (kalo-games-rename.md).** The repository, roots and venv are now
+`kalo-games`; the engine stays Temper Chess.
+
 ## Next (the developer, 2026-11-05)
+
+- **Finish kalo-games-rename.md:** Drive, then every machine's data root, venv and firewall rules.
 
 - **Finish temper-games-restart.md:** tests, then the Drive folders, one first commit, every machine
   on a fresh clone. The old repository is `temper-chess-archive`, archived and private.

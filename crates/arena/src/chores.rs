@@ -1068,9 +1068,9 @@ mod tests {
     #[test]
     fn a_network_s_name_is_its_path_in_the_store() {
         let name = "data/chess/networks/pesto-psq/run-1/gen-1/lambda-0.95/candidate.nnue";
-        assert_eq!(store_path("G:/My Drive/temper-games", name).unwrap(), format!("G:/My Drive/temper-games/{name}"));
+        assert_eq!(store_path("G:/My Drive/kalo-games", name).unwrap(), format!("G:/My Drive/kalo-games/{name}"));
         for wrong in ["0123abcd", "/etc/x", "data/../x.nnue"] {
-            assert!(store_path("G:/My Drive/temper-games", wrong).is_err(), "{wrong}");
+            assert!(store_path("G:/My Drive/kalo-games", wrong).is_err(), "{wrong}");
         }
     }
 

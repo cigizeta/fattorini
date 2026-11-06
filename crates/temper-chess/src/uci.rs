@@ -1752,8 +1752,8 @@ mod tests {
     #[test]
     fn the_installed_eval_file_sits_beside_the_executable() {
         assert_eq!(
-            eval_file_beside(std::path::Path::new("C:/Users/me/AppData/Local/temper-games/bin/temper-chess.exe")),
-            std::path::PathBuf::from("C:/Users/me/AppData/Local/temper-games/bin/temper-chess.nnue")
+            eval_file_beside(std::path::Path::new("C:/Users/me/AppData/Local/kalo-games/bin/temper-chess.exe")),
+            std::path::PathBuf::from("C:/Users/me/AppData/Local/kalo-games/bin/temper-chess.nnue")
         );
     }
 

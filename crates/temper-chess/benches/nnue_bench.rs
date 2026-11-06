@@ -201,7 +201,7 @@
 //! default) of 40 plies or more, evenly spaced over the source, compressed into `data/chess/lumbra/`, then
 //! copied up to Drive:
 //!
-//! `cargo bench --bench nnue_bench -- --cut-reference "/g/My Drive/temper-games/data/chess/lumbra/LumbrasGigaBase_OTB_ELO2400.pgn.zst"`
+//! `cargo bench --bench nnue_bench -- --cut-reference "/g/My Drive/kalo-games/data/chess/lumbra/LumbrasGigaBase_OTB_ELO2400.pgn.zst"`
 //!
 //! The source, a PGN or a `.pgn.zst`, is read this once; nothing reads it again.
 //!

@@ -4,7 +4,7 @@ For what Temper is and how to run it, see [README.md](README.md).
 
 Temper is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
 PowerShell or cmd. Development also requires **Google Drive for desktop**, with My Drive on `G:`:
-what the machines share, such as Lc0's converted games, lives in `G:/My Drive/temper-games`, and the scripts
+what the machines share, such as Lc0's converted games, lives in `G:/My Drive/kalo-games`, and the scripts
 and binaries read and write it there.
 
 ## The workspace
@@ -110,7 +110,7 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive
 winget install --id Rustlang.Rustup
 ```
 
-For full speed, exclude the repository, `%LOCALAPPDATA%\temper-games`, `%USERPROFILE%\.cargo` and
+For full speed, exclude the repository, `%LOCALAPPDATA%\kalo-games`, `%USERPROFILE%\.cargo` and
 `%USERPROFILE%\.rustup` from Microsoft Defender, and set Windows' power mode to Best performance.
 
 A name for the machine, lowercase letters and digits, different on every machine:
@@ -125,7 +125,7 @@ The external engines it may play, Stockfish first; then set each `path` in the c
 cp examples/engines.yaml data/chess/engines.yaml
 ```
 
-The opening positions and the Syzygy tablebases (about 150 GB), into `%LOCALAPPDATA%\temper-games`:
+The opening positions and the Syzygy tablebases (about 150 GB), into `%LOCALAPPDATA%\kalo-games`:
 
 ```bash
 ./bin/lichess-book.sh
@@ -136,7 +136,7 @@ The opening positions and the Syzygy tablebases (about 150 GB), into `%LOCALAPPD
 ```
 
 Google Drive for desktop, in streaming mode with My Drive on `G:`, on every machine, the arenas'
-included: Drive is Temper's store, `G:/My Drive/temper-games`, the same tree as the local data root. A file
+included: Drive is Temper's store, `G:/My Drive/kalo-games`, the same tree as the local data root. A file
 is made on the local disk and reaches Drive only whole, never written or appended there in place:
 
 - a run's networks (every candidate, every teacher) as soon as they are complete; the arenas read
@@ -151,7 +151,7 @@ is made on the local disk and reaches Drive only whole, never written or appende
 Every reader (`arena duel`, `smithy install`, the page's View) looks on the local disk
 first, then on Drive. Folders may be made available offline in Drive's settings to read them faster.
 
-A Python environment named `.temper-games` with PyTorch, for `smithy`: on the GPU machine to train, and
+A Python environment named `.kalo-games` with PyTorch, for `smithy`: on the GPU machine to train, and
 on any other machine that runs `smithy` or its tests:
 
 ```bash
@@ -159,11 +159,11 @@ winget install --id astral-sh.uv
 ```
 
 ```bash
-uv venv .temper-games --python 3.14
+uv venv .kalo-games --python 3.14
 ```
 
 ```bash
-source .temper-games/Scripts/activate
+source .kalo-games/Scripts/activate
 ```
 
 ```bash
@@ -200,7 +200,7 @@ the arenas. Written once, on Drive, so every machine reads the same copy.
 Its shape is `examples/machines.yaml`'s:
 
 ```bash
-cp examples/machines.yaml "/g/My Drive/temper-games/data/machines.yaml"
+cp examples/machines.yaml "/g/My Drive/kalo-games/data/machines.yaml"
 ```
 
 Then the names in that copy edited. A local `data/machines.yaml` is no longer read; the older
@@ -358,11 +358,11 @@ netsh advfirewall firewall delete rule name="arena"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="temper-chess smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\temper-games\target\release\smithy.exe"
+netsh advfirewall firewall add rule name="temper-chess smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\kalo-games\target\release\smithy.exe"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="temper-chess arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\temper-games\target\release\arena.exe"
+netsh advfirewall firewall add rule name="temper-chess arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\kalo-games\target\release\arena.exe"
 ```
 
 The first two remove Windows' own rules, if any were made. To check, each rule should show Profiles
@@ -398,5 +398,5 @@ a machine with a running arena, the player and a book. A candidate or a scaled r
 refused.
 
 The arena installs `temper-chess.exe` with that network, and its `parameters.txt` if it has one, in
-`%LOCALAPPDATA%\temper-games\bin`. The screen's Installed table shows the outcome; point lichess-bot's
+`%LOCALAPPDATA%\kalo-games\bin`. The screen's Installed table shows the outcome; point lichess-bot's
 `config.yml` at the installed engine.

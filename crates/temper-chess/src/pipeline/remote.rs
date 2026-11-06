@@ -22,9 +22,9 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-/// The root of the remote mirror: `temper-games/` in My Drive, on `G:`. Forward slashes: every Windows
+/// The root of the remote mirror: `kalo-games/` in My Drive, on `G:`. Forward slashes: every Windows
 /// file API accepts them, and the paths below are joined with `/`.
-pub const ROOT: &str = "G:/My Drive/temper-games";
+pub const ROOT: &str = "G:/My Drive/kalo-games";
 
 /// This process's remote root when it is not `ROOT`: a local folder standing in for Drive. Set once,
 /// before any remote call.

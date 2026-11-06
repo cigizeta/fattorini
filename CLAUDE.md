@@ -1,6 +1,6 @@
-# CLAUDE.md -- Temper Games
+# CLAUDE.md -- Kalo Games
 
-**Temper Games** is the project. **Temper Chess** is its UCI chess engine, written in Rust, whose
+**Kalo Games** is the project. **Temper Chess** is its UCI chess engine, written in Rust, whose
 neural network evaluation functions are trained on a limited compute budget. Temper Go is future
 work, not started.
 
@@ -91,7 +91,7 @@ syntax.
   always LF; `*.bat`, `*.cmd`, `*.ps1` always CRLF). Every other text file
   is stored LF and checked out with the OS's native endings, CRLF on Windows.
 - Windows-specific Rust code needs no `#[cfg]` pair any more, and no new
-  dependency when a few lines suffice. The data root is `%LOCALAPPDATA%\temper-games`;
+  dependency when a few lines suffice. The data root is `%LOCALAPPDATA%\kalo-games`;
   Google Drive is `G:` (`/g` in Git Bash).
 - Git Bash rewrites arguments that look like Unix paths when calling native
   Windows programs; prefix the command with `MSYS_NO_PATHCONV=1` when that
@@ -108,7 +108,7 @@ When giving the developer a command that runs a Temper binary, always use its wr
 (`bin/temper-chess`, `bin/smithy`, `bin/arena`), never `cargo run`, `cargo build` followed by
 `target/release/...`, or a bare `target/...` path. Each wrapper builds
 the release binary if needed, `cd`s to the repository root, and sets what the binary needs:
-`bin/smithy` also requires this repository's `.temper-games` venv to be active and sets libtorch's library
+`bin/smithy` also requires this repository's `.kalo-games` venv to be active and sets libtorch's library
 paths. Only tests (`cargo test ...`) are given as cargo commands.
 
 ## Licensing

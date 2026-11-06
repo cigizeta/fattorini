@@ -1,4 +1,4 @@
-# Temper Games
+# Kalo Games
 
 Temper Chess is a UCI chess engine written in Rust. Its evaluation networks are trained on one PC with one
 consumer GPU. Its training is starting again from scratch, along two routes: networks that learn

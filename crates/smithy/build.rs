@@ -14,10 +14,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc");
     if msvc {
-        // `bin/smithy` only runs with this repository's own `.temper-games` venv active, so torch's
+        // `bin/smithy` only runs with this repository's own `.kalo-games` venv active, so torch's
         // libraries are always here on Windows: the repository root is two levels above this crate.
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
-        let torch_lib = std::path::Path::new(&manifest_dir).join("../../.temper-games/Lib/site-packages/torch/lib");
+        let torch_lib = std::path::Path::new(&manifest_dir).join("../../.kalo-games/Lib/site-packages/torch/lib");
         // A directory's mtime changes when files are added or removed in it, so reinstalling torch
         // (CPU wheel to CUDA wheel, or back) reruns this script.
         println!("cargo:rerun-if-changed={}", torch_lib.display());
