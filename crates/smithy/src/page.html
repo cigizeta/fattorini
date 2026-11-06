@@ -370,8 +370,9 @@ function forge(view, live = false) {
 
 // The machines the smithy claims arenas on, then the arenas joined to the job, each in its own box.
 function arenas(list, machines) {
-  const claimed = `<section><h2>Machines</h2>` + table(["machine", "state", "held to send"],
-    machines.map((m) => [m.machine || m.target, m.state, m.outbox ? whole(m.outbox) : ""])) + `</section>`;
+  // An arena holds finished tasks only while it cannot reach this smithy, so the count is said only then.
+  const claimed = `<section><h2>Machines</h2>` + table(["machine", "state"],
+    machines.map((m) => [m.machine || m.target, m.outbox ? `${m.state}; holding ${whole(m.outbox)} finished to send` : m.state])) + `</section>`;
   if (list.length === 0) {
     const none = state.no_arena ? "no arena: this job waits for one, each held by another smithy or not answering (Machines above)" : "no arena";
     return claimed + `<section><h2>Arenas</h2><div class="muted">${none}</div></section>`;
