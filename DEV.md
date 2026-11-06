@@ -16,7 +16,7 @@ their networks. Three binaries, each with its own crate:
 - `arena`, which plays games: matches, and, as one of the smithy's arenas, every game of a forge or
   a tune.
 - `smithy`, which makes the sources' corpora and trains networks (the smithy, dealing its jobs to
-  the arenas), inspects checkpoints and installs players. Training needs an NVIDIA GPU.
+  the arenas), inspects checkpoints and asks for snapshots of players. Training needs an NVIDIA GPU.
 
 And one library, `pgn-replay`, which reads PGN moves for `arena` and `smithy`.
 
@@ -148,7 +148,7 @@ is made on the local disk and reaches Drive only whole, never written or appende
 - a tune's files every 15 minutes, then the whole tune beside its network at its end;
 - the sources' corpora, segment by segment.
 
-Every reader (`arena duel`, an install, the page's View) looks on the local disk
+Every reader (`arena duel`, a snapshot, the page's View) looks on the local disk
 first, then on Drive. Folders may be made available offline in Drive's settings to read them faster.
 
 A Python environment named `.kalo-games` with PyTorch, for `smithy`: on the GPU machine to train, and
@@ -228,8 +228,8 @@ machine shows the same, read-only.
 On every machine that should play, an arena, started by hand in its own terminal, left running: it
 idles until a smithy claims it, then plays for that smithy alone. A smithy claims arenas only while
 its job deals games (a forge's play, round robin and gate, a tune, a test, PeSTO's play) and
-releases them after 60 s dealing none, so another smithy's job plays meanwhile; Install claims the
-arena it installs on. When two smithies want one arena, a full job's claim takes it from a scaled
+releases them after 60 s dealing none, so another smithy's job plays meanwhile; a snapshot claims the
+arena it is taken on. When two smithies want one arena, a full job's claim takes it from a scaled
 job's, and between jobs of the same kind the smithy ranked higher in `machines.yaml` takes it; a
 job left with no arena says it waits, and the Machines table names each holder by its rank. A smithy polls its arenas every
 10 s: one unanswering for 30 s is late, for 60 s lost, its chore dealt again. An arena unpolled for
@@ -298,7 +298,7 @@ own `config.yaml` (`scale: <s>`) and marked on the page wherever the run is name
 A scaled run is a run like any other, numbered with the full ones and saved to Drive as they are. On a
 source, it reads a 1/s share of the corpus, its first training files, scattered into buckets of
 their own (`data/chess/buckets/lc0-s1024`), and a fixed subset of the source's frozen test set: sources
-are never scaled. Its networks play in their run alone: never installed nor a side of a test, and tuned only
+are never scaled. Its networks play in their run alone: never snapshotted nor a side of a test, and tuned only
 by a tune scaled as their run, to debug the tune itself.
 
 ## Matches

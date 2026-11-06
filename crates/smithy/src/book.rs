@@ -184,7 +184,7 @@ struct GraphView {
 struct WrittenView {
     n: u32,
     weights: String,
-    /// Its `.bin` in the remote's tree, as an install names it.
+    /// Its `.bin` in the remote's tree, by its `data/...` path.
     path: String,
 }
 

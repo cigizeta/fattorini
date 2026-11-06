@@ -5,7 +5,7 @@
 //! so `Device::cuda_if_available()` then silently falls back to the CPU. Forcing one of its symbols
 //! in keeps the library. `smithy` only: no other target links libtorch.
 //!
-//! A CPU-only torch wheel (a machine without a GPU, where `smithy` only installs the engine)
+//! A CPU-only torch wheel (a machine without a GPU, where `smithy` only asks for snapshots)
 //! has no `torch_cuda.dll`, so nothing would define the forced symbol and the link would fail: the
 //! symbol is forced in only when that file exists, the same test torch-sys uses to link
 //! `torch_cuda` at all.

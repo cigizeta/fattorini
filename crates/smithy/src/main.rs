@@ -2,7 +2,7 @@
 //! libtorch. `start` runs the smithy, whose jobs, started from its page, train every network,
 //! generation by generation, or tune a player's search parameters, every game played by the arenas
 //! (`arena start`), make a source's corpus, Lc0's converted or PeSTO's played, or make an opening
-//! book; and ask an arena to install a player for lichess-bot. The two binaries talk only through the
+//! book; and ask an arena to take a snapshot of a player. The two binaries talk only through the
 //! files and requests `kalo_chess::pipeline` defines.
 
 // MSVC's linker reports the import library it creates for smithy's exported symbols (the one
@@ -99,7 +99,7 @@ const USAGE: &str = "usage: smithy start | stop | status\n       \
      scaled anywhere on the CPU, a tune of a player's search\n        \
      parameters, a test, or PeSTO's Play, one at a time; beside them Lc0's Convert, which converts Lc0's\n        \
      training tars into data/chess/lc0 up to configs/chess/lc0.yaml's cap, or a book job, which makes an opening\n        \
-     book of a PGN in data/chess/books/ on Drive; and an install of a player for lichess-bot, on\n        \
+     book of a PGN in data/chess/books/ on Drive; and a snapshot of a player, on\n        \
      any machine whose arena it claims. stop and status reach it from another terminal on the same\n        \
      machine)";
 
@@ -108,8 +108,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_usage_offers_no_install_command() {
-        assert!(!USAGE.contains("smithy install"), "an install is asked from the page");
+    fn the_usage_offers_no_snapshot_command() {
+        assert!(!USAGE.contains("smithy snapshot"), "a snapshot is asked from the page");
     }
 
     #[test]

@@ -2,8 +2,8 @@
 //! third-party downloads (the opening book and the Syzygy tables, fetched by `bin/uho-book.sh`
 //! and `bin/syzygy.sh`). The two scripts compute the same root in shell, and the two must agree.
 //!
-//! Development only, and nothing here reads the environment: `%LOCALAPPDATA%` belongs to a release,
-//! the engine installed for lichess-bot, and is read in one place, the arena's `install`.
+//! It also holds the arena's snapshot (`chess/snapshot/`). Nothing here reads the environment, and
+//! nothing in the repository reads or writes outside it and Drive: a release `.exe` writes nothing.
 //!
 //! The repository is found by walking up from the current directory to the first one holding
 //! `Cargo.lock`: the `bin/` wrappers `cd` to the root, while `cargo test` runs in the crate's

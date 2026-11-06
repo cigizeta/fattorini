@@ -53,7 +53,7 @@ fn refuse_an_older_cpu() {
 
 /// `kalo-chess bench [<depth>]`, with the network the engine itself would start with.
 fn run_bench(depth: u32) {
-    let evaluator = kalo_chess::uci::evaluator_for(&kalo_chess::uci::installed_eval_file());
+    let evaluator = kalo_chess::uci::evaluator_for(&kalo_chess::uci::startup_eval_file());
     let (nodes, seconds) = kalo_chess::bench::bench_at_depth(evaluator.as_deref(), depth);
     println!("{}", kalo_chess::bench::bench_line(nodes, seconds));
 }

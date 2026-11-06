@@ -1,5 +1,5 @@
 # Everything that touches tensors and training data: the training server (`server start --forge`),
-# `lc0` and `install`. The one crate that needs libtorch.
+# `lc0` and the snapshots. The one crate that needs libtorch.
 [package]
 name = "smithy"
 version.workspace = true

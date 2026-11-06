@@ -46,8 +46,8 @@ use serde::{Deserialize, Serialize};
 use kalo_chess::pipeline::lan::{self, first_line_bytes};
 use lan_http::{Listener, Reply, Request};
 use kalo_chess::pipeline::protocol::{
-    self, entries_text, Alive, Chore, Claim, Entry, Hello, HelloReply, InstallRequest, Limit, Player, TaskKind, ALIVE_PATH, ARENA_PORT,
-    CHORE_PATH, CHORE_TAG, CLAIM_PATH, CLAIM_POLL, HELLO_PATH, INSTALL_PATH, JOBS_PATH, LATE_AFTER, LOOPBACK, MACHINES_PATH, PESTO, RELEASE_AFTER,
+    self, entries_text, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, SnapshotRequest, TaskKind, ALIVE_PATH, ARENA_PORT,
+    CHORE_PATH, CHORE_TAG, CLAIM_PATH, CLAIM_POLL, HELLO_PATH, SNAPSHOT_PATH, JOBS_PATH, LATE_AFTER, LOOPBACK, MACHINES_PATH, PESTO, RELEASE_AFTER,
     RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
 };
 use kalo_chess::pipeline::preprocessing_config;
@@ -420,7 +420,7 @@ fn home_of(local: Dirs, remote: Dirs) -> Dirs {
 }
 
 /// The numbers of `config`'s runs here and on the remote, ascending: one started in another smithy
-/// is listed, viewed, tuned and installed here too.
+/// is listed, viewed, tuned and snapshotted here too.
 fn known_runs(config: &str) -> Vec<u32> {
     let mut numbers = runs_of(config);
     numbers.extend(players::runs_in(&remote::remote_path(&players::config_dir(config))));
@@ -1566,17 +1566,17 @@ fn handle(shared: &Mutex<Shared>, token: &str, request: &Request, now: Instant) 
 /// (`job_name`), and a stop of the job, the smithy staying up.
 const JOB_PATH: &str = "/control/job";
 const JOB_STOP_PATH: &str = "/control/job/stop";
-/// The page's Install: an install asked of a claimed arena (`ask_install`).
-const INSTALL_CONTROL_PATH: &str = "/control/install";
+/// The page's Snapshot: a snapshot asked of a claimed arena (`ask_snapshot`).
+const SNAPSHOT_CONTROL_PATH: &str = "/control/snapshot";
 /// What the loopback listener alone answers beside the arenas' requests: `GET /control/status`, the
 /// job as it stands; `POST /control/stop`, the first Ctrl+C's stop of the job and the smithy; and the
-/// page's job controls and Install. These carry `Status::control_token`, which only the loopback page
+/// page's job controls and Snapshot. These carry `Status::control_token`, which only the loopback page
 /// is given: another site open in the same browser can neither read it nor send the header without it.
 fn control(status: &Status, request: &Request) -> Option<Reply> {
     let from_page = request.token.as_deref() == Some(status.control_token.as_str());
     match (request.method.as_str(), request.path.as_str()) {
-        ("POST", INSTALL_CONTROL_PATH) if !from_page => Some(Reply::error(403, "only the page opened on this machine asks for an install")),
-        ("POST", INSTALL_CONTROL_PATH) => Some(ask_install(&status.claims, &String::from_utf8_lossy(&request.body))),
+        ("POST", SNAPSHOT_CONTROL_PATH) if !from_page => Some(Reply::error(403, "only the page opened on this machine asks for a snapshot")),
+        ("POST", SNAPSHOT_CONTROL_PATH) => Some(ask_snapshot(&status.claims, &String::from_utf8_lossy(&request.body))),
         ("GET", STATUS_PATH) => Some(reply("OK", status.text().as_bytes())),
         ("POST", STOP_PATH) => {
             status.job_stop.store(true, Ordering::SeqCst);
@@ -1866,7 +1866,7 @@ fn network_scale(player: &str) -> Option<u64> {
     load_run_config(&parsed.run()).ok()?.0.scale
 }
 
-/// `player`, unless it is a scaled run's network: one is never installed nor a side of a test, its
+/// `player`, unless it is a scaled run's network: one is never snapshotted nor a side of a test, its
 /// strength meaning nothing outside its run, whose round robin and gate alone play it.
 fn unscaled(player: &str) -> Result<(), String> {
     match network_scale(player) {
@@ -1875,20 +1875,20 @@ fn unscaled(player: &str) -> Result<(), String> {
     }
 }
 
-/// Whether `player` may be installed (the developer, 2026-10-29): PeSTO, or a full run's generation
+/// Whether `player` may be snapshotted (the developer, 2026-10-29): PeSTO, or a full run's generation
 /// winner, one that passed its gate; never a candidate nor a scaled run's network.
-fn installable(player: &str) -> Result<(), String> {
+fn may_snapshot(player: &str) -> Result<(), String> {
     if player == PESTO {
         return Ok(());
     }
     unscaled(player)?;
     let parsed = players::parse_network_name(player)?;
     if parsed.candidate.is_some() {
-        return Err(format!("{player} is a candidate: only a generation's winner is installed"));
+        return Err(format!("{player} is a candidate: only a generation's winner is snapshotted"));
     }
     players::run_winner(&run_home(&parsed.run()).root, parsed.generation)
         .map(|_| ())
-        .map_err(|_| format!("{player} has no winner that passed its gate: only a generation's winner is installed"))
+        .map_err(|_| format!("{player} has no winner that passed its gate: only a generation's winner is snapshotted"))
 }
 
 fn tune_args(player: &str) -> Result<tune::TuneArgs, String> {
@@ -1974,8 +1974,8 @@ struct Claims {
     claim: Claim,
     /// Since when the job has dealt nothing, `None` while it deals.
     idle_since: Mutex<Option<Instant>>,
-    /// The targets an install is being asked of (`ask_install`): kept claimed meanwhile.
-    installing: Mutex<HashSet<String>>,
+    /// The targets a snapshot is being asked of (`ask_snapshot`): kept claimed meanwhile.
+    snapshotting: Mutex<HashSet<String>>,
     /// Where it claims them: the machines listed.
     targets: Vec<String>,
     /// The port the arenas are claimed on: `ARENA_PORT`, another in the tests.
@@ -2008,7 +2008,7 @@ impl Claims {
         Claims {
             claim,
             idle_since: Mutex::new(None),
-            installing: Mutex::new(HashSet::new()),
+            snapshotting: Mutex::new(HashSet::new()),
             targets,
             port: ARENA_PORT,
             held: Mutex::new(HashMap::new()),
@@ -2087,15 +2087,15 @@ impl Claims {
     }
 
     /// Every arena held released, the job dealing nothing: its chores closed, each arena free for
-    /// another smithy. One an install is being asked of, or runs on, is kept until it ends.
+    /// another smithy. One a snapshot is being asked of, or runs on, is kept until it ends.
     fn release_idle(&self, shared: &Mutex<Shared>) {
-        let installing = self.installing.lock().expect("the lock should not be poisoned").clone();
+        let snapshotting = self.snapshotting.lock().expect("the lock should not be poisoned").clone();
         let released: Vec<(String, String)> = {
             let mut held = self.held();
             let targets: Vec<String> = held
                 .iter()
                 .filter(|(target, arena)| {
-                    !installing.contains(*target) && arena.alive.as_ref().is_none_or(|alive| alive.install != "running")
+                    !snapshotting.contains(*target) && arena.alive.as_ref().is_none_or(|alive| alive.snapshot != "running")
                 })
                 .map(|(target, _)| target.clone())
                 .collect();
@@ -2196,8 +2196,8 @@ impl Claims {
                         machine: arena.hello.machine.clone(),
                         state: format!("{standing}{commit}"),
                         outbox: arena.alive.as_ref().map_or(0, |alive| alive.outbox),
-                        install: arena.alive.as_ref().map_or("-".to_string(), |alive| alive.install.clone()),
-                        installed: arena.alive.as_ref().map_or(Vec::new(), |alive| alive.installed.clone()),
+                        snapshot: arena.alive.as_ref().map_or("-".to_string(), |alive| alive.snapshot.clone()),
+                        snapshot_record: arena.alive.as_ref().map_or(Vec::new(), |alive| alive.snapshot_record.clone()),
                     }
                 }
                 None => {
@@ -2211,8 +2211,8 @@ impl Claims {
                         machine: String::new(),
                         state: format!("{note}{retry}"),
                         outbox: 0,
-                        install: "-".to_string(),
-                        installed: Vec::new(),
+                        snapshot: "-".to_string(),
+                        snapshot_record: Vec::new(),
                     }
                 }
             })
@@ -2247,7 +2247,7 @@ fn keep_claims(status: &Status, stop: &AtomicBool) {
 
 /// The source slot: Lc0's Convert job or a book job, one at a time. Neither uses the arenas nor the
 /// GPU, so either runs beside the arena job; both stream large files through the remote, so they
-/// exclude each other (page-install-and-books.md's design, the developer, 2026-10-26). Each is run
+/// exclude each other (the developer, 2026-10-26). Each is run
 /// as this smithy's child process (`lc0::run`, `book::run`), its lines into the smithy's log; its
 /// Stop kills the child, and a converter's curls with it.
 #[derive(Default)]
@@ -2663,10 +2663,10 @@ struct MachineView {
     machine: String,
     state: String,
     outbox: usize,
-    /// Its install, as its `Alive` says (`-`, `running`, or how the last one ended), and its
+    /// Its snapshot, as its `Alive` says (`-`, `running`, or how the last one ended), and its
     /// `kalo-chess.txt`, field by field; `-` and none for a machine not held.
-    install: String,
-    installed: Vec<(String, String)>,
+    snapshot: String,
+    snapshot_record: Vec<(String, String)>,
 }
 
 impl Status {
@@ -3942,33 +3942,33 @@ fn publish(path: &str) -> Result<String, String> {
     Ok(name)
 }
 
-/// How long an install waits for an arena it has just claimed to say hello.
-const INSTALL_JOIN_WAIT: Duration = Duration::from_secs(15);
+/// How long a snapshot waits for an arena it has just claimed to say hello.
+const SNAPSHOT_JOIN_WAIT: Duration = Duration::from_secs(15);
 
-/// The page's Install, its body `<target>` (a listed machine, as `Claims::targets` names it) and
+/// The page's Snapshot, its body `<target>` (a listed machine, as `Claims::targets` names it) and
 /// `<player>` a line each: the network the player plays put in the store
-/// (`install_network`), the arena claimed as a full job's when this smithy does not hold it (the
-/// developer, 2026-10-29), then the install asked of it, which answers at once and runs it on its
-/// own; its `Alive` says how it goes. The arena is kept claimed until its install ends.
-fn ask_install(claims: &Claims, body: &str) -> Reply {
+/// (`snapshot_network`), the arena claimed as a full job's when this smithy does not hold it (the
+/// developer, 2026-10-29), then the snapshot asked of it, which answers at once and takes it on its
+/// own; its `Alive` says how it goes. The arena is kept claimed until its snapshot ends.
+fn ask_snapshot(claims: &Claims, body: &str) -> Reply {
     let lines: Vec<&str> = body.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
     let [target, player] = lines[..] else {
-        return Reply::error(400, "an install is a machine and a player, a line each");
+        return Reply::error(400, "a snapshot is a machine and a player, a line each");
     };
-    if let Err(message) = installable(player) {
+    if let Err(message) = may_snapshot(player) {
         return Reply::error(400, &message);
     }
     if !claims.targets.iter().any(|listed| listed == target) {
         return Reply::error(400, &format!("{target} is not in {MACHINES_PATH}"));
     }
-    claims.installing.lock().expect("the lock should not be poisoned").insert(target.to_string());
-    let reply = install_on(claims, target, player);
-    claims.installing.lock().expect("the lock should not be poisoned").remove(target);
+    claims.snapshotting.lock().expect("the lock should not be poisoned").insert(target.to_string());
+    let reply = snapshot_on(claims, target, player);
+    claims.snapshotting.lock().expect("the lock should not be poisoned").remove(target);
     reply
 }
 
-/// `ask_install`'s claim, if needed, and its request, `target` kept claimed meanwhile.
-fn install_on(claims: &Claims, target: &str, player: &str) -> Reply {
+/// `ask_snapshot`'s claim, if needed, and its request, `target` kept claimed meanwhile.
+fn snapshot_on(claims: &Claims, target: &str, player: &str) -> Reply {
     if !claims.held().contains_key(target) {
         claims.claim_one(target, false, Instant::now());
         if !claims.held().contains_key(target) {
@@ -3976,28 +3976,28 @@ fn install_on(claims: &Claims, target: &str, player: &str) -> Reply {
             return Reply::error(409, &format!("{target}'s arena could not be claimed: {note}"));
         }
     }
-    let network = match install_network(player) {
+    let network = match snapshot_network(player) {
         Ok(network) => network,
         Err(message) => return Reply::error(400, &message),
     };
-    let request = InstallRequest { boot: claims.claim.boot.clone(), network };
+    let request = SnapshotRequest { boot: claims.claim.boot.clone(), network };
     // A claim just taken: the arena says hello within a few seconds.
     let started = Instant::now();
-    let mut answer = claims.post(target, INSTALL_PATH, request.text().as_bytes());
-    while matches!(&answer, Ok((word, _)) if word == "UNJOINED") && started.elapsed() < INSTALL_JOIN_WAIT {
+    let mut answer = claims.post(target, SNAPSHOT_PATH, request.text().as_bytes());
+    while matches!(&answer, Ok((word, _)) if word == "UNJOINED") && started.elapsed() < SNAPSHOT_JOIN_WAIT {
         std::thread::sleep(Duration::from_secs(1));
-        answer = claims.post(target, INSTALL_PATH, request.text().as_bytes());
+        answer = claims.post(target, SNAPSHOT_PATH, request.text().as_bytes());
     }
     match answer {
         Ok((word, _)) if word == "OK" => {
-            log::info!("install of {player} asked of {target}");
+            log::info!("snapshot of {player} asked of {target}");
             // Shown at once, not at the next poll: the arena said it started.
             if let Some(alive) = claims.held().get_mut(target).and_then(|held| held.alive.as_mut()) {
-                alive.install = "running".to_string();
+                alive.snapshot = "running".to_string();
             }
             reply("OK", b"")
         }
-        Ok((word, _)) if word == "BUSY" => Reply::error(409, "an install runs there: wait for its end"),
+        Ok((word, _)) if word == "BUSY" => Reply::error(409, "a snapshot runs there: wait for its end"),
         Ok((word, _)) if word == "UNJOINED" => Reply::error(409, "that arena has not said hello yet: try again in a few seconds"),
         Ok((word, _)) => Reply::error(409, &format!("the arena answered {word}")),
         Err(message) => Reply::error(409, &message),
@@ -4007,7 +4007,7 @@ fn install_on(claims: &Claims, target: &str, player: &str) -> Reply {
 /// The network the player `player` plays, by its name in the store, put there first with its records
 /// (`publish`); `pesto` as it is. Its `candidate.txt` and `parameters.txt` go first and every time, so
 /// they are there as soon as the network is, a tune's parameters as they now are.
-fn install_network(player: &str) -> Result<String, String> {
+fn snapshot_network(player: &str) -> Result<String, String> {
     let Some(path) = players::KaloChessPlayer::resolve(player)?.network else {
         return Ok(PESTO.to_string());
     };
@@ -5840,8 +5840,8 @@ mod tests {
                                 in_flight: 0,
                                 sent: 0,
                                 outbox: 2,
-                                install: "-".to_string(),
-                                installed: Vec::new(),
+                                snapshot: "-".to_string(),
+                                snapshot_record: Vec::new(),
                             };
                             Reply::status("OK", alive.text().as_bytes())
                         }
@@ -5879,7 +5879,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_dealing_nothing_for_the_grace_releases_its_arenas_but_one_installing() {
+    fn a_job_dealing_nothing_for_the_grace_releases_its_arenas_but_one_snapshotting() {
         // Two names for this machine, so nothing waits on a lookup.
         let (gamma, delta) = (LOOPBACK, "localhost");
         let claims = Claims::new(test_claim(), vec![gamma.to_string(), delta.to_string()]);
@@ -5888,7 +5888,7 @@ mod tests {
         for target in [gamma, delta] {
             claims.held().insert(target.to_string(), Held { hello: hello(target), answered: now, alive: None });
         }
-        claims.installing.lock().unwrap().insert(delta.to_string());
+        claims.snapshotting.lock().unwrap().insert(delta.to_string());
         // Port 1: nothing answers, so each release and poll fails quietly.
         let mut claims = claims;
         claims.port = 1;
@@ -5896,7 +5896,7 @@ mod tests {
         claims.round(&shared, now);
         assert_eq!(claims.held().len(), 2, "idle, but within the grace");
         claims.round(&shared, now + CLAIM_IDLE_GRACE);
-        assert_eq!(claims.held().keys().collect::<Vec<_>>(), vec![delta], "released, but the arena installing");
+        assert_eq!(claims.held().keys().collect::<Vec<_>>(), vec![delta], "released, but the arena snapshotting");
     }
 
     #[test]

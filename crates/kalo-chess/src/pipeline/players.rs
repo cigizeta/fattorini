@@ -1,5 +1,5 @@
-//! What a network player's name means, for both binaries: `arena` plays it, `smithy install` installs
-//! it, and neither may read a name differently from the other.
+//! What a network player's name means, for both binaries: `arena` plays it, and takes a snapshot
+//! of it when the smithy asks, and neither may read a name differently from the other.
 //!
 //! - `<config>-g<g>-l<lambda>-r<n>` and `<config>-g<g>-r<n>` (`NetworkName`), of run `<n>` of
 //!   `<config>` (`run_name`: `<config>-r<n>`) in `data/chess/networks/<config>/run-<n>/`: that lambda's

@@ -568,7 +568,7 @@ pub struct Engine {
     /// `EvalFile`. MultiPV, an analysis setting, keeps the evaluator's own.
     parameters: SearchParameters,
     /// The network loaded at startup and advertised as `EvalFile`'s default, empty for the
-    /// PeSTO evaluation. See `installed_eval_file` for where it comes from.
+    /// PeSTO evaluation. See `startup_eval_file` for where it comes from.
     default_eval_file: String,
     /// Whether the next `go` pins this process to a core group (`core_pinning.rs`): set by `run`
     /// under `--lichess`, cleared by the first `go`, so the engine pins at most once. At a `go`,
@@ -1177,7 +1177,7 @@ fn ponder_move(board: &Board, pv: &[Move], tt: &TranspositionTable) -> Option<Mo
 /// that fails to load ends the process, rather than being skipped the way a bad SyzygyPath is:
 /// playing on with the PeSTO evaluation would silently be a different engine from the one
 /// asked for, and a match, a GUI or a Lichess game would get the wrong thing. That holds for the
-/// installed default as much as for a GUI's `EvalFile`. stdout is UCI-only, so the reason goes to
+/// network beside the binary as much as for a GUI's `EvalFile`. stdout is UCI-only, so the reason goes to
 /// stderr.
 fn load_evaluator_or_exit(path: &str) -> Option<Arc<Network>> {
     if path.is_empty() {
@@ -1197,11 +1197,11 @@ fn load_evaluator_or_exit(path: &str) -> Option<Arc<Network>> {
     }
 }
 
-/// The name of the network an installed engine plays with, next to its own binary: `smithy
-/// install` puts the network it installs there, so every GUI and lichess-bot get it with no
-/// `EvalFile` to configure. A build in `target/` has none beside it, so development, matches and
-/// gates keep the PeSTO evaluation unless they send `EvalFile`.
-const INSTALLED_EVAL_FILE: &str = "kalo-chess.nnue";
+/// The name of the network an engine plays with when it sits next to its binary: a snapshot puts its
+/// network there (the arena's `snapshot.rs`), so every GUI and lichess-bot get it with no `EvalFile`
+/// to configure. A build in `target/` has none beside it, so development, matches and gates keep the
+/// PeSTO evaluation unless they send `EvalFile`.
+const EVAL_FILE_BESIDE: &str = "kalo-chess.nnue";
 
 /// The `.nnue` a build embeds when `KALO_CHESS_EVALFILE` names one at build time (`build.rs`), empty
 /// otherwise. A release will be built this way. No tuning comes with it: no file sits beside it.
@@ -1211,11 +1211,11 @@ const EMBEDDED_NETWORK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedd
 /// network; a GUI sending it back keeps that network.
 const EMBEDDED_EVAL_FILE: &str = "<embedded>";
 
-/// The network an engine starts with: `INSTALLED_EVAL_FILE` beside the running executable if it
+/// The network an engine starts with: `EVAL_FILE_BESIDE` beside the running executable if it
 /// exists, else the embedded network if the build has one, else empty, the PeSTO
 /// evaluation. `current_exe` resolves a symlink to the binary, so a link elsewhere still finds the
-/// installed network.
-pub fn installed_eval_file() -> String {
+/// network beside it.
+pub fn startup_eval_file() -> String {
     let beside = std::env::current_exe().ok().map(|executable| eval_file_beside(&executable)).filter(|path| path.is_file());
     if let Some(path) = beside {
         return path.to_string_lossy().into_owned();
@@ -1226,16 +1226,16 @@ pub fn installed_eval_file() -> String {
     String::new()
 }
 
-/// The network at `path` as the engine would load it (`installed_eval_file`'s value included), the
+/// The network at `path` as the engine would load it (`startup_eval_file`'s value included), the
 /// PeSTO evaluation for an empty one: what `kalo-chess bench` searches with.
 pub fn evaluator_for(path: &str) -> Option<Arc<Network>> {
     load_evaluator_or_exit(path)
 }
 
-/// Where `installed_eval_file` looks, for `executable`. The whole file name is replaced, so
+/// Where `startup_eval_file` looks, for `executable`. The whole file name is replaced, so
 /// Windows' `kalo-chess.exe` gets `kalo-chess.nnue` too.
 fn eval_file_beside(executable: &std::path::Path) -> std::path::PathBuf {
-    executable.with_file_name(INSTALLED_EVAL_FILE)
+    executable.with_file_name(EVAL_FILE_BESIDE)
 }
 
 /// The only place that actually touches stdin/stdout -- everything it does (parsing,
@@ -1254,7 +1254,7 @@ fn eval_file_beside(executable: &std::path::Path) -> std::path::PathBuf {
 /// `lichess` is the command line's `--lichess`: the first `go` pins the process to a free core
 /// group (`core_pinning.rs`).
 pub fn run(lichess: bool) {
-    let mut engine = Engine::with_default_eval_file(installed_eval_file());
+    let mut engine = Engine::with_default_eval_file(startup_eval_file());
     engine.pin_at_next_go = lichess;
     let stdin = std::io::stdin();
 
@@ -1750,10 +1750,10 @@ mod tests {
     }
 
     #[test]
-    fn the_installed_eval_file_sits_beside_the_executable() {
+    fn the_startup_eval_file_sits_beside_the_executable() {
         assert_eq!(
-            eval_file_beside(std::path::Path::new("C:/Users/me/AppData/Local/kalo-games/bin/kalo-chess.exe")),
-            std::path::PathBuf::from("C:/Users/me/AppData/Local/kalo-games/bin/kalo-chess.nnue")
+            eval_file_beside(std::path::Path::new("C:/engines/kalo-chess.exe")),
+            std::path::PathBuf::from("C:/engines/kalo-chess.nnue")
         );
     }
 

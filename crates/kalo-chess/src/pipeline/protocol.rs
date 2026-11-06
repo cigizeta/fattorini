@@ -13,7 +13,7 @@
 //!   arena unpolled for `RELEASE_AFTER` releases itself; a smithy unanswered for `LATE_AFTER` says the
 //!   arena is late, for `RELEASE_AFTER` lost, and closes its chore so its work is dealt again.
 //! - `POST /release` with the boot id: the arena idles again, from a smithy stopping.
-//! - `POST /install` with an `InstallRequest`: `OK`, the install started on a thread of the arena's
+//! - `POST /snapshot` with a `SnapshotRequest`: `OK`, the snapshot started on a thread of the arena's
 //!   own, its workers playing on; `BUSY` while one runs; `UNCLAIMED` (not this boot's), `UNJOINED`
 //!   (no store to read from yet), or `400` with what is wrong in it. It builds `kalo-chess` in release, minutes, so it is never waited for: the
 //!   `Alive` of the polls says how it stands, and the `kalo-chess.txt` it left.
@@ -60,7 +60,7 @@ pub const ARENA_PORT: u16 = 47_823;
 pub const CLAIM_PATH: &str = "/claim";
 pub const ALIVE_PATH: &str = "/alive";
 pub const RELEASE_PATH: &str = "/release";
-pub const INSTALL_PATH: &str = "/install";
+pub const SNAPSHOT_PATH: &str = "/snapshot";
 
 /// How often the smithy claims the machines it lacks and polls those it holds.
 pub const CLAIM_POLL: Duration = Duration::from_secs(10);
@@ -236,38 +236,38 @@ pub struct Alive {
     pub sent: u64,
     /// Finished tasks it holds, not yet sent.
     pub outbox: usize,
-    /// Its install: `-` before any, `running`, or how the last one ended, one line.
-    pub install: String,
-    /// The `kalo-chess.txt` beside the engine installed on its machine, field by field in order; none
-    /// before a first install.
-    pub installed: Vec<(String, String)>,
+    /// Its snapshot: `-` before any, `running`, or how the last one ended, one line.
+    pub snapshot: String,
+    /// The `kalo-chess.txt` of the snapshot on its machine, field by field in order; none before a
+    /// first snapshot.
+    pub snapshot_record: Vec<(String, String)>,
 }
 
-/// What starts an `Alive`'s line of `installed`, before the field's name.
-const INSTALLED_PREFIX: &str = "installed.";
+/// What starts an `Alive`'s line of `snapshot_record`, before the field's name.
+const RECORD_PREFIX: &str = "record.";
 
 impl Alive {
     pub fn text(&self) -> String {
         let mut text = format!(
-            "session\t{}\nchore\t{}\nin_flight\t{}\nsent\t{}\noutbox\t{}\ninstall\t{}\n",
+            "session\t{}\nchore\t{}\nin_flight\t{}\nsent\t{}\noutbox\t{}\nsnapshot\t{}\n",
             self.session,
             self.chore,
             self.in_flight,
             self.sent,
             self.outbox,
-            self.install.replace('\n', "; ")
+            self.snapshot.replace('\n', "; ")
         );
-        for (name, value) in &self.installed {
-            text.push_str(&format!("{INSTALLED_PREFIX}{name}\t{value}\n"));
+        for (name, value) in &self.snapshot_record {
+            text.push_str(&format!("{RECORD_PREFIX}{name}\t{value}\n"));
         }
         text
     }
 
     pub fn parse(text: &str) -> Result<Alive, String> {
         let map = fields(text);
-        let installed = text
+        let snapshot_record = text
             .lines()
-            .filter_map(|line| line.strip_prefix(INSTALLED_PREFIX)?.split_once('\t'))
+            .filter_map(|line| line.strip_prefix(RECORD_PREFIX)?.split_once('\t'))
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect();
         Ok(Alive {
@@ -276,30 +276,30 @@ impl Alive {
             in_flight: field(&map, "in_flight", "alive")?,
             sent: field(&map, "sent", "alive")?,
             outbox: field(&map, "outbox", "alive")?,
-            install: field(&map, "install", "alive")?,
-            installed,
+            snapshot: field(&map, "snapshot", "alive")?,
+            snapshot_record,
         })
     }
 }
 
-/// What the smithy asks an arena to install: the claim's boot id, as the polls carry it, and the
-/// network, by its path in the store (`data/...`, as a chore's `Player` names it) or `pesto`.
+/// What the smithy asks an arena to take a snapshot of: the claim's boot id, as the polls carry it,
+/// and the network, by its path in the store (`data/...`, as a chore's `Player` names it) or `pesto`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct InstallRequest {
+pub struct SnapshotRequest {
     pub boot: String,
     pub network: String,
 }
 
-impl InstallRequest {
+impl SnapshotRequest {
     pub fn text(&self) -> String {
         format!("boot\t{}\nnetwork\t{}\n", self.boot, self.network)
     }
 
-    pub fn parse(text: &str) -> Result<InstallRequest, String> {
+    pub fn parse(text: &str) -> Result<SnapshotRequest, String> {
         let map = fields(text);
-        Ok(InstallRequest {
-            boot: field(&map, "boot", "install")?,
-            network: field(&map, "network", "install")?,
+        Ok(SnapshotRequest {
+            boot: field(&map, "boot", "snapshot")?,
+            network: field(&map, "network", "snapshot")?,
         })
     }
 }
@@ -673,26 +673,26 @@ mod tests {
             in_flight: 4,
             sent: 17,
             outbox: 1,
-            install: "-".to_string(),
-            installed: Vec::new(),
+            snapshot: "-".to_string(),
+            snapshot_record: Vec::new(),
         };
         assert_eq!(Alive::parse(&alive.text()), Ok(alive.clone()));
-        alive.install = "done: installed pesto".to_string();
-        alive.installed = vec![("network".to_string(), "pesto".to_string()), ("commit".to_string(), "abc (modified)".to_string())];
+        alive.snapshot = "done: took pesto".to_string();
+        alive.snapshot_record = vec![("network".to_string(), "pesto".to_string()), ("commit".to_string(), "abc (modified)".to_string())];
         assert_eq!(Alive::parse(&alive.text()), Ok(alive.clone()));
-        alive.install = "failed: two\nlines".to_string();
-        assert_eq!(Alive::parse(&alive.text()).unwrap().install, "failed: two; lines", "one line");
+        alive.snapshot = "failed: two\nlines".to_string();
+        assert_eq!(Alive::parse(&alive.text()).unwrap().snapshot, "failed: two; lines", "one line");
         assert!(Claim::parse("smithy\tbeta\n").is_err());
     }
 
     #[test]
-    fn an_install_request_reads_back() {
-        let request = InstallRequest {
+    fn a_snapshot_request_reads_back() {
+        let request = SnapshotRequest {
             boot: "b00t".to_string(),
             network: "data/chess/networks/fine/run-1/gen-2/champion.nnue".to_string(),
         };
-        assert_eq!(InstallRequest::parse(&request.text()), Ok(request));
-        assert!(InstallRequest::parse("boot\tb00t\n").is_err());
+        assert_eq!(SnapshotRequest::parse(&request.text()), Ok(request));
+        assert!(SnapshotRequest::parse("boot\tb00t\n").is_err());
     }
 
     #[test]
