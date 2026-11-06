@@ -53,8 +53,9 @@ impl SprtSpec {
 /// One of the three decision rules (`runner::SequentialTest`), with its one value where it has one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Rule {
-    /// First past n/2 wins, n/2 each is drawn. n is even: results arrive in pairs.
-    BestOf(u32),
+    /// First past n/2 wins, n/2 each is drawn. n is even: results arrive in pairs. `full` plays all
+    /// n games even once the leader cannot be caught, so the score is always over n.
+    BestOf { n: u32, full: bool },
     /// Whether the challenger (the second player) is at least `elo_d` stronger (`sprt.rs`).
     Sprt(SprtSpec),
     /// Which of the two is stronger (`duel.rs`).
@@ -62,12 +63,12 @@ pub enum Rule {
 }
 
 impl Rule {
-    /// A best of `n`, or why `n` is not one.
-    pub fn best_of(n: u32) -> Result<Rule, String> {
+    /// A best of `n`, all of it played when `full`, or why `n` is not one.
+    pub fn best_of(n: u32, full: bool) -> Result<Rule, String> {
         if n < 2 || !n.is_multiple_of(2) {
             return Err(format!("a best of n needs an even n of at least 2, since results arrive in pairs, got {n}"));
         }
-        Ok(Rule::BestOf(n))
+        Ok(Rule::BestOf { n, full })
     }
 
     /// An SPRT at `elo_d`, or why `elo_d` is not a margin.
@@ -81,7 +82,8 @@ impl Rule {
     /// same test.
     pub fn spec_text(&self) -> String {
         match self {
-            Rule::BestOf(n) => format!("best-of {n}"),
+            Rule::BestOf { n, full: false } => format!("best-of {n}"),
+            Rule::BestOf { n, full: true } => format!("best-of {n} full"),
             Rule::Sprt(spec) => format!("sprt elo_d {}", spec.elo_d),
             Rule::Duel => "duel".to_string(),
         }
@@ -268,10 +270,11 @@ mod tests {
 
     #[test]
     fn a_rule_names_itself_by_its_value() {
-        assert_eq!(Rule::best_of(12).unwrap().spec_text(), "best-of 12");
+        assert_eq!(Rule::best_of(12, false).unwrap().spec_text(), "best-of 12");
+        assert_eq!(Rule::best_of(400, true).unwrap().spec_text(), "best-of 400 full");
         assert_eq!(Rule::sprt(35.0).unwrap().spec_text(), "sprt elo_d 35");
         assert_eq!(Rule::Duel.spec_text(), "duel");
-        assert!(Rule::best_of(7).is_err() && Rule::best_of(0).is_err());
+        assert!(Rule::best_of(7, false).is_err() && Rule::best_of(0, true).is_err());
     }
 
     #[test]

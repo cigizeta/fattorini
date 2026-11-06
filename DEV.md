@@ -307,9 +307,10 @@ by a tune scaled as their run, to debug the tune itself.
 ./bin/arena duel pesto@untuned pesto-psq-g1-r1@tuned --time 10+0.1
 ```
 
-- `match <a> <b> <n>`: n games.
+- `match <a> <b> [<n>]`: a best of n games, 400 by default, stopped once decided; `--full` plays
+  all n, so the score is always over n.
 - `sprt <a> <b> <elo>`: whether b is at least that many Elo stronger.
-- `duel <a> <b>`: until one is shown stronger, or 1000 games.
+- `duel <a> <b>`: until one is shown stronger, or 800 games (400 pairs).
 
 Each needs `--depth <d>` or `--time <base+inc>`. A player is a Kalo Chess player, `pesto` or a forge run's
 network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@tuned` or

@@ -37,6 +37,19 @@ the static C runtime, the notices, debugging while private.
 9. **Only the `.exe` is uploaded** (the developer, 2026-11-06), not the network. The notes and any
    accompanying text need a design of their own (below).
 
+10. **Strength: no Elo, two rows against Stockfish's Skill Level** (the developer, 2026-11-06):
+    the highest Skill Level the release beats and the lowest that beats it, adjacent if possible,
+    bracketing its strength with nothing claimed on a rating scale. Each row names the Stockfish
+    version and the conditions, since a Skill Level's strength depends on both:
+
+    | Opponent | Time control | Threads / Hash | Book | Games | W-L-D | Score |
+    |---|---|---|---|---|---|---|
+    | Stockfish *version*, Skill Level *n* | | | | | | |
+    | Stockfish *version*, Skill Level *n + 1* | | | | | | |
+
+    Measured again for each release against the same Stockfish version while it can be, so
+    releases compare. Open: the time control, the number of games, and what "beats" means.
+
 ## Proposed
 
 - **The notices embedded:** the dependencies' MIT and Apache notices must accompany a distributed
