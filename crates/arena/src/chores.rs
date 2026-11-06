@@ -1,5 +1,5 @@
 //! `arena start|stop|status`: an arena, doing the smithy's chores (`smithy start`), over HTTP
-//! (`temper_chess::pipeline::protocol`). Started by hand, it idles on `ARENA_PORT` until a smithy claims it,
+//! (`kalo_chess::pipeline::protocol`). Started by hand, it idles on `ARENA_PORT` until a smithy claims it,
 //! then says hello to that smithy and plays the chores it is given, until stopped. It serves one
 //! smithy at a time: another's claim is turned away while the claim is polled, and a claim no smithy
 //! has polled for `RELEASE_AFTER` is released, the arena idle again. A chore is tasks alike but for
@@ -30,15 +30,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use temper_chess::nnue::Network;
+use kalo_chess::nnue::Network;
 use lan_http::{self as http, Listener, Reply, Request};
-use temper_chess::pipeline::protocol::{
+use kalo_chess::pipeline::protocol::{
     self, parse_entries, task_body, Alive, Chore, Claim, Entry, Hello, HelloReply, InstallRequest, Limit, Player, TaskKind, ALIVE_PATH,
     ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, INSTALL_PATH, LOOPBACK, PESTO, RELEASE_AFTER,
     RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
 };
-use temper_chess::tablebase::SyzygyTablebase;
-use temper_chess::tt::TranspositionTable;
+use kalo_chess::tablebase::SyzygyTablebase;
+use kalo_chess::tt::TranspositionTable;
 
 use super::config::ControlSpec;
 use super::player::Control;
@@ -46,7 +46,7 @@ use super::in_process::InProcessPlayer;
 use super::random_book::RandomBook;
 use super::runner::{self, Recording};
 use super::self_play::{play_game_pgn, TT_SIZE_MB};
-use temper_chess::pipeline::spsa;
+use kalo_chess::pipeline::spsa;
 
 use super::{ctrlc_handler, data_root as arena_data_root, install, machine, pairing};
 
@@ -742,7 +742,7 @@ impl Arena {
         let mut challenger_player = InProcessPlayer::new(challenger_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, challenger.parameters);
         let mut teacher_player = InProcessPlayer::new(teacher_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, teacher.parameters);
         let recording =
-            Recording { event_name: "temper-chess arena", round: 1, champion_name: &teacher.network, challenger_name: &challenger.network, pgn_path: "" };
+            Recording { event_name: "kalo-chess arena", round: 1, champion_name: &teacher.network, challenger_name: &challenger.network, pgn_path: "" };
         // A tune's games end early by the tablebase, win and draw rules; a round robin's and a gate's never.
         let early_stop = task.adjudicate.then_some(&*self.tablebase);
         let finished = runner::play_games(
@@ -924,12 +924,12 @@ pub(crate) fn wait_for(path: &str, timeout: Duration, poll: Duration, stop: &Ato
     }
 }
 
-/// The nodes per second of one search thread on this machine with `network`, loaded: `temper-chess bench` on
+/// The nodes per second of one search thread on this machine with `network`, loaded: `kalo-chess bench` on
 /// `threads` threads at once, as the smithy benches its own (its `loaded_bench`), the mean of
 /// the threads.
 fn loaded_bench(network: Option<&Network>, threads: usize) -> f64 {
     let runs: Vec<(u64, f64)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || temper_chess::bench::bench(network))).collect();
+        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || kalo_chess::bench::bench(network))).collect();
         handles.into_iter().map(|handle| handle.join().expect("a bench thread panicked")).collect()
     });
     runs.iter().map(|&(nodes, seconds)| nodes as f64 / seconds.max(1e-9)).sum::<f64>() / runs.len().max(1) as f64
@@ -1086,7 +1086,7 @@ mod tests {
         };
         assert!(check(&chore(Limit::Depth(9), None)).is_ok());
         assert!(check(&chore(Limit::Clock("10+0.1".to_string()), None)).is_err());
-        assert!(check(&chore(Limit::Depth(9), Some(temper_chess::search::SearchParameters::DEFAULT))).is_ok());
+        assert!(check(&chore(Limit::Depth(9), Some(kalo_chess::search::SearchParameters::DEFAULT))).is_ok());
     }
 
     fn matchup(first: &str, second: &str, count: u32) -> Entry {

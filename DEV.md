@@ -1,8 +1,8 @@
-# Developing Temper
+# Developing Kalo Games
 
-For what Temper is and how to run it, see [README.md](README.md).
+For what Kalo Chess is and how to run it, see [README.md](README.md).
 
-Temper is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
+Kalo Games is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
 PowerShell or cmd. Development also requires **Google Drive for desktop**, with My Drive on `G:`:
 what the machines share, such as Lc0's converted games, lives in `G:/My Drive/kalo-games`, and the scripts
 and binaries read and write it there.
@@ -12,7 +12,7 @@ and binaries read and write it there.
 The repository holds the engine, an arena that plays engines against each other, and a trainer for
 their networks. Three binaries, each with its own crate:
 
-- `temper-chess`, the engine.
+- `kalo-chess`, the engine.
 - `arena`, which plays games: matches, and, as one of the smithy's arenas, every game of a forge or
   a tune.
 - `smithy`, which makes the sources' corpora and trains networks (the smithy, dealing its jobs to
@@ -24,7 +24,7 @@ Run every binary through its script in `bin/`, which builds it when needed and r
 repository root:
 
 ```bash
-./bin/temper-chess
+./bin/kalo-chess
 ```
 
 ## One generation
@@ -136,7 +136,7 @@ The opening positions and the Syzygy tablebases (about 150 GB), into the reposit
 ```
 
 Google Drive for desktop, in streaming mode with My Drive on `G:`, on every machine, the arenas'
-included: Drive is Temper's store, `G:/My Drive/kalo-games`, the same tree as the repository's `data/`. A file
+included: Drive is Kalo Games's store, `G:/My Drive/kalo-games`, the same tree as the repository's `data/`. A file
 is made on the local disk and reaches Drive only whole, never written or appended there in place:
 
 - a run's networks (every candidate, every teacher) as soon as they are complete; the arenas read
@@ -311,10 +311,10 @@ by a tune scaled as their run, to debug the tune itself.
 - `sprt <a> <b> <elo>`: whether b is at least that many Elo stronger.
 - `duel <a> <b>`: until one is shown stronger, or 1000 games.
 
-Each needs `--depth <d>` or `--time <base+inc>`. A player is a Temper player, `pesto` or a forge run's
+Each needs `--depth <d>` or `--time <base+inc>`. A player is a Kalo Chess player, `pesto` or a forge run's
 network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@default`, `@t1` or
 `@<cp>`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
-`data/chess/engines.yaml`, with no suffix. Against an external engine, Temper plays over UCI what it has by
+`data/chess/engines.yaml`, with no suffix. Against an external engine, Kalo Chess plays over UCI what it has by
 itself, so its suffix must say it: a tuned network `@t1`, an untuned one or pesto `@default`.
 
 ## Tuning search parameters

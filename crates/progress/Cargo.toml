@@ -1,5 +1,5 @@
 # The progress of `arena` and `smithy` as their page shows it, with elapsed time, ETA and rate, and
-# their event log. Its own crate so that none of it links into the `temper-chess` engine.
+# their event log. Its own crate so that none of it links into the `kalo-chess` engine.
 [package]
 name = "progress"
 version.workspace = true

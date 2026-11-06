@@ -16,6 +16,10 @@ the venv are named `temper-games`, and older entries here use the older paths an
 repository's `data/`, and `%LOCALAPPDATA%\kalo-games` holds the installed engine alone
 (data-root-in-repository.md).
 
+**Kalo Chess from 2026-11-06 (kalo-chess-rename.md):** the engine is `kalo-chess` (crate, binary,
+`bin/kalo-chess`, `KALO_CHESS_*`, UCI name Kalo Chess), the network magic `KALO`, and the Lichess
+account `kalo-chess`. Older entries say Temper or `temper-chess`.
+
 ## Next (the developer, 2026-11-05)
 
 - **Finish kalo-games-rename.md:** every other machine's `books/` and `syzygy/` into `data/chess/`,
@@ -23,7 +27,8 @@ repository's `data/`, and `%LOCALAPPDATA%\kalo-games` holds the installed engine
 
 - **Finish temper-games-restart.md:** tests, then the Drive folders, one first commit, every machine
   on a fresh clone. The old repository is `temper-chess-archive`, archived and private.
-- **Lichess:** the account `temper-chess` is a bot since 2026-11-05 with no game played. After an
+- **Lichess:** the account `kalo-chess` exists since 2026-11-06 (kalo-chess-rename.md) and replaces
+  `temper-chess`, a bot since 2026-11-05 with no game played, to be closed. After an
   install, PeSTO plays its first one or two games on it. lichess-bot's configuration is updated;
   any other copy of it still names the old paths.
 

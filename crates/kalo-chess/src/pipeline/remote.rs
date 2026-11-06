@@ -4,7 +4,7 @@
 //! server files clients find their servers by, so every machine reads the same tree.
 //!
 //! Google Drive for desktop, Google's own Windows client in Stream mode, presents the Drive as the
-//! `G:` drive and uploads and downloads in the background. Temper only copies files into and out of
+//! `G:` drive and uploads and downloads in the background. Kalo Chess only copies files into and out of
 //! that folder: no Drive API, no OAuth app, no child process. Stream mode keeps only a cache locally, so the Drive
 //! can hold far more than the local disk.
 //!
@@ -265,7 +265,7 @@ mod tests {
     use super::*;
 
     fn fixture_dir(name: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("temper-chess-remote-test-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kalo-chess-remote-test-{name}-{}", std::process::id()));
         fs::remove_dir_all(&dir).ok();
         fs::create_dir_all(&dir).expect("failed to create the fixture directory");
         dir.to_str().unwrap().to_string()
@@ -293,8 +293,8 @@ mod tests {
     #[test]
     fn check_mounted_needs_the_root_s_parent_not_the_root() {
         let drive = fixture_dir("mounted");
-        assert_eq!(check_mounted_under(&format!("{drive}/temper-chess")), Ok(()), "the root is created by the first upload");
-        assert!(matches!(check_mounted_under(&format!("{drive}/missing/temper-chess")), Err(RemoteError::NotMounted(_))));
+        assert_eq!(check_mounted_under(&format!("{drive}/kalo-chess")), Ok(()), "the root is created by the first upload");
+        assert!(matches!(check_mounted_under(&format!("{drive}/missing/kalo-chess")), Err(RemoteError::NotMounted(_))));
         fs::remove_dir_all(&drive).ok();
     }
 
@@ -340,7 +340,7 @@ mod tests {
             "alpha-20260926-1405.pgn.zst.count",
             "alpha.pgn",
             "alpha.count",
-            "temper-chess-self.lock",
+            "kalo-chess-self.lock",
             "x.pgn.zst.partial",
         ] {
             assert!(!is_segment_file(name), "{name:?}");

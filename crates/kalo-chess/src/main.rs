@@ -1,4 +1,4 @@
-/// `temper-chess` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
+/// `kalo-chess` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
 /// `config.yml` (`engine_options`), pins each game's engine to its own physical cores
 /// (`core_pinning.rs`). `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
@@ -9,18 +9,18 @@ fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match arguments.as_slice() {
-        [] => temper_chess::uci::run(false),
-        ["--lichess"] => temper_chess::uci::run(true),
-        ["bench"] => run_bench(temper_chess::bench::BENCH_DEPTH),
+        [] => kalo_chess::uci::run(false),
+        ["--lichess"] => kalo_chess::uci::run(true),
+        ["bench"] => run_bench(kalo_chess::bench::BENCH_DEPTH),
         ["bench", depth] => match depth.parse::<u32>() {
             Ok(depth) if depth > 0 => run_bench(depth),
             _ => {
-                eprintln!("temper-chess bench: the depth must be a positive integer, not {depth}");
+                eprintln!("kalo-chess bench: the depth must be a positive integer, not {depth}");
                 std::process::exit(2);
             }
         },
         _ => {
-            eprintln!("usage: temper-chess [--lichess] | temper-chess bench [<depth>]");
+            eprintln!("usage: kalo-chess [--lichess] | kalo-chess bench [<depth>]");
             std::process::exit(2);
         }
     }
@@ -44,16 +44,16 @@ fn refuse_an_older_cpu() {
     }
     if !missing.is_empty() {
         eprintln!(
-            "temper-chess needs an x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell or later, AMD Zen or later; this one lacks {}",
+            "kalo-chess needs an x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell or later, AMD Zen or later; this one lacks {}",
             missing.join(", ")
         );
         std::process::exit(1);
     }
 }
 
-/// `temper-chess bench [<depth>]`, with the network the engine itself would start with.
+/// `kalo-chess bench [<depth>]`, with the network the engine itself would start with.
 fn run_bench(depth: u32) {
-    let evaluator = temper_chess::uci::evaluator_for(&temper_chess::uci::installed_eval_file());
-    let (nodes, seconds) = temper_chess::bench::bench_at_depth(evaluator.as_deref(), depth);
-    println!("{}", temper_chess::bench::bench_line(nodes, seconds));
+    let evaluator = kalo_chess::uci::evaluator_for(&kalo_chess::uci::installed_eval_file());
+    let (nodes, seconds) = kalo_chess::bench::bench_at_depth(evaluator.as_deref(), depth);
+    println!("{}", kalo_chess::bench::bench_line(nodes, seconds));
 }

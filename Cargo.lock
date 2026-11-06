@@ -89,6 +89,7 @@ name = "arena"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "kalo-chess",
  "lan-http",
  "log",
  "mimalloc",
@@ -100,7 +101,6 @@ dependencies = [
  "serde",
  "serde_yaml",
  "shakmaty",
- "temper-chess",
  "time",
  "windows-sys",
  "zstd 0.13.3",
@@ -753,10 +753,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalo-chess"
+version = "0.1.0"
+dependencies = [
+ "num_enum",
+ "pgn-reader",
+ "serde",
+ "serde_yaml",
+ "shakmaty",
+ "shakmaty-syzygy",
+ "windows-sys",
+ "zstd 0.13.3",
+]
+
+[[package]]
 name = "lan-http"
 version = "0.1.0"
 dependencies = [
- "temper-chess",
+ "kalo-chess",
  "tiny_http",
  "ureq",
 ]
@@ -1008,8 +1022,8 @@ dependencies = [
 name = "pgn-replay"
 version = "0.1.0"
 dependencies = [
+ "kalo-chess",
  "shakmaty",
- "temper-chess",
 ]
 
 [[package]]
@@ -1371,6 +1385,7 @@ version = "0.1.0"
 dependencies = [
  "ctrlc",
  "flate2",
+ "kalo-chess",
  "lan-http",
  "log",
  "pgn-reader",
@@ -1382,7 +1397,6 @@ dependencies = [
  "serde_yaml",
  "shakmaty",
  "tch",
- "temper-chess",
  "time",
  "zstd 0.13.3",
 ]
@@ -1459,20 +1473,6 @@ dependencies = [
  "thiserror 1.0.69",
  "torch-sys",
  "zip",
-]
-
-[[package]]
-name = "temper-chess"
-version = "0.1.0"
-dependencies = [
- "num_enum",
- "pgn-reader",
- "serde",
- "serde_yaml",
- "shakmaty",
- "shakmaty-syzygy",
- "windows-sys",
- "zstd 0.13.3",
 ]
 
 [[package]]

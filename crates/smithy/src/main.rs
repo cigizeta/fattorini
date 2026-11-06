@@ -3,14 +3,14 @@
 //! generation by generation, or tune a player's search parameters, every game played by the arenas
 //! (`arena start`), make a source's corpus, Lc0's converted or PeSTO's played, or make an opening
 //! book; and ask an arena to install a player for lichess-bot. The two binaries talk only through the
-//! files and requests `temper_chess::pipeline` defines.
+//! files and requests `kalo_chess::pipeline` defines.
 
 // MSVC's linker reports the import library it creates for smithy's exported symbols (the one
 // `build.rs` forces in to keep `torch_cuda.dll` linked): a side product, nothing to act on.
 #![allow(linker_messages)]
 
 // The pipeline contract, shared with `arena`.
-use temper_chess::pipeline::{preprocessing_config, remote};
+use kalo_chess::pipeline::{preprocessing_config, remote};
 
 mod cache;
 mod game_labels;

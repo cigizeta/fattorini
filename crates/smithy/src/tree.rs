@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::time::SystemTime;
 
-use temper_chess::pipeline::remote;
+use kalo_chess::pipeline::remote;
 
 use super::archive;
 

@@ -33,7 +33,7 @@ pub fn load(path: &str) -> Result<String, String> {
 /// too. No `-`: it separates the stem from the timestamp in a segment's name. Nothing that would need
 /// quoting in a path.
 pub fn validate_name(name: &str) -> Result<(), String> {
-    temper_chess::pipeline::protocol::validate_machine_name(name)
+    kalo_chess::pipeline::protocol::validate_machine_name(name)
 }
 
 fn how_to_create(path: &str) -> String {
@@ -48,7 +48,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str, contents: &str) -> String {
-        let path = std::env::temp_dir().join(format!("temper-chess-machine-test-{name}-{}.yaml", std::process::id()));
+        let path = std::env::temp_dir().join(format!("kalo-chess-machine-test-{name}-{}.yaml", std::process::id()));
         std::fs::write(&path, contents).expect("failed to write the fixture file");
         path.to_str().unwrap().to_string()
     }
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn load_explains_how_to_create_a_missing_file() {
-        let error = load("temper-chess-machine-test-no-such-file.yaml").unwrap_err();
+        let error = load("kalo-chess-machine-test-no-such-file.yaml").unwrap_err();
         assert!(error.contains("echo 'name: alpha'"), "{error}");
     }
 

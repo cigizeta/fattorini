@@ -1,27 +1,27 @@
 # Kalo Games
 
-Temper Chess is a UCI chess engine written in Rust. Its evaluation networks are trained on one PC with one
+Kalo Chess is a UCI chess engine written in Rust. Its evaluation networks are trained on one PC with one
 consumer GPU. Its training is starting again from scratch, along two routes: networks that learn
-only from Temper itself, the first generation from the PeSTO evaluation and every later one from the
+only from Kalo Chess itself, the first generation from the PeSTO evaluation and every later one from the
 previous winner; and networks whose first generation learns from the training games Leela Chess
 Zero publishes. No other engine's network is used.
 
-Support for Go, as `temper-go`, is planned but not yet started.
+Support for Go, as `kalo-go`, is planned but not yet started.
 
-To build Temper or train its networks, see [DEV.md](DEV.md).
+To build Kalo Chess or train its networks, see [DEV.md](DEV.md).
 
-Temper Chess's account on Lichess is [temper-chess](https://lichess.org/@/temper-chess).
+Kalo Chess's account on Lichess is [kalo-chess](https://lichess.org/@/kalo-chess).
 
-## Running Temper
+## Running Kalo Chess
 
-There is no release yet, so there is no `temper-chess.exe` to download. Until the first one, Temper
+There is no release yet, so there is no `kalo-chess.exe` to download. Until the first one, Kalo Chess
 has to be built from source, as [DEV.md](DEV.md) describes, and then added to any UCI GUI.
 
 Requirements:
 
 - Windows, 64-bit.
 - An x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell (2013) or later, AMD Zen 3 or later. AMD Zen 1
-  and Zen 2 run it, but slowly. There is no build for older CPUs; on one, Temper says so and exits.
+  and Zen 2 run it, but slowly. There is no build for older CPUs; on one, Kalo Chess says so and exits.
 
 ### UCI options
 
@@ -33,9 +33,9 @@ Requirements:
 | `Ponder` | false | | Think on the opponent's time. |
 | `SyzygyPath` | empty | | Syzygy tablebase folders. |
 
-## How Temper learns
+## How Kalo Chess learns
 
-Temper improves one generation at a time. The teacher, at first the PeSTO evaluation, then each
+Kalo Chess improves one generation at a time. The teacher, at first the PeSTO evaluation, then each
 generation's network, plays games against itself, searching every position, and those searches
 become the training labels. One network is trained on them, and it replaces the teacher only if it
 beats it over the board.
@@ -54,7 +54,7 @@ label = (1 - lambda) * s + lambda * z
 ```
 
 How much should the result count? It depends on how far through the game the position is, and on
-how good the teacher is. So Temper does not pick a lambda: it measures one from the teacher's own
+how good the teacher is. So Kalo Chess does not pick a lambda: it measures one from the teacher's own
 games, before training.
 
 Think of `s` and `z` as two witnesses to the position's true value, each with its own errors, and
@@ -78,7 +78,7 @@ The shape belongs to the teacher:
   from mid-game it is 0: the formula finds no noise left to correct, the scores being right about who
   is winning and only a little timid about how much.
 
-So as Temper's own networks improve, their lambda is measured afresh each generation and should move
+So as Kalo Chess's own networks improve, their lambda is measured afresh each generation and should move
 from the first shape toward the second, with no schedule to design.
 
 ## Inside
@@ -94,11 +94,11 @@ from the first shape toward the second, with no schedule to design.
 
 ## Acknowledgments
 
-Some of Temper's networks are trained with the self-play games of [Leela Chess Zero](https://lczero.org),
+Some of Kalo Chess's networks are trained with the self-play games of [Leela Chess Zero](https://lczero.org),
 from its test91 run's training data (storage.lczero.org), made available under the
 [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/), its contents
 under the [Database Contents License (DbCL) 1.0](https://opendatacommons.org/licenses/dbcl/1-0/).
-The conversion of that data into Temper's training positions is Temper's own, in `crates/smithy/src/lc0/`.
+The conversion of that data into Kalo Chess's training positions is Kalo Chess's own, in `crates/smithy/src/lc0/`.
 
 ## License
 

@@ -3,9 +3,9 @@
 
 use rand::RngExt;
 
-use temper_chess::board::chess_move::Move;
-use temper_chess::search::{tb_loss_at, tb_win_at};
-use temper_chess::tablebase::TbResult;
+use kalo_chess::board::chess_move::Move;
+use kalo_chess::search::{tb_loss_at, tb_win_at};
+use kalo_chess::tablebase::TbResult;
 
 /// The label of a position the tables know: its result under the fifty-move rule, in the band a
 /// search writes for a tablebase win one ply away, `tb_win_at(1)`, a draw 0, a loss the negative.
@@ -39,8 +39,8 @@ pub fn self_play_tablebase_move(best: &[(Move, i32)], result: TbResult, rng: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temper_chess::board::Board;
-    use temper_chess::movegen::legal::legal_moves;
+    use kalo_chess::board::Board;
+    use kalo_chess::movegen::legal::legal_moves;
 
     /// The first `count` legal moves of the start position, distinct moves to stand for any.
     fn moves(count: usize) -> Vec<Move> {

@@ -38,7 +38,7 @@ pub enum TbResult {
 /// is its mirror. Under real tournament rules (the 50-move rule enforced), a cursed win can never
 /// actually be forced and a blessed loss can never actually be lost -- so reporting either as a real
 /// win/loss score would be dishonest about what the position actually delivers under the rules
-/// Temper is meant to play by. Collapsed to `Draw`, the practically correct value, rather than kept
+/// Kalo Chess is meant to play by. Collapsed to `Draw`, the practically correct value, rather than kept
 /// distinct.
 fn wdl_to_result(wdl: Wdl) -> TbResult {
     match wdl {
@@ -53,7 +53,7 @@ fn wdl_to_result(wdl: Wdl) -> TbResult {
 /// Whether `board` is even worth probing, before touching any table file: `probe_wdl_after_
 /// zeroing` (the only WDL-only-compatible probe `shakmaty-syzygy` offers) is documented as correct
 /// only for "a position reached directly after a capture or pawn move" -- i.e. a freshly reset
-/// halfmove clock. Temper has no DTZ tables to handle the general, clock-aware case (`probe_wdl`
+/// halfmove clock. Kalo Chess has no DTZ tables to handle the general, clock-aware case (`probe_wdl`
 /// needs both WDL and DTZ), so a position reached after several quiet moves is simply not probed
 /// at all, rather than risk reporting a stale classification that doesn't account for how much of
 /// the 50-move count has already elapsed. `max_pieces` is `Tablebase::max_pieces()` -- a position
@@ -129,7 +129,7 @@ const LAST_DECIDED_PLY: i32 = 99;
 /// root's DTZ, which the tables may round, and ranks the moves. A wide margin costs only probes.
 const LABEL_MARGIN: i32 = 4;
 
-/// Thin wrapper around `shakmaty_syzygy::Tablebase<Chess>`, adapting Temper's own `Board` to the
+/// Thin wrapper around `shakmaty_syzygy::Tablebase<Chess>`, adapting Kalo Chess's own `Board` to the
 /// `shakmaty::Chess` position it expects (`to_shakmaty`).
 pub struct SyzygyTablebase {
     inner: Tablebase<Chess>,
@@ -152,8 +152,8 @@ impl SyzygyTablebase {
     #[allow(clippy::new_without_default)]
     pub fn new() -> SyzygyTablebase {
         // SAFETY: `with_mmap_filesystem` requires that no table file is modified while mapped, and
-        // turns a read error into a crash. Nothing in Temper writes a table; `bin/syzygy.sh` can
-        // rewrite an incomplete one in place, and must not run while a Temper process has the
+        // turns a read error into a crash. Nothing in Kalo Chess writes a table; `bin/syzygy.sh` can
+        // rewrite an incomplete one in place, and must not run while a Kalo Chess process has the
         // tables open, as its header says. The tables live on a local disk, where a read error is
         // a failing disk, not a condition to recover from.
         SyzygyTablebase { inner: unsafe { Tablebase::with_mmap_filesystem() } }
@@ -419,7 +419,7 @@ mod tests {
     /// tables in-process and must not play on without them unnoticed.
     #[test]
     fn from_directories_refuses_a_missing_or_empty_directory() {
-        let empty = std::env::temp_dir().join(format!("temper-chess-tablebase-empty-{}", std::process::id()));
+        let empty = std::env::temp_dir().join(format!("kalo-chess-tablebase-empty-{}", std::process::id()));
         std::fs::create_dir_all(&empty).unwrap();
         let empty = empty.to_str().unwrap().to_string();
         let missing = format!("{empty}/missing");
@@ -554,7 +554,7 @@ mod tests {
 
     /// The speed of one probe against ranking every move, printed. Not a pass or a fail: run it by
     /// hand, on the machine holding the tables, idle:
-    /// `cargo test -p temper-chess --release label_speed -- --ignored --nocapture`.
+    /// `cargo test -p kalo-chess --release label_speed -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn label_speed() {

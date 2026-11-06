@@ -4,8 +4,8 @@
 
 use std::process;
 
-use temper_chess::nnue::QuantizedPsqNetwork;
-use temper_chess::pipeline::{generation, preprocessing_config};
+use kalo_chess::nnue::QuantizedPsqNetwork;
+use kalo_chess::pipeline::{generation, preprocessing_config};
 
 use crate::feature_set::FeatureSet;
 use crate::net_config::{ArchitectureKind, NetConfig};
@@ -256,7 +256,7 @@ mod tests {
         let generation = std::env::temp_dir().join(format!("smithy-candidates-{}-candidate-record", std::process::id()));
         let generation = generation.to_str().unwrap();
         std::fs::remove_dir_all(generation).ok();
-        let dir = generation::lambda_dir(generation, temper_chess::pipeline::preprocessing_config::ArmLambda::Constant(0.7));
+        let dir = generation::lambda_dir(generation, kalo_chess::pipeline::preprocessing_config::ArmLambda::Constant(0.7));
         assert!(read_candidate_step(&dir).is_err(), "no candidate.txt at all");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(candidate_record_path(&dir), "lambda\t0.70\nstep\t15872\ntest_loss\t0.04\ncheckpoint\tx/step_000015872.vs\n").unwrap();

@@ -6,7 +6,7 @@
 //! read and prepared every round as before. The batches, their order and the test loss are the same
 //! whichever way a batch arrives.
 
-use temper_chess::pipeline::system_memory::{self, SystemMemory};
+use kalo_chess::pipeline::system_memory::{self, SystemMemory};
 
 /// The bytes left to the operating system before the budget is taken.
 const OS_RESERVE_BYTES: u64 = 1 << 30;
@@ -98,7 +98,7 @@ impl<H> TestCache<H> {
     }
 }
 
-/// This machine's cache budget, read once (`temper_chess::pipeline::system_memory`), or why it cannot be.
+/// This machine's cache budget, read once (`kalo_chess::pipeline::system_memory`), or why it cannot be.
 pub fn budget() -> Result<u64, String> {
     system_memory::read().map(budget_from)
 }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Temper smithy</title>
+<title>Kalo Games smithy</title>
 <style>
   :root {
     --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4; --panel: #ffffff;
@@ -97,7 +97,7 @@
 <body>
 <main>
   <div id="home">
-    <h1>Temper smithy</h1>
+    <h1>Kalo Games smithy</h1>
     <div class="sub" id="sub">waiting for the smithy</div>
     <section class="live hidden"></section>
     <div id="boxes"></div>
@@ -425,7 +425,7 @@ const testForm = {
 const option = (value, label, selected) => `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
 
 async function send(path, body) {
-  const response = await fetch(path, { method: "POST", headers: { "X-Temper-Token": token }, body });
+  const response = await fetch(path, { method: "POST", headers: { "X-Kalo-Games-Token": token }, body });
   return response.ok ? "" : (await response.text()).trim() || `refused (${response.status})`;
 }
 
@@ -716,7 +716,7 @@ function drawConfig() {
       const error = await send("control/install", [machine, value("player")].join("\n"));
       const said = install.parentElement.querySelector(".said");
       said.classList.toggle("bad", Boolean(error));
-      said.textContent = error || `asked of ${machine}: it builds temper-chess and installs, its last install above says how it went`;
+      said.textContent = error || `asked of ${machine}: it builds kalo-chess and installs, its last install above says how it went`;
     };
   }
 }
@@ -754,7 +754,7 @@ function installScreen() {
 const PESTO_NAME = "pesto";
 
 // Each claimed machine's install, on the install's screen: how its last install went, and its
-// `temper-chess.txt`'s network, commit and time. Drawn at each poll into its own place.
+// `kalo-chess.txt`'s network, commit and time. Drawn at each poll into its own place.
 function drawInstall() {
   const section = document.getElementById("installMachines");
   if (!section) return;
@@ -1151,7 +1151,7 @@ function draw() {
   document.getElementById("home").classList.toggle("hidden", current !== null);
   document.getElementById("page").classList.toggle("hidden", current === null);
   if (!state) return;
-  const smithy = "Temper smithy";
+  const smithy = "Kalo Games smithy";
   document.title = current ? `${current} - ${smithy}` : smithy;
   document.querySelector("h1").textContent = smithy;
   const stopping = (state.slot.running ? `; beside it, ${state.slot.holder || "a job"}` : "") + (state.stopping ? "; the smithy is stopping" : "");

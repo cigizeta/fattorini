@@ -1,11 +1,11 @@
-//! An install, asked by the smithy (`protocol::INSTALL_PATH`): a fresh release `temper-chess` and the
+//! An install, asked by the smithy (`protocol::INSTALL_PATH`): a fresh release `kalo-chess` and the
 //! network it plays, put where lichess-bot runs them, the release root's `bin/`. Run on a thread of
 //! the arena's own (`chores.rs`), its workers playing on: their games run in-process, so no
-//! `temper-chess.exe` of theirs is replaced.
+//! `kalo-chess.exe` of theirs is replaced.
 //!
-//! The names in `bin/` never change (`temper-chess.exe`, `temper-chess.nnue`):
-//! the engine loads the `temper-chess.nnue` beside its own binary at startup, so no GUI needs an `EvalFile`,
-//! lichess-bot's config is written once, and every install only replaces the files. `temper-chess.txt`
+//! The names in `bin/` never change (`kalo-chess.exe`, `kalo-chess.nnue`):
+//! the engine loads the `kalo-chess.nnue` beside its own binary at startup, so no GUI needs an `EvalFile`,
+//! lichess-bot's config is written once, and every install only replaces the files. `kalo-chess.txt`
 //! beside them says what they are; the arena's `Alive` carries it to the smithy's page.
 //!
 //! The release root, `%LOCALAPPDATA%\kalo-games`, holds the installed engine alone: this is the one
@@ -14,15 +14,15 @@
 use std::process;
 use std::sync::atomic::AtomicBool;
 
-use temper_chess::pipeline::protocol::{self, InstallRequest, PESTO};
-use temper_chess::pipeline::lan;
+use kalo_chess::pipeline::protocol::{self, InstallRequest, PESTO};
+use kalo_chess::pipeline::lan;
 
 use super::chores::{store_path, wait_for, Waited, NETWORK_POLL, NETWORK_TIMEOUT};
 
 /// A network's tuned search parameters, beside its engine file (`nnue::parameters_file_beside`).
 const PARAMETERS_FILE: &str = "parameters.txt";
 
-/// The record beside a candidate's network, which `temper-chess.txt` carries with a `candidate_` prefix.
+/// The record beside a candidate's network, which `kalo-chess.txt` carries with a `candidate_` prefix.
 const CANDIDATE_FILE: &str = "candidate.txt";
 
 /// The variable the release root sits under, and the folder there.
@@ -95,7 +95,7 @@ pub(crate) fn run(install: &Install, store: &str, stop: &AtomicBool) -> Result<S
     let fields = match &network {
         Some(network_path) => {
             install_file(&engine_build_path(), &format!("{bin_dir}/{engine}"))?;
-            install_file(network_path, &format!("{bin_dir}/temper-chess.nnue"))?;
+            install_file(network_path, &format!("{bin_dir}/kalo-chess.nnue"))?;
             install_parameters(network_path, &bin_dir)?;
             let record = std::fs::read_to_string(beside(network_path, CANDIDATE_FILE)).unwrap_or_default();
             install_record(install.name(), &record, &protocol::current_commit(), &current_time())
@@ -104,20 +104,20 @@ pub(crate) fn run(install: &Install, store: &str, stop: &AtomicBool) -> Result<S
             // The network goes before the binary is replaced: an engine lichess-bot starts midway
             // then gets the old binary with no network, never the new binary beside a network it
             // might not load (the engine exits when its `EvalFile` fails to load).
-            remove_if_present(&format!("{bin_dir}/temper-chess.nnue"))?;
+            remove_if_present(&format!("{bin_dir}/kalo-chess.nnue"))?;
             install_file(&engine_build_path(), &format!("{bin_dir}/{engine}"))?;
             pesto_install_record(&protocol::current_commit(), &current_time())
         }
     };
     // Last, so it only ever describes files already in place.
-    write_record(&format!("{bin_dir}/temper-chess.txt"), &fields)?;
+    write_record(&format!("{bin_dir}/kalo-chess.txt"), &fields)?;
     Ok(format!("installed {} in {bin_dir}/", install.name()))
 }
 
-/// The `temper-chess.txt` of the engine installed on this machine, field by field; none before a first
+/// The `kalo-chess.txt` of the engine installed on this machine, field by field; none before a first
 /// install.
 pub(crate) fn installed() -> Vec<(String, String)> {
-    let text = std::fs::read_to_string(format!("{}/bin/temper-chess.txt", release_root())).unwrap_or_default();
+    let text = std::fs::read_to_string(format!("{}/bin/kalo-chess.txt", release_root())).unwrap_or_default();
     text.lines().filter_map(|line| line.split_once('\t')).map(|(field, value)| (field.to_string(), value.to_string())).collect()
 }
 
@@ -149,7 +149,7 @@ fn beside(path: &str, name: &str) -> String {
     format!("{dir}/{name}")
 }
 
-/// Puts the network's tuned parameters, the `parameters.txt` beside it, beside `temper-chess.nnue`, where
+/// Puts the network's tuned parameters, the `parameters.txt` beside it, beside `kalo-chess.nnue`, where
 /// the engine reads it (`nnue::parameters_file_beside`), so lichess-bot plays at them. A network never
 /// tuned has none: an old `parameters.txt` is then removed, so the engine never plays one network
 /// with another's parameters. A `margin.txt` left by an older install is removed too, being retired.
@@ -176,7 +176,7 @@ fn remove_if_present(path: &str) -> Result<(), String> {
     }
 }
 
-/// `temper-chess.txt`'s fields for the pesto install: no weights to name.
+/// `kalo-chess.txt`'s fields for the pesto install: no weights to name.
 fn pesto_install_record(commit: &str, installed: &str) -> Vec<(String, String)> {
     vec![
         ("network".to_string(), PESTO.to_string()),
@@ -185,7 +185,7 @@ fn pesto_install_record(commit: &str, installed: &str) -> Vec<(String, String)> 
     ]
 }
 
-/// `temper-chess.txt`'s fields: what was installed, and when. `record` is the record beside the network, its
+/// `kalo-chess.txt`'s fields: what was installed, and when. `record` is the record beside the network, its
 /// `candidate.txt`, carried over field by field with `candidate_` as a prefix.
 fn install_record(network: &str, record: &str, commit: &str, installed: &str) -> Vec<(String, String)> {
     let mut fields = vec![("network".to_string(), network.to_string())];
@@ -211,7 +211,7 @@ fn create_dir(dir: &str) -> Result<(), String> {
 /// The engine's file name, both where `cargo build --release` leaves it and where the install puts
 /// it.
 fn engine_file_name() -> String {
-    format!("temper-chess{}", std::env::consts::EXE_SUFFIX)
+    format!("kalo-chess{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Where `cargo build --release` leaves the engine, relative to the repository root every binary
@@ -220,19 +220,19 @@ fn engine_build_path() -> String {
     format!("target/release/{}", engine_file_name())
 }
 
-/// Runs `cargo build --release --bin temper-chess`: only `temper-chess`, never the `arena` that is running. Its
+/// Runs `cargo build --release --bin kalo-chess`: only `kalo-chess`, never the `arena` that is running. Its
 /// output goes to the log, a line at a time once it ends.
 fn build_engine() -> Result<(), String> {
-    log::info!("install: building a release temper-chess");
+    log::info!("install: building a release kalo-chess");
     let output = process::Command::new("cargo")
-        .args(["build", "--release", "--bin", "temper-chess"])
+        .args(["build", "--release", "--bin", "kalo-chess"])
         .output()
         .map_err(|error| format!("failed to run cargo: {error}"))?;
     for line in String::from_utf8_lossy(&output.stderr).lines() {
         log::info!("install: {line}");
     }
     if !output.status.success() {
-        return Err(format!("cargo build --release --bin temper-chess failed ({}): nothing was installed", output.status));
+        return Err(format!("cargo build --release --bin kalo-chess failed ({}): nothing was installed", output.status));
     }
     Ok(())
 }
@@ -247,7 +247,7 @@ fn install_file(source: &str, destination: &str) -> Result<(), String> {
     std::fs::rename(&staging_path, destination).map_err(|error| format!("failed to rename {staging_path} to {destination}: {error}"))
 }
 
-/// Windows refuses to replace or delete a file a process has open, a running `temper-chess.exe` above all,
+/// Windows refuses to replace or delete a file a process has open, a running `kalo-chess.exe` above all,
 /// but lets it be renamed. So `destination` is renamed aside to `{destination}.old-{seconds}`, its
 /// process keeping its file, and the rename into place then finds the name free. The asides of
 /// earlier installs are removed first, best-effort: one whose engine still runs stays until a later

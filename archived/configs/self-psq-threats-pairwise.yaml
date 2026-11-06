@@ -1,4 +1,4 @@
-# psq_threats_pairwise on Temper's self-play, as self-psq is psq's: generation 1 taught by
+# psq_threats_pairwise on Kalo Chess's self-play, as self-psq is psq's: generation 1 taught by
 # caroline-0001 (smithy teacher self-psq-threats-pairwise caroline-0001), on the same games as every
 # self- shape, from random weights.
 labels: self

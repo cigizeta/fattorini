@@ -15,13 +15,13 @@
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
 
-use temper_chess::move_stats::{bucket, bucket_low, take, MoveStats, BUCKETS, DEPTHS, OUTCOMES};
-use temper_chess::nnue::Network;
-use temper_chess::search::choose_best_move;
-use temper_chess::tablebase::SyzygyTablebase;
-use temper_chess::tt::TranspositionTable;
+use kalo_chess::move_stats::{bucket, bucket_low, take, MoveStats, BUCKETS, DEPTHS, OUTCOMES};
+use kalo_chess::nnue::Network;
+use kalo_chess::search::choose_best_move;
+use kalo_chess::tablebase::SyzygyTablebase;
+use kalo_chess::tt::TranspositionTable;
 
-use temper_chess::bench_positions::{board as board_from_line, POSITIONS};
+use kalo_chess::bench_positions::{board as board_from_line, POSITIONS};
 
 /// Fresh per search, so one position's history and entries never carry into the next.
 const TT_SIZE_MB: usize = 64;

@@ -525,9 +525,9 @@ fn run_test_pass<B, H: Send, T: BatchSource + Send>(
 #[allow(clippy::type_complexity, clippy::needless_range_loop)]
 mod tests {
     use super::*;
-    use temper_chess::board::castling_rights::CastlingRights;
-    use temper_chess::board::color::Color;
-    use temper_chess::board::square::Square;
+    use kalo_chess::board::castling_rights::CastlingRights;
+    use kalo_chess::board::color::Color;
+    use kalo_chess::board::square::Square;
     use tch::{nn, Reduction};
 
     const TEST_BATCH_SIZE: usize = 2;
@@ -570,7 +570,7 @@ mod tests {
     /// Bare kings, one record per label: these track-agnostic loop tests only care about row counts
     /// and labels reaching `compute_loss`, never about the positions.
     fn records_of(labels: &[f32]) -> Vec<CacheRecord> {
-        use temper_chess::features::CanonicalPosition;
+        use kalo_chess::features::CanonicalPosition;
         let canonical = CanonicalPosition {
             side_to_move: Color::White,
             pieces: vec![],
@@ -591,12 +591,12 @@ mod tests {
     fn a_batch_s_piece_count_is_its_records_when_they_share_one_and_none_when_mixed() {
         // `pieces` white knights beside the kings, on a1, a2 and so on: only the count matters.
         let record = |pieces: u16| {
-            let canonical = temper_chess::features::CanonicalPosition {
-                side_to_move: temper_chess::board::color::Color::White,
+            let canonical = kalo_chess::features::CanonicalPosition {
+                side_to_move: kalo_chess::board::color::Color::White,
                 pieces: (0..pieces).map(|square| square * 10 + 2).collect(),
-                white_king: temper_chess::board::square::Square::E1,
-                black_king: temper_chess::board::square::Square::E8,
-                castling_rights: temper_chess::board::castling_rights::CastlingRights::NONE,
+                white_king: kalo_chess::board::square::Square::E1,
+                black_king: kalo_chess::board::square::Square::E8,
+                castling_rights: kalo_chess::board::castling_rights::CastlingRights::NONE,
                 en_passant_file: None,
             };
             CacheRecord::new(canonical, 0.0)
@@ -672,7 +672,7 @@ mod tests {
 
     /// Records of bare kings with one label per arm, from `labels[arm][row]`.
     fn lockstep_records(labels: &[Vec<f32>]) -> Vec<CacheRecord> {
-        use temper_chess::features::CanonicalPosition;
+        use kalo_chess::features::CanonicalPosition;
         (0..labels[0].len())
             .map(|row| CacheRecord {
                 canonical: CanonicalPosition {
@@ -830,8 +830,8 @@ mod tests {
         use super::super::stacked_network::StackedNetwork;
         use super::super::arm_slice;
         use super::super::lockstep::{SlotFiles, Stack};
-        use temper_chess::board::Board;
-        use temper_chess::features::extract_canonical;
+        use kalo_chess::board::Board;
+        use kalo_chess::features::extract_canonical;
 
         let fens = [
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -882,7 +882,7 @@ mod tests {
         // Never written: the backup interval below is longer than the test.
         let files = (0..2)
             .map(|arm| SlotFiles {
-                lambda: temper_chess::pipeline::preprocessing_config::ArmLambda::Constant(arm as f64),
+                lambda: kalo_chess::pipeline::preprocessing_config::ArmLambda::Constant(arm as f64),
                 model_path: String::new(),
                 optimizer_path: String::new(),
                 round_progress_path: String::new(),

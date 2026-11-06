@@ -1,11 +1,11 @@
-//! A tune, the smithy's job of a player, as its config's `tune:` says (`args_of`): a Temper player's ten search parameters by SPSA
-//! (`temper_chess::pipeline::spsa`), every pair played by the arenas. Pairs of games, colours
+//! A tune, the smithy's job of a player, as its config's `tune:` says (`args_of`): a Kalo Chess player's ten search parameters by SPSA
+//! (`kalo_chess::pipeline::spsa`), every pair played by the arenas. Pairs of games, colours
 //! reversed on one random book opening, between theta + c_k Delta and theta - c_k Delta, one `k` per
 //! pair; theta moves as each pair arrives, in the order they arrive, each with its own `k`, as
 //! fishtest's workers do. Every game ends early by the tablebase, win and draw rules: a tune's chores
 //! say so (`Chore::adjudicate`).
 //!
-//! The run's folder (`TemperPlayer::tune_dir`) holds:
+//! The run's folder (`KaloChessPlayer::tune_dir`) holds:
 //!
 //! - `spec.txt`: what the run is (player, pairs, `r_end`, seed, control, the ten specs), written at the
 //!   first start; a later start that disagrees is refused rather than resumed.
@@ -24,13 +24,13 @@
 use std::io::Write;
 use std::path::Path;
 
-use temper_chess::pipeline::players::TemperPlayer;
-use temper_chess::pipeline::remote;
+use kalo_chess::pipeline::players::KaloChessPlayer;
+use kalo_chess::pipeline::remote;
 
 use super::{archive, lease, scale, tree};
-use temper_chess::pipeline::protocol::{Entry, Limit, Player};
-use temper_chess::pipeline::spsa::{self, Schedule, Spec, Theta, MAX_CLOCK_FACTOR, MIN_CLOCK_FACTOR};
-use temper_chess::search::SearchParameters;
+use kalo_chess::pipeline::protocol::{Entry, Limit, Player};
+use kalo_chess::pipeline::spsa::{self, Schedule, Spec, Theta, MAX_CLOCK_FACTOR, MIN_CLOCK_FACTOR};
+use kalo_chess::search::SearchParameters;
 
 /// A tune's control when none is given: arena's short time control.
 pub(crate) const STC: &str = "10+0.1";
@@ -57,7 +57,7 @@ pub(crate) struct TuneArgs {
 impl TuneArgs {
     /// `<player> [--pairs <n>] [--depth <d> | --time <base+inc>]`.
     pub(crate) fn parse(args: &[String]) -> Result<TuneArgs, String> {
-        let usage = "a tune takes a Temper player, then --pairs <n> for a new tune, and optionally --depth <d> or --time <base+inc>";
+        let usage = "a tune takes a Kalo Chess player, then --pairs <n> for a new tune, and optionally --depth <d> or --time <base+inc>";
         let (player, mut rest) = args.split_first().ok_or(usage)?;
         if player.starts_with("--") || player.contains('@') {
             return Err(format!("{usage}; got {player:?}"));
@@ -150,8 +150,8 @@ pub(crate) fn args_of(config: &TuneConfig, player: &str) -> Result<TuneArgs, Str
 }
 
 /// The player `name` names, from this machine's files.
-fn resolve(name: &str) -> Result<TemperPlayer, String> {
-    TemperPlayer::resolve(name)
+fn resolve(name: &str) -> Result<KaloChessPlayer, String> {
+    KaloChessPlayer::resolve(name)
 }
 
 /// The remote counterpart of `local`, a local path under `data/`.

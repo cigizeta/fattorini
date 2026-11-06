@@ -1,7 +1,7 @@
 # CLAUDE.md -- Kalo Games
 
-**Kalo Games** is the project. **Temper Chess** is its UCI chess engine, written in Rust, whose
-neural network evaluation functions are trained on a limited compute budget. Temper Go is future
+**Kalo Games** is the project. **Kalo Chess** is its UCI chess engine, written in Rust, whose
+neural network evaluation functions are trained on a limited compute budget. Kalo Go is future
 work, not started.
 
 ## Never leak secrets or sensitive information
@@ -70,7 +70,7 @@ must be one line only.
 
 ## Development platform: Windows only
 
-Temper is developed, tested, measured and distributed on native Windows only,
+Kalo Games is developed, tested, measured and distributed on native Windows only,
 not WSL (decided 2026-10-05: CCRL testers run a Windows binary). **Linux is
 no longer a target platform (decided 2026-10-08):** new code is written for
 Windows alone, with no `#[cfg(not(windows))]` twin, no `$OSTYPE` branch and no
@@ -105,8 +105,8 @@ syntax.
 
 ## Run the binaries through bin/
 
-When giving the developer a command that runs a Temper binary, always use its wrapper in `bin/`
-(`bin/temper-chess`, `bin/smithy`, `bin/arena`), never `cargo run`, `cargo build` followed by
+When giving the developer a command that runs a Kalo Chess binary, always use its wrapper in `bin/`
+(`bin/kalo-chess`, `bin/smithy`, `bin/arena`), never `cargo run`, `cargo build` followed by
 `target/release/...`, or a bare `target/...` path. Each wrapper builds
 the release binary if needed, `cd`s to the repository root, and sets what the binary needs:
 `bin/smithy` also requires this repository's `.kalo-games` venv to be active and sets libtorch's library
@@ -114,9 +114,9 @@ paths. Only tests (`cargo test ...`) are given as cargo commands.
 
 ## Licensing
 
-Temper is AGPLv3 only (`LICENSE`, `AGPL-3.0-only`): the developer's goal
+Kalo Games is AGPLv3 only (`LICENSE`, `AGPL-3.0-only`): the developer's goal
 is that nobody makes money by forking or using the code, and AGPLv3 also
-obliges anyone running a modified Temper as a network service to share its
+obliges anyone running a modified Kalo Games engine as a network service to share its
 source. GPLv3 code may be combined with it (AGPLv3 section 13).
 
 ## No em dashes

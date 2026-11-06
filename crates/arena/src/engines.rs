@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use temper_chess::nnue::Tuning;
-use temper_chess::search::SearchParameters;
+use kalo_chess::nnue::Tuning;
+use kalo_chess::search::SearchParameters;
 use serde::Deserialize;
 
 /// The registry's one place, per machine and gitignored.
@@ -19,7 +19,7 @@ pub const ENGINE_REGISTRY_PATH: &str = "data/chess/engines.yaml";
 ///
 /// `Builtin` and `Network` both become an `InProcessPlayer` and differ only in the evaluation they
 /// carry. They exist because the gate compares two evaluations inside one search, which driving
-/// Temper over UCI could not do: that would compare two whole engine builds instead, and would put a
+/// Kalo Chess over UCI could not do: that would compare two whole engine builds instead, and would put a
 /// subprocess boundary in the way of the one thing being measured.
 #[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -52,7 +52,7 @@ pub struct EngineEntry {
     pub parameters: Option<SearchParameters>,
 }
 
-pub use temper_chess::pipeline::players::pesto_parameters;
+pub use kalo_chess::pipeline::players::pesto_parameters;
 
 impl EngineEntry {
     /// The binary to spawn. Panics if absent, which `validate` has already ruled out at load time --
@@ -84,7 +84,7 @@ impl EngineEntry {
     /// player, whose search is its own business.
     pub fn own_tuning(&self) -> Result<Tuning, String> {
         match (self.kind, &self.net) {
-            (EngineKind::Network, Some(net)) => temper_chess::nnue::read_tuning_beside(net),
+            (EngineKind::Network, Some(net)) => kalo_chess::nnue::read_tuning_beside(net),
             (EngineKind::Builtin, _) => Ok(pesto_parameters()?.map_or(Tuning::Untuned, Tuning::Parameters)),
             _ => Ok(Tuning::Untuned),
         }
@@ -104,10 +104,10 @@ impl EngineEntry {
     }
 }
 
-/// Every player's table size unless `--hash` says otherwise: `bin/temper-chess`'s own UCI default, 16 MB,
+/// Every player's table size unless `--hash` says otherwise: `bin/kalo-chess`'s own UCI default, 16 MB,
 /// also the self-play size. A depth-9 search visits some 20k-70k nodes, about 1 MB of entries, so
 /// 16 MB leaves ample room for what carries over between moves.
-pub const DEFAULT_HASH_MB: usize = temper_chess::uci::DEFAULT_HASH_MB;
+pub const DEFAULT_HASH_MB: usize = kalo_chess::uci::DEFAULT_HASH_MB;
 
 #[derive(Debug, Deserialize)]
 struct EngineRegistryFile {

@@ -4,7 +4,7 @@
 //! (CC BY-SA 3.0), from which every number here is copied.
 //!
 //! Each table is written exactly as the page prints it, a8 first and h1 last, so that it can be
-//! checked against the page line by line. Temper's squares are LERF (a1 = 0), so `eval.rs` reads a
+//! checked against the page line by line. Kalo Chess's squares are LERF (a1 = 0), so `eval.rs` reads a
 //! White piece at `table[square ^ 56]` and a Black piece at `table[square]`.
 //!
 //! Indexed by `PieceType as usize`: pawn, knight, bishop, rook, queen, king.

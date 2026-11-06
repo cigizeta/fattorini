@@ -1,17 +1,17 @@
 //! A `Player` that searches in this process, with no subprocess and no protocol -- the side of a
-//! match that is Temper itself, evaluating either with the PeSTO evaluation or with a trained
+//! match that is Kalo Chess itself, evaluating either with the PeSTO evaluation or with a trained
 //! network. This is what makes an evaluation A/B possible at all: the gate needs both sides to run
 //! the identical search so that the evaluation function is the only thing that differs, and driving
-//! Temper over UCI would instead compare two whole engine builds.
+//! Kalo Chess over UCI would instead compare two whole engine builds.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use temper_chess::nnue::Network;
-use temper_chess::search::{choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, MAX_PLY};
-use temper_chess::tablebase::SyzygyTablebase;
-use temper_chess::tt::TranspositionTable;
-use temper_chess::uci::{format_move, split_score};
+use kalo_chess::nnue::Network;
+use kalo_chess::search::{choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, MAX_PLY};
+use kalo_chess::tablebase::SyzygyTablebase;
+use kalo_chess::tt::TranspositionTable;
+use kalo_chess::uci::{format_move, split_score};
 
 use super::player::{Fault, MoveLimit, MoveOutcome, MoveRequest, Player, SearchReport};
 
@@ -146,7 +146,7 @@ impl Player for InProcessPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temper_chess::board::Board;
+    use kalo_chess::board::Board;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
@@ -178,8 +178,8 @@ mod tests {
         let started = Instant::now();
         match player.choose_move(&request, &stop).expect("never faults") {
             MoveOutcome::Move(report) => {
-                let legal = temper_chess::movegen::legal::legal_moves(&board, board.side_to_move());
-                assert!(temper_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(), "{:?}", report.best_move_uci);
+                let legal = kalo_chess::movegen::legal::legal_moves(&board, board.side_to_move());
+                assert!(kalo_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(), "{:?}", report.best_move_uci);
             }
             MoveOutcome::TimedOut => panic!("an in-process player never reports a timeout itself"),
             MoveOutcome::Interrupted => panic!("nothing asked it to stop"),
@@ -209,9 +209,9 @@ mod tests {
 
         match player.choose_move(&request, &stop).expect("never faults") {
             MoveOutcome::Move(report) => {
-                let legal = temper_chess::movegen::legal::legal_moves(&board, board.side_to_move());
+                let legal = kalo_chess::movegen::legal::legal_moves(&board, board.side_to_move());
                 assert!(
-                    temper_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(),
+                    kalo_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(),
                     "{:?} should be legal in the starting position",
                     report.best_move_uci
                 );
@@ -245,9 +245,9 @@ mod tests {
 
         match player.choose_move(&request, &stop).expect("never faults") {
             MoveOutcome::Move(report) => {
-                let legal = temper_chess::movegen::legal::legal_moves(&board, board.side_to_move());
+                let legal = kalo_chess::movegen::legal::legal_moves(&board, board.side_to_move());
                 assert!(
-                    temper_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(),
+                    kalo_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(),
                     "{:?} should be legal in the starting position",
                     report.best_move_uci
                 );

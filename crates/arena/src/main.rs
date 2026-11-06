@@ -17,7 +17,7 @@
 //! each other's clocks (`cpu_topology.rs`), and one pair per logical core at a fixed depth, where
 //! timing does not matter.
 //!
-//! `smithy` and this binary talk only through the files `temper_chess::pipeline` defines.
+//! `smithy` and this binary talk only through the files `kalo_chess::pipeline` defines.
 
 mod best_of;
 mod bracket;
@@ -61,7 +61,7 @@ use runner::{Labels, Placement, Resolution, Run};
 use sprt::Sprt;
 
 // Self-play's threads all allocate at once, and Windows' system allocator does not scale with them;
-// the measurement is beside `mimalloc` in Cargo.toml. The engine `temper-chess` keeps the system
+// the measurement is beside `mimalloc` in Cargo.toml. The engine `kalo-chess` keeps the system
 // allocator: a GUI game searches with one thread unless told otherwise.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -113,10 +113,10 @@ fn print_usage_and_exit() -> ! {
     eprintln!("                    together must stay under half the machine's RAM");
     eprintln!("  games are played in colour-reversed pairs");
     eprintln!("  a player is stockfish-<level> (0 to 20), stockfish-elo-<rating> (1320 to 3190), an engine of");
-    eprintln!("  data/chess/engines.yaml, or a Temper player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
+    eprintln!("  data/chess/engines.yaml, or a Kalo Chess player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
     eprintln!("  or <config>-g<g>-l<lambda>-r<n>, that lambda's candidate in generation g");
-    eprintln!("  a Temper player is always followed by what it searches with: @default, the untuned defaults; @t1,");
-    eprintln!("  its tune; or @<cp>, as pesto@150, a margin per ply (in-process, so only against another Temper");
+    eprintln!("  a Kalo Chess player is always followed by what it searches with: @default, the untuned defaults; @t1,");
+    eprintln!("  its tune; or @<cp>, as pesto@150, a margin per ply (in-process, so only against another Kalo Chess");
     eprintln!("  player); against an external engine it plays over UCI what it has by itself, @t1 if tuned, else @default");
     process::exit(1);
 }
@@ -188,9 +188,9 @@ fn parse_flags(flags: &[String]) -> Result<(ControlSpec, usize), String> {
                 let mb: usize = value
                     .parse()
                     .ok()
-                    .filter(|mb| (temper_chess::uci::HASH_MB_MIN..=temper_chess::uci::HASH_MB_MAX).contains(mb))
+                    .filter(|mb| (kalo_chess::uci::HASH_MB_MIN..=kalo_chess::uci::HASH_MB_MAX).contains(mb))
                     .ok_or_else(|| {
-                        format!("--hash is {} to {} MB, got {value:?}", temper_chess::uci::HASH_MB_MIN, temper_chess::uci::HASH_MB_MAX)
+                        format!("--hash is {} to {} MB, got {value:?}", kalo_chess::uci::HASH_MB_MIN, kalo_chess::uci::HASH_MB_MAX)
                     })?;
                 hash_mb.replace(mb).is_some()
             }

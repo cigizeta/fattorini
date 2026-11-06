@@ -217,14 +217,14 @@ mod tests {
     }
 
     fn write_fixture(name: &str, contents: &str) -> String {
-        let path = std::env::temp_dir().join(format!("temper-chess-evolve-config-test-{}-{name}.yaml", std::process::id()));
+        let path = std::env::temp_dir().join(format!("kalo-chess-evolve-config-test-{}-{name}.yaml", std::process::id()));
         std::fs::write(&path, contents).expect("failed to write the fixture file");
         path.to_str().unwrap().to_string()
     }
 
     #[test]
     fn the_committed_ladder_example_loads() {
-        temper_chess::pipeline::repository_root::enter_for_tests();
+        kalo_chess::pipeline::repository_root::enter_for_tests();
         let config = TournamentConfig::load("examples/tournament.yaml");
         assert_eq!(config.match_spec.best_of, 2);
     }

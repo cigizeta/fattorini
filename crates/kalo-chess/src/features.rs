@@ -160,7 +160,7 @@ fn king_square(board: &Board, color: Color) -> Square {
         .expect("a legal position always has exactly one king per side")
 }
 
-/// Temper psq's own feature encoding: plain piece-square, the input elsewhere called "768" or
+/// Kalo Chess psq's own feature encoding: plain piece-square, the input elsewhere called "768" or
 /// bullet's `Chess768`, plus castling rights and the en passant file -- 780 rows per perspective.
 ///
 /// Two perspectives, each oriented for its own color (mirrored vertically for Black) with every

@@ -398,7 +398,7 @@ impl TranspositionTable {
     /// against `self.generation` already excludes untouched slots -- no separate "is this
     /// occupied at all" check is needed, unlike Stockfish's own two-part condition (its
     /// generation byte shares bits with the bound, so it needs a mask *and* a nonzero-depth
-    /// check where Temper's own separate, unmasked `generation` field needs neither).
+    /// check where Kalo Chess's own separate, unmasked `generation` field needs neither).
     pub fn hashfull(&self) -> u32 {
         let sampled_slots = self.entries.len().min(1000);
         let occupied_this_generation = self.entries[..sampled_slots]

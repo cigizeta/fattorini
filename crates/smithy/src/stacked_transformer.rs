@@ -195,8 +195,8 @@ mod tests {
     use super::super::cache::CacheRecord;
     use super::super::net_config::{Attention, ValueHeadConfig};
     use super::super::transformer_batch::to_transformer_batch;
-    use temper_chess::board::Board;
-    use temper_chess::features::extract_canonical;
+    use kalo_chess::board::Board;
+    use kalo_chess::features::extract_canonical;
 
     /// Same piece count, so one batch: 32 pieces each.
     const FENS: [&str; 3] = [

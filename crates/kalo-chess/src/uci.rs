@@ -40,7 +40,7 @@ pub const DEFAULT_HASH_MB: usize = 16;
 /// `parse_setoption`) doesn't clamp to this range, since respecting it is the GUI's own
 /// responsibility per the UCI spec, and `TranspositionTable::new` already tolerates any
 /// `usize` gracefully (including values outside it). `pub`: `arena --hash` refuses a value
-/// outside this range, since Temper over UCI advertises it.
+/// outside this range, since Kalo Chess over UCI advertises it.
 pub const HASH_MB_MIN: usize = 1;
 pub const HASH_MB_MAX: usize = 1024;
 
@@ -92,11 +92,11 @@ pub enum UciCommand {
     Uci,
     IsReady,
     UciNewGame,
-    /// `setoption name Hash value <MB>` -- the only option Temper currently supports, so this
+    /// `setoption name Hash value <MB>` -- the only option Kalo Chess currently supports, so this
     /// is specific to it rather than a generic `{ name: String, value: String }` shape; worth
     /// generalizing once a second option actually needs one, not before.
     SetOptionHash(usize),
-    /// `setoption name Threads value <N>` -- the second option Temper supports, following the
+    /// `setoption name Threads value <N>` -- the second option Kalo Chess supports, following the
     /// exact same pattern `SetOptionHash` already established (a dedicated variant per option,
     /// not yet a generic `{ name, value }` shape).
     SetOptionThreads(u32),
@@ -118,7 +118,7 @@ pub enum UciCommand {
     /// The path is rejoined from its tokens, like `SyzygyPath`'s, so one with a space survives.
     SetOptionEvalFile(String),
     /// `setoption name Ponder value true|false`: whether `bestmove` offers a ponder move. Only `go
-    /// ponder` makes Temper ponder; with no ponder move, a GUI has nothing to ponder on.
+    /// ponder` makes Kalo Chess ponder; with no ponder move, a GUI has nothing to ponder on.
     SetOptionPonder(bool),
     Position { fen: String, moves: Vec<String> },
     /// A plain `go`, or `go perft <depth>` when `perft_depth` is `Some`. The time-control
@@ -695,7 +695,7 @@ impl Engine {
             UciCommand::Uci => {
                 vec![
                     // The release is named by the workspace's version, which every crate inherits.
-                    format!("id name Temper Chess {}", env!("CARGO_PKG_VERSION")),
+                    format!("id name Kalo Chess {}", env!("CARGO_PKG_VERSION")),
                     "id author Calogero Zarba".to_string(),
                     format!("option name Hash type spin default {DEFAULT_HASH_MB} min {HASH_MB_MIN} max {HASH_MB_MAX}"),
                     format!(
@@ -1201,9 +1201,9 @@ fn load_evaluator_or_exit(path: &str) -> Option<Arc<Network>> {
 /// install` puts the network it installs there, so every GUI and lichess-bot get it with no
 /// `EvalFile` to configure. A build in `target/` has none beside it, so development, matches and
 /// gates keep the PeSTO evaluation unless they send `EvalFile`.
-const INSTALLED_EVAL_FILE: &str = "temper-chess.nnue";
+const INSTALLED_EVAL_FILE: &str = "kalo-chess.nnue";
 
-/// The `.nnue` a build embeds when `TEMPER_CHESS_EVALFILE` names one at build time (`build.rs`), empty
+/// The `.nnue` a build embeds when `KALO_CHESS_EVALFILE` names one at build time (`build.rs`), empty
 /// otherwise. A release will be built this way. No tuning comes with it: no file sits beside it.
 const EMBEDDED_NETWORK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded.nnue"));
 
@@ -1227,13 +1227,13 @@ pub fn installed_eval_file() -> String {
 }
 
 /// The network at `path` as the engine would load it (`installed_eval_file`'s value included), the
-/// PeSTO evaluation for an empty one: what `temper-chess bench` searches with.
+/// PeSTO evaluation for an empty one: what `kalo-chess bench` searches with.
 pub fn evaluator_for(path: &str) -> Option<Arc<Network>> {
     load_evaluator_or_exit(path)
 }
 
 /// Where `installed_eval_file` looks, for `executable`. The whole file name is replaced, so
-/// Windows' `temper-chess.exe` gets `temper-chess.nnue` too.
+/// Windows' `kalo-chess.exe` gets `kalo-chess.nnue` too.
 fn eval_file_beside(executable: &std::path::Path) -> std::path::PathBuf {
     executable.with_file_name(INSTALLED_EVAL_FILE)
 }
@@ -1693,7 +1693,7 @@ mod tests {
         assert_eq!(
             engine.handle(UciCommand::Uci),
             vec![
-                format!("id name Temper Chess {}", env!("CARGO_PKG_VERSION")),
+                format!("id name Kalo Chess {}", env!("CARGO_PKG_VERSION")),
                 "id author Calogero Zarba".to_string(),
                 "option name Hash type spin default 16 min 1 max 1024".to_string(),
                 "option name Threads type spin default 1 min 1 max 128".to_string(),
@@ -1710,7 +1710,7 @@ mod tests {
     fn a_search_with_an_eval_file_plays_a_legal_move() {
         // The network's values do not matter here, only that the search runs with it loaded and
         // answers: nnue.rs's own small fixture, written in the engine's format.
-        let path = std::env::temp_dir().join(format!("temper-chess-uci-evalfile-test-{}.nnue", std::process::id()));
+        let path = std::env::temp_dir().join(format!("kalo-chess-uci-evalfile-test-{}.nnue", std::process::id()));
         let path = path.to_str().unwrap().to_string();
         crate::nnue::tests::sample_network(8, &[4]).write(&path).expect("failed to write the test network");
 
@@ -1729,7 +1729,7 @@ mod tests {
 
     #[test]
     fn a_default_eval_file_is_loaded_at_startup_and_advertised() {
-        let path = std::env::temp_dir().join(format!("temper-chess-uci-default-evalfile-test-{}.nnue", std::process::id()));
+        let path = std::env::temp_dir().join(format!("kalo-chess-uci-default-evalfile-test-{}.nnue", std::process::id()));
         let path = path.to_str().unwrap().to_string();
         crate::nnue::tests::sample_network(8, &[4]).write(&path).expect("failed to write the test network");
 
@@ -1752,8 +1752,8 @@ mod tests {
     #[test]
     fn the_installed_eval_file_sits_beside_the_executable() {
         assert_eq!(
-            eval_file_beside(std::path::Path::new("C:/Users/me/AppData/Local/kalo-games/bin/temper-chess.exe")),
-            std::path::PathBuf::from("C:/Users/me/AppData/Local/kalo-games/bin/temper-chess.nnue")
+            eval_file_beside(std::path::Path::new("C:/Users/me/AppData/Local/kalo-games/bin/kalo-chess.exe")),
+            std::path::PathBuf::from("C:/Users/me/AppData/Local/kalo-games/bin/kalo-chess.nnue")
         );
     }
 

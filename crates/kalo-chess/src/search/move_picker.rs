@@ -1,8 +1,8 @@
-//! Stockfish's staged move picker (`movepick.cpp`), filled with Temper's tables: the TT move, good
+//! Stockfish's staged move picker (`movepick.cpp`), filled with Kalo Chess's tables: the TT move, good
 //! captures, the two killers, good quiets, losing captures, bad quiets; in check, every evasion
 //! sorted. Each move is scored once per node, not rescanned at every pick.
 //!
-//! Chosen by duels against Temper's previous order (a chain that rescanned the remaining moves at
+//! Chosen by duels against Kalo Chess's previous order (a chain that rescanned the remaining moves at
 //! every pick): about +115 Elo at 10s+0.1. The killers stay, unlike Stockfish's: a duel with and
 //! without them was even at depth 9, and the developer kept them.
 //!
@@ -15,7 +15,7 @@ use super::{captured_piece, combined_history_score, is_quiet, see_ge, Board, Mov
 use crate::eval::piece_value;
 use crate::movegen::{is_pseudo_legal, noisy_moves, pseudo_legal_moves, quiet_moves};
 
-/// A capture's score: Stockfish's `7 * PieceValue[captured]`, Temper having no capture history, plus
+/// A capture's score: Stockfish's `7 * PieceValue[captured]`, Kalo Chess having no capture history, plus
 /// the promoted piece's value for a promotion. Noisy moves are captures and promotions.
 fn capture_score(board: &Board, mv: Move) -> i32 {
     let victim = captured_piece(board, mv).map_or(0, |victim| piece_value(victim.piece_type()));

@@ -19,7 +19,7 @@ use super::batch::{DenseBatch, DenseBatchPsq};
 use super::feature_set::FeatureSet;
 use super::net_config::Architecture;
 use super::nnue_network::{pairwise_products, Network, FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND};
-use temper_chess::labels::S_PAWNS;
+use kalo_chess::labels::S_PAWNS;
 use super::stack_head::{hidden_output_input, kings_output_input, kings_stage_input, stacked_stage_forward, taper, their_own_frame, HeadShape, TAPER_PHASE_COLUMN};
 use super::value_head::Activation;
 
@@ -304,8 +304,8 @@ mod tests {
     use super::super::arm_slice;
     use super::super::batch::to_dense_batch;
     use super::super::cache::CacheRecord;
-    use temper_chess::board::Board;
-    use temper_chess::features::{extract_canonical, halfk};
+    use kalo_chess::board::Board;
+    use kalo_chess::features::{extract_canonical, halfk};
 
     const FENS: [&str; 4] = [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",

@@ -36,9 +36,10 @@ use crate::simd::{
     DOT_PRODUCT_BLOCK,
 };
 
-/// Identifies the file at all, before anything is trusted about its contents. Eight bytes so the
-/// header stays naturally aligned for everything that follows it.
-pub const MAGIC: &[u8; 8] = b"TEMPERCH";
+/// Identifies the file at all, before anything is trusted about its contents. Its length is free:
+/// every field after it is copied out with `from_le_bytes`, never read in place, so no alignment
+/// depends on it.
+pub const MAGIC: &[u8; 4] = b"KALO";
 
 /// Bumped whenever the byte layout changes in a way an older reader would misread. A reader that
 /// does not recognise a version refuses the file rather than guessing, which is the whole point of
@@ -64,7 +65,7 @@ pub fn curve_of_version(version: u32) -> crate::labels::Curve {
 pub fn file_version(path: &str) -> Result<u32, String> {
     let bytes = fs::read(path).map_err(|error| format!("{path}: {error}"))?;
     if bytes.len() < MAGIC.len() + 4 || &bytes[..MAGIC.len()] != MAGIC {
-        return Err(format!("{path}: not a Temper network file (bad magic)"));
+        return Err(format!("{path}: not a Kalo Chess network file (bad magic)"));
     }
     Ok(u32::from_le_bytes(bytes[MAGIC.len()..MAGIC.len() + 4].try_into().expect("four bytes")))
 }
@@ -982,7 +983,7 @@ const PRODUCT_ONE: f32 = (HALF_ONE * HALF_ONE) as f32 / 512.0;
 
 /// Two halves' activations, each in `0..=255`, multiplied and brought back to `0..=127` with
 /// Stockfish's divisor, 512, rounding to nearest (Stockfish truncates, its trainer modelling it;
-/// Temper's does not, and a truncation bias across lanes is what `QuantizedPsqNetwork::rounding`
+/// Kalo Chess's does not, and a truncation bias across lanes is what `QuantizedPsqNetwork::rounding`
 /// exists to avoid). At most `(65025 + 256) >> 9 = 127`.
 fn product_of(a: i32, b: i32) -> i32 {
     (a * b + 256) >> 9
@@ -2438,14 +2439,14 @@ impl Network {
 
     /// A network from a `.nnue` file's bytes, `name` standing for the file in every error, untuned:
     /// no file sits beside bytes, so `load` adds the tuning. Also the network a build embeds
-    /// (`TEMPER_CHESS_EVALFILE`, `uci::embedded_network`).
+    /// (`KALO_CHESS_EVALFILE`, `uci::embedded_network`).
     pub fn from_bytes(bytes: &[u8], name: &str) -> Result<Network, String> {
         let path = name;
         let mut reader = Reader { bytes, at: 0, path };
 
         let magic = reader.take(MAGIC.len())?;
         if magic != MAGIC {
-            return Err(format!("{path}: not a Temper network file (bad magic)"));
+            return Err(format!("{path}: not a Kalo Chess network file (bad magic)"));
         }
         let version = reader.u32()?;
         if version != VERSION && version != ATAN_VERSION {
@@ -2790,7 +2791,7 @@ pub(crate) mod tests {
 
     fn temp_path(name: &str) -> String {
         let pid = std::process::id();
-        std::env::temp_dir().join(format!("temper-chess-nnue-{name}-{pid}.nnue")).to_str().unwrap().to_string()
+        std::env::temp_dir().join(format!("kalo-chess-nnue-{name}-{pid}.nnue")).to_str().unwrap().to_string()
     }
 
     /// Reads `path` back, insisting it is a psq network.
@@ -2886,7 +2887,7 @@ pub(crate) mod tests {
         let network = sample_stack_network(16, [8, 4]);
         network.write(&path).expect("writing a valid stack network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_STACK);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_STACK);
         let loaded = load_psq(&path);
         assert!(loaded.pairwise && loaded.stack.is_some());
         assert_eq!(loaded, network);
@@ -2915,7 +2916,7 @@ pub(crate) mod tests {
         let network = sample_threats_stack_network(16, [8, 4]);
         network.write(&path).expect("writing a valid psq_threats_stack network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_STACK);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_STACK);
         let loaded = load_psq(&path);
         assert!(loaded.pairwise && loaded.threats && loaded.stack.is_some());
         assert_eq!(loaded, network);
@@ -3096,9 +3097,9 @@ pub(crate) mod tests {
         let network = sample_kings_network(16, 8);
         network.write(&path).expect("writing a valid psq_threats_screlu_kings network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_KINGS);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_KINGS);
         // One hidden width in the header, a side's.
-        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 1);
         let loaded = load_psq(&path);
         assert!(loaded.screlu && loaded.threats && !loaded.pairwise && loaded.material.is_none());
         assert_eq!(loaded.stack.as_ref().map(|stack| stack.output.len()), Some(1));
@@ -3297,8 +3298,8 @@ pub(crate) mod tests {
         let network = sample_screlu_hidden_network(16, 8);
         network.write(&path).expect("writing a valid psq_threats_screlu_hidden network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_HIDDEN);
-        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_HIDDEN);
+        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 1);
         let loaded = load_psq(&path);
         assert!(loaded.screlu && loaded.threats && !loaded.pairwise && loaded.stack.is_none() && loaded.material.is_none());
         assert_eq!(loaded, network);
@@ -3449,8 +3450,8 @@ pub(crate) mod tests {
         let network = sample_pairwise_hidden_network(16, 8);
         network.write(&path).expect("writing a valid psq_threats_pairwise_hidden network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN);
-        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN);
+        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 1);
         let loaded = load_psq(&path);
         assert!(loaded.pairwise && loaded.threats && !loaded.screlu && loaded.stack.is_none() && loaded.material.is_none());
         assert_eq!(loaded, network);
@@ -3465,7 +3466,7 @@ pub(crate) mod tests {
         network.output = Layer { in_dim: 8, out_dim: 1, weight: vec![0.01; 8], bias: vec![0.0] };
         network.write(&path).expect("a plain pairwise hidden layer is valid");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE);
         std::fs::remove_file(&path).ok();
     }
 
@@ -3621,7 +3622,7 @@ pub(crate) mod tests {
         let network = sample_material_network(16);
         network.write(&path).expect("writing a valid material network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE_MATERIAL);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE_MATERIAL);
         let loaded = load_psq(&path);
         assert!(loaded.pairwise && loaded.threats && loaded.material.is_some() && loaded.stack.is_none());
         assert_eq!(loaded, network);
@@ -3741,7 +3742,7 @@ pub(crate) mod tests {
 
             network.write(&path).expect("writing a valid psq_threats_pairwise network should succeed");
             let bytes = fs::read(&path).unwrap();
-            assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE);
+            assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_PAIRWISE);
             let loaded = load_psq(&path);
             assert!(loaded.pairwise && loaded.threats);
             assert_eq!(loaded, network);
@@ -3821,7 +3822,7 @@ pub(crate) mod tests {
         let network = sample_screlu_phase_network(16);
         network.write(&path).expect("writing a valid screlu phase network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_PHASE);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_PHASE);
         let loaded = load_psq(&path);
         assert!(loaded.screlu && loaded.threats && !loaded.pairwise && loaded.stack.is_none());
         assert_eq!(loaded.material.as_ref().map(|material| material.len()), Some(PHASE_BUCKETS));
@@ -3884,7 +3885,7 @@ pub(crate) mod tests {
         let network = sample_screlu_count_network(16);
         network.write(&path).expect("writing a valid screlu count network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_COUNT);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_COUNT);
         let loaded = load_psq(&path);
         assert!(loaded.screlu && loaded.threats && !loaded.pairwise && loaded.stack.is_none());
         assert_eq!(loaded.material.as_ref().map(|material| material.len()), Some(COUNT_BUCKETS));
@@ -3947,7 +3948,7 @@ pub(crate) mod tests {
         let network = sample_screlu_taper_network(16);
         network.write(&path).expect("writing a valid screlu taper network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_TAPER);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_TAPER);
         let loaded = load_psq(&path);
         assert!(loaded.screlu && loaded.threats && !loaded.pairwise && loaded.stack.is_none());
         assert_eq!(loaded.material.as_ref().map(|material| material.len()), Some(TAPER_SETS));
@@ -4020,7 +4021,7 @@ pub(crate) mod tests {
         let network = sample_screlu_material_network(16);
         network.write(&path).expect("writing a valid screlu material network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_MATERIAL);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU_MATERIAL);
         let loaded = load_psq(&path);
         assert!(loaded.screlu && loaded.threats && !loaded.pairwise && loaded.material.is_some() && loaded.stack.is_none());
         assert_eq!(loaded, network);
@@ -4143,7 +4144,7 @@ pub(crate) mod tests {
         let network = lively_threats_screlu_network(8);
         network.write(&path).expect("writing a valid psq_threats_screlu network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_THREATS_SCRELU);
         let loaded = load_psq(&path);
         assert!(loaded.screlu && loaded.threats && !loaded.pairwise);
         assert_eq!(loaded, network);
@@ -4304,7 +4305,7 @@ pub(crate) mod tests {
         let network = lively_halfk_hidden_network(8, [8, 4]);
         network.write(&path).expect("writing a valid halfk_threats_screlu_hidden network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN);
         let loaded = load_psq(&path);
         assert!(loaded.halfk && loaded.screlu && loaded.threats && !loaded.pairwise && loaded.hidden.len() == 2);
         assert_eq!(loaded, network);
@@ -4390,7 +4391,7 @@ pub(crate) mod tests {
         let network = lively_halfk_two_hidden_network(16, [8, 4], true);
         network.write(&path).expect("writing a valid halfk_threats_pairwise_hidden network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN);
         let loaded = load_psq(&path);
         assert!(loaded.halfk && loaded.pairwise && !loaded.screlu && loaded.threats && loaded.hidden.len() == 2);
         assert_eq!(loaded, network);
@@ -4460,7 +4461,7 @@ pub(crate) mod tests {
         let network = lively_halfk_network(8);
         network.write(&path).expect("writing a valid halfk_threats_screlu network should succeed");
         let bytes = fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_HALFK_THREATS_SCRELU);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_HALFK_THREATS_SCRELU);
         let loaded = load_psq(&path);
         assert!(loaded.halfk && loaded.screlu && loaded.threats && !loaded.pairwise);
         assert_eq!(loaded, network);
@@ -4624,7 +4625,7 @@ pub(crate) mod tests {
 
             network.write(&path).expect("writing a valid pairwise network should succeed");
             let bytes = fs::read(&path).unwrap();
-            assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), FEATURE_SET_PSQ_PAIRWISE);
+            assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_PSQ_PAIRWISE);
             let loaded = load_psq(&path);
             assert!(loaded.pairwise && !loaded.threats);
             assert_eq!(loaded, network);
@@ -5140,7 +5141,7 @@ pub(crate) mod tests {
         let path = temp_path("psq768");
         sample_network(8, &[]).write(&path).expect("writing should succeed");
         let mut bytes = std::fs::read(&path).unwrap();
-        bytes[12..16].copy_from_slice(&FEATURE_SET_PSQ768.to_le_bytes());
+        bytes[8..12].copy_from_slice(&FEATURE_SET_PSQ768.to_le_bytes());
         std::fs::write(&path, &bytes).unwrap();
         let error = Network::load(&path).expect_err("a psq768 file must be refused");
         assert!(error.contains("psq768"), "unexpected error: {error}");
@@ -5166,7 +5167,7 @@ pub(crate) mod tests {
         network.write(&path).unwrap();
 
         let mut bytes = std::fs::read(&path).unwrap();
-        bytes[8..12].copy_from_slice(&(VERSION + 1).to_le_bytes());
+        bytes[4..8].copy_from_slice(&(VERSION + 1).to_le_bytes());
         std::fs::write(&path, &bytes).unwrap();
 
         let error = Network::load(&path).expect_err("an unknown version must be refused");
@@ -5185,7 +5186,7 @@ pub(crate) mod tests {
         let current = Network::load(&path).unwrap();
 
         let mut bytes = std::fs::read(&path).unwrap();
-        bytes[8..12].copy_from_slice(&ATAN_VERSION.to_le_bytes());
+        bytes[4..8].copy_from_slice(&ATAN_VERSION.to_le_bytes());
         std::fs::write(&path, &bytes).unwrap();
         assert_eq!(file_version(&path).unwrap(), ATAN_VERSION);
         let old = Network::load(&path).expect("a version 1 network still loads");
@@ -5207,7 +5208,7 @@ pub(crate) mod tests {
         network.write(&path).unwrap();
 
         let mut bytes = std::fs::read(&path).unwrap();
-        bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&0u32.to_le_bytes());
         std::fs::write(&path, &bytes).unwrap();
 
         let error = Network::load(&path).expect_err("a tag-0 file must be refused");
@@ -5291,7 +5292,7 @@ pub(crate) mod tests {
     /// back.
     #[test]
     fn a_loaded_network_carries_the_parameters_beside_it() {
-        let dir = std::env::temp_dir().join(format!("temper-chess-nnue-parameters-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kalo-chess-nnue-parameters-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("champion.nnue").to_str().unwrap().to_string();
         let parameters_path = parameters_file_beside(&path);

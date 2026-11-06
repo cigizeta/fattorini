@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use temper_chess::pipeline::{preprocessing_config, segments};
+use kalo_chess::pipeline::{preprocessing_config, segments};
 
 use super::remote;
 

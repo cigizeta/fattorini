@@ -4,7 +4,7 @@
 
 # Everything Bash or awk reads must stay LF on every OS, or Bash fails with "bad interpreter"
 # and awk sees a stray \r at the end of every line. bin/ holds the extensionless wrappers
-# (bin/temper-chess, bin/arena, bin/smithy) next to the .sh and .awk scripts.
+# (bin/kalo-chess, bin/arena, bin/smithy) next to the .sh and .awk scripts.
 bin/** text eol=lf
 *.sh text eol=lf
 *.awk text eol=lf

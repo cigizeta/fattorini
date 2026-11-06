@@ -35,8 +35,8 @@ use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use temper_chess::labels::{Curve, LOGISTIC};
-use temper_chess::pipeline::segments::SEGMENT_SUFFIX;
+use kalo_chess::labels::{Curve, LOGISTIC};
+use kalo_chess::pipeline::segments::SEGMENT_SUFFIX;
 
 use super::buckets;
 use super::cache::Progress;

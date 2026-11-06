@@ -15,8 +15,8 @@
 //! - `POST /release` with the boot id: the arena idles again, from a smithy stopping.
 //! - `POST /install` with an `InstallRequest`: `OK`, the install started on a thread of the arena's
 //!   own, its workers playing on; `BUSY` while one runs; `UNCLAIMED` (not this boot's), `UNJOINED`
-//!   (no store to read from yet), or `400` with what is wrong in it. It builds `temper-chess` in release, minutes, so it is never waited for: the
-//!   `Alive` of the polls says how it stands, and the `temper-chess.txt` it left.
+//!   (no store to read from yet), or `400` with what is wrong in it. It builds `kalo-chess` in release, minutes, so it is never waited for: the
+//!   `Alive` of the polls says how it stands, and the `kalo-chess.txt` it left.
 //!
 //! **Arena to smithy, the work**, on `SMITHY_PORT`, at the host the claim named:
 //!
@@ -238,7 +238,7 @@ pub struct Alive {
     pub outbox: usize,
     /// Its install: `-` before any, `running`, or how the last one ended, one line.
     pub install: String,
-    /// The `temper-chess.txt` beside the engine installed on its machine, field by field in order; none
+    /// The `kalo-chess.txt` beside the engine installed on its machine, field by field in order; none
     /// before a first install.
     pub installed: Vec<(String, String)>,
 }
@@ -600,7 +600,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str, contents: Option<&str>) -> String {
-        let path = std::env::temp_dir().join(format!("temper-chess-protocol-test-{name}-{}.yaml", std::process::id())).display().to_string();
+        let path = std::env::temp_dir().join(format!("kalo-chess-protocol-test-{name}-{}.yaml", std::process::id())).display().to_string();
         std::fs::remove_file(&path).ok();
         if let Some(contents) = contents {
             std::fs::write(&path, contents).unwrap();

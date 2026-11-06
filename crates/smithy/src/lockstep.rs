@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use temper_chess::pipeline::preprocessing_config::{self, ArmLambda};
+use kalo_chess::pipeline::preprocessing_config::{self, ArmLambda};
 
 use crate::cache::CacheRecord;
 use crate::game_labels::RoundProgress;
@@ -68,7 +68,7 @@ fn open_arm(
             ("architecture", format!("{:?}", config.architecture)),
             // What the output is trained to mean and the loss: a run started under the atan curve and
             // the matching loss records no such line, so it is refused rather than resumed.
-            ("curve", format!("{} bce", temper_chess::labels::LOGISTIC.describe())),
+            ("curve", format!("{} bce", kalo_chess::labels::LOGISTIC.describe())),
             // The dataset actually trained on.
             ("parent", source.to_string()),
             ("lambda", preprocessing_config::lambda_text(lambda)),
@@ -789,7 +789,7 @@ mod tests {
     use crate::pgn_train_stream::PgnTrainStream;
     use crate::train_stream::TrainStream;
     use crate::{net_config, nnue_network, transformer_network};
-    use temper_chess::pipeline::generation;
+    use kalo_chess::pipeline::generation;
 
     /// A flat test set over `records`, read in order and stopping short at its end.
     struct Flat(Vec<CacheRecord>);

@@ -1,4 +1,4 @@
-# The CPU level Temper requires, x86-64-v3 (BMI2, AVX2, FMA and what every CPU having them also has),
+# The CPU level Kalo Chess requires, x86-64-v3 (BMI2, AVX2, FMA and what every CPU having them also has),
 # by its standard name rather than as those three features: the same machines, and the compiler free
 # to use the rest of the level. `main` refuses a CPU below it.
 [build]
@@ -21,7 +21,7 @@ LIBTORCH_USE_PYTORCH = "1"
 # starts in the repository root, but `cargo test` runs each crate's tests from that crate's own
 # directory, `crates/<name>/`.
 #
-# `cygpath -u`: under Cargo, `$PWD` can arrive as `C:/dev/temper-chess` (seen 2026-10-07), and
+# `cygpath -u`: under Cargo, `$PWD` can arrive as `C:/dev/kalo-chess` (seen 2026-10-07), and
 # its drive letter's colon would split the `PATH` entry in two, so torch's lib directory was never
 # searched and the test binary died on `c10.dll`.
 [target.x86_64-pc-windows-msvc]

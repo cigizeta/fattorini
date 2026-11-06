@@ -1,6 +1,6 @@
-//! The players `arena match`, `sprt` and `duel` take on their command line. Temper's are built in
+//! The players `arena match`, `sprt` and `duel` take on their command line. Kalo Chess's are built in
 //! code, the same way `run_selection` builds its pairings'; every external engine's executable comes
-//! from `data/chess/engines.yaml` (`Engines`), never from a name on the `PATH`. Between two Temper players,
+//! from `data/chess/engines.yaml` (`Engines`), never from a name on the `PATH`. Between two Kalo Chess players,
 //! at a fixed depth or under a clock, both play in-process, as in the gate. **Against an external
 //! engine every one is a UCI subprocess**, so both sides play on equal footing: the same protocol,
 //! the same kind of process, each managing its own time, and the same `Hash` and `Threads`
@@ -9,7 +9,7 @@
 //! `SyzygyPath` plays on without tables and says nothing, so the match loads them in-process first
 //! (`pairing::load_tablebase`), which stops the run when they are missing.
 //!
-//! - `pesto`: the release `temper-chess` with the PeSTO evaluation, asked for through an empty
+//! - `pesto`: the release `kalo-chess` with the PeSTO evaluation, asked for through an empty
 //!   `EvalFile`.
 //! - `stockfish-<level>`, level 0 to 20: the executable of the registry's `stockfish` entry, at that
 //!   `Skill Level`. The bare `stockfish` only says where Stockfish is and is no player: full strength
@@ -18,13 +18,13 @@
 //!   rating through `UCI_LimitStrength` and `UCI_Elo`.
 //! - Any other `kind: uci` engine of the registry, by its name, e.g. `reckless`, with its options.
 //! - `<config>-g<g>-l<lambda>-r<n>`, e.g. `pesto-psq-g1-l0.95-r1`, a forge run's network
-//!   (`players::parse_network_name`): the release `temper-chess` evaluating with that lambda's candidate in
+//!   (`players::parse_network_name`): the release `kalo-chess` evaluating with that lambda's candidate in
 //!   generation `g`, loaded through `EvalFile`.
 //! - `<config>-g<g>-r<n>`, e.g. `pesto-psq-g1-r1`: generation `g`'s winner, as its `generations.tsv`
 //!   records it. This machine's copy of the run first, then the remote's, where its closed
 //!   generations move.
 //!
-//! A Temper player, pesto or a network, is always followed by what it searches with, so that its name
+//! A Kalo Chess player, pesto or a network, is always followed by what it searches with, so that its name
 //! says it:
 //!
 //! - `@default`: the untuned `SearchParameters::DEFAULT`, whatever its `parameters.txt` says.
@@ -44,11 +44,11 @@ use std::collections::HashMap;
 
 use super::data_root;
 use super::engines::{self, EngineEntry, EngineKind, DEFAULT_HASH_MB};
-use temper_chess::pipeline::{players, remote};
+use kalo_chess::pipeline::{players, remote};
 // Read by arena's other modules through this one, where every player's name is read.
-pub use temper_chess::pipeline::players::parse_network_name;
-use temper_chess::nnue::Tuning;
-use temper_chess::search::SearchParameters;
+pub use kalo_chess::pipeline::players::parse_network_name;
+use kalo_chess::nnue::Tuning;
+use kalo_chess::search::SearchParameters;
 
 /// Stockfish's `Skill Level` option ranges over 0 to 20.
 const MAX_STOCKFISH_SKILL: u64 = 20;
@@ -58,12 +58,12 @@ const MAX_STOCKFISH_SKILL: u64 = 20;
 const MIN_STOCKFISH_ELO: u64 = 1320;
 const MAX_STOCKFISH_ELO: u64 = 3190;
 
-/// Temper as a UCI engine: the release binary itself, which `bin/arena` builds together with
-/// `arena`, so it is as fresh as the arena. Never the `bin/temper-chess` wrapper: Windows cannot
+/// Kalo Chess as a UCI engine: the release binary itself, which `bin/arena` builds together with
+/// `arena`, so it is as fresh as the arena. Never the `bin/kalo-chess` wrapper: Windows cannot
 /// spawn a Bash script, and a wrapper process in between would take the pin and the kill meant for
 /// the engine.
-fn temper_chess_binary() -> String {
-    format!("target/release/temper-chess{}", std::env::consts::EXE_SUFFIX)
+fn kalo_chess_binary() -> String {
+    format!("target/release/kalo-chess{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Set on every UCI player, so equal footing does not rest on two engines' defaults happening to
@@ -78,7 +78,7 @@ pub fn set_hash(entry: &mut EngineEntry, hash_mb: usize) {
 }
 
 /// The data root's Syzygy directories as one `SyzygyPath` value, joined with the OS path-list
-/// separator both Temper and Stockfish split it on.
+/// separator both Kalo Chess and Stockfish split it on.
 fn syzygy_path() -> String {
     let joined = std::env::join_paths(data_root::syzygy_directories()).unwrap_or_else(|error| {
         eprintln!("cannot join the Syzygy directories into one SyzygyPath: {error}");
@@ -112,7 +112,7 @@ const STOCKFISH_ENTRY: &str = "stockfish";
 
 /// The external engines this machine has: `data/chess/engines.yaml`'s `kind: uci` entries, by name (see
 /// `examples/engines.yaml`). Read once per run, so every game of it plays the same executables.
-/// Without the file there are none, and a run of Temper against Temper needs none.
+/// Without the file there are none, and a run of Kalo Chess against Kalo Chess needs none.
 pub struct Engines {
     origin: String,
     entries: Option<HashMap<String, EngineEntry>>,
@@ -125,7 +125,7 @@ impl Engines {
         Engines::from_entries(entries, engines::ENGINE_REGISTRY_PATH)
     }
 
-    /// No registry at all: enough for a player known to be Temper's.
+    /// No registry at all: enough for a player known to be Kalo Chess's.
     #[cfg(test)]
     pub fn none() -> Engines {
         Engines { origin: engines::ENGINE_REGISTRY_PATH.to_string(), entries: None }
@@ -172,14 +172,14 @@ impl Engines {
 
 /// Refuses a registry name that a built-in player has or could have, so a name always means one
 /// player: `pesto`, `stockfish-...`, a network's (`players::parse_network_name`), and anything
-/// with `@`, which a Temper player's suffix would take apart. `stockfish` itself is the entry Stockfish's
+/// with `@`, which a Kalo Chess player's suffix would take apart. `stockfish` itself is the entry Stockfish's
 /// players read, and is no player.
 fn check_engine_name(name: &str) -> Result<(), String> {
     if name == "pesto" || name.starts_with("stockfish-") || parse_network_name(name).is_ok() {
         return Err(format!("{name:?} is a built-in player's name: give the engine another"));
     }
     if name.contains('@') {
-        return Err(format!("{name:?} holds an @, which a Temper player's parameters follow: give the engine another name"));
+        return Err(format!("{name:?} holds an @, which a Kalo Chess player's parameters follow: give the engine another name"));
     }
     Ok(())
 }
@@ -193,13 +193,13 @@ fn external_entry(entry: &EngineEntry, handicap: Vec<(&str, serde_yaml::Value)>)
     uci_entry(entry.binary_path(), options)
 }
 
-/// Whether `name` is an engine other than Temper, which can only play over UCI: one of Stockfish's
+/// Whether `name` is an engine other than Kalo Chess, which can only play over UCI: one of Stockfish's
 /// players, or an engine of `engines`.
 pub fn is_external(name: &str, engines: &Engines) -> bool {
     name.starts_with("stockfish-") || engines.get(name).is_some()
 }
 
-/// Whether a run between `one` and `two` plays Temper in-process. Only when both players are Temper,
+/// Whether a run between `one` and `two` plays Kalo Chess in-process. Only when both players are Kalo Chess,
 /// at a fixed depth or under a clock: then both play in-process, exactly as in the gate (same search,
 /// same table, no subprocess per game, no protocol latency on either side), and each can carry its
 /// own parameters (its suffix). Otherwise both play over UCI, so the two sides are on equal footing --
@@ -208,7 +208,7 @@ pub fn plays_in_process(one: &str, two: &str, engines: &Engines) -> bool {
     !is_external(one, engines) && !is_external(two, engines)
 }
 
-/// What a Temper player's name says it searches with, after its `@`.
+/// What a Kalo Chess player's name says it searches with, after its `@`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Suffix {
     /// `@default`: `SearchParameters::DEFAULT`.
@@ -244,21 +244,21 @@ fn split_suffix(name: &str) -> Result<(&str, Option<Suffix>), String> {
     Ok((player, Some(Suffix::Margin(margin))))
 }
 
-/// The parameters the Temper player `player` has tuned, `None` if it has none: pesto's in
+/// The parameters the Kalo Chess player `player` has tuned, `None` if it has none: pesto's in
 /// `players::PESTO_TUNING_DIR`, a network's beside its file (`nnue::read_tuning_beside`).
 fn tuned_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<SearchParameters>, String> {
     if player == "pesto" {
         return players::pesto_parameters();
     }
     let path = players::resolve_network_file_in(player, run_dir)?;
-    Ok(match temper_chess::nnue::read_tuning_beside(&path)? {
+    Ok(match kalo_chess::nnue::read_tuning_beside(&path)? {
         Tuning::Parameters(parameters) => Some(parameters),
         Tuning::Untuned => None,
     })
 }
 
-/// What a Temper player plays over UCI by itself, which no suffix can change: a network the
-/// `parameters.txt` beside it, if any, else the defaults; pesto the defaults, the release `temper-chess`
+/// What a Kalo Chess player plays over UCI by itself, which no suffix can change: a network the
+/// `parameters.txt` beside it, if any, else the defaults; pesto the defaults, the release `kalo-chess`
 /// reading no tune of pesto's.
 fn uci_suffix(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Suffix, String> {
     if player == "pesto" {
@@ -268,7 +268,7 @@ fn uci_suffix(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) ->
 }
 
 /// The player `name` names, or why it names none. `in_process` is `plays_in_process` for the whole
-/// run: `pesto` and networks then play in-process; otherwise every player, Temper included, is
+/// run: `pesto` and networks then play in-process; otherwise every player, Kalo Chess included, is
 /// a UCI subprocess. An external engine's executable comes from `engines`.
 pub fn resolve_player(name: &str, in_process: bool, engines: &Engines) -> Result<EngineEntry, String> {
     // This machine's copy of a run first, then the remote's, where its closed generations move.
@@ -286,18 +286,18 @@ fn in_process_entry(net: Option<String>) -> EngineEntry {
     EngineEntry { kind, path: None, net, options: HashMap::new(), parameters: None }
 }
 
-/// Temper with the network at `net`, or the PeSTO evaluation when `None`: in-process when
-/// `in_process`, the release `temper-chess` over UCI otherwise. Also the gate's two players, built from paths
+/// Kalo Chess with the network at `net`, or the PeSTO evaluation when `None`: in-process when
+/// `in_process`, the release `kalo-chess` over UCI otherwise. Also the gate's two players, built from paths
 /// rather than names.
-pub fn temper_chess_entry(net: Option<String>, in_process: bool) -> EngineEntry {
+pub fn kalo_chess_entry(net: Option<String>, in_process: bool) -> EngineEntry {
     if in_process {
         return in_process_entry(net);
     }
-    // An explicitly empty `EvalFile`, not Temper's default: an engine with a `temper-chess.nnue` beside its
+    // An explicitly empty `EvalFile`, not Kalo Chess's default: an engine with a `kalo-chess.nnue` beside its
     // binary loads it at startup, and the PeSTO evaluation must never depend on that file
     // being absent.
     let eval_file = net.unwrap_or_else(|| "<empty>".to_string());
-    uci_entry(&temper_chess_binary(), vec![("EvalFile", serde_yaml::Value::String(eval_file))])
+    uci_entry(&kalo_chess_binary(), vec![("EvalFile", serde_yaml::Value::String(eval_file))])
 }
 
 /// `resolve_player`, with where a run's directory is, so the tests can use temporary ones.
@@ -306,13 +306,13 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
     let mut entry = resolve_player_without_suffix(player, in_process, engines, run_dir)?;
     if is_external(player, engines) {
         if suffix.is_some() {
-            return Err(format!("{name:?}: an external engine takes no suffix, which only a Temper player has"));
+            return Err(format!("{name:?}: an external engine takes no suffix, which only a Kalo Chess player has"));
         }
         return Ok(entry);
     }
     let Some(suffix) = suffix else {
         return Err(format!(
-            "{name:?}: a Temper player says what it searches with, {name}@default, {name}@t1 (its tune) or {name}@<cp> (a margin)"
+            "{name:?}: a Kalo Chess player says what it searches with, {name}@default, {name}@t1 (its tune) or {name}@<cp> (a margin)"
         ));
     };
     if !in_process {
@@ -324,7 +324,7 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
             };
             return Err(format!(
                 "{name:?}: over UCI, against an external engine, it plays what it has by itself, so it is {player}@{named}; \
-                 other parameters only in-process, against another Temper player"
+                 other parameters only in-process, against another Kalo Chess player"
             ));
         }
         return Ok(entry);
@@ -340,7 +340,7 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
 /// `resolve_player_with` for a name with no `@` suffix.
 fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<EngineEntry, String> {
     if name == "pesto" {
-        return Ok(temper_chess_entry(None, in_process));
+        return Ok(kalo_chess_entry(None, in_process));
     }
     if name == STOCKFISH_ENTRY {
         return Err(format!(
@@ -375,7 +375,7 @@ fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines
     }
 
     let path = players::resolve_network_file_in(name, run_dir)?;
-    Ok(temper_chess_entry(Some(path), in_process))
+    Ok(kalo_chess_entry(Some(path), in_process))
 }
 
 /// Where every match between two players is recorded, one dated folder each:
@@ -511,10 +511,10 @@ mod tests {
     }
 
     #[test]
-    fn pesto_is_temper_chess_over_uci_with_an_explicitly_empty_eval_file() {
+    fn pesto_is_kalo_chess_over_uci_with_an_explicitly_empty_eval_file() {
         let entry = resolve_player("pesto@default", false, &Engines::none()).unwrap();
         assert_equal_footing(&entry);
-        assert_eq!(entry.binary_path(), temper_chess_binary());
+        assert_eq!(entry.binary_path(), kalo_chess_binary());
         assert_eq!(entry.options["EvalFile"], serde_yaml::Value::String("<empty>".to_string()));
     }
 
@@ -539,7 +539,7 @@ mod tests {
 
     /// Both in-process or both over UCI, never one of each.
     #[test]
-    fn temper_chess_plays_in_process_only_against_temper_chess() {
+    fn kalo_chess_plays_in_process_only_against_kalo_chess() {
         let engines = engines();
         assert!(plays_in_process("amanda-g1-r1@t1", "pesto@default", &engines));
         assert!(plays_in_process("amanda-g1-r1@150", "amanda-g1-r1@default", &engines));
@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn a_temper_chess_player_always_says_what_it_searches_with() {
+    fn a_kalo_chess_player_always_says_what_it_searches_with() {
         let engines = engines();
         let entry = resolve_player("pesto@150", true, &engines).unwrap();
         assert_eq!((entry.kind, entry.parameters), (EngineKind::Builtin, Some(SearchParameters::with_margin(150))));
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn a_registry_name_a_built_in_player_has_is_refused() {
         let path = test_executable();
-        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "temper-chess@150"] {
+        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "kalo-chess@150"] {
             let entries = HashMap::from([(name.to_string(), registered(&path, &[]))]);
             assert!(Engines::from_entries(Some(entries), "test").is_err(), "{name:?}");
         }
@@ -657,7 +657,7 @@ mod tests {
         let name = "fine-g1-l0.05-r1";
         let entry = resolve_player_with(&format!("{name}@default"), false, &Engines::none(), &runs).unwrap();
         assert_equal_footing(&entry);
-        assert_eq!(entry.binary_path(), temper_chess_binary());
+        assert_eq!(entry.binary_path(), kalo_chess_binary());
         assert_eq!(entry.options["EvalFile"], serde_yaml::Value::String(candidate.clone()));
         let entry = resolve_player_with(&format!("{name}@default"), true, &Engines::none(), &runs).unwrap();
         assert_eq!((entry.kind, entry.net, entry.parameters), (EngineKind::Network, Some(candidate.clone()), Some(SearchParameters::DEFAULT)));
@@ -674,7 +674,7 @@ mod tests {
         }
         // Tuned: t1 is its parameters.txt in-process, and over UCI only @t1, since the subprocess reads it.
         let tuned = SearchParameters::with_margin(120);
-        tuned.write_file(&temper_chess::nnue::parameters_file_beside(&candidate)).unwrap();
+        tuned.write_file(&kalo_chess::nnue::parameters_file_beside(&candidate)).unwrap();
         let entry = resolve_player_with(&format!("{name}@t1"), true, &Engines::none(), &runs).unwrap();
         assert_eq!(entry.parameters, Some(tuned));
         assert!(resolve_player_with(&format!("{name}@t1"), false, &Engines::none(), &runs).is_ok());
@@ -691,7 +691,7 @@ mod tests {
 
     #[test]
     fn the_latest_unfinished_match_is_resumed_and_a_finished_one_starts_a_new_one() {
-        let pairing = std::env::temp_dir().join(format!("temper-chess-evolve-match-dirs-{}", std::process::id()));
+        let pairing = std::env::temp_dir().join(format!("kalo-chess-evolve-match-dirs-{}", std::process::id()));
         let pairing = pairing.to_str().unwrap().to_string();
         std::fs::remove_dir_all(&pairing).ok();
 

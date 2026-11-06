@@ -233,21 +233,21 @@ use std::hint::black_box;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use temper_chess::board::chess_move::{Move, MoveKind};
-use temper_chess::board::piece_type::PieceType;
-use temper_chess::board::Board;
-use temper_chess::eval::evaluate;
-use temper_chess::movegen::attacks::is_in_check;
-use temper_chess::movegen::noisy_moves;
-use temper_chess::search::MATE_SCORE;
-use temper_chess::features::{halfk, psq, psq_threats};
-use temper_chess::movegen::legal::legal_moves;
-use temper_chess::board::color::Color;
-use temper_chess::nnue::{HiddenArithmetic, Layer, Network, PsqNetwork, QuantizedPsqNetwork, StackLayers};
-use temper_chess::stack_buckets::{COUNT_BUCKETS, MATERIAL_BUCKETS, OUR_KING_BUCKETS, PHASE_BUCKETS, TAPER_SETS, THEIR_KING_BUCKETS};
-use temper_chess::search::choose_best_move;
-use temper_chess::tablebase::SyzygyTablebase;
-use temper_chess::tt::TranspositionTable;
+use kalo_chess::board::chess_move::{Move, MoveKind};
+use kalo_chess::board::piece_type::PieceType;
+use kalo_chess::board::Board;
+use kalo_chess::eval::evaluate;
+use kalo_chess::movegen::attacks::is_in_check;
+use kalo_chess::movegen::noisy_moves;
+use kalo_chess::search::MATE_SCORE;
+use kalo_chess::features::{halfk, psq, psq_threats};
+use kalo_chess::movegen::legal::legal_moves;
+use kalo_chess::board::color::Color;
+use kalo_chess::nnue::{HiddenArithmetic, Layer, Network, PsqNetwork, QuantizedPsqNetwork, StackLayers};
+use kalo_chess::stack_buckets::{COUNT_BUCKETS, MATERIAL_BUCKETS, OUR_KING_BUCKETS, PHASE_BUCKETS, TAPER_SETS, THEIR_KING_BUCKETS};
+use kalo_chess::search::choose_best_move;
+use kalo_chess::tablebase::SyzygyTablebase;
+use kalo_chess::tt::TranspositionTable;
 
 /// The forge's psq shape (the archived `pesto-psq` config's), the default when
 /// `--width`/`--head` are not given, so the measurement with no arguments describes the network
@@ -395,9 +395,9 @@ fn from_repository(path: &str) -> String {
 /// remote when this machine's has no such network, a run trained on another machine (its local
 /// folder may exist without the network, holding only what a duel or a resume left there).
 fn player_path(name: &str) -> String {
-    use temper_chess::pipeline::players::{resolve_network_file_in, run_dir};
+    use kalo_chess::pipeline::players::{resolve_network_file_in, run_dir};
     let local = |run: &str| -> Result<String, String> { Ok(from_repository(&run_dir(run)?)) };
-    let remote = |run: &str| -> Result<String, String> { Ok(temper_chess::pipeline::remote::remote_path(&run_dir(run)?)) };
+    let remote = |run: &str| -> Result<String, String> { Ok(kalo_chess::pipeline::remote::remote_path(&run_dir(run)?)) };
     resolve_network_file_in(name, &local)
         .or_else(|on_local| resolve_network_file_in(name, &remote).map_err(|on_remote| format!("{on_local}; nor on the remote: {on_remote}")))
         .unwrap_or_else(|message| panic!("{message}"))
@@ -589,7 +589,7 @@ fn search_only(network: Option<&Network>, depth: u32, threads: usize, tablebase:
     // The counters are per thread: with one search, all of them are this thread's.
     #[cfg(feature = "node-stats")]
     if threads == 1 {
-        let stats = temper_chess::node_stats::take();
+        let stats = kalo_chess::node_stats::take();
         let share = |part: u64, whole: u64| -> f64 { return 100.0 * part as f64 / whole.max(1) as f64 };
         println!("\n  node-stats (timing above includes the counting):");
         println!(
@@ -651,10 +651,10 @@ fn search_only(network: Option<&Network>, depth: u32, threads: usize, tablebase:
         // the waste it could remove, both as shares of all nodes.
         println!("\n    a move hint only where at least d plies remain (shares of all nodes):");
         println!("    {:>4}  {:>14}  {:>16}", "d", "ordered nodes", "waste reachable");
-        for d in 0..temper_chess::node_stats::DEPTHS {
+        for d in 0..kalo_chess::node_stats::DEPTHS {
             let ordered: u64 = stats.ordered_by_depth[d..].iter().sum();
             let wasted: u64 = stats.wasted_by_depth[d..].iter().sum();
-            let label = if d == temper_chess::node_stats::DEPTHS - 1 { format!("{d}+") } else { d.to_string() };
+            let label = if d == kalo_chess::node_stats::DEPTHS - 1 { format!("{d}+") } else { d.to_string() };
             println!("    {label:>4}  {:>13.1}%  {:>15.1}%", share(ordered, total_nodes), share(wasted, total_nodes));
         }
     }
@@ -693,7 +693,7 @@ fn bench_tablebase(arguments: &[String]) -> SyzygyTablebase {
     if !arguments.iter().any(|argument| argument == "--syzygy") {
         return SyzygyTablebase::new();
     }
-    let root = temper_chess::pipeline::data_root::data_root();
+    let root = kalo_chess::pipeline::data_root::data_root();
     let directories: Vec<String> =
         ["3-4-5-wdl", "6-wdl", "3-4-5-dtz", "6-dtz"].iter().map(|set| format!("{root}/chess/syzygy/{set}")).collect();
     SyzygyTablebase::from_directories(&directories).unwrap_or_else(|message| panic!("{message}"))
@@ -752,7 +752,7 @@ fn selection_positions(dir: &str) -> Vec<Board> {
     selection_games(dir)
         .into_iter()
         .flatten()
-        .filter(|board| !temper_chess::movegen::attacks::is_in_check(board, board.side_to_move()))
+        .filter(|board| !kalo_chess::movegen::attacks::is_in_check(board, board.side_to_move()))
         .collect()
 }
 
@@ -909,11 +909,11 @@ fn cut_reference(source: &str, games: usize) {
     std::fs::rename(&partial, &path).unwrap_or_else(|error| panic!("cannot rename {partial}: {error}"));
     println!("{kept} games written to {path}");
 
-    temper_chess::pipeline::remote::check_mounted().unwrap_or_else(|error| panic!("{error}"));
+    kalo_chess::pipeline::remote::check_mounted().unwrap_or_else(|error| panic!("{error}"));
     // The reference only: the source's `.pgn.zst` is put on Drive by hand, and an uncompressed PGN never.
-    let remote = temper_chess::pipeline::remote::remote_path(REFERENCE_DIR);
-    temper_chess::pipeline::remote::copy_files(&local, &remote, &|file: &str| file == name).unwrap_or_else(|error| panic!("{error}"));
-    println!("copied up to {}", temper_chess::pipeline::remote::remote_path(REFERENCE_DIR));
+    let remote = kalo_chess::pipeline::remote::remote_path(REFERENCE_DIR);
+    kalo_chess::pipeline::remote::copy_files(&local, &remote, &|file: &str| file == name).unwrap_or_else(|error| panic!("{error}"));
+    println!("copied up to {}", kalo_chess::pipeline::remote::remote_path(REFERENCE_DIR));
 }
 
 /// The positions (not in check) of the reference of `games` games, copied down from Drive first when
@@ -925,9 +925,9 @@ fn reference_positions(games: usize, per_game: usize) -> (Vec<Board>, String) {
     let local = from_repository(REFERENCE_DIR);
     let path = format!("{local}/{name}");
     if !std::path::Path::new(&path).is_file() {
-        temper_chess::pipeline::remote::check_mounted().unwrap_or_else(|error| panic!("{error}"));
+        kalo_chess::pipeline::remote::check_mounted().unwrap_or_else(|error| panic!("{error}"));
         std::fs::create_dir_all(&local).unwrap_or_else(|error| panic!("cannot create {local}: {error}"));
-        temper_chess::pipeline::remote::copy_down(REFERENCE_DIR, &local, &|file: &str| file == name)
+        kalo_chess::pipeline::remote::copy_down(REFERENCE_DIR, &local, &|file: &str| file == name)
             .unwrap_or_else(|error| panic!("{error}"));
         assert!(std::path::Path::new(&path).is_file(), "{path} is neither here nor on Drive: run --cut-reference first");
     }
@@ -937,7 +937,7 @@ fn reference_positions(games: usize, per_game: usize) -> (Vec<Board>, String) {
     let mut index: u64 = 0;
     for_each_game(decoder, &path, |boards| {
         let candidates: Vec<Board> =
-            boards.into_iter().filter(|board| !temper_chess::movegen::attacks::is_in_check(board, board.side_to_move())).collect();
+            boards.into_iter().filter(|board| !kalo_chess::movegen::attacks::is_in_check(board, board.side_to_move())).collect();
         index += 1;
         if per_game == 0 {
             kept.extend(candidates);
@@ -1399,7 +1399,7 @@ fn residuals(evaluator: Evaluator, pawn_percent: i32, all: Vec<Board>, source: &
 fn is_noisy(board: &Board) -> bool {
     legal_moves(board, board.side_to_move()).into_iter().any(|mv| {
         mv.promotion().is_some()
-            || ((board.piece_at(mv.to()).is_some() || mv.kind() == MoveKind::EnPassantCapture) && temper_chess::movegen::see::see(board, mv) > 0)
+            || ((board.piece_at(mv.to()).is_some() || mv.kind() == MoveKind::EnPassantCapture) && kalo_chess::movegen::see::see(board, mv) > 0)
     })
 }
 
@@ -1428,7 +1428,7 @@ fn print_residual_tails(label: &str, kept: &[(i32, i32, i32)]) {
     // The same tails in label space (`labels::LOGISTIC`, the curve in [-1, 1] the networks are trained
     // against), in thousandths: whether a margin in expected score fits better than one in
     // centipawns. Only the forward conversion, from each centipawn value, never its inverse.
-    let label = |cp: i32| -> i32 { (temper_chess::labels::LOGISTIC.score(cp as f64 / 100.0) * 1000.0).round() as i32 };
+    let label = |cp: i32| -> i32 { (kalo_chess::labels::LOGISTIC.score(cp as f64 / 100.0) * 1000.0).round() as i32 };
     let label_tails: [(&str, &dyn Fn(&(i32, i32, i32)) -> i32); 3] = [
         ("value - static", &|&(static_eval, value, _)| label(value) - label(static_eval)),
         ("value - qsearch", &|&(_, value, quiescence)| label(value) - label(quiescence)),
@@ -1879,7 +1879,7 @@ fn reduce_8(sums: [std::arch::x86_64::__m256i; 8]) -> [i32; 8] {
     result
 }
 
-use temper_chess::bench_positions::{board as board_from_line, POSITIONS as POSITIONS_FOR_SEARCH};
+use kalo_chess::bench_positions::{board as board_from_line, POSITIONS as POSITIONS_FOR_SEARCH};
 
 /// `--reference-games`' value, the reference file to cut or read: `REFERENCE_DEFAULT_GAMES` when
 /// absent. Not `--games`, which `--search-only` already reads as a directory.

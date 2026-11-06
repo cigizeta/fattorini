@@ -10,7 +10,7 @@ license = "AGPL-3.0-only"
 
 # Dead code is never tolerated: every build fails on it, the `bin/` wrappers' included. Not every
 # warning: a new toolchain's lint would then break the build. A `pub` item of a library is never
-# reported, so `temper_chess::pipeline` holds only the contract both tools use.
+# reported, so `kalo_chess::pipeline` holds only the contract both tools use.
 [workspace.lints.rust]
 dead_code = "deny"
 unused = "deny"
@@ -18,7 +18,7 @@ non_shorthand_field_patterns = "deny"
 
 # The versions every crate shares. Why each crate needs a dependency is said where it uses it.
 [workspace.dependencies]
-temper-chess = { path = "crates/temper-chess" }
+kalo-chess = { path = "crates/kalo-chess" }
 pgn-replay = { path = "crates/pgn-replay" }
 progress = { path = "crates/progress" }
 lan-http = { path = "crates/lan-http" }

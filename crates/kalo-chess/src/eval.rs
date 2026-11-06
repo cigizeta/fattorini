@@ -29,7 +29,7 @@ pub(crate) const fn piece_value(piece_type: PieceType) -> i32 {
 }
 
 /// Where a piece of `color` on `square` reads the PeSTO tables. The tables are printed a8 first
-/// and Temper's squares are LERF (a1 = 0), so White flips the rank (`^ 56`) and Black, whose tables
+/// and Kalo Chess's squares are LERF (a1 = 0), so White flips the rank (`^ 56`) and Black, whose tables
 /// are White's mirrored, reads the square as it is.
 fn table_index(color: Color, square: Square) -> usize {
     match color {

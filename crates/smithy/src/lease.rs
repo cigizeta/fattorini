@@ -19,8 +19,8 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use temper_chess::pipeline::protocol::{JOBS_PATH, SMITHY_PORT};
-use temper_chess::pipeline::remote;
+use kalo_chess::pipeline::protocol::{JOBS_PATH, SMITHY_PORT};
+use kalo_chess::pipeline::remote;
 
 /// The lease's former file in a job's remote directory, now the last part of its key; an old one
 /// left there is ignored, and never copied (`tree.rs`, `tune.rs`).

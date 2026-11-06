@@ -9,7 +9,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-temper-chess.workspace = true
+kalo-chess.workspace = true
 pgn-replay.workspace = true
 progress.workspace = true
 # The claim, the work and the control, over HTTP with the smithy (`chores.rs`).
