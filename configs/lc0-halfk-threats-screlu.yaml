@@ -3,7 +3,7 @@
 # Generation 1 trains on Lc0's labels, direct blend, nine lambdas; its winner is gated against PeSTO,
 # as a sanity check, once, then duelled against the psq_threats_screlu trained on the same corpus.
 # Differs from lc0-psq-threats-screlu by its kind alone. Lc0's corpus is the one the forges read,
-# data/chess/lc0 (1.2B positions with visit counts, since 2026-11-02).
+# data/lc0 (1.2B positions with visit counts, since 2026-11-02).
 
 # The forge. Generation 1's grid: 0.01 to 0.09.
 grid_center: 0.05

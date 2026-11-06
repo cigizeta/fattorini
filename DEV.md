@@ -1,10 +1,10 @@
-# Developing Kalo Games
+# Developing Kalo Chess
 
 For what Kalo Chess is and how to run it, see [README.md](README.md).
 
-Kalo Games is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
+Kalo Chess is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
 PowerShell or cmd. Development also requires **Google Drive for desktop**, with My Drive on `G:`:
-what the machines share, such as Lc0's converted games, lives in `G:/My Drive/kalo-games`, and the scripts
+what the machines share, such as Lc0's converted games, lives in `G:/My Drive/kalo-chess`, and the scripts
 and binaries read and write it there.
 
 ## The workspace
@@ -29,11 +29,11 @@ repository root:
 
 ## One generation
 
-`configs/chess/` holds two kinds of config. A **source** makes one corpus, once, on Drive, for every forge
+`configs/` holds two kinds of config. A **source** makes one corpus, once, on Drive, for every forge
 named after it:
 
-- `lc0.yaml`: Lc0's training tars, converted by its Convert job (`data/chess/lc0/`), up to its cap.
-- `pesto.yaml`: the PeSTO evaluation's self-play at depth 9, played by its Play job (`data/chess/pesto/`), to
+- `lc0.yaml`: Lc0's training tars, converted by its Convert job (`data/lc0/`), up to its cap.
+- `pesto.yaml`: the PeSTO evaluation's self-play at depth 9, played by its Play job (`data/pesto/`), to
   its `training_positions`; it also holds `pesto`'s `tune:`.
 
 Each also sizes its frozen test set, `test_positions`. A **forge**, `<source>-<architecture>`
@@ -45,8 +45,8 @@ from the smithy's page, and every game is played by the arenas, `arena start`, o
 over HTTP on the local network.
 
 A config can be forged more than once: each time is a **run**, numbered from 1, in
-`data/chess/networks/<config>/run-<n>/` with its own copy of the config as it started, `config.yaml`, so
-editing `configs/chess/` changes only new runs. Every phase resumes from the run's files. Run n is
+`data/networks/<config>/run-<n>/` with its own copy of the config as it started, `config.yaml`, so
+editing `configs/` changes only new runs. Every phase resumes from the run's files. Run n is
 named `<config>-r<n>`, the first included (`pesto-psq-r1`, `pesto-psq-r2`). A network is named by
 its config, then each part marked by a letter, the run always and last:
 
@@ -123,7 +123,7 @@ echo 'name: <name>' > data/machine.yaml
 The external engines it may play, Stockfish first; then set each `path` in the copy:
 
 ```bash
-cp examples/engines.yaml data/chess/engines.yaml
+cp examples/engines.yaml data/engines.yaml
 ```
 
 The opening positions and the Syzygy tablebases (about 150 GB), into the repository's `data/`:
@@ -137,7 +137,7 @@ The opening positions and the Syzygy tablebases (about 150 GB), into the reposit
 ```
 
 Google Drive for desktop, in streaming mode with My Drive on `G:`, on every machine, the arenas'
-included: Drive is Kalo Games's store, `G:/My Drive/kalo-games`, the same tree as the repository's `data/`. A file
+included: Drive is Kalo Chess's store, `G:/My Drive/kalo-chess`, the same tree as the repository's `data/`. A file
 is made on the local disk and reaches Drive only whole, never written or appended there in place:
 
 - a run's networks (every candidate, every teacher) as soon as they are complete; the arenas read
@@ -152,7 +152,7 @@ is made on the local disk and reaches Drive only whole, never written or appende
 Every reader (`arena duel`, a snapshot, the page's View) looks on the local disk
 first, then on Drive. Folders may be made available offline in Drive's settings to read them faster.
 
-A Python environment named `.kalo-games` with PyTorch, for `smithy`: on the GPU machine to train, and
+A Python environment named `.kalo-chess` with PyTorch, for `smithy`: on the GPU machine to train, and
 on any other machine that runs `smithy` or its tests:
 
 ```bash
@@ -160,11 +160,11 @@ winget install --id astral-sh.uv
 ```
 
 ```bash
-uv venv .kalo-games --python 3.14
+uv venv .kalo-chess --python 3.14
 ```
 
 ```bash
-source .kalo-games/Scripts/activate
+source .kalo-chess/Scripts/activate
 ```
 
 ```bash
@@ -201,7 +201,7 @@ the arenas. Written once, on Drive, so every machine reads the same copy.
 Its shape is `examples/machines.yaml`'s:
 
 ```bash
-cp examples/machines.yaml "/g/My Drive/kalo-games/data/machines.yaml"
+cp examples/machines.yaml "/g/My Drive/kalo-chess/data/machines.yaml"
 ```
 
 Then the names in that copy edited. A local `data/machines.yaml` is no longer read; the older
@@ -282,7 +282,7 @@ them down. Full runs train only where CUDA is: on a machine without it, the page
 scaled runs alone.
 
 An NNUE forge trains on its training set fully shuffled: its training first scatters the training set into
-`data/chess/buckets/` on the smithy's local disk: once per source for generation 1 (about 15 GB for Lc0's,
+`data/buckets/` on the smithy's local disk: once per source for generation 1 (about 15 GB for Lc0's,
 shared by every `lc0-` forge; PeSTO's likewise), and about 15 GB per self-play generation after. A disposable cache: deleting it costs only a new scatter. Each lambda keeps one checkpoint, its best
 so far (the others are deleted after every round).
 
@@ -297,7 +297,7 @@ own `config.yaml` (`scale: <s>`) and marked on the page wherever the run is name
 
 A scaled run is a run like any other, numbered with the full ones and saved to Drive as they are. On a
 source, it reads a 1/s share of the corpus, its first training files, scattered into buckets of
-their own (`data/chess/buckets/lc0-s1024`), and a fixed subset of the source's frozen test set: sources
+their own (`data/buckets/lc0-s1024`), and a fixed subset of the source's frozen test set: sources
 are never scaled. Its networks play in their run alone: never snapshotted nor a side of a test, and tuned only
 by a tune scaled as their run, to debug the tune itself.
 
@@ -315,7 +315,7 @@ by a tune scaled as their run, to debug the tune itself.
 Each needs `--depth <d>` or `--time <base+inc>`. A player is a Kalo Chess player, `pesto` or a forge run's
 network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@tuned` or
 `@untuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
-`data/chess/engines.yaml`, with no suffix. Against an external engine, the Kalo Chess player plays over
+`data/engines.yaml`, with no suffix. Against an external engine, the Kalo Chess player plays over
 UCI: the arena first builds it with its network and parameters embedded, as a snapshot, into
 `target/uci-players/`.
 
@@ -329,7 +329,7 @@ A snapshot is a release build of `kalo-chess` with a player's network and parame
 
 The player is `pesto` or a full run's generation winner, `@tuned` or `@untuned`. The snapshot is
 written straight to Drive, never locally:
-`/g/My Drive/kalo-games/data/chess/snapshots/kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`
+`/g/My Drive/kalo-chess/data/snapshots/kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`
 (UTC). A new snapshot replaces the older ones of the same player and suffix, so lichess-bot's
 `config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
 embeds. `kalo-chess about`, its UCI name and a first `info string` say exactly what it is: the
@@ -365,7 +365,7 @@ cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), 
 A tune of a network's search parameters by SPSA is the smithy's other job, its pairs played by the
 same arenas, started from the smithy's page: the winner of a generation that passed its gate in an
 ended forge run (`pesto-psq-g1-r1`), or `pesto`. The config's `tune:` says how long and at what
-control, the run's frozen copy for a network, `configs/chess/pesto.yaml` for `pesto`:
+control, the run's frozen copy for a network, `configs/pesto.yaml` for `pesto`:
 
 ```yaml
 tune:
@@ -401,22 +401,22 @@ netsh advfirewall firewall delete rule name="arena"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="kalo-games smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\kalo-games\target\release\smithy.exe"
+netsh advfirewall firewall add rule name="kalo-chess smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\kalo-chess\target\release\smithy.exe"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="kalo-games arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\kalo-games\target\release\arena.exe"
+netsh advfirewall firewall add rule name="kalo-chess arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\kalo-chess\target\release\arena.exe"
 ```
 
 The first two remove Windows' own rules, if any were made. To check, each rule should show Profiles
 Private, TCP and its LocalPort, and `name="smithy"` and `name="arena"` should match no rule:
 
 ```bash
-netsh advfirewall firewall show rule name="kalo-games smithy" verbose
+netsh advfirewall firewall show rule name="kalo-chess smithy" verbose
 ```
 
 ```bash
-netsh advfirewall firewall show rule name="kalo-games arena" verbose
+netsh advfirewall firewall show rule name="kalo-chess arena" verbose
 ```
 
 ```bash

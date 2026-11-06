@@ -1,5 +1,5 @@
-//! PeSTO's source, `configs/chess/pesto.yaml`: the PeSTO evaluation, the player `pesto`, whose self-play
-//! the smithy's Play job has the arenas play once into `data/chess/pesto/test` and `data/chess/pesto/train` on the
+//! PeSTO's source, `configs/pesto.yaml`: the PeSTO evaluation, the player `pesto`, whose self-play
+//! the smithy's Play job has the arenas play once into `data/pesto/test` and `data/pesto/train` on the
 //! remote, in day directories as Lc0's corpus is, for every `pesto-` config's generation 1; and its
 //! tune, as a forge config's `tune:`.
 //!
@@ -14,10 +14,10 @@ use kalo_chess::pipeline::{preprocessing_config, remote, segments};
 
 use super::tune::TuneConfig;
 
-pub(crate) const CONFIG_PATH: &str = "configs/chess/pesto.yaml";
+pub(crate) const CONFIG_PATH: &str = "configs/pesto.yaml";
 
 /// Written to the remote when the Play job has played the whole corpus.
-const COMPLETE_PATH: &str = "data/chess/pesto/complete.txt";
+const COMPLETE_PATH: &str = "data/pesto/complete.txt";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +99,6 @@ mod tests {
 
     #[test]
     fn its_games_go_under_data_pesto() {
-        assert_eq!((test_dir(), train_dir()), ("data/chess/pesto/test".to_string(), "data/chess/pesto/train".to_string()));
+        assert_eq!((test_dir(), train_dir()), ("data/pesto/test".to_string(), "data/pesto/train".to_string()));
     }
 }

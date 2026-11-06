@@ -679,8 +679,8 @@ mod tests {
 
     #[test]
     fn a_label_set_is_named_after_its_lambda() {
-        assert_eq!(labels_path("data/chess/lc0/frozen", ArmLambda::Constant(0.25)), "data/chess/lc0/frozen/lambda-0.25/test.labels");
-        assert_eq!(labels_path("data/chess/lc0/frozen", ArmLambda::Polyline), "data/chess/lc0/frozen/lambda-polyline/test.labels");
+        assert_eq!(labels_path("data/lc0/frozen", ArmLambda::Constant(0.25)), "data/lc0/frozen/lambda-0.25/test.labels");
+        assert_eq!(labels_path("data/lc0/frozen", ArmLambda::Polyline), "data/lc0/frozen/lambda-polyline/test.labels");
     }
 
     /// Constant arms at `lambdas`, as the grid labels them.

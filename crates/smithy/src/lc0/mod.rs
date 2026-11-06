@@ -1,5 +1,5 @@
 //! Lc0's source, the smithy's Convert job: converts Lc0's published training tars into PGN segments
-//! in `test/` and `train/` of its corpus (`LC0_ROOT`, `data/chess/lc0`, each comment carrying the
+//! in `test/` and `train/` of its corpus (`LC0_ROOT`, `data/lc0`, each comment carrying the
 //! visit counts too), in the shape the server's self-play writes, so the
 //! server's `lc0-` runs freeze their test set from the one and train on the other as they read their
 //! own games.
@@ -9,7 +9,7 @@
 //! as Ctrl+C ends it: the tar in flight is abandoned, and converted again from its download, or from
 //! its start, next time.
 //!
-//! **Whole tars only.** Tars are taken in date order from `configs/chess/lc0.yaml`'s `from`. Before one is
+//! **Whole tars only.** Tars are taken in date order from `configs/lc0.yaml`'s `from`. Before one is
 //! downloaded, its output is predicted from its listed size and the largest ratio of PGN bytes to tar
 //! bytes seen so far; if that would take the corpus past `cap_bytes`, the run stops there, and raising
 //! the cap later resumes with that same tar. A started tar always finishes, so a low prediction
@@ -17,7 +17,7 @@
 //! A corpus always has a training tar too: while none is in `train/`, the next tar goes there whatever
 //! the cap, so a small cap, a dev Convert's, never leaves nothing to train on.
 //!
-//! **`data/chess/lc0/tars.tsv`** on the remote holds one row per finished tar: where it went, its bytes, the
+//! **`data/lc0/tars.tsv`** on the remote holds one row per finished tar: where it went, its bytes, the
 //! PGN bytes it produced, its games and positions. A row is written only once every segment of its
 //! tar is on the remote, so it is also the list of tars done. A run stopped mid-tar leaves no row:
 //! the next run converts that tar again, from its download if it finished, writing the same segments.
@@ -52,30 +52,30 @@ use kalo_chess::pipeline::{preprocessing_config, segments};
 
 use super::remote;
 
-const CONFIG_PATH: &str = "configs/chess/lc0.yaml";
+const CONFIG_PATH: &str = "configs/lc0.yaml";
 
 /// The smithy's own subcommand the Convert job runs this as: no command for anyone to type, so it is
 /// in no usage line.
 pub(crate) const CHILD_COMMAND: &str = "lc0-convert";
 
-/// The corpus the Convert fills and the forges read: `data/chess/lc0`, every comment carrying the
+/// The corpus the Convert fills and the forges read: `data/lc0`, every comment carrying the
 /// visit counts a policy is trained on (`convert::visit_counts`). Its segments, `tars.tsv` and
 /// `complete.txt` all live under it.
 pub(crate) const LC0_ROOT: &str = preprocessing_config::LC0_ROOT;
-const STAGING_DIR: &str = "data/chess/lc0/staging";
+const STAGING_DIR: &str = "data/lc0/staging";
 
 /// The staging directory, where the tars wait for their conversion.
 fn staging_dir() -> String {
     STAGING_DIR.to_string()
 }
-const TARS_PATH: &str = "data/chess/lc0/tars.tsv";
+const TARS_PATH: &str = "data/lc0/tars.tsv";
 /// Written to the remote when a run stops at the cap: the corpus is whole, and the server may train on it.
-const COMPLETE_PATH: &str = "data/chess/lc0/complete.txt";
+const COMPLETE_PATH: &str = "data/lc0/complete.txt";
 const TARS_HEADER: &str = "tar\tdir\ttar_bytes\tpgn_bytes\tgames\tskipped\tpositions\tsegments";
 
 /// The tars a run skipped as too slow (`SKIP_AFTER`), one row each time: never done, and passed over
 /// by later runs once they have `GIVE_UP_AFTER` rows.
-const SKIPPED_PATH: &str = "data/chess/lc0/skipped.tsv";
+const SKIPPED_PATH: &str = "data/lc0/skipped.tsv";
 const SKIPPED_HEADER: &str = "tar\tskipped_at_unix\tbytes\tbytes_per_second";
 
 /// The runs a tar is skipped in before later runs pass it over untried: a run judges a tar once, so
@@ -504,7 +504,7 @@ pub(crate) fn run(rest: &[String]) {
                     shared.stopped = true;
                     wake.notify_all();
                     println!(
-                        "stopping before {stem}: data/chess/lc0 holds {used} bytes, and its predicted {predicted} would pass the cap of {}",
+                        "stopping before {stem}: data/lc0 holds {used} bytes, and its predicted {predicted} would pass the cap of {}",
                         config.cap_bytes
                     );
                     write_complete(&shared.rows);
@@ -775,7 +775,7 @@ fn read_config(path: &str) -> Result<Lc0Config, String> {
     Ok(config)
 }
 
-/// The frozen test set every `lc0-` run's generation 1 is judged on, `configs/chess/lc0.yaml`'s.
+/// The frozen test set every `lc0-` run's generation 1 is judged on, `configs/lc0.yaml`'s.
 pub(crate) fn test_positions() -> Result<u64, String> {
     Ok(read_config(CONFIG_PATH)?.test_positions)
 }
@@ -864,7 +864,7 @@ fn predicted(rows: &[TarRow], tar_bytes: u64) -> Option<u64> {
     ratio.map(|ratio| (tar_bytes as f64 * ratio).ceil() as u64)
 }
 
-/// Whether a tar of `tar_bytes` would take `data/chess/lc0` past `cap_bytes`, beside what `rows` hold and
+/// Whether a tar of `tar_bytes` would take `data/lc0` past `cap_bytes`, beside what `rows` hold and
 /// `ahead` more bytes predicted for the tars before it. Never with nothing to predict from.
 fn passes_cap(rows: &[TarRow], ahead: u64, tar_bytes: u64, cap_bytes: u64) -> bool {
     let used: u64 = rows.iter().map(|row| row.pgn_bytes).sum();
@@ -1374,7 +1374,7 @@ mod tests {
         assert_eq!(game_id("run/LICENSE"), None);
     }
 
-    /// A diagnostic, run by hand (2026-11-02): the first freeze of `data/chess/lc0` found its test segments
+    /// A diagnostic, run by hand (2026-11-02): the first freeze of `data/lc0` found its test segments
     /// holding one position a game more than their `.meta` files say. Reads the first test segment on
     /// the remote twice, as raw text and through the freeze's reader, and prints its `.meta`'s counts,
     /// both reads' totals, and the first games where a game's comments + 1 (what the Convert counts)

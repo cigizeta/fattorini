@@ -631,7 +631,7 @@ mod tests {
     fn hello_and_its_reply_read_back() {
         let hello = Hello { machine: "alpha".to_string(), workers: 8, commit: "abc (modified)".to_string() };
         assert_eq!(Hello::parse(&hello.text()), Ok(hello));
-        let reply = HelloReply { session: "alpha-3".to_string(), token: "t0k3n".to_string(), store: "G:/My Drive/kalo-games".to_string() };
+        let reply = HelloReply { session: "alpha-3".to_string(), token: "t0k3n".to_string(), store: "G:/My Drive/kalo-chess".to_string() };
         assert_eq!(HelloReply::parse(&reply.text()), Ok(reply));
     }
 

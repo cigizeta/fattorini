@@ -8,10 +8,14 @@ moot before then, the reasoning behind it included, is in git: the version of th
 commit that pruned it. The documents in `claude/` keep their own history as written.
 
 **Names:** the project was Rotor until 2026-11-04, then Temper, Temper Games from 2026-11-05, and
-Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md). Older documents use the
-older names and paths (`rotor`, `ROTOR_*`, `temper-chess`, `data/` without `chess/`).
+Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Kalo Chess alone,
+with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md).
+Older documents use the older names and paths.
 
 ## Next (the developer, 2026-11-06)
+
+- **Finish kalo-chess-repository.md, step 5, when every machine is idle:** Drive, GitHub, each
+  machine. Until then that commit stays off the other machines: it cannot find the old Drive root.
 
 In this order:
 

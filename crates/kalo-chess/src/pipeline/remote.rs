@@ -22,9 +22,9 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-/// The root of the remote mirror: `kalo-games/` in My Drive, on `G:`. Forward slashes: every Windows
+/// The root of the remote mirror: `kalo-chess/` in My Drive, on `G:`. Forward slashes: every Windows
 /// file API accepts them, and the paths below are joined with `/`.
-pub const ROOT: &str = "G:/My Drive/kalo-games";
+pub const ROOT: &str = "G:/My Drive/kalo-chess";
 
 /// This process's remote root when it is not `ROOT`: a local folder standing in for Drive. Set once,
 /// before any remote call.
@@ -92,8 +92,8 @@ pub fn list_dirs(local_dir: &str, accept: &dyn Fn(&str) -> bool) -> Result<Vec<S
     Ok(names)
 }
 
-/// The remote counterpart of a local path under `data/`: `data/chess/lc0/test` becomes
-/// `{ROOT}/data/chess/lc0/test`.
+/// The remote counterpart of a local path under `data/`: `data/lc0/test` becomes
+/// `{ROOT}/data/lc0/test`.
 pub fn remote_path(local: &str) -> String {
     remote_path_under(this_root(), local)
 }
@@ -273,15 +273,15 @@ mod tests {
 
     #[test]
     fn remote_path_mirrors_the_local_layout_under_the_root() {
-        assert_eq!(remote_path("data/chess/lc0/test"), format!("{ROOT}/data/chess/lc0/test"));
-        assert_eq!(remote_path_under("/r", "data/chess/lc0/frozen/"), "/r/data/chess/lc0/frozen");
-        assert_eq!(remote_path_under("/r", "data/chess/books/book.bin"), "/r/data/chess/books/book.bin");
+        assert_eq!(remote_path("data/lc0/test"), format!("{ROOT}/data/lc0/test"));
+        assert_eq!(remote_path_under("/r", "data/lc0/frozen/"), "/r/data/lc0/frozen");
+        assert_eq!(remote_path_under("/r", "data/books/book.bin"), "/r/data/books/book.bin");
     }
 
     #[test]
     #[should_panic(expected = "is not under data/")]
     fn remote_path_refuses_a_path_outside_data() {
-        remote_path("configs/chess/pesto-psq.yaml");
+        remote_path("configs/pesto-psq.yaml");
     }
 
     #[test]

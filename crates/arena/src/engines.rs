@@ -1,8 +1,8 @@
-//! `data/chess/engines.yaml`: the engine registry, each external engine named once with the path to its
+//! `data/engines.yaml`: the engine registry, each external engine named once with the path to its
 //! executable and the UCI options to set on it, as cutechess keeps its `engines.json`. The players
 //! of `match`, `sprt`, `duel` take every external engine from it (`match_player::Engines`), and a
 //! tournament `config.yaml`'s `participants` resolve against it. Lives under `data/`, not
-//! `configs/chess/`: a binary path is the machine's own business, so each developer writes the file by
+//! `configs/`: a binary path is the machine's own business, so each developer writes the file by
 //! hand from the committed `examples/engines.yaml`.
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use kalo_chess::search::SearchParameters;
 use serde::Deserialize;
 
 /// The registry's one place, per machine and gitignored.
-pub const ENGINE_REGISTRY_PATH: &str = "data/chess/engines.yaml";
+pub const ENGINE_REGISTRY_PATH: &str = "data/engines.yaml";
 
 /// What kind of player a registry entry names. `Uci` is the default, so every `engines.yaml`
 /// written before this field existed keeps working unchanged.
@@ -61,7 +61,7 @@ impl EngineEntry {
         self
             .path
             .as_deref()
-            .expect("a uci engine entry always has a path, enforced when data/chess/engines.yaml is loaded")
+            .expect("a uci engine entry always has a path, enforced when data/engines.yaml is loaded")
     }
 
     /// The `.nnue` file for `kind: network`, likewise already checked present at load time.
@@ -69,7 +69,7 @@ impl EngineEntry {
         self
             .net
             .as_deref()
-            .expect("a network engine entry always has a net, enforced when data/chess/engines.yaml is loaded")
+            .expect("a network engine entry always has a net, enforced when data/engines.yaml is loaded")
     }
 
     /// The table size in MB: the `Hash` option, which a UCI player is sent and an in-process player
@@ -129,7 +129,7 @@ impl EngineRegistry {
         EngineRegistry { entries: file.engines }
     }
 
-    /// A registry built in memory rather than read from `data/chess/engines.yaml`, validated the same way.
+    /// A registry built in memory rather than read from `data/engines.yaml`, validated the same way.
     /// For the gate, whose two players are derived from a network's generation directory rather than
     /// registered by hand.
     pub fn from_entries(entries: HashMap<String, EngineEntry>, origin: &str) -> EngineRegistry {
@@ -141,7 +141,7 @@ impl EngineRegistry {
 
     /// Resolves a bare engine name (as it appears in a tournament `config.yaml`'s
     /// `participants` list) to its registry entry. Panics on an unregistered name -- a
-    /// tournament referencing an engine `data/chess/engines.yaml` doesn't know about is a config
+    /// tournament referencing an engine `data/engines.yaml` doesn't know about is a config
     /// error, not something to run around (CLAUDE.md rule 4: assertions, not eyeballing).
     pub fn resolve(&self, name: &str) -> &EngineEntry {
         self
@@ -195,7 +195,7 @@ pub fn format_option_value(value: &serde_yaml::Value) -> String {
         serde_yaml::Value::Bool(value) => value.to_string(),
         serde_yaml::Value::Number(value) => value.to_string(),
         serde_yaml::Value::String(value) => value.clone(),
-        other => panic!("unsupported engine option value in data/chess/engines.yaml: {other:?}"),
+        other => panic!("unsupported engine option value in data/engines.yaml: {other:?}"),
     }
 }
 
@@ -230,10 +230,10 @@ mod tests {
 
     #[test]
     fn a_network_entry_carries_the_nnue_file() {
-        let entries = parse("engines:\n  amanda-e5:\n    kind: network\n    net: data/chess/networks/a.nnue\n");
+        let entries = parse("engines:\n  amanda-e5:\n    kind: network\n    net: data/networks/a.nnue\n");
         let entry = &entries["amanda-e5"];
         assert_eq!(entry.kind, EngineKind::Network);
-        assert_eq!(entry.network_path(), "data/chess/networks/a.nnue");
+        assert_eq!(entry.network_path(), "data/networks/a.nnue");
         validate("amanda-e5", entry, "test");
     }
 

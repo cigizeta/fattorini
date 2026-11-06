@@ -9,7 +9,7 @@
 //! - `arena start|stop|status`: an arena, playing the smithy's self-play, round-robin, gate and tune
 //!   chores (`chores.rs`).
 //! - `arena snapshot <player>@<tuned|untuned>`: a build of the engine with that player embedded,
-//!   into Drive's `data/chess/snapshots/` (`snapshot.rs`). Hidden: not in the usage.
+//!   into Drive's `data/snapshots/` (`snapshot.rs`). Hidden: not in the usage.
 //! - `arena release <player>@<tuned|untuned> [--dry-run]`: a binary release at a tag, built here and
 //!   drafted on GitHub with `gh` (`release.rs`). Hidden: not in the usage.
 //! - `arena <tournament-id>`: fitness-selection phase 1 scope only, a single pairing -- round
@@ -78,7 +78,7 @@ fn main() {
         print_usage_and_exit();
     };
     // A tournament id never starts with a dash, so `--help`, `-h`, or any stray flag here gets the
-    // usage rather than a panic about a missing `data/chess/tournaments/--help/config.yaml`.
+    // usage rather than a panic about a missing `data/tournaments/--help/config.yaml`.
     if first.starts_with('-') {
         print_usage_and_exit();
     }
@@ -121,7 +121,7 @@ fn print_usage_and_exit() -> ! {
     eprintln!("                    together must stay under half the machine's RAM");
     eprintln!("  games are played in colour-reversed pairs");
     eprintln!("  a player is stockfish-<level> (0 to 20), stockfish-elo-<rating> (1320 to 3190), an engine of");
-    eprintln!("  data/chess/engines.yaml, or a Kalo Chess player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
+    eprintln!("  data/engines.yaml, or a Kalo Chess player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
     eprintln!("  or <config>-g<g>-l<lambda>-r<n>, that lambda's candidate in generation g");
     eprintln!("  a Kalo Chess player is always followed by what it searches with: @tuned, its tune, or @untuned,");
     eprintln!("  the defaults; against an external engine it plays over UCI, built first with both embedded");
@@ -285,8 +285,8 @@ fn play_rule(
 
 /// `arena match | sprt | duel`: one run between two players named on the command line
 /// (`match_player::resolve_player`), with no tournament config; an external engine comes from
-/// `data/chess/engines.yaml` (`match_player::Engines`), read once for the run. Recorded in
-/// a dated folder, `data/chess/matches/<champion>-vs-<challenger>/<YYYYMMDD-HHMM>/`, whose `spec.txt` names its rule and
+/// `data/engines.yaml` (`match_player::Engines`), read once for the run. Recorded in
+/// a dated folder, `data/matches/<champion>-vs-<challenger>/<YYYYMMDD-HHMM>/`, whose `spec.txt` names its rule and
 /// control and which gets a `result.txt` when the run ends. Rerunning the same command resumes the
 /// latest run if it has none, and otherwise starts a new one (`match_player::choose_match_dir`); a
 /// rerun with another rule, value or control is refused rather than resuming it.

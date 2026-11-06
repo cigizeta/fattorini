@@ -1,6 +1,6 @@
 # The PeSTO evaluation, the player `pesto`: the hand-crafted evaluation, and the source of every
 # `pesto-` config's generation 1. Its Play job, from the smithy's page, has the arenas play its
-# self-play at depth 9 into data/chess/pesto/test and data/chess/pesto/train on Drive, once, for every `pesto-`
+# self-play at depth 9 into data/pesto/test and data/pesto/train on Drive, once, for every `pesto-`
 # config.
 
 # The corpus: 1024 x 1024 x 1024 training positions, as every self-play generation plays (raised from

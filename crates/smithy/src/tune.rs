@@ -100,7 +100,7 @@ impl TuneArgs {
 }
 
 /// What a tune is, for any player it tunes: a config's `tune:` section, a forge config's for its
-/// runs' generations, `configs/chess/pesto.yaml`'s for pesto (`pesto.rs`), as
+/// runs' generations, `configs/pesto.yaml`'s for pesto (`pesto.rs`), as
 ///
 /// ```yaml
 /// tune:

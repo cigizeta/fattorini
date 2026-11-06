@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Downloads the Syzygy tables into the data root's chess/syzygy/ directory, regardless of where this
+# Downloads the Syzygy tables into the data root's syzygy/ directory, regardless of where this
 # script is invoked from. The data root is the repository's gitignored data/. The same rule is in
 # src/pipeline/data_root.rs, and the two must agree.
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_ROOT="$REPO_ROOT/data"
-SYZYGY="$DATA_ROOT/chess/syzygy"
+SYZYGY="$DATA_ROOT/syzygy"
 
 BASE="https://tablebase.lichess.ovh/tables/standard"
 

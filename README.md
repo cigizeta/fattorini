@@ -1,12 +1,10 @@
-# Kalo Games
+# Kalo Chess
 
 Kalo Chess is a UCI chess engine written in Rust. Its evaluation networks are trained on one PC with one
 consumer GPU. Its training is starting again from scratch, along two routes: networks that learn
 only from Kalo Chess itself, the first generation from the PeSTO evaluation and every later one from the
 previous winner; and networks whose first generation learns from the training games Leela Chess
 Zero publishes. No other engine's network is used.
-
-Support for Go, as `kalo-go`, is planned but not yet started.
 
 To build Kalo Chess or train its networks, see [DEV.md](DEV.md).
 

@@ -1,5 +1,5 @@
 # Lc0's source: its Convert job, from the smithy's page, converts Lc0's training tars into
-# data/chess/lc0/test and data/chess/lc0/train on Drive, once, for every `lc0-` config.
+# data/lc0/test and data/lc0/train on Drive, once, for every `lc0-` config.
 
 # 4 x 1024 x 1024: the frozen test set every `lc0-` run's generation 1 is judged on, drawn from
 # the corpus's test/.

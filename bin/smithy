@@ -4,12 +4,12 @@
 # Windows finds libtorch's DLLs. No CUDA preload is needed: build.rs keeps torch_cuda.dll linked.
 # LIBTORCH_USE_PYTORCH is deliberately not set here -- that variable is read only by torch-sys's own
 # build script at compile time, and `.cargo/config.toml` sets it. The `cargo build` line below needs
-# this repo's own .kalo-games venv active (DEV.md's "Setting up a machine" section), so
+# this repo's own .kalo-chess venv active (DEV.md's "Setting up a machine" section), so
 # this checks for it explicitly before ever invoking cargo: without it, `cargo build --bin
 # smithy` would fail with a torch-sys/build-script error that gives no hint the real problem is just
 # an inactive venv.
 #
-# The venv is `.kalo-games`, not the conventional `.venv`, so that an active one names this project and
+# The venv is `.kalo-chess`, not the conventional `.venv`, so that an active one names this project and
 # is never mistaken for another project's.
 set -euo pipefail
 
@@ -17,16 +17,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # `VIRTUAL_ENV` is the standard signal a venv's own `activate` script sets (and `deactivate` unsets)
-# -- checked against this repo's own `.kalo-games` specifically, not just "some venv or other," since a
+# -- checked against this repo's own `.kalo-chess` specifically, not just "some venv or other," since a
 # different one wouldn't have `torch` installed either. It may be a C:\ path while REPO_ROOT is
 # /c/..., so both are compared in the Unix form.
 active_venv="${VIRTUAL_ENV:-}"
 if [ -n "$active_venv" ]; then
     active_venv="$(cygpath -u "$active_venv")"
 fi
-if [ "$active_venv" != "$REPO_ROOT/.kalo-games" ]; then
-    echo "smithy: this repo's own .kalo-games venv is not active (VIRTUAL_ENV=${VIRTUAL_ENV:-<unset>}) --" \
-         "run \`source $REPO_ROOT/.kalo-games/Scripts/activate\` first, see DEV.md's \"Setting up" \
+if [ "$active_venv" != "$REPO_ROOT/.kalo-chess" ]; then
+    echo "smithy: this repo's own .kalo-chess venv is not active (VIRTUAL_ENV=${VIRTUAL_ENV:-<unset>}) --" \
+         "run \`source $REPO_ROOT/.kalo-chess/Scripts/activate\` first, see DEV.md's \"Setting up" \
          "a machine\" section" >&2
     exit 1
 fi
@@ -42,7 +42,7 @@ if [ "$control" = 0 ] || [ ! -f "$REPO_ROOT/target/release/smithy.exe" ]; then
     cargo build --release --bin smithy
 fi
 
-TORCH_LIB_DIR="$REPO_ROOT/.kalo-games/Lib/site-packages/torch/lib"
+TORCH_LIB_DIR="$REPO_ROOT/.kalo-chess/Lib/site-packages/torch/lib"
 if [ ! -d "$TORCH_LIB_DIR" ]; then
     echo "smithy: no $TORCH_LIB_DIR -- see DEV.md's \"Setting up a machine\"" \
          "section" >&2
@@ -50,7 +50,7 @@ if [ ! -d "$TORCH_LIB_DIR" ]; then
 fi
 export PATH="$TORCH_LIB_DIR:$PATH"
 
-# smithy's own `configs/chess/`/`data/` paths (`preprocessing_config.rs`/`net_config.rs`) are all
+# smithy's own `configs/`/`data/` paths (`preprocessing_config.rs`/`net_config.rs`) are all
 # relative, so it only reads/writes the right files when actually run from the repo root --
 # already true here (this script `cd`ed above before the `cargo build` call).
 exec "$REPO_ROOT/target/release/smithy.exe" "$@"

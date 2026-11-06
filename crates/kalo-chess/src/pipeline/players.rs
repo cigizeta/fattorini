@@ -2,7 +2,7 @@
 //! the smithy trains and tunes it, and neither may read a name differently from the other.
 //!
 //! - `<config>-g<g>-l<lambda>-r<n>` and `<config>-g<g>-r<n>` (`NetworkName`), of run `<n>` of
-//!   `<config>` (`run_name`: `<config>-r<n>`) in `data/chess/networks/<config>/run-<n>/`: that lambda's
+//!   `<config>` (`run_name`: `<config>-r<n>`) in `data/networks/<config>/run-<n>/`: that lambda's
 //!   candidate in generation `g`, or the generation's winner as its `generations.tsv` records it.
 //!
 //! This machine's copy of a run first, then the remote's (`remote::remote_path`): a run's closed
@@ -17,7 +17,7 @@ use crate::search::SearchParameters;
 
 /// Where pesto's tune writes its `parameters.txt`, and where its in-process player reads it: pesto
 /// has no network file to sit beside.
-pub const PESTO_TUNING_DIR: &str = "data/chess/spsa/pesto";
+pub const PESTO_TUNING_DIR: &str = "data/spsa/pesto";
 
 /// Pesto's tuned parameters (`PESTO_TUNING_DIR`), this machine's when it has them, else the remote's,
 /// where a finished tune moves; `None` if never tuned.
@@ -76,7 +76,7 @@ impl KaloChessPlayer {
 
 /// Where the smithy's forges keep their runs, one directory per config holding one per run, relative
 /// to the repository root every binary runs from.
-pub const RUNS_ROOT: &str = "data/chess/networks";
+pub const RUNS_ROOT: &str = "data/networks";
 
 /// A forge run's name: `<config>-r<n>` for the config's n-th run, the first included, so that a run's
 /// name never reads as its config's.
@@ -114,7 +114,7 @@ pub fn config_dir(config: &str) -> String {
     format!("{RUNS_ROOT}/{config}")
 }
 
-/// A forge run's directory, from its name (`run_name`): `data/chess/networks/<config>/run-<n>`.
+/// A forge run's directory, from its name (`run_name`): `data/networks/<config>/run-<n>`.
 pub fn run_dir(run: &str) -> Result<String, String> {
     let (config, number) = parse_run(run)?;
     Ok(format!("{}/run-{number}", config_dir(config)))
@@ -199,7 +199,7 @@ pub fn parse_network_name(name: &str) -> Result<NetworkName, String> {
     let not_a_player = || {
         format!(
             "{name:?} is not a player: pesto, stockfish-<level>, stockfish-elo-<rating>, an engine of \
-             data/chess/engines.yaml, <config>-g<g>-r<n> (generation g's winner in run n) or \
+             data/engines.yaml, <config>-g<g>-r<n> (generation g's winner in run n) or \
              <config>-g<g>-l<lambda>-r<n> (that lambda's candidate in generation g)"
         )
     };
@@ -308,8 +308,8 @@ mod tests {
         for odd in ["gen-psq", "gen-psq-r0", "gen-psq-r02", "gen-psq-r", "gen-psq-rx", "-r2"] {
             assert!(parse_run(odd).is_err(), "{odd:?} names no run");
         }
-        assert_eq!(run_dir("gen-psq-r1"), Ok("data/chess/networks/gen-psq/run-1".to_string()));
-        assert_eq!(run_dir("gen-psq-r3"), Ok("data/chess/networks/gen-psq/run-3".to_string()));
+        assert_eq!(run_dir("gen-psq-r1"), Ok("data/networks/gen-psq/run-1".to_string()));
+        assert_eq!(run_dir("gen-psq-r3"), Ok("data/networks/gen-psq/run-3".to_string()));
         assert!(run_dir("gen-psq").is_err(), "run 1's old, bare name");
         assert!(is_run_suffixed("gen-psq-r2") && is_run_suffixed("x-r1"));
         assert!(!is_run_suffixed("gen-psq") && !is_run_suffixed("gen-psq-rx") && !is_run_suffixed("lc0-psq-direct"));
@@ -413,10 +413,10 @@ mod tests {
     fn only_the_winner_has_a_tune_folder() {
         let root = root("tune");
         let local = |path: &str| format!("{root}/{path}");
-        let generation_dir = local("data/chess/networks/fine/run-1/gen-1");
+        let generation_dir = local("data/networks/fine/run-1/gen-1");
         touch(&format!("{generation_dir}/lambda-0.03/candidate.nnue"));
         std::fs::write(
-            local("data/chess/networks/fine/run-1/generations.tsv"),
+            local("data/networks/fine/run-1/generations.tsv"),
             "generation\twinner\tgate_games\tgate_share\tpassed\n1\t0.03\t300\t0.5600\ttrue\n",
         )
         .unwrap();

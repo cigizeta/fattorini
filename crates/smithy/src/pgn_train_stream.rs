@@ -28,7 +28,7 @@ use kalo_chess::pipeline::segments;
 use super::{preprocessing_config, remote};
 
 /// A source's training segments on the remote, in the day directories of `{root}/train` (Lc0's
-/// `data/chess/lc0`, PeSTO's `data/chess/pesto`), read in place, each with the positions its `.meta` records, by
+/// `data/lc0`, PeSTO's `data/pesto`), read in place, each with the positions its `.meta` records, by
 /// day and then by name. An error when there are none.
 pub(crate) fn training_files(root: &str) -> Result<Vec<StreamFile>, String> {
     segment_files(&preprocessing_config::source_train_dir(root))

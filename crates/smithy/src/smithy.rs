@@ -21,7 +21,7 @@
 //!    run starting over. A generation has one training set, no retry with more data (the developer,
 //!    2026-11-02).
 //!
-//! Each run lives in the repository's `data/chess/networks/<config>/run-<n>/` (`players::run_dir`), with its
+//! Each run lives in the repository's `data/networks/<config>/run-<n>/` (`players::run_dir`), with its
 //! own frozen copy of its config, local to the smithy; every phase resumes from its files. Its files
 //! reach Drive, the remote (`remote::remote_path`), whole, never written there piece by piece: the
 //! files that change along the run copied at every phase boundary (`Run::mirror_living`), every
@@ -86,7 +86,7 @@ use super::{batch, candidates, checkpoint_store, nnue_network, round, round_robi
 const PREFIX: &str = "smithy";
 
 /// Where the NNUE forges' buckets are scattered (`buckets.rs`): local, disposable, never on Drive.
-const BUCKETS_ROOT: &str = "data/chess/buckets";
+const BUCKETS_ROOT: &str = "data/buckets";
 
 /// The grid's size and fine step: 9 lambdas 0.01 apart, centred on the previous winner.
 const GRID: i32 = 9;
@@ -150,7 +150,7 @@ struct GenConfig {
     /// The tune of each generation whose challenger passed its gate, started by hand from the page.
     tune: tune::TuneConfig,
     /// A scaled run's `s`, its volumes and work `1/s` of a full run's (`scale_forge`): written into
-    /// the run's own copy of its config at New run (`freeze_run_config`), never in `configs/chess/`, so a
+    /// the run's own copy of its config at New run (`freeze_run_config`), never in `configs/`, so a
     /// run is scaled or not for its whole life.
     #[serde(default)]
     scale: Option<u64>,
@@ -322,7 +322,7 @@ fn load_config(path: &str) -> Result<(GenConfig, NetConfig), String> {
     Ok((config, net))
 }
 
-/// The config name `path`, a `configs/chess/` file's path, would be the file of: its stem.
+/// The config name `path`, a `configs/` file's path, would be the file of: its stem.
 fn config_name_of(path: &str) -> String {
     Path::new(path).file_stem().map_or(String::new(), |stem| stem.to_string_lossy().into_owned())
 }
@@ -393,7 +393,7 @@ fn next_run_number(local: &[u32], remote: &[u32]) -> u32 {
 const RUN_CONFIG: &str = "config.yaml";
 
 /// The config run `run` trains by: the copy frozen into its directory as it started, so editing
-/// `configs/chess/` changes only new runs; `configs/chess/`' own for a run moved there by hand without one,
+/// `configs/` changes only new runs; `configs/`' own for a run moved there by hand without one,
 /// until `freeze_run_config` writes it.
 fn load_run_config(run: &str) -> Result<(GenConfig, NetConfig), String> {
     // A run started in another smithy may be on the remote alone, its frozen copy there.
@@ -429,7 +429,7 @@ fn known_runs(config: &str) -> Vec<u32> {
     numbers
 }
 
-/// Copies `configs/chess/<config>.yaml` into run `run`'s directory, the run's own from then on, with
+/// Copies `configs/<config>.yaml` into run `run`'s directory, the run's own from then on, with
 /// `scale:` appended for a scaled run; a copy already there is kept.
 fn freeze_run_config(run: &str, config: &str, scale: Option<u64>) -> Result<(), String> {
     let frozen = format!("{}/{RUN_CONFIG}", run_dir(run));
@@ -1740,9 +1740,9 @@ struct PlayerEntry {
     tune: Option<(u32, u32)>,
 }
 
-/// The names of `configs/chess/`' files, sorted.
+/// The names of `configs/`' files, sorted.
 fn config_names() -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir("configs/chess")
+    let mut names: Vec<String> = std::fs::read_dir("configs")
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok()?.strip_suffix(".yaml").map(str::to_string))
@@ -1751,7 +1751,7 @@ fn config_names() -> Vec<String> {
     names
 }
 
-/// Whether `name` is a forge config in `configs/chess/`: one that reads as one, named for its source
+/// Whether `name` is a forge config in `configs/`: one that reads as one, named for its source
 /// (`check_forge_name`), never named as a run.
 fn is_forge_config(name: &str) -> bool {
     !players::is_run_suffixed(name)
@@ -4248,7 +4248,7 @@ fn job(status: &Status, args: &[String]) -> Result<String, String> {
 }
 
 /// `--play pesto`: PeSTO's self-play dealt to the arenas into its corpus (`pesto.rs`), the test games
-/// first, then the training games, to `configs/chess/pesto.yaml`'s sizes, resumable. Each segment is made
+/// first, then the training games, to `configs/pesto.yaml`'s sizes, resumable. Each segment is made
 /// locally, in the day directory of the start, and moved to the remote once closed: at the start
 /// (what a stopped play left), when stopped, and when done, when `complete.txt` follows.
 fn play_pesto(status: &Status) -> Result<String, String> {
@@ -4985,7 +4985,7 @@ mod tests {
 
     #[test]
     fn a_config_of_a_kind_this_binary_does_not_know_is_an_error_not_a_panic() {
-        // The server reads every config in `configs/chess/`: one written for a newer binary must leave it
+        // The server reads every config in `configs/`: one written for a newer binary must leave it
         // running, that config simply not a forge to it.
         kalo_chess::pipeline::repository_root::enter_for_tests();
         let text = std::fs::read_to_string(preprocessing_config::net_config_path("lc0-psq-threats-screlu")).unwrap();

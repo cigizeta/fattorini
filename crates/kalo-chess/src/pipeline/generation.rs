@@ -1,5 +1,5 @@
 //! The files below a forge run's generation that the arena reads to name a player:
-//! `data/chess/networks/<config>/run-<n>/gen-<g>/` (`players.rs`).
+//! `data/networks/<config>/run-<n>/gen-<g>/` (`players.rs`).
 //!
 //! Each lambda's run sits in its own `lambda_dir`, `lambda-<l>/` (`model.vs`, `optimizer.opt`,
 //! `history.tsv`, `checkpoints/`, `candidate.nnue`, `candidate.txt`).
@@ -43,8 +43,8 @@ mod tests {
 
     #[test]
     fn every_lambda_file_sits_in_its_two_decimal_directory() {
-        let run = lambda_dir("data/chess/networks/self-psq/run-1/gen-1", super::super::preprocessing_config::ArmLambda::Constant(0.7));
-        assert_eq!(run, "data/chess/networks/self-psq/run-1/gen-1/lambda-0.70");
+        let run = lambda_dir("data/networks/self-psq/run-1/gen-1", super::super::preprocessing_config::ArmLambda::Constant(0.7));
+        assert_eq!(run, "data/networks/self-psq/run-1/gen-1/lambda-0.70");
         assert_eq!(candidate_network_path(&run), format!("{run}/candidate.nnue"));
         assert_eq!(candidate_record_path(&run), format!("{run}/candidate.txt"));
         assert_eq!(record_field("step\t12\nloss\t0.5\n", "loss", "x"), Ok("0.5"));

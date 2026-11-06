@@ -753,7 +753,7 @@ mod tests {
 
     #[test]
     fn replay_stages_is_the_first_rate_for_a_run_with_no_history() {
-        let stages = replay_stages("data/chess/networks/train-main-test-no-such-run/history.tsv", 512, 2, 8, 6);
+        let stages = replay_stages("data/networks/train-main-test-no-such-run/history.tsv", 512, 2, 8, 6);
         assert_eq!((stages.stage, stages.finished), (0, false));
     }
 

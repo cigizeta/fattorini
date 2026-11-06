@@ -1,4 +1,4 @@
-//! `data/chess/tournaments/<id>/config.yaml`: a tournament specification. See the tournament design's
+//! `data/tournaments/<id>/config.yaml`: a tournament specification. See the tournament design's
 //! "Tournament: single-elimination knockout" and "Fitness selection" sections. And the `selection:`
 //! section of a network's `net.yaml`, the one thing `arena select` reads from it: the depth,
 //! the round robin's pairs, and the gate's rule. Plus the rule and control values themselves, which
@@ -147,18 +147,18 @@ pub struct TournamentConfig {
     pub match_spec: MatchSpec,
 }
 
-/// Where a tournament id's own directory lives -- `data/chess/tournaments/{id}/`, flat, holding
+/// Where a tournament id's own directory lives -- `data/tournaments/{id}/`, flat, holding
 /// `config.yaml` plus that tournament's own generated `games.pgn`/`results.db` -- the same
 /// "bare name in, real path out" convention `preprocessing_config::net_config_path` already
-/// established for `configs/chess/{name}.yaml`.
+/// established for `configs/{name}.yaml`.
 pub fn tournament_dir(id: &str) -> String {
-    format!("data/chess/tournaments/{id}")
+    format!("data/tournaments/{id}")
 }
 
-/// `data/chess/tournaments/{id}/config.yaml` -- the hand-written spec inside `tournament_dir(id)`,
+/// `data/tournaments/{id}/config.yaml` -- the hand-written spec inside `tournament_dir(id)`,
 /// colocated with that same directory's own generated `games.pgn`/`results.db` rather than
-/// living separately under `configs/chess/` -- see the tournament design's "PGN writer" section (the
-/// `data/chess/tournaments/<id>/` layout decision).
+/// living separately under `configs/` -- see the tournament design's "PGN writer" section (the
+/// `data/tournaments/<id>/` layout decision).
 pub fn config_path(id: &str) -> String {
     format!("{}/config.yaml", tournament_dir(id))
 }

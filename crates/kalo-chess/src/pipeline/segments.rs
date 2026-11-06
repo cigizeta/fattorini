@@ -1,4 +1,4 @@
-//! Finished segments in a forge run's games and `data/chess/lc0`, as both `arena` and `smithy` see them: one
+//! Finished segments in a forge run's games and `data/lc0`, as both `arena` and `smithy` see them: one
 //! directory per day, `{dir}/YYYYMMDD/{name}.pgn.zst`, each segment beside its `{name}.pgn.zst.meta`,
 //! which records its trainable positions and games. The day is the segment's own date, so no
 //! directory grows without end.
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn a_segment_s_day_is_its_date_s_first_eight_digits() {
-        assert_eq!(day_dir("data/chess/lc0/test", "20261017-030803"), "data/chess/lc0/test/20261017");
+        assert_eq!(day_dir("data/lc0/test", "20261017-030803"), "data/lc0/test/20261017");
         assert!(is_day("20261017"));
         assert!(!is_day("2026101"));
         assert!(!is_day("frozen"));

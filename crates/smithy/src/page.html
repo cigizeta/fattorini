@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kalo Games smithy</title>
+<title>Kalo Chess smithy</title>
 <style>
   :root {
     --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4; --panel: #ffffff;
@@ -97,7 +97,7 @@
 <body>
 <main>
   <div id="home">
-    <h1>Kalo Games smithy</h1>
+    <h1>Kalo Chess smithy</h1>
     <div class="sub" id="sub">waiting for the smithy</div>
     <section class="live hidden"></section>
     <div id="boxes"></div>
@@ -651,7 +651,7 @@ function drawConfig() {
   } else {
     const config = catalog.configs.find((c) => c.name === current);
     if (!config) {
-      element.innerHTML = `<section class="bad">no config ${escape(current)} in configs/chess/</section>`;
+      element.innerHTML = `<section class="bad">no config ${escape(current)} in configs/</section>`;
       return;
     }
     const runs = config.runs.map((run) => runBlock(config, run)).join("") || `<div class="muted">no run yet</div>`;
@@ -701,7 +701,7 @@ function claimedMachines() {
 function booksScreen() {
   const progress = `<section id="bookProgress" class="hidden"></section>`;
   if (catalog.books.length === 0) {
-    return progress + `<section class="muted">no source yet: a source is a folder of data/chess/books/ on the remote holding its PGN, `
+    return progress + `<section class="muted">no source yet: a source is a folder of data/books/ on the remote holding its PGN, `
       + `&lt;source&gt;.pgn or &lt;source&gt;.pgn.zst</section>`;
   }
   const sources = catalog.books.map((source) => {
@@ -1076,7 +1076,7 @@ function draw() {
   document.getElementById("home").classList.toggle("hidden", current !== null);
   document.getElementById("page").classList.toggle("hidden", current === null);
   if (!state) return;
-  const smithy = "Kalo Games smithy";
+  const smithy = "Kalo Chess smithy";
   document.title = current ? `${current} - ${smithy}` : smithy;
   document.querySelector("h1").textContent = smithy;
   const stopping = (state.slot.running ? `; beside it, ${state.slot.holder || "a job"}` : "") + (state.stopping ? "; the smithy is stopping" : "");

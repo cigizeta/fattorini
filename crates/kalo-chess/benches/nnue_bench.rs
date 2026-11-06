@@ -27,7 +27,7 @@
 //! Usage: `cargo bench --bench nnue_bench`, optionally with a real network to time instead of a
 //! randomly generated one, and optionally with a search depth:
 //!
-//! `cargo bench --bench nnue_bench -- data/chess/networks/pesto-psq/run-1/gen-1/lambda-0.95/candidate.nnue --depth 9`
+//! `cargo bench --bench nnue_bench -- data/networks/pesto-psq/run-1/gen-1/lambda-0.95/candidate.nnue --depth 9`
 //!
 //! A relative path is read from the repository root. A forge run's player can also be named, from
 //! this machine's runs (`players::resolve_network_file`):
@@ -143,7 +143,7 @@
 //! whole evaluation's cost over its time, an upper bound, as not every node is evaluated. On the
 //! positions of the games under `dir`, or the seven above:
 //!
-//! `cargo bench --bench nnue_bench -- --network <player> --threat-parts data/chess/matches/<a test>`
+//! `cargo bench --bench nnue_bench -- --network <player> --threat-parts data/matches/<a test>`
 //!
 //! `--search-only` skips every timing above and only searches Stockfish's 49 bench positions with the
 //! network, at `--depth` (9 by default): the run to profile.
@@ -166,7 +166,7 @@
 //! of the 49, as the replay searches them: every position in order with the game's history, one
 //! 16 MB table per game. The same games for every evaluator:
 //!
-//! `cargo bench --bench nnue_bench -- --search-only --pesto --games data/chess/networks/pesto-psq/run-1/gen-1`
+//! `cargo bench --bench nnue_bench -- --search-only --pesto --games data/networks/pesto-psq/run-1/gen-1`
 //!
 //! Under the `node-stats` feature, a single-threaded `--search-only` also counts the accumulator
 //! updates, how many an evaluation ever reads, and the evaluations of positions the TT holds:
@@ -178,11 +178,11 @@
 //! percentiles, how often each clears 1 to 6 pawns, and the slope of one on the other. Whether the
 //! search's margins, set in the PeSTO pawn, fit the network:
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --eval-scale data/chess/networks/pesto-psq/run-1/gen-1`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --eval-scale data/networks/pesto-psq/run-1/gen-1`
 //!
 //! `--residuals [dir] [--max-depth D] [--sample N]` measures how far `d` plies of a plain search
 //! (no pruning, no TT) move the evaluator's static evaluation, for `d` = 0 to `D` (4 by default),
-//! over `N` positions (10,000 by default) of the reference games in `data/chess/lumbra/` (copied down
+//! over `N` positions (10,000 by default) of the reference games in `data/lumbra/` (copied down
 //! from Drive when missing), or of the games under `dir`: the quantiles of the tails each pruning
 //! bets on, beside today's margin. With `--pesto`, the PeSTO evaluation instead of the
 //! network:
@@ -198,10 +198,10 @@
 //! tail is printed in centipawns and in thousandths of label space (`labels::LOGISTIC`).
 //!
 //! `--cut-reference <big.pgn> [--reference-games N]` writes a reference once: N games (5,000 by
-//! default) of 40 plies or more, evenly spaced over the source, compressed into `data/chess/lumbra/`, then
+//! default) of 40 plies or more, evenly spaced over the source, compressed into `data/lumbra/`, then
 //! copied up to Drive:
 //!
-//! `cargo bench --bench nnue_bench -- --cut-reference "/g/My Drive/kalo-games/data/chess/lumbra/LumbrasGigaBase_OTB_ELO2400.pgn.zst"`
+//! `cargo bench --bench nnue_bench -- --cut-reference "/g/My Drive/kalo-chess/data/lumbra/LumbrasGigaBase_OTB_ELO2400.pgn.zst"`
 //!
 //! The source, a PGN or a `.pgn.zst`, is read this once; nothing reads it again.
 //!
@@ -209,7 +209,7 @@
 //! and compares its evaluation with the f32 one over the games under `dir`, such as a duel against
 //! PeSTO: the accumulator's scale and headroom, and the differences in centipawns.
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --quantization data/chess/matches/pesto-vs-self-psq-0001`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --quantization data/matches/pesto-vs-self-psq-0001`
 //!
 //! `--weights` prints how the first hidden layer's weights sit against `127 / 64`, the range an `i8`
 //! layer at a fixed scale of 64 holds: what clipping in training would cut.
@@ -222,7 +222,7 @@
 //! `maddubs` (AVX2) and `i8` `dpbusd` (AVX-VNNI, when the CPU has it). The kernels are this bench's
 //! own copies: the engine is not changed by it. A network with exactly one hidden layer only.
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --i8 data/chess/matches/pesto-vs-self-psq-0001`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --i8 data/matches/pesto-vs-self-psq-0001`
 //!
 //! Weight *values* should not affect the per-evaluation timing, but "should not" is not "do not" --
 //! a ReLU is a data-dependent branch and denormals are real -- so timing a genuine trained network
@@ -695,7 +695,7 @@ fn bench_tablebase(arguments: &[String]) -> SyzygyTablebase {
     }
     let root = kalo_chess::pipeline::data_root::data_root();
     let directories: Vec<String> =
-        ["3-4-5-wdl", "6-wdl", "3-4-5-dtz", "6-dtz"].iter().map(|set| format!("{root}/chess/syzygy/{set}")).collect();
+        ["3-4-5-wdl", "6-wdl", "3-4-5-dtz", "6-dtz"].iter().map(|set| format!("{root}/syzygy/{set}")).collect();
     SyzygyTablebase::from_directories(&directories).unwrap_or_else(|message| panic!("{message}"))
 }
 
@@ -816,7 +816,7 @@ const COMPRESSION_LEVEL: i32 = 19;
 /// (`pipeline::remote`): the source, recompressed as `.pgn.zst`, and the reference cut from it.
 /// Relative to the repository's root, not the working directory: `cargo bench` runs from the crate's
 /// own directory, where a copy would land outside the data root (`from_repository`).
-const REFERENCE_DIR: &str = "data/chess/lumbra";
+const REFERENCE_DIR: &str = "data/lumbra";
 
 /// `--residuals`' positions: human over-the-board games, held out from every training corpus (TCEC,
 /// CCRL and self-play), so that no network is measured on positions like those it was trained on,

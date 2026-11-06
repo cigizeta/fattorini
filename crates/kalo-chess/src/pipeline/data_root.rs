@@ -32,7 +32,7 @@ pub fn data_root() -> String {
 /// smithy's tablebase labels), unlike the engine, where a tester may give it any of them or none.
 pub fn syzygy_directories() -> Vec<String> {
     let root = data_root();
-    ["3-4-5-wdl", "6-wdl", "3-4-5-dtz", "6-dtz"].iter().map(|set| format!("{root}/chess/syzygy/{set}")).collect()
+    ["3-4-5-wdl", "6-wdl", "3-4-5-dtz", "6-dtz"].iter().map(|set| format!("{root}/syzygy/{set}")).collect()
 }
 
 /// `data_root` from an explicit directory and test for the repository, so its tests need no real

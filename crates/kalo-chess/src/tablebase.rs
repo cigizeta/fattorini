@@ -436,10 +436,10 @@ mod tests {
     fn local_tables() -> Option<SyzygyTablebase> {
         let root = crate::pipeline::data_root::data_root();
         let directories: Vec<String> =
-            ["3-4-5-wdl", "6-wdl", "3-4-5-dtz", "6-dtz"].iter().map(|set| format!("{root}/chess/syzygy/{set}")).collect();
+            ["3-4-5-wdl", "6-wdl", "3-4-5-dtz", "6-dtz"].iter().map(|set| format!("{root}/syzygy/{set}")).collect();
         let tables = SyzygyTablebase::from_directories(&directories).ok();
         if tables.is_none() {
-            println!("skipped: no Syzygy WDL and DTZ tables under {root}/chess/syzygy");
+            println!("skipped: no Syzygy WDL and DTZ tables under {root}/syzygy");
         }
         tables
     }

@@ -3,7 +3,7 @@
 # runs target/release/arena: self-play, the gate, matches and tournaments. Release-only, since
 # performance actually matters at self-play's scale. No libtorch dependency, so no environment
 # variables to set here (unlike bin/smithy), and it runs on every generating machine. `cd`s to
-# the repo root before running: the opening book, the Syzygy directories, data/chess/engines.yaml, and
+# the repo root before running: the opening book, the Syzygy directories, data/engines.yaml, and
 # every game's output paths are all relative to the repo root.
 set -euo pipefail
 

@@ -3,7 +3,7 @@
 //! hand-write it), YAML is a generic, well-established format with a mature library already
 //! available.
 //!
-//! The network's sections of a forge config, `configs/chess/<name>.yaml` (`preprocessing_config::net_config_path`),
+//! The network's sections of a forge config, `configs/<name>.yaml` (`preprocessing_config::net_config_path`),
 //! one file holding the forge's own keys beside them (the smithy's `load_config`). One shared
 //! schema for every architecture this project trains (NNUE's three kinds and the transformer
 //! alike), not two
@@ -326,7 +326,7 @@ pub fn load(path: &str) -> NetConfig {
 
 /// `load`'s checks as an error: a missing file, invalid YAML, a missing/mistyped field, an unknown
 /// kind, or `training.attention` disagreeing with `architecture.kind`. The smithy's server reads every
-/// config in `configs/chess/`, and one written for a newer binary must not bring it down.
+/// config in `configs/`, and one written for a newer binary must not bring it down.
 pub fn read(path: &str) -> Result<NetConfig, String> {
     macro_rules! ensure {
         ($condition:expr, $($message:tt)+) => {{
@@ -911,7 +911,7 @@ mod tests {
     fn every_committed_forge_config_s_network_loads() {
         kalo_chess::pipeline::repository_root::enter_for_tests();
         for name in ["pesto-psq-threats-screlu", "lc0-psq-threats-screlu"] {
-            let config = load(&format!("configs/chess/{name}.yaml"));
+            let config = load(&format!("configs/{name}.yaml"));
             assert!(matches!(config.architecture.kind, ArchitectureKind::PsqThreatsScrelu), "{name}");
             assert!(config.training.patience_rounds.is_some(), "{name}");
         }

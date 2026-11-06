@@ -1,6 +1,6 @@
 //! The players `arena match`, `sprt` and `duel` take on their command line. Kalo Chess's are built in
 //! code, the same way `run_selection` builds its pairings'; every external engine's executable comes
-//! from `data/chess/engines.yaml` (`Engines`), never from a name on the `PATH`. Between two Kalo Chess players,
+//! from `data/engines.yaml` (`Engines`), never from a name on the `PATH`. Between two Kalo Chess players,
 //! at a fixed depth or under a clock, both play in-process, as in the gate. **Against an external
 //! engine every one is a UCI subprocess**, so both sides play on equal footing: the same protocol,
 //! the same kind of process, each managing its own time, and the same `Hash` and `Threads`
@@ -130,7 +130,7 @@ fn uci_entry(path: &str, options: Vec<(&str, serde_yaml::Value)>) -> EngineEntry
 /// `stockfish-elo-<rating>`.
 const STOCKFISH_ENTRY: &str = "stockfish";
 
-/// The external engines this machine has: `data/chess/engines.yaml`'s `kind: uci` entries, by name (see
+/// The external engines this machine has: `data/engines.yaml`'s `kind: uci` entries, by name (see
 /// `examples/engines.yaml`). Read once per run, so every game of it plays the same executables.
 /// Without the file there are none, and a run of Kalo Chess against Kalo Chess needs none.
 pub struct Engines {
@@ -359,9 +359,9 @@ fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines
 }
 
 /// Where every match between two players is recorded, one dated folder each:
-/// `data/chess/matches/<champion>-vs-<challenger>/`.
+/// `data/matches/<champion>-vs-<challenger>/`.
 pub fn pairing_dir(champion: &str, challenger: &str) -> String {
-    format!("data/chess/matches/{champion}-vs-{challenger}")
+    format!("data/matches/{champion}-vs-{challenger}")
 }
 
 /// A finished match's `result.txt`: the outcome and the final score. Its presence is what makes a
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn a_pairing_is_recorded_under_both_names() {
-        assert_eq!(pairing_dir("stockfish-0", "amanda-0001"), "data/chess/matches/stockfish-0-vs-amanda-0001");
+        assert_eq!(pairing_dir("stockfish-0", "amanda-0001"), "data/matches/stockfish-0-vs-amanda-0001");
     }
 
     #[test]

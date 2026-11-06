@@ -1,8 +1,7 @@
-# CLAUDE.md -- Kalo Games
+# CLAUDE.md -- Kalo Chess
 
-**Kalo Games** is the project. **Kalo Chess** is its UCI chess engine, written in Rust, whose
-neural network evaluation functions are trained on a limited compute budget. Kalo Go is future
-work, not started.
+**Kalo Chess** is a UCI chess engine, written in Rust, whose neural network evaluation functions
+are trained on a limited compute budget.
 
 ## Never leak secrets or sensitive information
 
@@ -19,7 +18,7 @@ file, commit message, issue, pull request, published page or external service:
 - **Personal or household information:** schedules, habits, travel, when the home is empty or a
   machine is off, where the developer works or lives.
 
-Real values live only in gitignored local files (as `data/chess/engines.yaml`), with committed examples
+Real values live only in gitignored local files (as `data/engines.yaml`), with committed examples
 holding placeholders. Before writing a file the developer may commit, check it for any of the above;
 when in doubt, leave it out and ask. A leak already committed cannot be fixed by a later commit:
 say so at once, so the developer can rewrite history and rotate the secret.
@@ -70,7 +69,7 @@ must be one line only.
 
 ## Development platform: Windows only
 
-Kalo Games is developed, tested, measured and distributed on native Windows only,
+Kalo Chess is developed, tested, measured and distributed on native Windows only,
 not WSL (decided 2026-10-05: CCRL testers run a Windows binary). **Linux is
 no longer a target platform (decided 2026-10-08):** new code is written for
 Windows alone, with no `#[cfg(not(windows))]` twin, no `$OSTYPE` branch and no
@@ -92,7 +91,7 @@ syntax.
   is stored LF and checked out with the OS's native endings, CRLF on Windows.
 - Windows-specific Rust code needs no `#[cfg]` pair any more, and no new
   dependency when a few lines suffice. The data root is the repository's gitignored `data/`. The arena's
-  snapshots of the engine go straight to Drive's `data/chess/snapshots/`, never locally; lichess-bot
+  snapshots of the engine go straight to Drive's `data/snapshots/`, never locally; lichess-bot
   runs one of them.
   **Nothing in this repository reads or writes `%LOCALAPPDATA%`** (the developer, 2026-11-06), nor
   anywhere outside the repository and Drive; a release is a plain `.exe` that writes nothing.
@@ -112,14 +111,14 @@ When giving the developer a command that runs a Kalo Chess binary, always use it
 (`bin/kalo-chess`, `bin/smithy`, `bin/arena`), never `cargo run`, `cargo build` followed by
 `target/release/...`, or a bare `target/...` path. Each wrapper builds
 the release binary if needed, `cd`s to the repository root, and sets what the binary needs:
-`bin/smithy` also requires this repository's `.kalo-games` venv to be active and sets libtorch's library
+`bin/smithy` also requires this repository's `.kalo-chess` venv to be active and sets libtorch's library
 paths. Only tests (`cargo test ...`) are given as cargo commands.
 
 ## Licensing
 
-Kalo Games is AGPLv3 only (`LICENSE`, `AGPL-3.0-only`): the developer's goal
+Kalo Chess is AGPLv3 only (`LICENSE`, `AGPL-3.0-only`): the developer's goal
 is that nobody makes money by forking or using the code, and AGPLv3 also
-obliges anyone running a modified Kalo Games engine as a network service to share its
+obliges anyone running a modified Kalo Chess engine as a network service to share its
 source. GPLv3 code may be combined with it (AGPLv3 section 13).
 
 ## No em dashes

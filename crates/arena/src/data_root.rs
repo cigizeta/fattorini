@@ -10,7 +10,7 @@ pub use kalo_chess::pipeline::data_root::{data_root, syzygy_directories};
 
 /// The opening book every match, gate and self-play game draws its openings from.
 pub fn book_path() -> String {
-    format!("{}/chess/books/UHO_Lichess_4852_v1.epd", data_root())
+    format!("{}/books/UHO_Lichess_4852_v1.epd", data_root())
 }
 
 /// Every table in `syzygy_directories`, exiting when a directory is missing or holds none. Loud on

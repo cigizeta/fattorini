@@ -1,5 +1,5 @@
 //! The repository root, which every binary runs from (each `bin/` wrapper `cd`s there), so the
-//! relative paths of the pipeline (`configs/chess/`, `data/`, `examples/`) resolve against it. `cargo test`
+//! relative paths of the pipeline (`configs/`, `data/`, `examples/`) resolve against it. `cargo test`
 //! instead runs each crate's tests from that crate's own directory, `crates/<name>/`.
 
 use std::sync::Once;

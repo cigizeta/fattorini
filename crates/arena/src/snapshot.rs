@@ -1,6 +1,6 @@
 //! `arena snapshot <player>@<tuned|untuned>`: a release build of `kalo-chess` with that player's
 //! network and parameters embedded, and a description of itself (`build.rs`), written straight to
-//! Drive's `data/chess/snapshots/` (never locally), under a name saying what it plays and when it was
+//! Drive's `data/snapshots/` (never locally), under a name saying what it plays and when it was
 //! taken: `kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`, UTC. A command line feature only,
 //! run on any machine, no smithy nor claim involved. One a player and suffix: a new
 //! snapshot replaces the older ones of the same player and suffix. lichess-bot's `config.yml` names the one it plays.
@@ -22,7 +22,7 @@ use super::match_player::{self, Engines};
 const EMBEDDED_TARGET_DIR: &str = "target/snapshot";
 
 /// Where snapshots go, as a path under `data/`: written only on Drive, never locally.
-const SNAPSHOTS_DIR: &str = "data/chess/snapshots";
+const SNAPSHOTS_DIR: &str = "data/snapshots";
 
 /// `arena snapshot <player>@<tuned|untuned>`: takes the snapshot, or says why not and exits.
 pub(crate) fn command(rest: &[String]) {

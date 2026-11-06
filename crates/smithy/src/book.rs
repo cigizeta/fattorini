@@ -1,6 +1,6 @@
 //! The smithy's book job: a Polyglot-style opening book from a PGN database of strong games: every
 //! move played at least N times from its position, weighed by the points it scored. Each source has
-//! its own folder on the remote, `data/chess/books/<source>/`, holding its PGN, `<source>.pgn` or `<source>.pgn.zst`, kept on
+//! its own folder on the remote, `data/books/<source>/`, holding its PGN, `<source>.pgn` or `<source>.pgn.zst`, kept on
 //! Drive for its backup and streamed from there. The job runs as the smithy's child
 //! (`CHILD_COMMAND`), the stages it still lacks in order, each stored for the next:
 //!
@@ -71,7 +71,7 @@ const FIT_SHARES: [f64; 3] = [0.40, 0.55, 0.70];
 
 /// A source's folder, under `data/` locally and on the remote alike.
 fn source_dir(source: &str) -> String {
-    format!("data/chess/books/{source}")
+    format!("data/books/{source}")
 }
 
 fn graph_path(source: &str) -> String {
@@ -94,10 +94,10 @@ fn pgn_path(source: &str) -> Result<String, String> {
 }
 
 /// A source's name is its folder's: one path component, with no separator to climb out of
-/// `data/chess/books/`.
+/// `data/books/`.
 pub(crate) fn check_source(source: &str) -> Result<(), String> {
     let plain = !source.is_empty() && source != "." && source != ".." && !source.contains(['/', '\\', ':']);
-    if plain { Ok(()) } else { Err(format!("{source:?} is not a source's name, a folder of data/chess/books/")) }
+    if plain { Ok(()) } else { Err(format!("{source:?} is not a source's name, a folder of data/books/")) }
 }
 
 /// The rule for N: `max(MIN_N, ceil(ANCHOR_N * (games / ANCHOR_GAMES)^alpha))`.
@@ -188,10 +188,10 @@ struct WrittenView {
     path: String,
 }
 
-/// Every source on the remote, by name: each folder of `data/chess/books/` holding its PGN. None when the
+/// Every source on the remote, by name: each folder of `data/books/` holding its PGN. None when the
 /// remote cannot be read.
 pub(crate) fn sources() -> Vec<SourceView> {
-    let Ok(entries) = std::fs::read_dir(remote::remote_path("data/chess/books")) else {
+    let Ok(entries) = std::fs::read_dir(remote::remote_path("data/books")) else {
         return Vec::new();
     };
     let mut names: Vec<String> = entries
@@ -430,7 +430,7 @@ fn create_parent(path: &str) {
     }
 }
 
-/// Every game of the source's PGN, `path` in the remote's tree (`data/chess/books/...`), zstd-compressed
+/// Every game of the source's PGN, `path` in the remote's tree (`data/books/...`), zstd-compressed
 /// when its name ends in `.zst` and plain otherwise, in file order, streamed from the remote as pass
 /// `label`. The pass counts the file's bytes: the number of games is not known before it ends.
 fn read_pgn(path: &str, label: &str, on_game: impl FnMut(&PgnGame)) {
@@ -1324,15 +1324,15 @@ mod tests {
 
     #[test]
     fn a_source_s_files_are_in_its_folder() {
-        assert_eq!(graph_path("twic"), "data/chess/books/twic/graph.txt");
-        assert_eq!(fit_path("twic"), "data/chess/books/twic/fit.txt");
+        assert_eq!(graph_path("twic"), "data/books/twic/graph.txt");
+        assert_eq!(fit_path("twic"), "data/books/twic/fit.txt");
     }
 
     #[test]
     fn a_written_book_is_read_from_its_record_s_name() {
         assert_eq!(
             written_book("twic", "book-n9-points.txt"),
-            Some(WrittenView { n: 9, weights: "points".to_string(), path: "data/chess/books/twic/book-n9-points.bin".to_string() })
+            Some(WrittenView { n: 9, weights: "points".to_string(), path: "data/books/twic/book-n9-points.bin".to_string() })
         );
         for other in ["book-n9-points.bin", "book-n9-results.txt", "book-nx-counts.txt", "graph.txt", "fit.txt"] {
             assert_eq!(written_book("twic", other), None, "{other}");

@@ -1,5 +1,5 @@
 //! `results.db` -- the shared results database every arena run writes alongside its
-//! own PGN (`data/chess/tournaments/<id>/results.db` next to `games.pgn`, for now -- see
+//! own PGN (`data/tournaments/<id>/results.db` next to `games.pgn`, for now -- see
 //! the tournament design's "Results database and resumability" section). One table, per-game rows,
 //! normalized `(round, engine_one, engine_two)` rather than a free-form pairing id, decided
 //! directly with the developer. This table *is* the resumable state: a pairing's current score

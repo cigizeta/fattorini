@@ -17,7 +17,7 @@ use kalo_chess::pipeline::protocol::Limit;
 use super::sprt::{Sprt, Verdict};
 
 /// Where the tests are kept, locally: `tests.tsv`, and each test's pairs and games.
-pub const TESTS_DIR: &str = "data/chess/tests";
+pub const TESTS_DIR: &str = "data/tests";
 
 /// The tests kept, with their games: the oldest goes as a new one starts past it.
 pub const KEPT: usize = 20;
