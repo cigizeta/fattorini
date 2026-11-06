@@ -5,11 +5,10 @@
 //! The names in `bin/` never change (`temper-chess.exe`, `temper-chess.nnue`):
 //! the engine loads the `temper-chess.nnue` beside its own binary at startup, so no GUI needs an `EvalFile`,
 //! lichess-bot's config is written once, and every install only replaces the files. `temper-chess.txt`
-//! beside them says what they are; the arena's `Alive` carries it to the smithy's page. The install
-//! also creates the directory lichess-bot writes its games to (`games_dir`).
+//! beside them says what they are; the arena's `Alive` carries it to the smithy's page.
 //!
-//! The release root, `%LOCALAPPDATA%\kalo-games`, belongs to an install: this is the one place that
-//! reads the variable. Development's files are in the repository's `data/`.
+//! The release root, `%LOCALAPPDATA%\kalo-games`, holds the installed engine alone: this is the one
+//! place that reads the variable.
 
 use std::process;
 use std::sync::atomic::AtomicBool;
@@ -91,7 +90,6 @@ pub(crate) fn run(install: &Install, store: &str, stop: &AtomicBool) -> Result<S
 
     let bin_dir = format!("{}/bin", release_root());
     create_dir(&bin_dir)?;
-    create_dir(&games_dir())?;
     let engine = engine_file_name();
     let fields = match &network {
         Some(network_path) => {
@@ -202,12 +200,6 @@ fn install_record(network: &str, record: &str, commit: &str, installed: &str) ->
 /// Writes `fields` to `path` as one `name<TAB>value` line each, whole (`lan::write_whole`).
 fn write_record(path: &str, fields: &[(String, String)]) -> Result<(), String> {
     lan::write_whole(path, &fields.iter().map(|(name, value)| format!("{name}\t{value}\n")).collect::<String>())
-}
-
-/// Where lichess-bot keeps the PGN of its games (`pgn_directory` in its `config.yml`), created by
-/// every install, so lichess-bot never needs a directory made by hand.
-fn games_dir() -> String {
-    format!("{}/lichess/games", release_root())
 }
 
 /// Creates `dir` and its parents. An existing directory is left as it is.

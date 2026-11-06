@@ -10,8 +10,8 @@ unset, and development data sits outside the repository. A release ships no tabl
 
 - **Development:** the book and the tablebases live in the repository's gitignored `data/`:
   `data/chess/books/` and `data/chess/syzygy/`. Nothing in development reads `LOCALAPPDATA`.
-- **Release:** the engine `install` sets up stays in `%LOCALAPPDATA%\kalo-games\bin`, and
-  lichess-bot's PGN in `%LOCALAPPDATA%\kalo-games\lichess\games`. These are the only uses left.
+- **Release:** the engine `install` sets up stays in `%LOCALAPPDATA%\kalo-games\bin`, the only use
+  left. lichess-bot's PGN goes to `data/lichess/games`, created by every install.
 - **No books in an install:** the Install screen offers a machine and a player, nothing else.
 - **The Books screen stays, unchanged, on Drive:** it reads its sources from and writes its books
   to `G:/My Drive/kalo-games/data/chess/books/`, and an install no longer takes one (the developer,
