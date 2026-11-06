@@ -35,7 +35,7 @@ use lan_http::{self as http, Listener, Reply, Request};
 use kalo_chess::pipeline::protocol::{
     self, parse_entries, task_body, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, TaskKind, ALIVE_PATH,
     ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, LOOPBACK, PESTO, RELEASE_AFTER,
-    RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, SNAPSHOT_PATH, STATUS_PATH, STOP_PATH, TASK_PATH, SnapshotRequest,
+    RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
 };
 use kalo_chess::tablebase::SyzygyTablebase;
 use kalo_chess::tt::TranspositionTable;
@@ -48,7 +48,7 @@ use super::runner::{self, Recording};
 use super::self_play::{play_game_pgn, TT_SIZE_MB};
 use kalo_chess::pipeline::spsa;
 
-use super::{ctrlc_handler, data_root as arena_data_root, machine, pairing, snapshot};
+use super::{ctrlc_handler, data_root as arena_data_root, machine, pairing};
 
 const PREFIX: &str = "arena";
 
@@ -122,7 +122,6 @@ fn start() {
         waiting_for: Mutex::new(HashSet::new()),
         speeds: Mutex::new(HashMap::new()),
         dealing: Mutex::new(Dealing::default()),
-        snapshot: Mutex::new(None),
         stop,
     });
     let control_done = Arc::new(AtomicBool::new(false));
@@ -157,8 +156,7 @@ fn answer_control(arena: &Arena, request: &Request) -> Reply {
     }
 }
 
-/// The claim's answers, on `ARENA_PORT`: a smithy claiming the arena, polling it, releasing it, and
-/// asking it to take a snapshot.
+/// The claim's answers, on `ARENA_PORT`: a smithy claiming the arena, polling it and releasing it.
 fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
     let body = String::from_utf8_lossy(&request.body).trim().to_string();
     match (request.method.as_str(), request.path.as_str()) {
@@ -180,12 +178,6 @@ fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
                 }
                 state.outbox.len()
             };
-            let snapshot = match &*arena.snapshot.lock().expect("the lock should not be poisoned") {
-                None => "-".to_string(),
-                Some(None) => "running".to_string(),
-                Some(Some(line)) => line.clone(),
-            };
-            let snapshots = snapshot::snapshots();
             let dealing = arena.dealing();
             let alive = Alive {
                 session: dealing.joined.as_ref().map_or("-".to_string(), |(session, _, _)| session.clone()),
@@ -193,43 +185,8 @@ fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
                 in_flight: dealing.in_flight,
                 sent: dealing.sent,
                 outbox,
-                snapshot,
-                snapshots,
             };
             Reply::status("OK", alive.text().as_bytes())
-        }
-        ("POST", SNAPSHOT_PATH) => {
-            let Ok(asked) = SnapshotRequest::parse(&body) else {
-                return Reply::error(400, "a malformed snapshot request");
-            };
-            if arena.claimed().is_none_or(|claim| claim.boot != asked.boot) {
-                return Reply::status("UNCLAIMED", b"");
-            }
-            let Some((_, _, store)) = arena.dealing().joined.clone() else {
-                return Reply::status("UNJOINED", b"");
-            };
-            let job = match snapshot::Snapshot::of(&asked) {
-                Ok(job) => job,
-                Err(message) => return Reply::error(400, &message),
-            };
-            {
-                let mut state = arena.snapshot.lock().expect("the lock should not be poisoned");
-                if matches!(*state, Some(None)) {
-                    return Reply::status("BUSY", b"");
-                }
-                *state = Some(None);
-            }
-            let arena = Arc::clone(arena);
-            std::thread::spawn(move || {
-                log::info!("snapshot of {} asked by the smithy", job.name());
-                let line = match snapshot::run(&job, &store, &arena.stop) {
-                    Ok(line) => format!("done: {line}"),
-                    Err(message) => format!("failed: {message}"),
-                };
-                log::info!("snapshot: {line}");
-                *arena.snapshot.lock().expect("the lock should not be poisoned") = Some(Some(line));
-            });
-            Reply::status("OK", b"")
         }
         ("POST", RELEASE_PATH) => {
             let released = {
@@ -369,9 +326,6 @@ struct Arena {
     /// This machine's loaded speed with each network a tune has named, by name (`loaded_bench`).
     speeds: Mutex<HashMap<String, f64>>,
     dealing: Mutex<Dealing>,
-    /// The snapshot, one at a time: `None` before any, `Some(None)` while one runs, `Some(Some(line))`
-    /// once it has ended, saying how.
-    snapshot: Mutex<Option<Option<String>>>,
     stop: Arc<AtomicBool>,
 }
 

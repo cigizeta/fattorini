@@ -1,9 +1,9 @@
-//! A snapshot, asked by the smithy (`protocol::SNAPSHOT_PATH`): a release build of `kalo-chess` with a
-//! player's network and parameters embedded, and a description of itself (`build.rs`), written to
-//! the data root's `chess/snapshots/` under a name saying what it plays and when it was taken:
-//! `kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`, UTC. Any number are kept, deleted by
-//! hand; one is never replaced. lichess-bot's `config.yml` names the one it plays. Run on a thread of
-//! the arena's own (`chores.rs`), its workers playing on.
+//! `arena snapshot <player>@<tuned|untuned>`: a release build of `kalo-chess` with that player's
+//! network and parameters embedded, and a description of itself (`build.rs`), written straight to
+//! Drive's `data/chess/snapshots/` (never locally), under a name saying what it plays and when it was
+//! taken: `kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`, UTC. A command line feature only,
+//! run on any machine, no smithy nor claim involved. One a player and suffix: a new
+//! snapshot replaces the older ones of the same player and suffix. lichess-bot's `config.yml` names the one it plays.
 //!
 //! The same build (`build_embedded`) gives a match against an external engine its Kalo Chess side
 //! (`match_player.rs`). A release will be built the same way.
@@ -11,110 +11,126 @@
 //! Nothing here, nor anywhere in the repository, writes outside it and Drive.
 
 use std::process;
-use std::sync::atomic::AtomicBool;
 
-use kalo_chess::pipeline::data_root::data_root;
-use kalo_chess::pipeline::protocol::{self, SnapshotRequest, MAX_SNAPSHOTS_SAID, PESTO};
+use kalo_chess::pipeline::{players, protocol, remote};
+use kalo_chess::search::SearchParameters;
 
-use super::chores::{store_path, wait_for, Waited, NETWORK_POLL, NETWORK_TIMEOUT};
+use super::match_player::{self, Engines};
 
 /// Where a build with something embedded goes, never `target/release`: the plain build there embeds
 /// nothing, and every match and the bench count on that.
 const EMBEDDED_TARGET_DIR: &str = "target/snapshot";
 
-/// Every snapshot's file name starts so.
-const PREFIX: &str = "kalo-chess-";
+/// Where snapshots go, as a path under `data/`: written only on Drive, never locally.
+const SNAPSHOTS_DIR: &str = "data/chess/snapshots";
 
-/// The snapshots' folder, under the data root.
-fn snapshots_dir() -> String {
-    format!("{}/chess/snapshots", data_root())
-}
-
-/// A snapshot the arena can take, as the smithy asked it, checked.
-#[derive(Debug, PartialEq)]
-pub(crate) struct Snapshot {
-    /// The player's name, as the file name and the description say it.
-    player: String,
-    /// The network's path in the store, `None` for the PeSTO evaluation.
-    network: Option<String>,
-    /// The parameters' path in the store, `None` for the untuned defaults.
-    parameters: Option<String>,
-}
-
-impl Snapshot {
-    /// `request`, checked: a player name fit for a file name, `pesto` or a `.nnue` in the store, and
-    /// a `parameters.txt` in the store or none.
-    pub(crate) fn of(request: &SnapshotRequest) -> Result<Snapshot, String> {
-        let fit = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.';
-        if request.player.is_empty() || !request.player.chars().all(fit) {
-            return Err(format!("the player {:?} is not a name a file may carry", request.player));
+/// `arena snapshot <player>@<tuned|untuned>`: takes the snapshot, or says why not and exits.
+pub(crate) fn command(rest: &[String]) {
+    let [name] = rest else {
+        eprintln!("usage: arena snapshot <player>@<tuned|untuned>, the player pesto or a generation's winner");
+        process::exit(2);
+    };
+    match take(name) {
+        Ok(path) => println!("took {path}"),
+        Err(message) => {
+            eprintln!("{message}");
+            process::exit(1);
         }
-        let network = match request.network.as_str() {
-            PESTO => None,
-            path if path.ends_with(".nnue") => Some(in_store(path)?),
-            other => return Err(format!("the network is pesto or a .nnue in the store, got {other:?}")),
-        };
-        let parameters = match request.tuned() {
-            false => None,
-            true if request.parameters.ends_with("parameters.txt") => Some(in_store(&request.parameters)?),
-            true => return Err(format!("the parameters are a parameters.txt in the store, got {:?}", request.parameters)),
-        };
-        Ok(Snapshot { player: request.player.clone(), network, parameters })
-    }
-
-    /// What it takes, for the log and the page: the player and its suffix.
-    pub(crate) fn name(&self) -> String {
-        format!("{}@{}", self.player, tuned_word(self.parameters.is_some()))
     }
 }
 
-/// `tuned` or `untuned`, as a player's suffix and a snapshot's name say it.
-fn tuned_word(tuned: bool) -> &'static str {
-    if tuned { "tuned" } else { "untuned" }
-}
-
-/// `path`, when it is a path in the store (`store_path`'s rule), as it is.
-fn in_store(path: &str) -> Result<String, String> {
-    store_path("", path)?;
-    Ok(path.to_string())
-}
-
-/// Takes `snapshot`, its files read from `store`, waited for up to `NETWORK_TIMEOUT` until `stop`.
-/// `Ok` with the file written, or `Err` with why none was.
-pub(crate) fn run(snapshot: &Snapshot, store: &str, stop: &AtomicBool) -> Result<String, String> {
-    let network = snapshot.network.as_deref().map(|name| fetch(name, store, stop)).transpose()?;
-    let parameters = snapshot.parameters.as_deref().map(|name| fetch(name, store, stop)).transpose()?;
+/// Takes a snapshot of `name`, a player with its suffix: its network and parameters as a match
+/// against an external engine resolves them (this machine's copy first, then Drive's), the file named
+/// then built, and the same player's older snapshots removed. `Ok` with the file written.
+fn take(name: &str) -> Result<String, String> {
+    let Some((player, suffix)) = name.split_once('@') else {
+        return Err(format!("{name:?}: say what it searches with, {name}@tuned or {name}@untuned"));
+    };
+    may_snapshot(player)?;
+    // Kalo Chess players only reach here, so the registry is read only to tell them from an engine.
+    let entry = match_player::resolve_player(name, false, &Engines::load()?)?;
+    // Straight to Drive, so every machine (the Lichess one included) runs the same file.
+    remote::check_mounted().map_err(|error| error.to_string())?;
+    let dir = remote::remote_path(SNAPSHOTS_DIR);
     let now = time::OffsetDateTime::now_utc();
     let stamp = format!("{:04}{:02}{:02}-{:02}{:02}", now.year(), u8::from(now.month()), now.day(), now.hour(), now.minute());
-    let dir = snapshots_dir();
-    std::fs::create_dir_all(&dir).map_err(|error| format!("failed to create {dir}: {error}"))?;
-    let file = format!("{PREFIX}{}-{}-{stamp}.exe", snapshot.player, tuned_word(parameters.is_some()));
-    let out = format!("{dir}/{file}");
-    if std::path::Path::new(&out).exists() {
-        return Err(format!("{file} exists already: one snapshot of a player a minute"));
+    let prefix = format!("kalo-chess-{player}-{suffix}-");
+    let stem = format!("{prefix}{stamp}");
+    let out = format!("{dir}/{stem}.exe");
+    // The parameters as a local file, for `build.rs`, beside the build while it runs.
+    let parameters_file = match entry.parameters {
+        Some(parameters) if parameters != SearchParameters::DEFAULT => {
+            std::fs::create_dir_all(EMBEDDED_TARGET_DIR).map_err(|error| format!("failed to create {EMBEDDED_TARGET_DIR}: {error}"))?;
+            let file = format!("{EMBEDDED_TARGET_DIR}/{stem}.parameters.txt");
+            parameters.write_file(&file)?;
+            Some(file)
+        }
+        _ => None,
+    };
+    let description = describe(name, &protocol::current_commit(), &now_text());
+    let built = build_embedded(entry.net.as_deref(), parameters_file.as_deref(), &description, &out);
+    if let Some(file) = &parameters_file {
+        std::fs::remove_file(file).ok();
     }
-    let description = describe(&snapshot.name(), &protocol::current_commit(), &now_text(), network.as_deref(), parameters.as_deref())?;
-    build_embedded(network.as_deref(), parameters.as_deref(), &description, &out)?;
-    Ok(format!("took {out}"))
+    built?;
+    // One snapshot a player and suffix: the older ones go, only once the new one is in place.
+    let older = remote::list(SNAPSHOTS_DIR, &|file| is_older_snapshot(file, &prefix, &stem)).map_err(|error| error.to_string())?;
+    for file in older {
+        let path = format!("{dir}/{file}");
+        std::fs::remove_file(&path).map_err(|error| format!("took {out}, but failed to remove {path}: {error}"))?;
+        println!("removed {path}");
+    }
+    Ok(out)
 }
 
-/// What a build embeds as its description (`kalo-chess about`, UCI's `id name`): the player and its
-/// suffix, the commit, when, and a hash of each embedded file, so two builds of one name but other
-/// files tell themselves apart.
-pub(crate) fn describe(player: &str, commit: &str, taken: &str, network: Option<&str>, parameters: Option<&str>) -> Result<String, String> {
-    let hash = |path: Option<&str>, none: &str| -> Result<String, String> {
-        match path {
-            None => Ok(none.to_string()),
-            Some(path) => std::fs::read(path).map(|bytes| format!("{:016x}", fnv1a(&bytes))).map_err(|error| format!("{path}: {error}")),
-        }
-    };
-    let short_commit: String = commit.chars().take(12).collect();
-    let modified = if commit.contains("modified") { " (modified)" } else { "" };
-    Ok(format!(
-        "{player}, commit {short_commit}{modified}, taken {taken}, network {}, parameters {}",
-        hash(network, "PeSTO")?,
-        hash(parameters, "untuned")?
-    ))
+/// Whether `file` is another snapshot of the player and suffix `prefix` names: the prefix, then a
+/// stamp alone (`YYYYMMDD-HHMM.exe`), so `pesto-untuned-` never matches `pesto-psq-g1-r1-untuned-`'s
+/// files. Not `stem` itself, the one just written.
+fn is_older_snapshot(file: &str, prefix: &str, stem: &str) -> bool {
+    let Some(rest) = file.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(".exe")) else { return false };
+    let stamp = rest.as_bytes();
+    stamp.len() == 13
+        && stamp[8] == b'-'
+        && stamp.iter().enumerate().all(|(i, byte)| i == 8 || byte.is_ascii_digit())
+        && file != format!("{stem}.exe")
+}
+
+/// Whether `player` may be snapshotted (the developer, 2026-10-29, kept 2026-11-06): pesto, or a full
+/// run's generation winner, one that passed its gate; never a candidate nor a scaled run's network,
+/// whose strength means nothing outside its run.
+fn may_snapshot(player: &str) -> Result<(), String> {
+    if player == protocol::PESTO {
+        return Ok(());
+    }
+    let parsed = players::parse_network_name(player)?;
+    if parsed.candidate.is_some() {
+        return Err(format!("{player} is a candidate: only pesto or a generation's winner is snapshotted"));
+    }
+    let local = players::run_dir(&parsed.run())?;
+    let homes = [local.clone(), remote::remote_path(&local)];
+    if homes.iter().all(|home| players::run_winner(home, parsed.generation).is_err()) {
+        return Err(format!("{player} has no winner that passed its gate: only a generation's winner is snapshotted"));
+    }
+    if let Some(scale) = homes.iter().find_map(|home| scale_of(&format!("{home}/config.yaml"))) {
+        return Err(format!("{player} is a scaled run's network (1/{scale}): it plays in its own run alone"));
+    }
+    Ok(())
+}
+
+/// The `scale:` of the frozen run config at `path`, `None` for a full run's or no file.
+fn scale_of(path: &str) -> Option<u64> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let config: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    config.get("scale")?.as_u64()
+}
+
+/// What a build embeds as its description (`kalo-chess about`, UCI's `id name`), each word said
+/// once: the player and its suffix, the commit (`-dirty` when modified, as git says it), and when,
+/// as `pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`.
+pub(crate) fn describe(player: &str, commit: &str, taken: &str) -> String {
+    let short_commit: String = commit.chars().take(7).collect();
+    let dirty = if commit.contains("modified") { "-dirty" } else { "" };
+    format!("{player} {short_commit}{dirty} {taken}")
 }
 
 /// The time now, as a description says it: `YYYY-MM-DD HH:MM UTC`.
@@ -123,16 +139,11 @@ pub(crate) fn now_text() -> String {
     format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", now.year(), u8::from(now.month()), now.day(), now.hour(), now.minute())
 }
 
-/// FNV-1a, 64 bits: enough to tell two files apart at a glance, with no dependency for it.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3))
-}
-
 /// Builds `kalo-chess` in release with `network` and `parameters` embedded (none: the PeSTO
 /// evaluation, the untuned defaults) and `description`, in `EMBEDDED_TARGET_DIR`, then copies the
-/// binary to `out`. Its output goes to the log, a line at a time once it ends.
+/// binary to `out`. cargo's own output goes to the terminal as it builds.
 pub(crate) fn build_embedded(network: Option<&str>, parameters: Option<&str>, description: &str, out: &str) -> Result<(), String> {
-    log::info!("building kalo-chess for {out}: {description}");
+    println!("building kalo-chess for {out}: {description}");
     let mut command = process::Command::new("cargo");
     command.args(["build", "--release", "--bin", "kalo-chess", "--target-dir", EMBEDDED_TARGET_DIR]);
     for (variable, value) in [("KALO_CHESS_EVALFILE", network), ("KALO_CHESS_PARAMETERS", parameters), ("KALO_CHESS_DESCRIPTION", Some(description))] {
@@ -141,104 +152,54 @@ pub(crate) fn build_embedded(network: Option<&str>, parameters: Option<&str>, de
             None => command.env_remove(variable),
         };
     }
-    let output = command.output().map_err(|error| format!("failed to run cargo: {error}"))?;
-    for line in String::from_utf8_lossy(&output.stderr).lines() {
-        log::info!("build: {line}");
-    }
-    if !output.status.success() {
-        return Err(format!("cargo build --release --bin kalo-chess failed ({}): nothing written", output.status));
+    let status = command.status().map_err(|error| format!("failed to run cargo: {error}"))?;
+    if !status.success() {
+        return Err(format!("cargo build --release --bin kalo-chess failed ({status}): nothing written"));
     }
     let built = format!("{EMBEDDED_TARGET_DIR}/release/kalo-chess{}", std::env::consts::EXE_SUFFIX);
-    if let Some(dir) = std::path::Path::new(out).parent() {
-        std::fs::create_dir_all(dir).map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
-    }
-    std::fs::copy(&built, out).map_err(|error| format!("failed to copy {built} to {out}: {error}"))?;
-    Ok(())
-}
-
-/// The file names of this machine's snapshots, newest first by the stamp ending each, at most
-/// `MAX_SNAPSHOTS_SAID`; none before a first one.
-pub(crate) fn snapshots() -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(snapshots_dir()) else {
-        return Vec::new();
-    };
-    let mut files: Vec<String> = entries
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.starts_with(PREFIX) && name.ends_with(".exe"))
-        .collect();
-    files.sort_by_key(|name| std::cmp::Reverse(stamp_of(name)));
-    files.truncate(MAX_SNAPSHOTS_SAID);
-    files
-}
-
-/// The `YYYYMMDD-HHMM` ending a snapshot's file name, so the newest sorts first whatever its player.
-fn stamp_of(file: &str) -> String {
-    let stem = file.trim_end_matches(".exe");
-    stem.get(stem.len().saturating_sub(13)..).unwrap_or("").to_string()
-}
-
-/// The file `name` names, read local first, this machine's copy when it holds one (`name` is the
-/// same `data/...` path in the repository's tree), else from `store`, waited for there. The smithy
-/// puts the parameters in the store before the network.
-fn fetch(name: &str, store: &str, stop: &AtomicBool) -> Result<String, String> {
-    if std::path::Path::new(name).is_file() {
-        return Ok(name.to_string());
-    }
-    let path = store_path(store, name)?;
-    if !std::path::Path::new(&path).is_file() {
-        log::info!("snapshot: waiting for {name} in {store}, up to {} minutes", NETWORK_TIMEOUT.as_secs() / 60);
-    }
-    match wait_for(&path, NETWORK_TIMEOUT, NETWORK_POLL, stop) {
-        Waited::Ready => Ok(path),
-        Waited::Stopped => Err("the arena stopped first: no snapshot was taken".to_string()),
-        Waited::TimedOut => Err(format!(
-            "{name} not in {store} after {} minutes: no snapshot was taken",
-            NETWORK_TIMEOUT.as_secs() / 60
-        )),
-    }
+    // Via `.partial` and a rename: no reader, on Drive or in a match, sees a half-copied `.exe`.
+    remote::copy_replacing(&built, out).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn request(player: &str, network: &str, parameters: &str) -> SnapshotRequest {
-        SnapshotRequest { boot: "b00t".to_string(), player: player.to_string(), network: network.to_string(), parameters: parameters.to_string() }
-    }
-
-    #[test]
-    fn a_snapshot_takes_pesto_or_a_network_in_the_store() {
-        let network = "data/chess/networks/fine/run-1/gen-2/champion.nnue";
-        let parameters = "data/chess/networks/fine/run-1/gen-2/parameters.txt";
-        assert_eq!(
-            Snapshot::of(&request(PESTO, PESTO, protocol::UNTUNED)),
-            Ok(Snapshot { player: PESTO.to_string(), network: None, parameters: None })
-        );
-        let tuned = Snapshot::of(&request("fine-g2-r1", network, parameters)).unwrap();
-        assert_eq!(tuned.name(), "fine-g2-r1@tuned");
-        assert_eq!(Snapshot::of(&request("fine-g2-r1", network, protocol::UNTUNED)).unwrap().name(), "fine-g2-r1@untuned");
-        for network in ["betty-g1-r1", "C:/elsewhere/champion.nnue", "data/../champion.nnue"] {
-            assert!(Snapshot::of(&request("fine-g2-r1", network, protocol::UNTUNED)).is_err(), "{network}");
-        }
-        for player in ["", "Fine", "a@b", "a/b"] {
-            assert!(Snapshot::of(&request(player, network, protocol::UNTUNED)).is_err(), "{player:?}");
-        }
-        assert!(Snapshot::of(&request("fine-g2-r1", network, "data/x.txt")).is_err());
-    }
-
-    #[test]
-    fn the_newest_snapshot_comes_first_whatever_its_player() {
-        let mut files = ["kalo-chess-zeta-g1-r1-tuned-20261106-0930.exe", "kalo-chess-pesto-untuned-20261106-1532.exe"];
-        files.sort_by_key(|name| std::cmp::Reverse(stamp_of(name)));
-        assert_eq!(files[0], "kalo-chess-pesto-untuned-20261106-1532.exe");
-        assert_eq!(stamp_of("kalo-chess-pesto-untuned-20261106-1532.exe"), "20261106-1532");
-    }
-
     #[test]
     fn a_description_says_the_player_the_commit_and_what_is_embedded() {
-        let description = describe("pesto@untuned", "0123456789abcdef (modified)", "2026-11-06 15:32 UTC", None, None).unwrap();
-        assert_eq!(description, "pesto@untuned, commit 0123456789ab (modified), taken 2026-11-06 15:32 UTC, network PeSTO, parameters untuned");
-        assert_ne!(fnv1a(b"a"), fnv1a(b"b"));
+        let description = describe("pesto@untuned", "0123456789abcdef (modified)", "2026-11-06 15:32 UTC");
+        assert_eq!(description, "pesto@untuned 0123456-dirty 2026-11-06 15:32 UTC");
+        assert_eq!(describe("pesto@tuned", "0123456789abcdef", "2026-11-06 15:32 UTC"), "pesto@tuned 0123456 2026-11-06 15:32 UTC");
+    }
+
+    #[test]
+    fn a_new_snapshot_replaces_only_the_same_players_older_ones() {
+        let prefix = "kalo-chess-pesto-untuned-";
+        let stem = "kalo-chess-pesto-untuned-20261106-1532";
+        assert!(is_older_snapshot("kalo-chess-pesto-untuned-20261105-0900.exe", prefix, stem));
+        assert!(!is_older_snapshot("kalo-chess-pesto-untuned-20261106-1532.exe", prefix, stem));
+        assert!(!is_older_snapshot("kalo-chess-pesto-tuned-20261105-0900.exe", prefix, stem));
+        assert!(!is_older_snapshot("kalo-chess-pesto-psq-g1-r1-untuned-20261105-0900.exe", "kalo-chess-pesto-", stem));
+        assert!(!is_older_snapshot("kalo-chess-pesto-untuned-20261105-0900.exe.partial", prefix, stem));
+    }
+
+    #[test]
+    fn only_pesto_or_a_generations_winner_is_snapshotted() {
+        assert!(may_snapshot("pesto").is_ok());
+        assert!(may_snapshot("fine-g1-l0.05-r1").unwrap_err().contains("candidate"));
+        assert!(may_snapshot("stockfish-5").is_err());
+    }
+
+    #[test]
+    fn a_scaled_run_says_its_scale_in_its_frozen_config() {
+        let dir = std::env::temp_dir().join(format!("arena-snapshot-scale-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.yaml").to_str().unwrap().to_string();
+        std::fs::write(&path, "kind: psq\nscale: 1024\n").unwrap();
+        assert_eq!(scale_of(&path), Some(1024));
+        std::fs::write(&path, "kind: psq\n").unwrap();
+        assert_eq!(scale_of(&path), None);
+        assert_eq!(scale_of("no/such/config.yaml"), None);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -46,8 +46,8 @@ use serde::{Deserialize, Serialize};
 use kalo_chess::pipeline::lan::{self, first_line_bytes};
 use lan_http::{Listener, Reply, Request};
 use kalo_chess::pipeline::protocol::{
-    self, entries_text, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, SnapshotRequest, TaskKind, ALIVE_PATH, ARENA_PORT,
-    CHORE_PATH, CHORE_TAG, CLAIM_PATH, CLAIM_POLL, HELLO_PATH, SNAPSHOT_PATH, JOBS_PATH, LATE_AFTER, LOOPBACK, MACHINES_PATH, PESTO, RELEASE_AFTER,
+    self, entries_text, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, TaskKind, ALIVE_PATH, ARENA_PORT,
+    CHORE_PATH, CHORE_TAG, CLAIM_PATH, CLAIM_POLL, HELLO_PATH, JOBS_PATH, LATE_AFTER, LOOPBACK, MACHINES_PATH, PESTO, RELEASE_AFTER,
     RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
 };
 use kalo_chess::pipeline::preprocessing_config;
@@ -420,7 +420,7 @@ fn home_of(local: Dirs, remote: Dirs) -> Dirs {
 }
 
 /// The numbers of `config`'s runs here and on the remote, ascending: one started in another smithy
-/// is listed, viewed, tuned and snapshotted here too.
+/// is listed, viewed and tuned here too.
 fn known_runs(config: &str) -> Vec<u32> {
     let mut numbers = runs_of(config);
     numbers.extend(players::runs_in(&remote::remote_path(&players::config_dir(config))));
@@ -1566,17 +1566,13 @@ fn handle(shared: &Mutex<Shared>, token: &str, request: &Request, now: Instant) 
 /// (`job_name`), and a stop of the job, the smithy staying up.
 const JOB_PATH: &str = "/control/job";
 const JOB_STOP_PATH: &str = "/control/job/stop";
-/// The page's Snapshot: a snapshot asked of a claimed arena (`ask_snapshot`).
-const SNAPSHOT_CONTROL_PATH: &str = "/control/snapshot";
 /// What the loopback listener alone answers beside the arenas' requests: `GET /control/status`, the
 /// job as it stands; `POST /control/stop`, the first Ctrl+C's stop of the job and the smithy; and the
-/// page's job controls and Snapshot. These carry `Status::control_token`, which only the loopback page
+/// page's job controls. These carry `Status::control_token`, which only the loopback page
 /// is given: another site open in the same browser can neither read it nor send the header without it.
 fn control(status: &Status, request: &Request) -> Option<Reply> {
     let from_page = request.token.as_deref() == Some(status.control_token.as_str());
     match (request.method.as_str(), request.path.as_str()) {
-        ("POST", SNAPSHOT_CONTROL_PATH) if !from_page => Some(Reply::error(403, "only the page opened on this machine asks for a snapshot")),
-        ("POST", SNAPSHOT_CONTROL_PATH) => Some(ask_snapshot(&status.claims, &String::from_utf8_lossy(&request.body))),
         ("GET", STATUS_PATH) => Some(reply("OK", status.text().as_bytes())),
         ("POST", STOP_PATH) => {
             status.job_stop.store(true, Ordering::SeqCst);
@@ -1866,7 +1862,7 @@ fn network_scale(player: &str) -> Option<u64> {
     load_run_config(&parsed.run()).ok()?.0.scale
 }
 
-/// `player`, unless it is a scaled run's network: one is never snapshotted nor a side of a test, its
+/// `player`, unless it is a scaled run's network: one is never a side of a test, its
 /// strength meaning nothing outside its run, whose round robin and gate alone play it.
 fn unscaled(player: &str) -> Result<(), String> {
     match network_scale(player) {
@@ -1875,21 +1871,6 @@ fn unscaled(player: &str) -> Result<(), String> {
     }
 }
 
-/// Whether `player` may be snapshotted (the developer, 2026-10-29): PeSTO, or a full run's generation
-/// winner, one that passed its gate; never a candidate nor a scaled run's network.
-fn may_snapshot(player: &str) -> Result<(), String> {
-    if player == PESTO {
-        return Ok(());
-    }
-    unscaled(player)?;
-    let parsed = players::parse_network_name(player)?;
-    if parsed.candidate.is_some() {
-        return Err(format!("{player} is a candidate: only a generation's winner is snapshotted"));
-    }
-    players::run_winner(&run_home(&parsed.run()).root, parsed.generation)
-        .map(|_| ())
-        .map_err(|_| format!("{player} has no winner that passed its gate: only a generation's winner is snapshotted"))
-}
 
 fn tune_args(player: &str) -> Result<tune::TuneArgs, String> {
     if player == PESTO {
@@ -1974,8 +1955,6 @@ struct Claims {
     claim: Claim,
     /// Since when the job has dealt nothing, `None` while it deals.
     idle_since: Mutex<Option<Instant>>,
-    /// The targets a snapshot is being asked of (`ask_snapshot`): kept claimed meanwhile.
-    snapshotting: Mutex<HashSet<String>>,
     /// Where it claims them: the machines listed.
     targets: Vec<String>,
     /// The port the arenas are claimed on: `ARENA_PORT`, another in the tests.
@@ -2008,7 +1987,6 @@ impl Claims {
         Claims {
             claim,
             idle_since: Mutex::new(None),
-            snapshotting: Mutex::new(HashSet::new()),
             targets,
             port: ARENA_PORT,
             held: Mutex::new(HashMap::new()),
@@ -2087,20 +2065,10 @@ impl Claims {
     }
 
     /// Every arena held released, the job dealing nothing: its chores closed, each arena free for
-    /// another smithy. One a snapshot is being asked of, or runs on, is kept until it ends.
+    /// another smithy.
     fn release_idle(&self, shared: &Mutex<Shared>) {
-        let snapshotting = self.snapshotting.lock().expect("the lock should not be poisoned").clone();
-        let released: Vec<(String, String)> = {
-            let mut held = self.held();
-            let targets: Vec<String> = held
-                .iter()
-                .filter(|(target, arena)| {
-                    !snapshotting.contains(*target) && arena.alive.as_ref().is_none_or(|alive| alive.snapshot != "running")
-                })
-                .map(|(target, _)| target.clone())
-                .collect();
-            targets.into_iter().filter_map(|target| held.remove(&target).map(|arena| (target, arena.hello.machine))).collect()
-        };
+        let released: Vec<(String, String)> =
+            self.held().drain().map(|(target, arena)| (target, arena.hello.machine)).collect();
         for (target, machine) in released {
             let _ = self.post(&target, RELEASE_PATH, self.claim.boot.as_bytes());
             self.note(&target, format!("{machine} released: this smithy's job deals no games now"));
@@ -2196,8 +2164,6 @@ impl Claims {
                         machine: arena.hello.machine.clone(),
                         state: format!("{standing}{commit}"),
                         outbox: arena.alive.as_ref().map_or(0, |alive| alive.outbox),
-                        snapshot: arena.alive.as_ref().map_or("-".to_string(), |alive| alive.snapshot.clone()),
-                        snapshots: arena.alive.as_ref().map_or(Vec::new(), |alive| alive.snapshots.clone()),
                     }
                 }
                 None => {
@@ -2211,8 +2177,6 @@ impl Claims {
                         machine: String::new(),
                         state: format!("{note}{retry}"),
                         outbox: 0,
-                        snapshot: "-".to_string(),
-                        snapshots: Vec::new(),
                     }
                 }
             })
@@ -2663,10 +2627,6 @@ struct MachineView {
     machine: String,
     state: String,
     outbox: usize,
-    /// Its snapshot, as its `Alive` says (`-`, `running`, or how the last one ended), and its
-    /// snapshots' file names, newest first; `-` and none for a machine not held.
-    snapshot: String,
-    snapshots: Vec<String>,
 }
 
 impl Status {
@@ -3942,107 +3902,6 @@ fn publish(path: &str) -> Result<String, String> {
     Ok(name)
 }
 
-/// How long a snapshot waits for an arena it has just claimed to say hello.
-const SNAPSHOT_JOIN_WAIT: Duration = Duration::from_secs(15);
-
-/// The page's Snapshot, its body `<target>` (a listed machine, as `Claims::targets` names it),
-/// `<player>` and `tuned` or `untuned`, a line each: the network the player plays and its parameters
-/// put in the store (`snapshot_files`), the arena claimed as a full job's when this smithy does not
-/// hold it (the developer, 2026-10-29), then the snapshot asked of it, which answers at once and
-/// takes it on its own; its `Alive` says how it goes. The arena is kept claimed until its snapshot
-/// ends.
-fn ask_snapshot(claims: &Claims, body: &str) -> Reply {
-    let lines: Vec<&str> = body.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
-    let [target, player, tuning] = lines[..] else {
-        return Reply::error(400, "a snapshot is a machine, a player and tuned or untuned, a line each");
-    };
-    let tuned = match tuning {
-        "tuned" => true,
-        "untuned" => false,
-        other => return Reply::error(400, &format!("a snapshot is tuned or untuned, not {other:?}")),
-    };
-    if let Err(message) = may_snapshot(player) {
-        return Reply::error(400, &message);
-    }
-    if !claims.targets.iter().any(|listed| listed == target) {
-        return Reply::error(400, &format!("{target} is not in {MACHINES_PATH}"));
-    }
-    claims.snapshotting.lock().expect("the lock should not be poisoned").insert(target.to_string());
-    let reply = snapshot_on(claims, target, player, tuned);
-    claims.snapshotting.lock().expect("the lock should not be poisoned").remove(target);
-    reply
-}
-
-/// `ask_snapshot`'s claim, if needed, and its request, `target` kept claimed meanwhile.
-fn snapshot_on(claims: &Claims, target: &str, player: &str, tuned: bool) -> Reply {
-    if !claims.held().contains_key(target) {
-        claims.claim_one(target, false, Instant::now());
-        if !claims.held().contains_key(target) {
-            let note = claims.notes.lock().expect("the lock should not be poisoned").get(target).cloned().unwrap_or_default();
-            return Reply::error(409, &format!("{target}'s arena could not be claimed: {note}"));
-        }
-    }
-    let (network, parameters) = match snapshot_files(player, tuned) {
-        Ok(files) => files,
-        Err(message) => return Reply::error(400, &message),
-    };
-    let request = SnapshotRequest { boot: claims.claim.boot.clone(), player: player.to_string(), network, parameters };
-    // A claim just taken: the arena says hello within a few seconds.
-    let started = Instant::now();
-    let mut answer = claims.post(target, SNAPSHOT_PATH, request.text().as_bytes());
-    while matches!(&answer, Ok((word, _)) if word == "UNJOINED") && started.elapsed() < SNAPSHOT_JOIN_WAIT {
-        std::thread::sleep(Duration::from_secs(1));
-        answer = claims.post(target, SNAPSHOT_PATH, request.text().as_bytes());
-    }
-    match answer {
-        Ok((word, _)) if word == "OK" => {
-            log::info!("snapshot of {player} asked of {target}");
-            // Shown at once, not at the next poll: the arena said it started.
-            if let Some(alive) = claims.held().get_mut(target).and_then(|held| held.alive.as_mut()) {
-                alive.snapshot = "running".to_string();
-            }
-            reply("OK", b"")
-        }
-        Ok((word, _)) if word == "BUSY" => Reply::error(409, "a snapshot runs there: wait for its end"),
-        Ok((word, _)) if word == "UNJOINED" => Reply::error(409, "that arena has not said hello yet: try again in a few seconds"),
-        Ok((word, _)) => Reply::error(409, &format!("the arena answered {word}")),
-        Err(message) => Reply::error(409, &message),
-    }
-}
-
-/// What a snapshot of `player` embeds, by their names in the store: its network (`pesto` for the
-/// PeSTO evaluation), put there first (`publish`), and, when `tuned`, its `parameters.txt` as a tune
-/// has now left it, copied there every time and before the network, so it is there as soon as the
-/// network is; `protocol::UNTUNED` otherwise. Tuned with no tune is refused.
-fn snapshot_files(player: &str, tuned: bool) -> Result<(String, String), String> {
-    let resolved = players::KaloChessPlayer::resolve(player)?;
-    let parameters = if tuned {
-        let path = &resolved.parameters_path;
-        if !Path::new(path).is_file() && !Path::new(&remote::remote_path(path)).is_file() {
-            return Err(format!("{player} has no tune: snapshot it untuned"));
-        }
-        publish_replacing(path)?
-    } else {
-        protocol::UNTUNED.to_string()
-    };
-    let network = match &resolved.network {
-        Some(path) => publish(path)?,
-        None => PESTO.to_string(),
-    };
-    Ok((network, parameters))
-}
-
-/// The file at `path` by its name in the store, copied there whenever this machine holds it: unlike a
-/// network, a `parameters.txt` changes when its player is tuned again.
-fn publish_replacing(path: &str) -> Result<String, String> {
-    if let Some(name) = path.strip_prefix(&format!("{}/", remote::this_root())) {
-        return Ok(name.to_string());
-    }
-    if Path::new(path).is_file() {
-        remote::copy_replacing(path, &remote::remote_path(path)).map_err(|error| error.to_string())?;
-    }
-    Ok(path.to_string())
-}
 
 /// Where generation `generation` of run `run` is read: this machine's copy while it has one, else the
 /// remote's, where a closed generation moves (`archive.rs`).
@@ -5864,8 +5723,6 @@ mod tests {
                                 in_flight: 0,
                                 sent: 0,
                                 outbox: 2,
-                                snapshot: "-".to_string(),
-                                snapshots: Vec::new(),
                             };
                             Reply::status("OK", alive.text().as_bytes())
                         }
@@ -5903,7 +5760,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_dealing_nothing_for_the_grace_releases_its_arenas_but_one_snapshotting() {
+    fn a_job_dealing_nothing_for_the_grace_releases_its_arenas() {
         // Two names for this machine, so nothing waits on a lookup.
         let (gamma, delta) = (LOOPBACK, "localhost");
         let claims = Claims::new(test_claim(), vec![gamma.to_string(), delta.to_string()]);
@@ -5912,7 +5769,6 @@ mod tests {
         for target in [gamma, delta] {
             claims.held().insert(target.to_string(), Held { hello: hello(target), answered: now, alive: None });
         }
-        claims.snapshotting.lock().unwrap().insert(delta.to_string());
         // Port 1: nothing answers, so each release and poll fails quietly.
         let mut claims = claims;
         claims.port = 1;
@@ -5920,7 +5776,7 @@ mod tests {
         claims.round(&shared, now);
         assert_eq!(claims.held().len(), 2, "idle, but within the grace");
         claims.round(&shared, now + CLAIM_IDLE_GRACE);
-        assert_eq!(claims.held().keys().collect::<Vec<_>>(), vec![delta], "released, but the arena snapshotting");
+        assert!(claims.held().is_empty(), "released");
     }
 
     #[test]

@@ -8,15 +8,17 @@ rule against `%LOCALAPPDATA%` stay, the rest is replaced.
 
 - **Snapshots and releases are aligned:** both are one `.exe` with the network and its tuned
   parameters embedded. Nothing sits beside the `.exe`, nothing configures the network.
-- **Snapshots are named by what they play, then dated:** `data/chess/snapshots/`, any number kept,
-  deleted by hand at will. lichess-bot's `../lichess-bot/config.yml` names one, edited by hand. A
+- **Snapshots are named by what they play, then dated:** Drive's `data/chess/snapshots/`, one per
+  player and suffix: a new one replaces the older (the developer, 2026-11-06: "replace the file if
+  an old timestamp exists", a timestamp saying when, not what). lichess-bot's `../lichess-bot/config.yml` names one, edited by hand. A
   date alone was rejected: "I will never know what a snapshot really does" (the developer).
 - **The name:** `kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`, UTC, as
   `kalo-chess-lc0-psq-threats-screlu-g1-r1-tuned-20261106-1530.exe`,
   `kalo-chess-pesto-untuned-20261106-1532.exe` (the developer, 2026-11-06). The same player twice
-  in one minute: the second refused, a file never overwritten.
+  in one minute: the second overwrites the first.
 - **The `.exe` describes itself exactly,** the name being only a summary: player, tuned or untuned,
-  the commit, the date, a short hash of the embedded network and of the embedded parameters. Shown
+  the commit (`-dirty` when modified), the date; no hashes, each word said once (the developer,
+  2026-11-06: "a lot of redundant wording"). Shown
   by `kalo-chess about`, a startup `info string`, and UCI's `id name` (`Kalo Chess 0.1.0
   lc0-psq-threats-screlu-g1-r1@tuned (abc1234, 2026-11-06)`). No `.txt` beside it; the page reads
   the file names. A release carries the same description, with its version.
@@ -75,7 +77,24 @@ rule against `%LOCALAPPDATA%` stay, the rest is replaced.
 
    Kept: `MARGIN_PER_PLY`, the default value of the tuned margins (`DEFAULT`), not a player.
 
+10. **A command, not a page feature (the developer, 2026-11-06: "a hidden feature, not runnable
+    from a GUI"):** `bin/arena snapshot <player>@<tuned|untuned>`, run on any machine, written
+    straight to Drive's `data/chess/snapshots/`, never locally (the developer, 2026-11-06). It resolves the player as a match
+    against an external engine does (`match_player::resolve_player`, this machine's copy first,
+    then Drive's), refuses what the page refused (PeSTO or a full run's passed winner only, never a
+    candidate nor a scaled run's network: the developer, 2026-11-06, the same rule), and builds
+    with `snapshot::build_embedded`. No smithy, no claim, no running arena needed. Gone with the
+    page's screen: the `/snapshot` request and `SnapshotRequest`, the `Alive`'s `snapshot` and
+    `snapshots` (the protocol then has no install at all: an `Alive` without the `install` fields of
+before 2026-11-06, so a smithy and an arena still switch together), the arena's handler, the smithy's
+    `ask_snapshot`, `snapshot_on`, `snapshot_files`, `publish_replacing`, `may_snapshot`, its
+    control path and `Claims::snapshotting`.
+
 ## Open
+
+- **Concurrent embedded builds on one machine** share `target/snapshot/` and could swap `.exe`s
+  between the build and the copy: not guarded, by decision (the developer, 2026-11-06: "They
+  cannot happen. This is a hidden feature.").
 
 - **The release's version and upload:** binary-release.md's plan, to be aligned with this.
 - **Benches:** `search_bench` runs the engine over UCI; whether it ever sent `EvalFile` is checked

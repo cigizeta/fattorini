@@ -82,8 +82,7 @@ pub fn build_uci_player(name: &str, entry: &EngineEntry) -> Result<(), String> {
         }
         _ => None,
     };
-    let description =
-        snapshot::describe(name, &protocol::current_commit(), &snapshot::now_text(), entry.net.as_deref(), parameters_file.as_deref())?;
+    let description = snapshot::describe(name, &protocol::current_commit(), &snapshot::now_text());
     snapshot::build_embedded(entry.net.as_deref(), parameters_file.as_deref(), &description, path)
 }
 

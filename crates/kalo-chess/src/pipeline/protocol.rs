@@ -13,10 +13,6 @@
 //!   arena unpolled for `RELEASE_AFTER` releases itself; a smithy unanswered for `LATE_AFTER` says the
 //!   arena is late, for `RELEASE_AFTER` lost, and closes its chore so its work is dealt again.
 //! - `POST /release` with the boot id: the arena idles again, from a smithy stopping.
-//! - `POST /snapshot` with a `SnapshotRequest`: `OK`, the snapshot started on a thread of the arena's
-//!   own, its workers playing on; `BUSY` while one runs; `UNCLAIMED` (not this boot's), `UNJOINED`
-//!   (no store to read from yet), or `400` with what is wrong in it. It builds `kalo-chess` in release, minutes, so it is never waited for: the
-//!   `Alive` of the polls says how it stands, and the snapshots its machine holds.
 //!
 //! **Arena to smithy, the work**, on `SMITHY_PORT`, at the host the claim named:
 //!
@@ -60,7 +56,6 @@ pub const ARENA_PORT: u16 = 47_823;
 pub const CLAIM_PATH: &str = "/claim";
 pub const ALIVE_PATH: &str = "/alive";
 pub const RELEASE_PATH: &str = "/release";
-pub const SNAPSHOT_PATH: &str = "/snapshot";
 
 /// How often the smithy claims the machines it lacks and polls those it holds.
 pub const CLAIM_POLL: Duration = Duration::from_secs(10);
@@ -236,87 +231,25 @@ pub struct Alive {
     pub sent: u64,
     /// Finished tasks it holds, not yet sent.
     pub outbox: usize,
-    /// Its snapshot: `-` before any, `running`, or how the last one ended, one line.
-    pub snapshot: String,
-    /// The file names of the snapshots on its machine, newest first, at most `MAX_SNAPSHOTS_SAID`.
-    pub snapshots: Vec<String>,
 }
-
-/// What starts an `Alive`'s line of `snapshots`, before its rank.
-const SNAPSHOTS_PREFIX: &str = "snapshots.";
-
-/// How many of a machine's snapshots its `Alive` says: its folder holds the rest.
-pub const MAX_SNAPSHOTS_SAID: usize = 20;
 
 impl Alive {
     pub fn text(&self) -> String {
-        let mut text = format!(
-            "session\t{}\nchore\t{}\nin_flight\t{}\nsent\t{}\noutbox\t{}\nsnapshot\t{}\n",
-            self.session,
-            self.chore,
-            self.in_flight,
-            self.sent,
-            self.outbox,
-            self.snapshot.replace('\n', "; ")
-        );
-        for (rank, file) in self.snapshots.iter().take(MAX_SNAPSHOTS_SAID).enumerate() {
-            text.push_str(&format!("{SNAPSHOTS_PREFIX}{rank}\t{file}\n"));
-        }
-        text
+        format!(
+            "session\t{}\nchore\t{}\nin_flight\t{}\nsent\t{}\noutbox\t{}\n",
+            self.session, self.chore, self.in_flight, self.sent, self.outbox
+        )
     }
 
     pub fn parse(text: &str) -> Result<Alive, String> {
         let map = fields(text);
-        let snapshots = text
-            .lines()
-            .filter_map(|line| line.strip_prefix(SNAPSHOTS_PREFIX)?.split_once('\t'))
-            .map(|(_, file)| file.to_string())
-            .collect();
         Ok(Alive {
             session: field(&map, "session", "alive")?,
             chore: field(&map, "chore", "alive")?,
             in_flight: field(&map, "in_flight", "alive")?,
             sent: field(&map, "sent", "alive")?,
             outbox: field(&map, "outbox", "alive")?,
-            snapshot: field(&map, "snapshot", "alive")?,
-            snapshots,
         })
-    }
-}
-
-/// What the smithy asks an arena to take a snapshot of: the claim's boot id, as the polls carry it;
-/// the player, as its name (`pesto`, `<config>-g<g>-r<n>`); its network, by its path in the store
-/// (`data/...`, as a chore's `Player` names it) or `pesto`; and its parameters, the `parameters.txt`
-/// in the store it embeds, or `-` for the untuned defaults.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SnapshotRequest {
-    pub boot: String,
-    pub player: String,
-    pub network: String,
-    pub parameters: String,
-}
-
-/// `SnapshotRequest::parameters` for the untuned defaults.
-pub const UNTUNED: &str = "-";
-
-impl SnapshotRequest {
-    pub fn text(&self) -> String {
-        format!("boot\t{}\nplayer\t{}\nnetwork\t{}\nparameters\t{}\n", self.boot, self.player, self.network, self.parameters)
-    }
-
-    pub fn parse(text: &str) -> Result<SnapshotRequest, String> {
-        let map = fields(text);
-        Ok(SnapshotRequest {
-            boot: field(&map, "boot", "snapshot")?,
-            player: field(&map, "player", "snapshot")?,
-            network: field(&map, "network", "snapshot")?,
-            parameters: field(&map, "parameters", "snapshot")?,
-        })
-    }
-
-    /// Whether it embeds tuned parameters.
-    pub fn tuned(&self) -> bool {
-        self.parameters != UNTUNED
     }
 }
 
@@ -683,37 +616,15 @@ mod tests {
         assert_eq!(Claim::parse(&claim.text()), Ok(claim.clone()));
         (claim.scaled, claim.rank) = (false, None);
         assert_eq!(Claim::parse(&claim.text()), Ok(claim));
-        let mut alive = Alive {
+        let alive = Alive {
             session: "gamma-0".to_string(),
             chore: "c000003".to_string(),
             in_flight: 4,
             sent: 17,
             outbox: 1,
-            snapshot: "-".to_string(),
-            snapshots: Vec::new(),
         };
-        assert_eq!(Alive::parse(&alive.text()), Ok(alive.clone()));
-        alive.snapshot = "done: took pesto".to_string();
-        alive.snapshots = vec!["kalo-chess-pesto-untuned-20261106-1532.exe".to_string(), "kalo-chess-pesto-tuned-20261106-1530.exe".to_string()];
-        assert_eq!(Alive::parse(&alive.text()), Ok(alive.clone()));
-        alive.snapshot = "failed: two\nlines".to_string();
-        assert_eq!(Alive::parse(&alive.text()).unwrap().snapshot, "failed: two; lines", "one line");
+        assert_eq!(Alive::parse(&alive.text()), Ok(alive));
         assert!(Claim::parse("smithy\tbeta\n").is_err());
-    }
-
-    #[test]
-    fn a_snapshot_request_reads_back() {
-        let mut request = SnapshotRequest {
-            boot: "b00t".to_string(),
-            player: "fine-g2-r1".to_string(),
-            network: "data/chess/networks/fine/run-1/gen-2/champion.nnue".to_string(),
-            parameters: "data/chess/networks/fine/run-1/gen-2/parameters.txt".to_string(),
-        };
-        assert_eq!(SnapshotRequest::parse(&request.text()), Ok(request.clone()));
-        assert!(request.tuned());
-        request.parameters = UNTUNED.to_string();
-        assert!(!SnapshotRequest::parse(&request.text()).unwrap().tuned());
-        assert!(SnapshotRequest::parse("boot\tb00t\n").is_err());
     }
 
     #[test]

@@ -16,7 +16,7 @@ their networks. Three binaries, each with its own crate:
 - `arena`, which plays games: matches, and, as one of the smithy's arenas, every game of a forge or
   a tune.
 - `smithy`, which makes the sources' corpora and trains networks (the smithy, dealing its jobs to
-  the arenas), inspects checkpoints and asks for snapshots of players. Training needs an NVIDIA GPU.
+  the arenas), and inspects checkpoints. Training needs an NVIDIA GPU.
 
 And one library, `pgn-replay`, which reads PGN moves for `arena` and `smithy`.
 
@@ -229,8 +229,7 @@ machine shows the same, read-only.
 On every machine that should play, an arena, started by hand in its own terminal, left running: it
 idles until a smithy claims it, then plays for that smithy alone. A smithy claims arenas only while
 its job deals games (a forge's play, round robin and gate, a tune, a test, PeSTO's play) and
-releases them after 60 s dealing none, so another smithy's job plays meanwhile; a snapshot claims the
-arena it is taken on. When two smithies want one arena, a full job's claim takes it from a scaled
+releases them after 60 s dealing none, so another smithy's job plays meanwhile. When two smithies want one arena, a full job's claim takes it from a scaled
 job's, and between jobs of the same kind the smithy ranked higher in `machines.yaml` takes it; a
 job left with no arena says it waits, and the Machines table names each holder by its rank. A smithy polls its arenas every
 10 s: one unanswering for 30 s is late, for 60 s lost, its chore dealt again. An arena unpolled for
@@ -321,12 +320,19 @@ UCI: the arena first builds it with its network and parameters embedded, as a sn
 
 ## Snapshots
 
-A snapshot is a release build of `kalo-chess` with a player's network and parameters embedded, taken
-from the page's Snapshot screen on any claimed machine. It is written to that machine's
-`data/chess/snapshots/kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe` (UTC), never
-replaced; delete old ones by hand. The engine has no option choosing a network: it plays what it
+A snapshot is a release build of `kalo-chess` with a player's network and parameters embedded:
+
+```bash
+./bin/arena snapshot pesto-psq-g1-r1@tuned
+```
+
+The player is `pesto` or a full run's generation winner, `@tuned` or `@untuned`. The snapshot is
+written straight to Drive, never locally:
+`/g/My Drive/kalo-games/data/chess/snapshots/kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`
+(UTC). A new snapshot replaces the older ones of the same player and suffix, so lichess-bot's
+`config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
 embeds. `kalo-chess about`, its UCI name and a first `info string` say exactly what it is: the
-player, the commit, when, and a hash of the network and of the parameters. lichess-bot's
+player, the commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`). lichess-bot's
 `config.yml` names the snapshot it plays. A release on GitHub will be built the same way.
 
 ## Tuning search parameters

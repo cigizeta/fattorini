@@ -414,8 +414,6 @@ const SOURCES = ["lc0", "pesto"];
 const TESTS = "tests";
 // The books' screen, and the config a book job is of (the smithy's `BOOKS_SCREEN`).
 const BOOKS = "books";
-// The snapshot's screen: each claimed machine's snapshot, and Take a snapshot.
-const SNAPSHOT = "snapshot";
 // The New test form's choices, kept across its redraws.
 const testForm = {
   kind: "duel", pairs: "500", elo0: "0", elo1: "5", challenger: "", champion: "pesto",
@@ -548,7 +546,7 @@ function boxSections() {
   const forges = (source) => catalog.configs.filter((config) => config.source === source).map((config) => config.name).sort();
   const sections = SECTIONS.map(([source, title]) => [title, [source, ...forges(source)]]);
   const other = catalog.configs.filter((config) => !known.includes(config.source)).map((config) => config.name).sort();
-  return [...sections, ...(other.length > 0 ? [["Other", other]] : []), ["Books", [BOOKS]], ["Tests", [TESTS]], ["Snapshot", [SNAPSHOT]]];
+  return [...sections, ...(other.length > 0 ? [["Other", other]] : []), ["Books", [BOOKS]], ["Tests", [TESTS]]];
 }
 
 // Whether Lc0's Convert holds the source slot, beside the arena job.
@@ -561,17 +559,10 @@ function makingBook() {
   return Boolean(state && state.slot.kind === "book");
 }
 
-// The claimed machines whose arena is taking a snapshot, by name.
-function snapshotting() {
-  return state ? state.machines.filter((m) => m.machine && m.snapshot === "running").map((m) => m.machine) : [];
-}
-
-// Whether a job of config `name` runs: the arena job, or lc0's conversion or a book job beside it,
-// or a snapshot on some machine.
+// Whether a job of config `name` runs: the arena job, or lc0's conversion or a book job beside it.
 function isRunning(name) {
   if (!state) return false;
-  return (state.running && state.config === name) || (name === "lc0" && converting()) || (name === BOOKS && makingBook())
-    || (name === SNAPSHOT && snapshotting().length > 0);
+  return (state.running && state.config === name) || (name === "lc0" && converting()) || (name === BOOKS && makingBook());
 }
 
 function source(name) {
@@ -587,14 +578,6 @@ function boxLine(name) {
     if (makingBook()) return `<span class="tag">running</span> ${escape(state.slot.holder || "")}`;
     const count = catalog.books.length;
     return count === 0 ? `<span class="muted">no source yet</span>` : count === 1 ? "1 source" : `${count} sources`;
-  }
-  if (name === SNAPSHOT) {
-    const busy = snapshotting();
-    if (busy.length > 0) return `<span class="tag">running</span> taking a snapshot on ${escape(busy.join(", "))}`;
-    // A machine's snapshot is known only from its arena's answer to a poll, so only of an arena held.
-    if (claimedMachines().length === 0) return `<span class="muted">no machine claimed: each one's snapshot is unknown</span>`;
-    const count = state.machines.reduce((sum, m) => sum + m.snapshots.length, 0);
-    return count === 0 ? `<span class="muted">no snapshot on a claimed machine</span>` : count === 1 ? "1 snapshot" : `${count} snapshots`;
   }
   if (isRunning(name)) {
     const where = state.phase ? `: generation ${state.generation}, ${phaseName(state.phase)}` : "";
@@ -660,8 +643,6 @@ function drawConfig() {
     bindTestForm(element);
   } else if (current === BOOKS) {
     element.innerHTML = booksScreen();
-  } else if (current === SNAPSHOT) {
-    element.innerHTML = snapshotScreen();
   } else if (current === "pesto") {
     element.innerHTML = corpusSection("pesto") + `<section><h2>Tune</h2>${tuneRow(catalog.pesto)}</section>`;
   } else if (current === "lc0") {
@@ -706,71 +687,11 @@ function drawConfig() {
     const weights = button.parentElement.querySelector("select");
     button.onclick = () => start(["--book", button.dataset.book, "--weights", weights.value], button);
   });
-  const take = document.getElementById("snapshotButton");
-  if (take) {
-    take.onclick = async () => {
-      const value = (field) => element.querySelector(`[data-snapshot="${field}"]`).value;
-      const machine = value("machine");
-      sayPending(take, `claiming ${machine}'s arena if this smithy does not hold it, then asking its snapshot...`);
-      const error = await send("control/snapshot", [machine, value("player"), value("tuning")].join("\n"));
-      const said = take.parentElement.querySelector(".said");
-      said.classList.toggle("bad", Boolean(error));
-      said.textContent = error || `asked of ${machine}: it builds kalo-chess with the player embedded, its last snapshot above says how it went`;
-    };
-  }
 }
 
 // The machines whose arena this smithy holds, by name.
 function claimedMachines() {
   return state.machines.filter((m) => m.machine).map((m) => m.machine);
-}
-
-// Says `text` beside `button`, in progress rather than an error.
-function sayPending(button, text) {
-  const said = button.parentElement.querySelector(".said");
-  said.classList.remove("bad");
-  said.textContent = text;
-}
-
-// The snapshot's screen: each claimed machine's snapshot, drawn at each poll (`drawSnapshot`), then
-// Take a snapshot on this machine: a machine and a player (every network a test may name, PeSTO
-// first). The arena builds and takes it on its own, its workers playing on, and says how it went at
-// the next polls.
-function snapshotScreen() {
-  const machines = `<section id="snapshotMachines"></section>`;
-  if (!token) return machines;
-  // Every listed machine: an arena this smithy does not hold is claimed for the snapshot, refused
-  // while another smithy's job holds it.
-  const listed = state.machines.map((m) => m.target);
-  // PeSTO and each generation's winner alone; the catalog leaves scaled runs out already.
-  const players = catalog.networks.filter((n) => n.winner || n.name === PESTO_NAME).map((n) => option(n.name, n.name, n.name === PESTO_NAME)).join("");
-  return machines + `<section><h2>Take a snapshot</h2>`
-    + `<div class="row"><label>Machine</label><select data-snapshot="machine">${listed.map((m) => option(m, m, false)).join("")}</select></div>`
-    + `<div class="row"><label>Player</label><select data-snapshot="player">${players}</select></div>`
-    // A player with no tune is refused tuned, by the smithy, with why.
-    + `<div class="row"><label>Parameters</label><select data-snapshot="tuning">${option("tuned", "its tune", true)}${option("untuned", "untuned", false)}</select></div>`
-    + `<div class="row"><label></label><button id="snapshotButton">Take a snapshot</button><span class="said bad"></span></div></section>`;
-}
-
-// The player a new snapshot offers first.
-const PESTO_NAME = "pesto";
-
-// Each claimed machine's snapshots, on the snapshot's screen: how its last one went, then every
-// snapshot's file name, newest first, which says the player, tuned or untuned, and when. Drawn at
-// each poll into its own place.
-function drawSnapshot() {
-  const section = document.getElementById("snapshotMachines");
-  if (!section) return;
-  const held = state.machines.filter((m) => m.machine);
-  if (held.length === 0) {
-    redraw(section, `<h2>Snapshots</h2><div class="muted">no machine claimed</div>`);
-    return;
-  }
-  const said = (m) => m.snapshot === "-" ? "" : m.snapshot;
-  const rows = held.flatMap((m) => m.snapshots.length === 0
-    ? [[m.machine, { html: `<span class="muted">nothing yet</span>` }, said(m)]]
-    : m.snapshots.map((file, i) => [i === 0 ? m.machine : "", file, i === 0 ? said(m) : ""]));
-  redraw(section, `<h2>Snapshots</h2>` + table(["machine", "snapshot", "last snapshot"], rows));
 }
 
 // The books' screen: the job beside the arena job while a book job runs, then one section a source
@@ -1199,7 +1120,6 @@ function draw() {
   drawConfig();
   drawConvertProgress();
   drawBookProgress();
-  drawSnapshot();
   syncView();
 }
 

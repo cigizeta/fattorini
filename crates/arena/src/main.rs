@@ -6,8 +6,9 @@
 //!   `n` (`best_of.rs`), the sequential probability ratio test (`sprt.rs`), or which of the two is
 //!   stronger (`duel.rs`) -- each with exactly one of `--depth <1-9>` or `--time <base+inc>`.
 //! - `arena start|stop|status`: an arena, playing the smithy's self-play, round-robin, gate and tune
-//!   chores (`chores.rs`), and taking a snapshot of the engine when its smithy asks
-//!   (`snapshot.rs`).
+//!   chores (`chores.rs`).
+//! - `arena snapshot <player>@<tuned|untuned>`: a build of the engine with that player embedded,
+//!   into Drive's `data/chess/snapshots/` (`snapshot.rs`). Hidden: not in the usage.
 //! - `arena <tournament-id>`: fitness-selection phase 1 scope only, a single pairing -- round
 //!   1's first real (bye-free) match, per proper bracket seeding -- rather than a full bracket. The
 //!   bracket scheduler is not built yet.
@@ -79,6 +80,7 @@ fn main() {
     }
     match first.as_str() {
         "start" | "stop" | "status" => chores::run(&first, &args.collect::<Vec<String>>()),
+        "snapshot" => snapshot::command(&args.collect::<Vec<String>>()),
         "match" | "sprt" | "duel" => {
             let rest: Vec<String> = args.collect();
             let versus = parse_versus_args(&first, &rest).unwrap_or_else(|message| {

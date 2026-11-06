@@ -91,9 +91,9 @@ syntax.
   always LF; `*.bat`, `*.cmd`, `*.ps1` always CRLF). Every other text file
   is stored LF and checked out with the OS's native endings, CRLF on Windows.
 - Windows-specific Rust code needs no `#[cfg]` pair any more, and no new
-  dependency when a few lines suffice. The data root is the repository's gitignored `data/`, which
-  also holds the arena's snapshots of the engine (`data/chess/snapshots/`, one of which lichess-bot
-  runs).
+  dependency when a few lines suffice. The data root is the repository's gitignored `data/`. The arena's
+  snapshots of the engine go straight to Drive's `data/chess/snapshots/`, never locally; lichess-bot
+  runs one of them.
   **Nothing in this repository reads or writes `%LOCALAPPDATA%`** (the developer, 2026-11-06), nor
   anywhere outside the repository and Drive; a release is a plain `.exe` that writes nothing.
   Google Drive is `G:` (`/g` in Git Bash).

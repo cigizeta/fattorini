@@ -2,7 +2,7 @@
 //! third-party downloads (the opening book and the Syzygy tables, fetched by `bin/uho-book.sh`
 //! and `bin/syzygy.sh`). The two scripts compute the same root in shell, and the two must agree.
 //!
-//! It also holds the arena's snapshot (`chess/snapshot/`). Nothing here reads the environment, and
+//! Snapshots (`arena snapshot`) are not here: they go straight to Drive. Nothing here reads the environment, and
 //! nothing in the repository reads or writes outside it and Drive: a release `.exe` writes nothing.
 //!
 //! The repository is found by walking up from the current directory to the first one holding

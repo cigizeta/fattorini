@@ -141,6 +141,48 @@ Then a snapshot of pesto on the Lichess machine from the page; lichess-bot's `co
 at it and at the account `kalo-chess`; `data/chess/snapshot/` and `%LOCALAPPDATA%\kalo-games`
 deleted by hand.
 
+## Step 9: the command line only (snapshots.md, point 10)
+
+**Written 2026-11-06, not yet built.** Changes from this step: the command is left out of `arena`'s
+usage, being hidden, and written in DEV.md and `main.rs`'s header; the smithy's
+`the_usage_offers_no_snapshot_command` deleted, since the smithy has no snapshot at all; the
+registry is read (`Engines::load`) to resolve the player, `Engines::none` being test-only.
+
+- `arena/src/main.rs`: `snapshot <player>@<tuned|untuned>` in the dispatch and the usage, calling
+  `snapshot::take(name)`.
+- `snapshot.rs`: `take(name)`: `match_player::resolve_player(name, false, &Engines::none())` for
+  the network and parameters; `may_snapshot(player)`, moved from the smithy: pesto, or a network
+  that `players::parse_network_name` reads as a winner (no candidate), whose generation
+  `players::run_winner` finds passed (run home local, else Drive), and whose frozen `config.yaml`
+  (run directory, local else Drive) has no `scale:`; then the name, the refusal of an existing
+  file, `describe`, `build_embedded`. `Snapshot`, `Snapshot::of`, `run`, `fetch` and `snapshots()`
+  go. The parameters of a tuned player are written to the file beside the target `.exe`, as
+  `build_uci_player` does, then removed.
+- `chores.rs`: the `/snapshot` arm and the `snapshot` mutex go; the `Alive` is built without them.
+- `protocol.rs`: `SNAPSHOT_PATH`, `SnapshotRequest`, `UNTUNED`, `MAX_SNAPSHOTS_SAID`, the `Alive`'s
+  `snapshot` and `snapshots` and their tests go; the header's `POST /snapshot` line.
+- `smithy.rs`: `ask_snapshot`, `snapshot_on`, `snapshot_files`, `publish_replacing`,
+  `may_snapshot`, `SNAPSHOT_CONTROL_PATH` and its two arms, `SNAPSHOT_JOIN_WAIT`,
+  `Claims::snapshotting` (and its test's use; `release_idle` keeps every arena idle-released),
+  `MachineView`'s two fields. `unscaled` stays (tests use it).
+- `page.html`: the `SNAPSHOT` screen, its menu entry, `snapshotting`, `snapshotScreen`,
+  `drawSnapshot` and its call, the button's handler.
+- `smithy/src/main.rs`: the header and usage lines on snapshots, the test
+  `the_usage_offers_no_snapshot_command` (still true, kept).
+- DEV.md: Snapshots says `bin/arena snapshot`; `smithy` no longer asks for them (DEV.md 19, 151, 231).
+- Check: `git grep -nI 'SnapshotRequest\|SNAPSHOT_PATH\|snapshotting\|ask_snapshot\|control/snapshot' -- ':!claude'`
+  prints nothing; tests, clippy, the bench as before; `bin/arena snapshot pesto@untuned` writes a
+  file whose `about` says so.
+
+## Step 10: on Drive (the developer, 2026-11-06)
+
+Written 2026-11-06. Snapshots go straight to Drive's `data/chess/snapshots/`, never locally:
+`snapshot.rs` checks the drive is mounted, names the file under `remote::remote_path`, keeps the
+temporary parameters file in `target/snapshot/`, and `build_embedded` copies through
+`remote::copy_replacing` (`.partial`, then a rename), for the UCI players too. DEV.md, CLAUDE.md,
+`data_root.rs` and the arena's header say so. Check: tests, clippy, `bin/arena snapshot
+pesto@untuned` writes the file on Drive.
+
 ## Done when
 
 The searches clean, tests and clippy pass, the bench unchanged, `about` says what a snapshot is,
