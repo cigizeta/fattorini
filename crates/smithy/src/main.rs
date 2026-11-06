@@ -79,8 +79,6 @@ fn main() {
         Some(lc0::CHILD_COMMAND) => lc0::run(&rest),
         // The one-off rewrite of Lc0's corpus into Lc0's curve, run by hand once: in no usage line.
         Some(lc0::rewrite::REWRITE_COMMAND) => lc0::rewrite::run(&rest),
-        // A read-only look at a corpus's buckets, run by hand: in no usage line.
-        Some(polyline::DIAGNOSE_COMMAND) => polyline::run_diagnose(&rest),
         // The book job's child, likewise.
         Some(book::CHILD_COMMAND) => book::run(&rest),
         Some(verb @ ("start" | "stop" | "status")) => smithy::run(verb, &rest),
