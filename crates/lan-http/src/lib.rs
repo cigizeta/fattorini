@@ -14,7 +14,7 @@ use std::time::Duration;
 use kalo_chess::pipeline::protocol::{LOOPBACK, STOP_PATH};
 
 /// The header every request after `hello` carries its token in.
-pub const TOKEN_HEADER: &str = "X-Kalo-Games-Token";
+pub const TOKEN_HEADER: &str = "X-Kalo-Chess-Token";
 
 /// The largest body either side takes: a job's compressed games or a network are a few MB.
 pub const BODY_LIMIT: u64 = 64 * 1024 * 1024;

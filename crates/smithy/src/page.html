@@ -424,7 +424,7 @@ const testForm = {
 const option = (value, label, selected) => `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
 
 async function send(path, body) {
-  const response = await fetch(path, { method: "POST", headers: { "X-Kalo-Games-Token": token }, body });
+  const response = await fetch(path, { method: "POST", headers: { "X-Kalo-Chess-Token": token }, body });
   return response.ok ? "" : (await response.text()).trim() || `refused (${response.status})`;
 }
 
