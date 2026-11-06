@@ -1,6 +1,11 @@
 # Is Lc0's late lambda of 0 right? A measurement first
 
-**Status:** the measurement built 2026-11-05 as `smithy polyline-diagnose <buckets> [one-in]`, not yet
+**Status: closed 2026-11-06 without running the measurement (the developer):** the late lambdas of 0
+are sound. The doubt came from z growing more reliable toward a game's end, but s does too (simpler
+positions, the tables), so late in a game s already carries what z would add, with less noise.
+`smithy polyline-diagnose` stays in the code until removed by choice.
+
+**Earlier status:** the measurement built 2026-11-05 as `smithy polyline-diagnose <buckets> [one-in]`, not yet
 run; it prints the 20 bins and leaves out the logit-space slope, the bins answering that. An open question on lambda-polyline.md, for after the
 running `lc0-psq-threats-screlu` run. Only the measurement is proposed here; any change to the
 labels is decided from its numbers.

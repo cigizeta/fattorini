@@ -89,7 +89,8 @@ Commits may be waiting for a push: GitHub's Git Operations were degraded on 2026
 5. **Meanwhile, PeSTO's corpus is being played from scratch** (below); a PeSTO run waits for its
    `complete.txt`.
 
-6. **After the experiment, is Lc0's late lambda of 0 right?** (polyline-calibration.md, proposed
+6. **Closed 2026-11-06: Lc0's late lambda of 0 is right** (the developer: s grows as stable as z
+   toward the end, so s already carries z's information there). **After the experiment, is Lc0's late lambda of 0 right?** (polyline-calibration.md, proposed
    2026-11-05): the clamp hides a model that does not apply to a squeezed teacher. A read-only
    measurement first, slope and bins per bucket of progress, then a design if the squeeze is real.
 
