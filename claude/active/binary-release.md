@@ -55,7 +55,8 @@ the static C runtime, the notices, debugging while private.
 
 11. **The version checked** (the developer, 2026-11-06): `arena release` refuses when the tag,
     less its `v`, differs from `Cargo.toml`'s version (in `id name` as `Kalo Chess 0.1.0`), so the
-    two never disagree; a candidate's tag `v0.1.0-rc.1` needs `version = "0.1.0-rc.1"`.
+    two never disagree; a candidate's tag `v0.1.0-rc.1` passes against `0.1.0`, so candidates need
+    no version change of their own.
 
 12. **The notes, a committed file** (the developer, 2026-11-06): `RELEASE-NOTES.md` at the
     repository's root, edited before each release (the version, the network, the strength table

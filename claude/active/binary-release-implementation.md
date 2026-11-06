@@ -4,9 +4,10 @@
 "We implement and complete later"), the notes' text shown and accepted as a draft. Design: binary-release.md. Builds on snapshots.md's
 code (`snapshot::describe`, `build_embedded`, the snapshot's rule).
 
-**Taken as recommended, the developer to confirm:** the notices embedded behind `kalo-chess
-licenses`; the arena writes a first text of the notes, the developer completing it on the draft;
-a tag must be `v` followed by the workspace's version, so `id name` and the tag never disagree.
+**Confirmed by the developer (2026-11-06, binary-release.md decisions 10 to 12):** the notices
+embedded behind `kalo-chess licenses`; a tag must be `v` followed by the workspace's version, so
+`id name` and the tag never disagree; the notes are not written by the arena but committed,
+`RELEASE-NOTES.md`, the strength table filled from two full matches before the tag.
 
 ## Step 1: the notices, in the engine (`crates/kalo-chess`)
 
@@ -45,22 +46,24 @@ header, not the usage). In this order, each refusal saying why and exiting befor
    the description with the tag; copied to `target/release-build/kalo-chess-<tag>.exe`.
 6. **The checks on the `.exe`:** its bytes hold no `VCRUNTIME140.dll` (import names are ASCII in
    the file: no `dumpbin`, no Visual Studio shell); `about` prints the description; `bench` exits 0.
-7. **The notes:** `target/release-build/notes-<tag>.md`: the description; requirements (Windows, an
-   x86-64-v3 CPU: AVX2, BMI2, FMA; nothing installed, nothing written); use (any UCI GUI; `Hash`,
-   `Threads`, the Syzygy path; no network option); a `Strength` heading left for the developer;
-   license (AGPLv3, the source at the tag's link, `kalo-chess licenses` for the third parties).
+7. **The notes:** `RELEASE-NOTES.md` at the repository's root, committed (the clean tree of step 2
+   says so), read as it is; refused unless it names the version (`0.1.0` for `v0.1.0` and its
+   candidates). Checked first, with the tag, so a stale file stops the release before the build.
+   `--dry-run` checks only that the file exists.
 8. **The draft,** unless `--dry-run`: `gh release create <tag> target/release-build/kalo-chess-<tag>.exe
-   --draft --verify-tag --title "Kalo Chess <tag>" --notes-file <notes>`; prints `gh`'s URL.
+   --draft --verify-tag --title "Kalo Chess <tag>" --notes-file RELEASE-NOTES.md`; prints `gh`'s URL.
 
 Tests: the tag rule (`v0.1.0` and `v0.1.0-rc.2` against `0.1.0` yes; `0.1.0`, `v0.1.1`,
-`v0.1.0-rc`, `v0.1.0-beta.1` no), the notes' text for
-pesto and for a network, the `VCRUNTIME140.dll` search on two byte strings.
+`v0.1.0-rc`, `v0.1.0-beta.1` no), the notes' version check (a text naming `0.1.0` passes, one
+naming only `0.0.9` or `0.1.01` is refused), the `VCRUNTIME140.dll` search on two byte strings.
 
 ## Step 4: docs
 
 - DEV.md: a Releases section: `cargo-about` and `gh` installed (`gh auth login` once), the steps
-  (bump the version, commit, tag, push the tag, `bin/arena release ...`, complete the notes on
-  GitHub, publish), `--dry-run` first.
+  (bump the version; the two full matches against Stockfish's Skill Levels, `bin/arena match
+  stockfish-<level> <player>@tuned --time 10+0.1 --hash 64 --full`, the player built over UCI with
+  both embedded as a snapshot is; `RELEASE-NOTES.md` filled; commit, tag, push the tag; `bin/arena release ...`; read the
+  draft, publish), `--dry-run` first.
 - binary-release.md: the decisions above confirmed.
 
 ## Step 5: check (the developer)
