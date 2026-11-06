@@ -48,7 +48,22 @@ the static C runtime, the notices, debugging while private.
     | Stockfish *version*, Skill Level *n + 1* | | | | | | |
 
     Measured again for each release against the same Stockfish version while it can be, so
-    releases compare. Open: the time control, the number of games, and what "beats" means.
+    releases compare. Each row a full match, `bin/arena match stockfish-<level> <player>@tuned
+    --full ...`: 400 games, all played (the developer, 2026-11-06), at 10+0.1, one thread, 64 MB,
+    the UHO book, as the duels. "Beats" is the match's own verdict, a score above 50%; exactly 50%
+    is not expected (the developer).
+
+11. **The version checked** (the developer, 2026-11-06): `arena release` refuses when the tag,
+    less its `v`, differs from `Cargo.toml`'s version (in `id name` as `Kalo Chess 0.1.0`), so the
+    two never disagree; a candidate's tag `v0.1.0-rc.1` needs `version = "0.1.0-rc.1"`.
+
+12. **The notes, a committed file** (the developer, 2026-11-06): `RELEASE-NOTES.md` at the
+    repository's root, edited before each release (the version, the network, the strength table
+    filled), committed, then tagged; `gh release create <tag> --draft --verify-tag --notes-file
+    RELEASE-NOTES.md`, the file passed as it is, no placeholders. The arena refuses when the file
+    does not name the tag's version, so a release never carries the previous notes. The two
+    matches are played before the tag, on a snapshot of the commit before the notes' commit: the
+    notes name no commit, so nothing says otherwise.
 
 ## Proposed
 
@@ -57,13 +72,11 @@ the static C runtime, the notices, debugging while private.
   printed by `kalo-chess licenses`. One file still.
 - **The notes:** what it is (the description), requirements (Windows, x86-64-v3, writes nothing),
   use (any UCI GUI; `Hash`, `Threads`, Syzygy; no network option), strength (only if measured),
-  license (AGPLv3, the source at the tag, `kalo-chess licenses`). A first text from the arena, the
-  developer completing it on GitHub, or all by hand: to decide.
+  license (AGPLv3, the source at the tag, `kalo-chess licenses`). Kept in `RELEASE-NOTES.md`
+  (decision 12).
 - **Shared code:** `snapshot::describe` takes the commit or the tag; `build_embedded` takes the
   target directory and extra flags.
 
 ## Open
 
-- **The version:** the tag alone, or refused when it differs from `Cargo.toml`'s version (in
-  `id name` as `Kalo Chess 0.1.0`).
-- **The draft's notes:** written by hand on GitHub, or a first text from the arena (`--notes`).
+Nothing left (2026-11-06).
