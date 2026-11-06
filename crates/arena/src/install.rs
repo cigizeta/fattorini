@@ -1,19 +1,21 @@
 //! An install, asked by the smithy (`protocol::INSTALL_PATH`): a fresh release `temper-chess` and the
-//! network it plays, put where lichess-bot runs them, the data root's `bin/`, with the opening book
-//! beside them. Run on a thread of the arena's own (`chores.rs`), its workers playing on: their games
+//! network it plays, put where lichess-bot runs them, the release root's `bin/`. Run on a thread of the arena's own (`chores.rs`), its workers playing on: their games
 //! run in-process, so no `temper-chess.exe` of theirs is replaced.
 //!
-//! The names in `bin/` never change (`temper-chess.exe`, `temper-chess.nnue`, and the opening book `temper-chess.bin`):
+//! The names in `bin/` never change (`temper-chess.exe`, `temper-chess.nnue`):
 //! the engine loads the `temper-chess.nnue` beside its own binary at startup, so no GUI needs an `EvalFile`,
 //! lichess-bot's config is written once, and every install only replaces the files. `temper-chess.txt`
 //! beside them says what they are; the arena's `Alive` carries it to the smithy's page. The install
 //! also creates the directory lichess-bot writes its games to (`games_dir`).
+//!
+//! The release root, `%LOCALAPPDATA%\kalo-games`, belongs to an install: this is the one place that
+//! reads the variable. Development's files are in the repository's `data/`.
 
 use std::process;
 use std::sync::atomic::AtomicBool;
 
 use temper_chess::pipeline::protocol::{self, InstallRequest, PESTO};
-use temper_chess::pipeline::{data_root, lan};
+use temper_chess::pipeline::lan;
 
 use super::chores::{store_path, wait_for, Waited, NETWORK_POLL, NETWORK_TIMEOUT};
 
@@ -23,42 +25,45 @@ const PARAMETERS_FILE: &str = "parameters.txt";
 /// The record beside a candidate's network, which `temper-chess.txt` carries with a `candidate_` prefix.
 const CANDIDATE_FILE: &str = "candidate.txt";
 
-/// What an install does with the opening book lichess-bot plays, `temper-chess.bin` beside the engine.
-#[derive(Debug, PartialEq)]
-enum BookChoice {
-    /// `keep`: the installed book stays, so installing a new champion never drops it.
-    Keep,
-    /// The Polyglot book at that path in the store, as the smithy's book job leaves it there
-    /// (`data/chess/books/<source>/book-n<N>-<weights>.bin`), its record the `.txt` beside it.
-    Install(String),
-    /// `none`.
-    Remove,
+/// The variable the release root sits under, and the folder there.
+const RELEASE_BASE_VARIABLE: &str = "LOCALAPPDATA";
+const UNDER_RELEASE_BASE: &str = "kalo-games";
+
+/// The release root, exiting when `LOCALAPPDATA` is unset.
+fn release_root() -> String {
+    release_root_from(std::env::var(RELEASE_BASE_VARIABLE).ok()).unwrap_or_else(|message| {
+        eprintln!("{message}");
+        process::exit(1);
+    })
 }
 
-/// An install the arena can run: the network's path in the store, `None` for the PeSTO evaluation,
-/// and the book.
+/// `release_root` on an explicit value, so its tests do not mutate the process environment, which
+/// other tests running in parallel would see. An empty value counts as unset. The separator is
+/// `/` throughout, `LOCALAPPDATA`'s own backslashes included: every Windows file API accepts it,
+/// and a printed path can be pasted into a double-quoted YAML string (lichess-bot's `config.yml`),
+/// where a backslash starts an escape.
+fn release_root_from(base: Option<String>) -> Result<String, String> {
+    match base.filter(|value| !value.is_empty()) {
+        Some(base) => Ok(format!("{}/{UNDER_RELEASE_BASE}", base.replace('\\', "/"))),
+        None => Err(format!("{RELEASE_BASE_VARIABLE} is not set, so there is no release root under it")),
+    }
+}
+
+/// An install the arena can run: the network's path in the store, `None` for the PeSTO evaluation.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Install {
     network: Option<String>,
-    book: BookChoice,
 }
 
 impl Install {
-    /// `request`'s network and book, checked: a network is `pesto` or a `.nnue` in the store, a book
-    /// `keep`, `none` or a `.bin` in the store.
+    /// `request`'s network, checked: `pesto` or a `.nnue` in the store.
     pub(crate) fn of(request: &InstallRequest) -> Result<Install, String> {
         let network = match request.network.as_str() {
             PESTO => None,
             path if path.ends_with(".nnue") => Some(in_store(path)?),
             other => return Err(format!("the network is pesto or a .nnue in the store, got {other:?}")),
         };
-        let book = match request.book.as_str() {
-            "keep" => BookChoice::Keep,
-            "none" => BookChoice::Remove,
-            path if path.ends_with(".bin") => BookChoice::Install(in_store(path)?),
-            other => return Err(format!("the book is keep, none or a .bin in the store, got {other:?}")),
-        };
-        Ok(Install { network, book })
+        Ok(Install { network })
     }
 
     /// What it installs, for the log and the page: the network's path, or `pesto`.
@@ -81,20 +86,10 @@ pub(crate) fn run(install: &Install, store: &str, stop: &AtomicBool) -> Result<S
         Some(name) => Some(fetch(name, store, stop)?),
         None => None,
     };
-    let book_path = match &install.book {
-        BookChoice::Install(path) => {
-            let full = store_path(store, path)?;
-            if !std::path::Path::new(&full).is_file() {
-                return Err(format!("no opening book at {path} in {store}: nothing was installed"));
-            }
-            Some(full)
-        }
-        _ => None,
-    };
 
     build_engine()?;
 
-    let bin_dir = format!("{}/bin", data_root::data_root());
+    let bin_dir = format!("{}/bin", release_root());
     create_dir(&bin_dir)?;
     create_dir(&games_dir())?;
     let engine = engine_file_name();
@@ -115,16 +110,15 @@ pub(crate) fn run(install: &Install, store: &str, stop: &AtomicBool) -> Result<S
             pesto_install_record(&protocol::current_commit(), &current_time())
         }
     };
-    let book = install_book(&bin_dir, &install.book, book_path.as_deref())?;
     // Last, so it only ever describes files already in place.
-    write_record(&format!("{bin_dir}/temper-chess.txt"), &with_book_fields(fields, book))?;
+    write_record(&format!("{bin_dir}/temper-chess.txt"), &fields)?;
     Ok(format!("installed {} in {bin_dir}/", install.name()))
 }
 
 /// The `temper-chess.txt` of the engine installed on this machine, field by field; none before a first
 /// install.
 pub(crate) fn installed() -> Vec<(String, String)> {
-    let text = std::fs::read_to_string(format!("{}/bin/temper-chess.txt", data_root::data_root())).unwrap_or_default();
+    let text = std::fs::read_to_string(format!("{}/bin/temper-chess.txt", release_root())).unwrap_or_default();
     text.lines().filter_map(|line| line.split_once('\t')).map(|(field, value)| (field.to_string(), value.to_string())).collect()
 }
 
@@ -183,68 +177,6 @@ fn remove_if_present(path: &str) -> Result<(), String> {
     }
 }
 
-/// Applies `book` to `temper-chess.bin` beside the engine, where lichess-bot's `polyglot:` section reads
-/// it, and returns `temper-chess.txt`'s fields for it. Called before `temper-chess.txt` is rewritten, so `Keep`
-/// can carry the previous one's book lines. `book_path` is the book's file, checked present.
-fn install_book(bin_dir: &str, book: &BookChoice, book_path: Option<&str>) -> Result<Vec<(String, String)>, String> {
-    let destination = format!("{bin_dir}/temper-chess.bin");
-    match (book, book_path) {
-        (BookChoice::Install(path), Some(book_path)) => {
-            install_file(book_path, &destination)?;
-            let record_path = format!("{}.txt", book_path.strip_suffix(".bin").expect("checked by Install::of"));
-            let record = std::fs::read_to_string(record_path).unwrap_or_default();
-            Ok(installed_book_fields(path, &record))
-        }
-        (BookChoice::Remove, _) => {
-            remove_if_present(&destination)?;
-            Ok(vec![("book".to_string(), "none".to_string())])
-        }
-        _ => {
-            let previous = std::fs::read_to_string(format!("{bin_dir}/temper-chess.txt")).unwrap_or_default();
-            Ok(kept_book_fields(&previous, std::path::Path::new(&destination).is_file()))
-        }
-    }
-}
-
-/// `temper-chess.txt`'s book fields for a book just installed from `path`: `book` names it, and its record
-/// follows field by field with a `book_` prefix.
-fn installed_book_fields(path: &str, record: &str) -> Vec<(String, String)> {
-    let mut fields = vec![("book".to_string(), path.to_string())];
-    for line in record.lines().filter(|line| !line.is_empty()) {
-        let (field, value) = line.split_once('\t').unwrap_or((line, ""));
-        fields.push((format!("book_{field}"), value.to_string()));
-    }
-    fields
-}
-
-/// `temper-chess.txt`'s book fields when the installed book stays: the previous `temper-chess.txt`'s `book` and
-/// `book_` lines. `none` when no `temper-chess.bin` is there, whatever the old lines said; `unknown` when
-/// one is there but no line describes it.
-fn kept_book_fields(previous: &str, book_present: bool) -> Vec<(String, String)> {
-    if !book_present {
-        return vec![("book".to_string(), "none".to_string())];
-    }
-    let fields: Vec<(String, String)> = previous
-        .lines()
-        .filter_map(|line| line.split_once('\t'))
-        .filter(|(field, _)| *field == "book" || field.starts_with("book_"))
-        .map(|(field, value)| (field.to_string(), value.to_string()))
-        .collect();
-    if fields.first().is_none_or(|(field, _)| field != "book") {
-        return vec![("book".to_string(), "unknown".to_string())];
-    }
-    fields
-}
-
-/// `fields` with `book` inserted before `commit`, so `temper-chess.txt` lists what was installed before
-/// when and from which commit.
-fn with_book_fields(fields: Vec<(String, String)>, book: Vec<(String, String)>) -> Vec<(String, String)> {
-    let at = fields.iter().position(|(field, _)| field == "commit").unwrap_or(fields.len());
-    let mut result = fields;
-    result.splice(at..at, book);
-    result
-}
-
 /// `temper-chess.txt`'s fields for the pesto install: no weights to name.
 fn pesto_install_record(commit: &str, installed: &str) -> Vec<(String, String)> {
     vec![
@@ -275,7 +207,7 @@ fn write_record(path: &str, fields: &[(String, String)]) -> Result<(), String> {
 /// Where lichess-bot keeps the PGN of its games (`pgn_directory` in its `config.yml`), created by
 /// every install, so lichess-bot never needs a directory made by hand.
 fn games_dir() -> String {
-    format!("{}/lichess/games", data_root::data_root())
+    format!("{}/lichess/games", release_root())
 }
 
 /// Creates `dir` and its parents. An existing directory is left as it is.
@@ -358,30 +290,36 @@ fn current_time() -> String {
 mod tests {
     use super::*;
 
-    fn request(network: &str, book: &str) -> InstallRequest {
-        InstallRequest { boot: "b00t".to_string(), network: network.to_string(), book: book.to_string() }
+    fn request(network: &str) -> InstallRequest {
+        InstallRequest { boot: "b00t".to_string(), network: network.to_string() }
+    }
+
+    fn some(value: &str) -> Option<String> {
+        Some(value.to_string())
     }
 
     #[test]
-    fn an_install_takes_pesto_or_a_network_in_the_store_and_a_book_kept_none_or_in_the_store() {
-        let network = "data/chess/networks/fine/run-1/gen-2/champion.nnue";
-        let book = "data/chess/books/elite/book-n9-points.bin";
-        assert_eq!(Install::of(&request(PESTO, "keep")), Ok(Install { network: None, book: BookChoice::Keep }));
+    fn the_release_root_is_under_local_app_data() {
         assert_eq!(
-            Install::of(&request(network, book)),
-            Ok(Install { network: Some(network.to_string()), book: BookChoice::Install(book.to_string()) })
+            release_root_from(some(r"C:\Users\me\AppData\Local")).unwrap(),
+            "C:/Users/me/AppData/Local/kalo-games"
         );
-        assert_eq!(Install::of(&request(network, "none")).unwrap().book, BookChoice::Remove);
-        assert_eq!(Install::of(&request(network, "none")).unwrap().name(), network);
-        for (network, book) in [
-            ("betty-g1-r1", "keep"),
-            ("C:/elsewhere/champion.nnue", "keep"),
-            ("data/../champion.nnue", "keep"),
-            (PESTO, "elite.txt"),
-            (PESTO, "data/../book.bin"),
-            (PESTO, ""),
-        ] {
-            assert!(Install::of(&request(network, book)).is_err(), "{network} {book}");
+    }
+
+    #[test]
+    fn no_base_is_no_release_root() {
+        assert!(release_root_from(None).is_err());
+        assert!(release_root_from(some("")).is_err(), "empty is unset");
+    }
+
+    #[test]
+    fn an_install_takes_pesto_or_a_network_in_the_store() {
+        let network = "data/chess/networks/fine/run-1/gen-2/champion.nnue";
+        assert_eq!(Install::of(&request(PESTO)), Ok(Install { network: None }));
+        assert_eq!(Install::of(&request(network)), Ok(Install { network: Some(network.to_string()) }));
+        assert_eq!(Install::of(&request(network)).unwrap().name(), network);
+        for network in ["betty-g1-r1", "C:/elsewhere/champion.nnue", "data/../champion.nnue"] {
+            assert!(Install::of(&request(network)).is_err(), "{network}");
         }
     }
 
@@ -407,36 +345,5 @@ mod tests {
     fn the_pesto_install_record_names_no_weights() {
         let names: Vec<String> = pesto_install_record("abc123", "now").into_iter().map(|(field, _)| field).collect();
         assert_eq!(names, ["network", "commit", "installed"]);
-    }
-
-    #[test]
-    fn temper_chess_txt_names_the_book_before_the_commit_with_its_record_under_a_prefix() {
-        let fields = with_book_fields(
-            install_record("w.nnue", "", "abc123", "now"),
-            installed_book_fields("data/chess/books/elite/book-n9-points.bin", "weights\tpoints\nmoves\t42\n"),
-        );
-        let actual: Vec<(&str, &str)> = fields.iter().map(|(field, value)| (field.as_str(), value.as_str())).collect();
-        assert_eq!(
-            actual,
-            [
-                ("network", "w.nnue"),
-                ("book", "data/chess/books/elite/book-n9-points.bin"),
-                ("book_weights", "points"),
-                ("book_moves", "42"),
-                ("commit", "abc123"),
-                ("installed", "now"),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_kept_book_carries_its_previous_lines_or_says_what_is_known() {
-        let previous = "network\tbetty\nbook\tdata/chess/books/elite/book-n9-points.bin\nbook_moves\t42\ncommit\tabc\n";
-        let fields = kept_book_fields(previous, true);
-        let actual: Vec<(&str, &str)> = fields.iter().map(|(field, value)| (field.as_str(), value.as_str())).collect();
-        assert_eq!(actual, [("book", "data/chess/books/elite/book-n9-points.bin"), ("book_moves", "42")]);
-        assert_eq!(kept_book_fields(previous, false), [("book".to_string(), "none".to_string())], "no temper-chess.bin there");
-        assert_eq!(kept_book_fields("network\tbetty\n", true), [("book".to_string(), "unknown".to_string())]);
-        assert_eq!(kept_book_fields("", true), [("book".to_string(), "unknown".to_string())], "a first install");
     }
 }

@@ -1,7 +1,6 @@
 //! The smithy's book job: a Polyglot-style opening book from a PGN database of strong games: every
-//! move played at least N times from its position, weighed by the points it scored. lichess-bot plays
-//! it once `smithy install --book` puts it beside the engine. Each source has its own folder on the
-//! remote, `data/chess/books/<source>/`, holding its PGN, `<source>.pgn` or `<source>.pgn.zst`, kept on
+//! move played at least N times from its position, weighed by the points it scored. Each source has
+//! its own folder on the remote, `data/chess/books/<source>/`, holding its PGN, `<source>.pgn` or `<source>.pgn.zst`, kept on
 //! Drive for its backup and streamed from there. The job runs as the smithy's child
 //! (`CHILD_COMMAND`), the stages it still lacks in order, each stored for the next:
 //!
@@ -166,7 +165,7 @@ fn parse_make_args(args: &[String]) -> Result<MakeArgs, String> {
 #[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct SourceView {
     name: String,
-    /// Its PGN's file name, `None` when the remote no longer holds it: its books still install, but
+    /// Its PGN's file name, `None` when the remote no longer holds it: its books stay, but
     /// no stage can run again.
     pgn: Option<String>,
     alpha: Option<f64>,
@@ -1216,8 +1215,7 @@ fn current_time() -> String {
 /// The write stage: the source's graph from the remote, its book at the graph's own N, and the
 /// `.bin` and its record, moved to the remote beside the graph: the book first, the record last, so
 /// a remote record never describes a book that is not there yet. Skipped when that record is there
-/// already. `smithy install --book` copies the book beside the engine and the record into
-/// `temper-chess.txt`.
+/// already.
 fn run_write(source: &str, weights: Weights) {
     let graph_path = remote::remote_path(&graph_path(source));
     let graph_text = std::fs::read_to_string(&graph_path).unwrap_or_else(|error| fail(format!("failed to read {graph_path}: {error}")));

@@ -1,6 +1,6 @@
 //! The third-party downloads in the data root: the opening book and the Syzygy tables, downloaded
 //! there by `bin/lichess-book.sh` and `bin/syzygy.sh`. Where the root itself is lives in
-//! `temper_chess::pipeline::data_root`, shared with `smithy`, which installs the engine under it.
+//! `temper_chess::pipeline::data_root`, shared with `smithy`.
 
 use std::process;
 

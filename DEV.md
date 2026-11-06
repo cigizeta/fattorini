@@ -110,7 +110,7 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive
 winget install --id Rustlang.Rustup
 ```
 
-For full speed, exclude the repository, `%LOCALAPPDATA%\kalo-games`, `%USERPROFILE%\.cargo` and
+For full speed, exclude the repository, `%USERPROFILE%\.cargo` and
 `%USERPROFILE%\.rustup` from Microsoft Defender, and set Windows' power mode to Best performance.
 
 A name for the machine, lowercase letters and digits, different on every machine:
@@ -125,7 +125,7 @@ The external engines it may play, Stockfish first; then set each `path` in the c
 cp examples/engines.yaml data/chess/engines.yaml
 ```
 
-The opening positions and the Syzygy tablebases (about 150 GB), into `%LOCALAPPDATA%\kalo-games`:
+The opening positions and the Syzygy tablebases (about 150 GB), into the repository's `data/`:
 
 ```bash
 ./bin/lichess-book.sh
@@ -136,7 +136,7 @@ The opening positions and the Syzygy tablebases (about 150 GB), into `%LOCALAPPD
 ```
 
 Google Drive for desktop, in streaming mode with My Drive on `G:`, on every machine, the arenas'
-included: Drive is Temper's store, `G:/My Drive/kalo-games`, the same tree as the local data root. A file
+included: Drive is Temper's store, `G:/My Drive/kalo-games`, the same tree as the repository's `data/`. A file
 is made on the local disk and reaches Drive only whole, never written or appended there in place:
 
 - a run's networks (every candidate, every teacher) as soon as they are complete; the arenas read
@@ -394,7 +394,7 @@ netsh advfirewall show currentprofile
 
 To play PeSTO or a full run's generation winner through
 [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot), use the page's Install screen: pick
-a machine with a running arena, the player and a book. A candidate or a scaled run's network is
+a machine with a running arena and the player. A candidate or a scaled run's network is
 refused.
 
 The arena installs `temper-chess.exe` with that network, and its `parameters.txt` if it has one, in

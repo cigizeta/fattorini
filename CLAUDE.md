@@ -91,7 +91,8 @@ syntax.
   always LF; `*.bat`, `*.cmd`, `*.ps1` always CRLF). Every other text file
   is stored LF and checked out with the OS's native endings, CRLF on Windows.
 - Windows-specific Rust code needs no `#[cfg]` pair any more, and no new
-  dependency when a few lines suffice. The data root is `%LOCALAPPDATA%\kalo-games`;
+  dependency when a few lines suffice. The data root is the repository's gitignored `data/`, and
+  only a release, the engine installed for lichess-bot, uses `%LOCALAPPDATA%\kalo-games`;
   Google Drive is `G:` (`/g` in Git Bash).
 - Git Bash rewrites arguments that look like Unix paths when calling native
   Windows programs; prefix the command with `MSYS_NO_PATHCONV=1` when that

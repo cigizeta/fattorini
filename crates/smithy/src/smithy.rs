@@ -3945,15 +3945,15 @@ fn publish(path: &str) -> Result<String, String> {
 /// How long an install waits for an arena it has just claimed to say hello.
 const INSTALL_JOIN_WAIT: Duration = Duration::from_secs(15);
 
-/// The page's Install, its body `<target>` (a listed machine, as `Claims::targets` names it),
-/// `<player>` and `<book>` a line each: the network the player plays put in the store
+/// The page's Install, its body `<target>` (a listed machine, as `Claims::targets` names it) and
+/// `<player>` a line each: the network the player plays put in the store
 /// (`install_network`), the arena claimed as a full job's when this smithy does not hold it (the
 /// developer, 2026-10-29), then the install asked of it, which answers at once and runs it on its
 /// own; its `Alive` says how it goes. The arena is kept claimed until its install ends.
 fn ask_install(claims: &Claims, body: &str) -> Reply {
     let lines: Vec<&str> = body.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
-    let [target, player, book] = lines[..] else {
-        return Reply::error(400, "an install is a machine, a player and a book, a line each");
+    let [target, player] = lines[..] else {
+        return Reply::error(400, "an install is a machine and a player, a line each");
     };
     if let Err(message) = installable(player) {
         return Reply::error(400, &message);
@@ -3962,13 +3962,13 @@ fn ask_install(claims: &Claims, body: &str) -> Reply {
         return Reply::error(400, &format!("{target} is not in {MACHINES_PATH}"));
     }
     claims.installing.lock().expect("the lock should not be poisoned").insert(target.to_string());
-    let reply = install_on(claims, target, player, book);
+    let reply = install_on(claims, target, player);
     claims.installing.lock().expect("the lock should not be poisoned").remove(target);
     reply
 }
 
 /// `ask_install`'s claim, if needed, and its request, `target` kept claimed meanwhile.
-fn install_on(claims: &Claims, target: &str, player: &str, book: &str) -> Reply {
+fn install_on(claims: &Claims, target: &str, player: &str) -> Reply {
     if !claims.held().contains_key(target) {
         claims.claim_one(target, false, Instant::now());
         if !claims.held().contains_key(target) {
@@ -3980,7 +3980,7 @@ fn install_on(claims: &Claims, target: &str, player: &str, book: &str) -> Reply 
         Ok(network) => network,
         Err(message) => return Reply::error(400, &message),
     };
-    let request = InstallRequest { boot: claims.claim.boot.clone(), network, book: book.to_string() };
+    let request = InstallRequest { boot: claims.claim.boot.clone(), network };
     // A claim just taken: the arena says hello within a few seconds.
     let started = Instant::now();
     let mut answer = claims.post(target, INSTALL_PATH, request.text().as_bytes());
@@ -3990,7 +3990,7 @@ fn install_on(claims: &Claims, target: &str, player: &str, book: &str) -> Reply 
     }
     match answer {
         Ok((word, _)) if word == "OK" => {
-            log::info!("install of {player} with book {book} asked of {target}");
+            log::info!("install of {player} asked of {target}");
             // Shown at once, not at the next poll: the arena said it started.
             if let Some(alive) = claims.held().get_mut(target).and_then(|held| held.alive.as_mut()) {
                 alive.install = "running".to_string();

@@ -713,7 +713,7 @@ function drawConfig() {
       const value = (field) => element.querySelector(`[data-install="${field}"]`).value;
       const machine = value("machine");
       sayPending(install, `claiming ${machine}'s arena if this smithy does not hold it, then asking its install...`);
-      const error = await send("control/install", [machine, value("player"), value("book")].join("\n"));
+      const error = await send("control/install", [machine, value("player")].join("\n"));
       const said = install.parentElement.querySelector(".said");
       said.classList.toggle("bad", Boolean(error));
       said.textContent = error || `asked of ${machine}: it builds temper-chess and installs, its last install above says how it went`;
@@ -734,9 +734,8 @@ function sayPending(button, text) {
 }
 
 // The install's screen: each claimed machine's install, drawn at each poll (`drawInstall`), then
-// Install on this machine: a machine, a player (every network a test may name, PeSTO first), and a
-// book (kept, none, or one written on the books' screen). The arena builds and installs on its own,
-// its workers playing on, and says how it went at the next polls.
+// Install on this machine: a machine and a player (every network a test may name, PeSTO first). The
+// arena builds and installs on its own, its workers playing on, and says how it went at the next polls.
 function installScreen() {
   const machines = `<section id="installMachines"></section>`;
   if (!token) return machines;
@@ -745,12 +744,9 @@ function installScreen() {
   const listed = state.machines.map((m) => m.target);
   // PeSTO and each generation's winner alone; the catalog leaves scaled runs out already.
   const players = catalog.networks.filter((n) => n.winner || n.name === PESTO_NAME).map((n) => option(n.name, n.name, n.name === PESTO_NAME)).join("");
-  const books = option("keep", "keep the installed book", true) + option("none", "no book", false)
-    + catalog.books.flatMap((source) => source.books.map((book) => option(book.path, `${source.name}: n${book.n} ${book.weights}`, false))).join("");
   return machines + `<section><h2>Install</h2>`
     + `<div class="row"><label>Machine</label><select data-install="machine">${listed.map((m) => option(m, m, false)).join("")}</select></div>`
     + `<div class="row"><label>Player</label><select data-install="player">${players}</select></div>`
-    + `<div class="row"><label>Book</label><select data-install="book">${books}</select></div>`
     + `<div class="row"><label></label><button id="installButton">Install</button><span class="said bad"></span></div></section>`;
 }
 
@@ -758,7 +754,7 @@ function installScreen() {
 const PESTO_NAME = "pesto";
 
 // Each claimed machine's install, on the install's screen: how its last install went, and its
-// `temper-chess.txt`'s network, book, commit and time. Drawn at each poll into its own place.
+// `temper-chess.txt`'s network, commit and time. Drawn at each poll into its own place.
 function drawInstall() {
   const section = document.getElementById("installMachines");
   if (!section) return;
@@ -769,9 +765,9 @@ function drawInstall() {
   }
   const field = (m, name) => (m.installed.find(([key]) => key === name) || [name, ""])[1];
   const said = (m) => m.install === "-" ? "" : m.install;
-  redraw(section, `<h2>Installed</h2>` + table(["machine", "network", "book", "commit", "installed", "last install"],
-    held.map((m) => m.installed.length === 0 ? [m.machine, { html: `<span class="muted">nothing yet</span>` }, "", "", "", said(m)]
-      : [m.machine, field(m, "network"), field(m, "book"), field(m, "commit").slice(0, 12), field(m, "installed"), said(m)])));
+  redraw(section, `<h2>Installed</h2>` + table(["machine", "network", "commit", "installed", "last install"],
+    held.map((m) => m.installed.length === 0 ? [m.machine, { html: `<span class="muted">nothing yet</span>` }, "", "", said(m)]
+      : [m.machine, field(m, "network"), field(m, "commit").slice(0, 12), field(m, "installed"), said(m)])));
 }
 
 // The books' screen: the job beside the arena job while a book job runs, then one section a source
@@ -789,7 +785,7 @@ function booksScreen() {
     const books = source.books.length === 0 ? `<span class="muted">none yet</span>`
       : source.books.map((book) => escape(`n${book.n} ${book.weights}`)).join(", ");
     const make = source.pgn === null
-      ? `<div class="muted">its PGN is no longer on the remote: its books install, but none can be made</div>`
+      ? `<div class="muted">its PGN is no longer on the remote: its books stay, but none can be made</div>`
       : token
       ? `<div class="row"><select>${option("points", "points", true)}${option("counts", "counts", false)}</select>`
         + `<button data-book="${escape(source.name)}"${state.slot.running ? " disabled" : ""}>Make book</button><span class="said bad"></span></div>`

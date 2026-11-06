@@ -282,19 +282,17 @@ impl Alive {
     }
 }
 
-/// What the smithy asks an arena to install: the claim's boot id, as the polls carry it; the
-/// network, by its path in the store (`data/...`, as a chore's `Player` names it) or `pesto`; and the
-/// book, `keep` (the installed one stays), `none`, or a Polyglot `.bin`'s path in the store.
+/// What the smithy asks an arena to install: the claim's boot id, as the polls carry it, and the
+/// network, by its path in the store (`data/...`, as a chore's `Player` names it) or `pesto`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstallRequest {
     pub boot: String,
     pub network: String,
-    pub book: String,
 }
 
 impl InstallRequest {
     pub fn text(&self) -> String {
-        format!("boot\t{}\nnetwork\t{}\nbook\t{}\n", self.boot, self.network, self.book)
+        format!("boot\t{}\nnetwork\t{}\n", self.boot, self.network)
     }
 
     pub fn parse(text: &str) -> Result<InstallRequest, String> {
@@ -302,7 +300,6 @@ impl InstallRequest {
         Ok(InstallRequest {
             boot: field(&map, "boot", "install")?,
             network: field(&map, "network", "install")?,
-            book: field(&map, "book", "install")?,
         })
     }
 }
@@ -693,10 +690,9 @@ mod tests {
         let request = InstallRequest {
             boot: "b00t".to_string(),
             network: "data/chess/networks/fine/run-1/gen-2/champion.nnue".to_string(),
-            book: "keep".to_string(),
         };
         assert_eq!(InstallRequest::parse(&request.text()), Ok(request));
-        assert!(InstallRequest::parse("boot\tb00t\nnetwork\tpesto\n").is_err());
+        assert!(InstallRequest::parse("boot\tb00t\n").is_err());
     }
 
     #[test]

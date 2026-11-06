@@ -99,7 +99,7 @@ const USAGE: &str = "usage: smithy start | stop | status\n       \
      scaled anywhere on the CPU, a tune of a player's search\n        \
      parameters, a test, or PeSTO's Play, one at a time; beside them Lc0's Convert, which converts Lc0's\n        \
      training tars into data/chess/lc0 up to configs/chess/lc0.yaml's cap, or a book job, which makes an opening\n        \
-     book of a PGN in data/chess/books/ on Drive; and an install of a player and a book for lichess-bot, on\n        \
+     book of a PGN in data/chess/books/ on Drive; and an install of a player for lichess-bot, on\n        \
      any machine whose arena it claims. stop and status reach it from another terminal on the same\n        \
      machine)";
 

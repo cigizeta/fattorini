@@ -12,7 +12,8 @@ old name still lives. It supersedes the names in temper-games-restart.md, which 
 - **Firewall rules:** `kalo-games smithy` and `kalo-games arena`, replacing the `temper-chess` ones
   (the developer, 2026-11-06).
 - **Venv:** `.kalo-games`.
-- **Data root:** `%LOCALAPPDATA%\kalo-games`. **Drive root:** `G:/My Drive/kalo-games`.
+- **Data root:** moved into the repository, see data-root-in-repository.md; `%LOCALAPPDATA%\kalo-games`
+  is now the release's. **Drive root:** `G:/My Drive/kalo-games`.
 - **No fallback to the old names:** a clean cut, one fixed place each, as before.
 - **History stays:** `claude/done/`, `claude/archived/`, temper-games-restart.md, temper-chess-rename.md
   and dated TODO entries keep the name they had.
