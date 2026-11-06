@@ -84,6 +84,9 @@ git commit -am "The engine is Kalo Chess: crate, binary, variables, magic KALO, 
 
 ## Step 5: the switch, every machine
 
+**Done 2026-11-06 but for the Lichess machine's install (item 4):** committed, every machine on the
+new build, PeSTO's play stopped and resumed on it, the networks converted to `KALO`.
+
 1. Pull, then build through the wrappers (`bin/kalo-chess`, `bin/arena`, `bin/smithy`).
 2. **The networks, once, on Drive** (and on the training machine's `data/`, whose copies would
    otherwise be read first). Each file into a new copy, checked, then put in place:

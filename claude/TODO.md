@@ -22,11 +22,9 @@ account `kalo-chess`. Older entries say Temper or `temper-chess`.
 
 ## Next (the developer, 2026-11-05)
 
-- **Finish kalo-games-rename.md:** every other machine's `books/` and `syzygy/` into `data/chess/`,
-  venv and firewall rules. Drive is done.
-
-- **Finish temper-games-restart.md:** tests, then the Drive folders, one first commit, every machine
-  on a fresh clone. The old repository is `temper-chess-archive`, archived and private.
+- **Finish kalo-chess-rename-implementation.md:** every machine on the new build since 2026-11-06;
+  left, the Lichess machine's install and lichess-bot pointed at the bot `kalo-chess`, then
+  `temper-chess` closed.
 - **Lichess:** the account `kalo-chess` exists since 2026-11-06 (kalo-chess-rename.md) and replaces
   `temper-chess`, a bot since 2026-11-05 with no game played, to be closed. After an
   install, PeSTO plays its first one or two games on it. lichess-bot's configuration is updated;

@@ -1,6 +1,7 @@
 # The rename to kalo-games
 
-**Status:** code and docs edited; the developer's steps below remain.
+**Status:** done (the developer, 2026-11-06). Its one decision to keep the engine's name,
+superseded the same day by kalo-chess-rename.md.
 
 The repository is `kalo-games` on GitHub, and its folder too. This finishes the rename everywhere the
 old name still lives. It supersedes the names in temper-games-restart.md, which stays as written.

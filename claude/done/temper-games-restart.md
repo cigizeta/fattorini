@@ -1,8 +1,10 @@
 # The restart as temper-games
 
-**Status:** decided 2026-11-05 (the developer). The old repository is `temper-chess-archive`, archived
-and private. `temper-games` is created, public from the start, with one first commit. Steps 1 to 5
-done on one machine; steps 6 to 8 next. Replaces the remaining steps of temper-chess-rename.md.
+**Status:** done 2026-11-06. The old repository is `temper-chess-archive`, archived and private.
+Steps 1 to 6 and 8 done (8: run 1 of `lc0-psq-threats-screlu`, Lc0's test set frozen again); step 7
+taken over by kalo-chess-rename.md (the account `kalo-chess`). The names here were then replaced,
+by kalo-games-rename.md and kalo-chess-rename.md. The open points below are settled in TODO.md
+(atan support deprecated, kept in the code for now; the duel played on CuteChess).
 
 ## Why
 
