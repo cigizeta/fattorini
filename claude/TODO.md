@@ -185,8 +185,10 @@ Commits may be waiting for a push: GitHub's Git Operations were degraded on 2026
     start before Lc0 (Stockfish's order), dropped: one large Lc0 stage most likely washes out any
     start, and Lc0 is one stage (the developer). Whether self-play after Lc0 helps: the running
     generation 2 above.
-  - **Open:** which line Rotor releases (CCRL, Lichess), to record as a decision so that an Lc0
-    network is never swapped in silently. (The cap on a generation's attempts, once open here, is
+  - **Decided 2026-11-06 (the developer): the release (CCRL, Lichess) ships the stronger network,
+    whichever line it comes from;** expected to be the tuned lc0 network. Decided by a duel of the
+    tuned lc0 and tuned PeSTO winners, both `@tuned`. Was open: which line Rotor releases, to record
+    as a decision so that an Lc0 network is never swapped in silently. (The cap on a generation's attempts, once open here, is
     moot: attempts were removed 2026-11-02, no-attempts.md.)
 
 - **Next, after generation 2's gate (passed 2026-11-02, against expectations): the halfk line (the developer, 2026-10-31).**
