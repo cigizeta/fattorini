@@ -13,8 +13,8 @@ the venv are named `temper-games`, and older entries here use the older paths an
 
 **Kalo Games from 2026-11-06 (kalo-games-rename.md).** The repository, roots and venv are now
 `kalo-games`; the engine stays Temper Chess. The opening positions and the tablebases moved to the
-repository's `data/`, and `%LOCALAPPDATA%\kalo-games` holds the installed engine alone
-(data-root-in-repository.md).
+repository's `data/` (data-root-in-repository.md). Since the same day nothing uses
+`%LOCALAPPDATA%`: snapshots go to Drive's `data/chess/snapshots/` (no-localappdata.md, snapshots.md).
 
 **Kalo Chess from 2026-11-06 (kalo-chess-rename.md):** the engine is `kalo-chess` (crate, binary,
 `bin/kalo-chess`, `KALO_CHESS_*`, UCI name Kalo Chess), the network magic `KALO`, and the Lichess
