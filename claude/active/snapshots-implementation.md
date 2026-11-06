@@ -127,8 +127,11 @@ The bench's nodes as before (nothing embedded in `target/release`).
 
 ## Step 8: the switch
 
-Every machine at once, PeSTO's play stopped and resumed (two protocol changes, one switch). On
-each smithy machine, the tests log rewritten once, with the smithy stopped:
+Every machine at once, PeSTO's play stopped and resumed (two protocol changes, one switch).
+Optional (the developer asked, 2026-11-06): left as it is, the tests log's old lines still list, but
+lose their live block on the page and a stopped one cannot resume; new tests are written with the
+new suffixes and replace the old within 20. To keep them whole, on each smithy machine, the smithy
+stopped:
 
 ```
 sed -i -e 's/@t1\b/@tuned/g' -e 's/@default\b/@untuned/g' data/chess/tests/tests.tsv
