@@ -1,7 +1,14 @@
 # Binary releases: implementation
 
-**Status:** planned 2026-11-06, not started; left at plan status (the developer, 2026-11-06:
-"We implement and complete later"), the notes' text shown and accepted as a draft. Design: binary-release.md. Builds on snapshots.md's
+**Status:** steps 1 to 4 applied 2026-11-06 (the developer: "we can implement the code to
+release"); the dry run passed the same day (notices for 41 crates, no `VCRUNTIME140.dll`, `about`
+and `bench` right, `licenses` printing them), after two fixes: `cargo-about` installed with
+`--features cli`, and `build_embedded` passing absolute paths, since cargo runs `build.rs` from the
+engine's crate directory (latent for a tuned snapshot's parameters too). Left: the refusal without
+a tag, and a real candidate's draft. `about.hbs` and `RELEASE-NOTES.md` credit Lc0's data whatever
+the network: to adjust if a PeSTO network ships. As applied: `describe_release` beside `describe` rather than one
+function taking either; `snapshot::parameters_file` shared by the snapshot and the release; the notes
+read and checked with the tag, before the tools and the build. Design: binary-release.md. Builds on snapshots.md's
 code (`snapshot::describe`, `build_embedded`, the snapshot's rule).
 
 **Confirmed by the developer (2026-11-06, binary-release.md decisions 10 to 12):** the notices

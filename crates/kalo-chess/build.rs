@@ -3,10 +3,11 @@
 //!
 //! - `KALO_CHESS_EVALFILE`: the `.nnue` it evaluates with;
 //! - `KALO_CHESS_PARAMETERS`: the `parameters.txt` it searches with;
-//! - `KALO_CHESS_DESCRIPTION`: a line of text saying what it is, not a path.
+//! - `KALO_CHESS_DESCRIPTION`: a line of text saying what it is, not a path;
+//! - `KALO_CHESS_NOTICES`: the third-party notices a release carries (`cargo-about`'s), a path.
 //!
 //! Each unset (or empty) embeds nothing: the PeSTO evaluation, the untuned parameters, no
-//! description, the binary every development build is.
+//! description, no notices, the binary every development build is.
 
 use std::path::Path;
 
@@ -14,6 +15,7 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").expect("cargo sets OUT_DIR for a build script");
     embed_file("KALO_CHESS_EVALFILE", &Path::new(&out_dir).join("embedded.nnue"));
     embed_file("KALO_CHESS_PARAMETERS", &Path::new(&out_dir).join("embedded-parameters.txt"));
+    embed_file("KALO_CHESS_NOTICES", &Path::new(&out_dir).join("embedded-notices.txt"));
     println!("cargo:rerun-if-env-changed=KALO_CHESS_DESCRIPTION");
     let description = std::env::var("KALO_CHESS_DESCRIPTION").unwrap_or_default();
     std::fs::write(Path::new(&out_dir).join("embedded-description.txt"), description.trim())

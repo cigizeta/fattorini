@@ -83,7 +83,7 @@ pub fn build_uci_player(name: &str, entry: &EngineEntry) -> Result<(), String> {
         _ => None,
     };
     let description = snapshot::describe(name, &protocol::current_commit(), &snapshot::now_text());
-    snapshot::build_embedded(entry.net.as_deref(), parameters_file.as_deref(), &description, path)
+    snapshot::build_embedded(&snapshot::EmbeddedBuild::plain(entry.net.as_deref(), parameters_file.as_deref(), &description), path)
 }
 
 /// Set on every UCI player, so equal footing does not rest on two engines' defaults happening to

@@ -334,7 +334,31 @@ written straight to Drive, never locally:
 `config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
 embeds. `kalo-chess about`, its UCI name and a first `info string` say exactly what it is: the
 player, the commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`). lichess-bot's
-`config.yml` names the snapshot it plays. A release on GitHub will be built the same way.
+`config.yml` names the snapshot it plays. A release on GitHub is built the same way.
+
+## Releases
+
+A release is a snapshot built at a tag: the C runtime static, the third-party notices embedded
+(`kalo-chess licenses`), uploaded to GitHub as a draft. Only the `.exe` is uploaded; the release's
+text is `RELEASE-NOTES.md`, passed as it is. Once, on the machine that releases: `cargo install
+cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), GitHub's `gh` installed, and `gh auth login`.
+
+1. The version in `Cargo.toml`'s `[workspace.package]`, if this release changes it.
+2. The two strength matches, 400 games each, all played, both sides with the Syzygy tables:
+
+   ```bash
+   ./bin/arena match stockfish-<level> <player>@tuned --time 10+0.1 --hash 64 --full
+   ```
+
+   the highest Skill Level the release beats and the lowest that beats it.
+3. `RELEASE-NOTES.md`: the version, the network, the strength table.
+4. Commit, then tag and push the tag: `v<version>`, or a candidate `v<version>-rc.<n>` first.
+5. `./bin/arena release <player>@tuned --dry-run` once, then without `--dry-run`. Every check runs
+   before the upload: HEAD at the tag, the tree clean, the tag matching the version, the notes
+   naming it, no release of the tag yet, the `.exe` free of `VCRUNTIME140.dll`, its `about` and
+   `bench`.
+6. Read the draft on GitHub, then publish it there. A candidate that proves broken: delete its draft
+   and tag the next candidate, never moving a tag anyone has seen.
 
 ## Tuning search parameters
 

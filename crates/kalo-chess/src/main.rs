@@ -1,6 +1,7 @@
 /// `kalo-chess` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
 /// `config.yml` (`engine_options`), pins each game's engine to its own physical cores
-/// (`core_pinning.rs`). `about` says what the build embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
+/// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints the third-party notices
+/// a release embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
 ///
 /// Any other argument stops the engine, so a typo is never silently ignored.
@@ -12,6 +13,7 @@ fn main() {
         [] => kalo_chess::uci::run(false),
         ["--lichess"] => kalo_chess::uci::run(true),
         ["about"] => about(),
+        ["licenses"] => licenses(),
         ["bench"] => run_bench(kalo_chess::bench::BENCH_DEPTH),
         ["bench", depth] => match depth.parse::<u32>() {
             Ok(depth) if depth > 0 => run_bench(depth),
@@ -21,7 +23,7 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("usage: kalo-chess [--lichess] | kalo-chess about | kalo-chess bench [<depth>]");
+            eprintln!("usage: kalo-chess [--lichess] | kalo-chess about | kalo-chess licenses | kalo-chess bench [<depth>]");
             std::process::exit(2);
         }
     }
@@ -58,6 +60,16 @@ fn run_bench(depth: u32) {
     let parameters = kalo_chess::uci::embedded_parameters();
     let (nodes, seconds) = kalo_chess::bench::bench_with(evaluator.as_deref(), parameters, depth);
     println!("{}", kalo_chess::bench::bench_line(nodes, seconds));
+}
+
+/// `kalo-chess licenses`: the third-party notices, which only a release embeds.
+fn licenses() {
+    let notices = kalo_chess::uci::embedded_notices();
+    if notices.is_empty() {
+        println!("no notices embedded: a development build");
+    } else {
+        print!("{notices}");
+    }
 }
 
 /// `kalo-chess about`: what the build embeds, as its description says.

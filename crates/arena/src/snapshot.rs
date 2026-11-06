@@ -6,7 +6,7 @@
 //! snapshot replaces the older ones of the same player and suffix. lichess-bot's `config.yml` names the one it plays.
 //!
 //! The same build (`build_embedded`) gives a match against an external engine its Kalo Chess side
-//! (`match_player.rs`). A release will be built the same way.
+//! (`match_player.rs`), and a release its `.exe` (`release.rs`).
 //!
 //! Nothing here, nor anywhere in the repository, writes outside it and Drive.
 
@@ -57,18 +57,9 @@ fn take(name: &str) -> Result<String, String> {
     let prefix = format!("kalo-chess-{player}-{suffix}-");
     let stem = format!("{prefix}{stamp}");
     let out = format!("{dir}/{stem}.exe");
-    // The parameters as a local file, for `build.rs`, beside the build while it runs.
-    let parameters_file = match entry.parameters {
-        Some(parameters) if parameters != SearchParameters::DEFAULT => {
-            std::fs::create_dir_all(EMBEDDED_TARGET_DIR).map_err(|error| format!("failed to create {EMBEDDED_TARGET_DIR}: {error}"))?;
-            let file = format!("{EMBEDDED_TARGET_DIR}/{stem}.parameters.txt");
-            parameters.write_file(&file)?;
-            Some(file)
-        }
-        _ => None,
-    };
+    let parameters_file = parameters_file(entry.parameters, EMBEDDED_TARGET_DIR, &stem)?;
     let description = describe(name, &protocol::current_commit(), &now_text());
-    let built = build_embedded(entry.net.as_deref(), parameters_file.as_deref(), &description, &out);
+    let built = build_embedded(&EmbeddedBuild::plain(entry.net.as_deref(), parameters_file.as_deref(), &description), &out);
     if let Some(file) = &parameters_file {
         std::fs::remove_file(file).ok();
     }
@@ -81,6 +72,20 @@ fn take(name: &str) -> Result<String, String> {
         println!("removed {path}");
     }
     Ok(out)
+}
+
+/// The parameters as a local file in `dir`, for `build.rs`, beside the build while it runs; none for
+/// the untuned defaults, which need no file. The caller removes it after the build.
+pub(crate) fn parameters_file(parameters: Option<SearchParameters>, dir: &str, stem: &str) -> Result<Option<String>, String> {
+    match parameters {
+        Some(parameters) if parameters != SearchParameters::DEFAULT => {
+            std::fs::create_dir_all(dir).map_err(|error| format!("failed to create {dir}: {error}"))?;
+            let file = format!("{dir}/{stem}.parameters.txt");
+            parameters.write_file(&file)?;
+            Ok(Some(file))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Whether `file` is another snapshot of the player and suffix `prefix` names: the prefix, then a
@@ -98,7 +103,8 @@ fn is_older_snapshot(file: &str, prefix: &str, stem: &str) -> bool {
 /// Whether `player` may be snapshotted (the developer, 2026-10-29, kept 2026-11-06): pesto, or a full
 /// run's generation winner, one that passed its gate; never a candidate nor a scaled run's network,
 /// whose strength means nothing outside its run.
-fn may_snapshot(player: &str) -> Result<(), String> {
+/// A release follows the same rule.
+pub(crate) fn may_snapshot(player: &str) -> Result<(), String> {
     if player == protocol::PESTO {
         return Ok(());
     }
@@ -133,30 +139,70 @@ pub(crate) fn describe(player: &str, commit: &str, taken: &str) -> String {
     format!("{player} {short_commit}{dirty} {taken}")
 }
 
+/// A release's description: the tag, written whole, where a snapshot says the commit, as
+/// `lc0-psq-threats-screlu-g1-r1@tuned v0.1.0 2026-11-20 10:00 UTC`.
+pub(crate) fn describe_release(player: &str, tag: &str, built: &str) -> String {
+    format!("{player} {tag} {built}")
+}
+
 /// The time now, as a description says it: `YYYY-MM-DD HH:MM UTC`.
 pub(crate) fn now_text() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", now.year(), u8::from(now.month()), now.day(), now.hour(), now.minute())
 }
 
-/// Builds `kalo-chess` in release with `network` and `parameters` embedded (none: the PeSTO
-/// evaluation, the untuned defaults) and `description`, in `EMBEDDED_TARGET_DIR`, then copies the
-/// binary to `out`. cargo's own output goes to the terminal as it builds.
-pub(crate) fn build_embedded(network: Option<&str>, parameters: Option<&str>, description: &str, out: &str) -> Result<(), String> {
-    println!("building kalo-chess for {out}: {description}");
+/// What `build_embedded` builds: the files and text embedded (`build.rs`), where cargo builds, and
+/// whether the C runtime is linked statically.
+pub(crate) struct EmbeddedBuild<'a> {
+    /// The `.nnue`; none, the PeSTO evaluation.
+    pub(crate) network: Option<&'a str>,
+    /// The `parameters.txt`; none, the untuned defaults.
+    pub(crate) parameters: Option<&'a str>,
+    pub(crate) description: &'a str,
+    /// The third-party notices, a release's alone.
+    pub(crate) notices: Option<&'a str>,
+    pub(crate) target_dir: &'a str,
+    /// A release's: no Visual C++ Redistributable needed where it runs.
+    pub(crate) static_runtime: bool,
+}
+
+impl<'a> EmbeddedBuild<'a> {
+    /// A snapshot's or a match's build: in `EMBEDDED_TARGET_DIR`, no notices, the runtime dynamic.
+    pub(crate) fn plain(network: Option<&'a str>, parameters: Option<&'a str>, description: &'a str) -> EmbeddedBuild<'a> {
+        EmbeddedBuild { network, parameters, description, notices: None, target_dir: EMBEDDED_TARGET_DIR, static_runtime: false }
+    }
+}
+
+/// The flags of a build with the C runtime static. `RUSTFLAGS` replaces `.cargo/config.toml`'s
+/// `rustflags` rather than adding to them, so the CPU level is said again.
+const STATIC_RUSTFLAGS: &str = "-C target-cpu=x86-64-v3 -C target-feature=+crt-static";
+
+/// Builds `kalo-chess` in release as `build` says, then copies the binary to `out`. cargo's own
+/// output goes to the terminal as it builds.
+pub(crate) fn build_embedded(build: &EmbeddedBuild, out: &str) -> Result<(), String> {
+    println!("building kalo-chess for {out}: {}", build.description);
     let mut command = process::Command::new("cargo");
-    command.args(["build", "--release", "--bin", "kalo-chess", "--target-dir", EMBEDDED_TARGET_DIR]);
-    for (variable, value) in [("KALO_CHESS_EVALFILE", network), ("KALO_CHESS_PARAMETERS", parameters), ("KALO_CHESS_DESCRIPTION", Some(description))] {
-        match value {
-            Some(value) => command.env(variable, value),
+    command.args(["build", "--release", "--bin", "kalo-chess", "--target-dir", build.target_dir]);
+    // Absolute: cargo runs `build.rs` from the engine's crate directory, not from here, so a path
+    // relative to the repository's root would name nothing there.
+    let absolute = |path: &str| {
+        std::path::absolute(path).map(|path| path.into_os_string()).map_err(|error| format!("{path}: {error}"))
+    };
+    for (variable, path) in [("KALO_CHESS_EVALFILE", build.network), ("KALO_CHESS_PARAMETERS", build.parameters), ("KALO_CHESS_NOTICES", build.notices)] {
+        match path {
+            Some(path) => command.env(variable, absolute(path)?),
             None => command.env_remove(variable),
         };
+    }
+    command.env("KALO_CHESS_DESCRIPTION", build.description);
+    if build.static_runtime {
+        command.env("RUSTFLAGS", STATIC_RUSTFLAGS);
     }
     let status = command.status().map_err(|error| format!("failed to run cargo: {error}"))?;
     if !status.success() {
         return Err(format!("cargo build --release --bin kalo-chess failed ({status}): nothing written"));
     }
-    let built = format!("{EMBEDDED_TARGET_DIR}/release/kalo-chess{}", std::env::consts::EXE_SUFFIX);
+    let built = format!("{}/release/kalo-chess{}", build.target_dir, std::env::consts::EXE_SUFFIX);
     // Via `.partial` and a rename: no reader, on Drive or in a match, sees a half-copied `.exe`.
     remote::copy_replacing(&built, out).map_err(|error| error.to_string())
 }
@@ -170,6 +216,7 @@ mod tests {
         let description = describe("pesto@untuned", "0123456789abcdef (modified)", "2026-11-06 15:32 UTC");
         assert_eq!(description, "pesto@untuned 0123456-dirty 2026-11-06 15:32 UTC");
         assert_eq!(describe("pesto@tuned", "0123456789abcdef", "2026-11-06 15:32 UTC"), "pesto@tuned 0123456 2026-11-06 15:32 UTC");
+        assert_eq!(describe_release("pesto@tuned", "v0.1.0-rc.2", "2026-11-06 15:32 UTC"), "pesto@tuned v0.1.0-rc.2 2026-11-06 15:32 UTC");
     }
 
     #[test]

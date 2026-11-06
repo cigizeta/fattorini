@@ -1196,6 +1196,16 @@ pub fn embedded_description() -> String {
     String::from_utf8_lossy(EMBEDDED_DESCRIPTION).trim().to_string()
 }
 
+/// The third-party notices a release embeds (`KALO_CHESS_NOTICES`, written by `cargo-about`), empty
+/// for every other build. Their licenses (MIT, Apache and others) ask that a distributed binary
+/// carry them, and the ODbL asks the training data's attribution: one file, so they live inside it.
+const EMBEDDED_NOTICES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-notices.txt"));
+
+/// The embedded notices, empty when the build has none.
+pub fn embedded_notices() -> String {
+    String::from_utf8_lossy(EMBEDDED_NOTICES).into_owned()
+}
+
 /// The only place that actually touches stdin/stdout -- everything it does (parsing,
 /// state, replies) is the same `parse_command`/`Engine::handle` machinery already tested
 /// above without any I/O involved. Reads one line at a time, stops at `Quit` (checked
@@ -1683,6 +1693,7 @@ mod tests {
         assert!(engine.evaluator.is_none());
         assert_eq!(engine.parameters, SearchParameters::DEFAULT);
         assert!(engine.description.is_empty());
+        assert!(embedded_notices().is_empty());
     }
 
     #[test]
