@@ -33,7 +33,9 @@ header, not the usage). In this order, each refusal saying why and exiting befor
 
 1. **The player:** `snapshot::may_snapshot`, then `match_player::resolve_player`, as a snapshot.
 2. **The tag:** `git describe --exact-match --tags HEAD`; `protocol::current_commit()` not
-   modified; the tag is `v{version}`, the version the engine's `id name` says
+   modified; the tag is `v{version}` or a release candidate `v{version}-rc.{n}` (the developer,
+   2026-11-06: release candidates, a tag never moved nor reused once seen; `v{version}` tagged only
+   on the candidate that worked), the version the engine's `id name` says
    (`env!("CARGO_PKG_VERSION")`, the workspace's, to check it is shared). `--dry-run` skips these
    three and names the build `v0.0.0-dry-run`.
 3. **The tools:** `cargo about --version` and, unless `--dry-run`, `gh --version`; `gh release view
@@ -50,7 +52,8 @@ header, not the usage). In this order, each refusal saying why and exiting befor
 8. **The draft,** unless `--dry-run`: `gh release create <tag> target/release-build/kalo-chess-<tag>.exe
    --draft --verify-tag --title "Kalo Chess <tag>" --notes-file <notes>`; prints `gh`'s URL.
 
-Tests: the tag rule (`v0.1.0` against `0.1.0` yes, `0.1.0`, `v0.1.1` no), the notes' text for
+Tests: the tag rule (`v0.1.0` and `v0.1.0-rc.2` against `0.1.0` yes; `0.1.0`, `v0.1.1`,
+`v0.1.0-rc`, `v0.1.0-beta.1` no), the notes' text for
 pesto and for a network, the `VCRUNTIME140.dll` search on two byte strings.
 
 ## Step 4: docs

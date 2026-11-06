@@ -20,15 +20,19 @@ repository's `data/`, and `%LOCALAPPDATA%\kalo-games` holds the installed engine
 `bin/kalo-chess`, `KALO_CHESS_*`, UCI name Kalo Chess), the network magic `KALO`, and the Lichess
 account `kalo-chess`. Older entries say Temper or `temper-chess`.
 
-## Next (the developer, 2026-11-05)
+## Next (the developer, 2026-11-06)
 
-- **Finish kalo-chess-rename-implementation.md:** every machine on the new build since 2026-11-06;
-  left, the Lichess machine's install and lichess-bot pointed at the bot `kalo-chess`, then
-  `temper-chess` closed.
-- **Lichess:** the account `kalo-chess` exists since 2026-11-06 (kalo-chess-rename.md) and replaces
-  `temper-chess`, a bot since 2026-11-05 with no game played, to be closed. After an
-  install, PeSTO plays its first one or two games on it. lichess-bot's configuration is updated;
-  any other copy of it still names the old paths.
+In this order:
+
+1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`), SPSA from the smithy's page.
+2. **Train and tune a PeSTO network:** a forge run on PeSTO's played corpus, its winner tuned.
+3. **Lichess, the tuned lc0 network:** a `@tuned` snapshot (`bin/arena snapshot`), lichess-bot's
+   `engine.name` pointed at it. Ready since 2026-11-06: the bot `kalo-chess` (account and token
+   done), lichess-bot's config on a Drive snapshot, games in `data/chess/lichess/`; it plays the
+   untuned snapshot until then. `temper-chess` to close.
+4. **The first release:** binary-release-implementation.md, at a tag; a draft first, its open
+   points (notices, notes, version) settled on it when the time comes (the developer, 2026-11-06).
+5. **CCRL testers:** tell them of the release.
 
 ## Status (2026-11-05, read this first)
 

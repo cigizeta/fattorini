@@ -31,7 +31,10 @@ the static C runtime, the notices, debugging while private.
 7. **Dropped:** several networks zipped for `EvalFile` (there is none: another network is another
    release); GitHub Actions and a committed manifest.
 
-8. **Only the `.exe` is uploaded** (the developer, 2026-11-06), not the network. The notes and any
+8. **Release candidates** (the developer, 2026-11-06): `v0.1.0-rc.1`, `-rc.2`, ... each a draft,
+   a broken one's draft deleted; `v0.1.0` tagged on the candidate that worked. A tag seen by anyone
+   is never moved nor reused.
+9. **Only the `.exe` is uploaded** (the developer, 2026-11-06), not the network. The notes and any
    accompanying text need a design of their own (below).
 
 ## Proposed
