@@ -8,7 +8,9 @@ old name still lives. It supersedes the names in temper-games-restart.md, which 
 ## Decisions
 
 - **Project:** Kalo Games. **Engine:** Temper Chess, unchanged: the crate, binary, UCI name, `bin/`
-  wrappers and firewall rule names stay, and plain "Temper" stays a shorthand for the engine.
+  wrappers stay, and plain "Temper" stays a shorthand for the engine.
+- **Firewall rules:** `kalo-games smithy` and `kalo-games arena`, replacing the `temper-chess` ones
+  (the developer, 2026-11-06).
 - **Venv:** `.kalo-games`.
 - **Data root:** `%LOCALAPPDATA%\kalo-games`. **Drive root:** `G:/My Drive/kalo-games`.
 - **No fallback to the old names:** a clean cut, one fixed place each, as before.

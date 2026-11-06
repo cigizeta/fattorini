@@ -358,22 +358,22 @@ netsh advfirewall firewall delete rule name="arena"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="temper-chess smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\kalo-games\target\release\smithy.exe"
+netsh advfirewall firewall add rule name="kalo-games smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\kalo-games\target\release\smithy.exe"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="temper-chess arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\kalo-games\target\release\arena.exe"
+netsh advfirewall firewall add rule name="kalo-games arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\kalo-games\target\release\arena.exe"
 ```
 
 The first two remove Windows' own rules, if any were made. To check, each rule should show Profiles
 Private, TCP and its LocalPort, and `name="smithy"` and `name="arena"` should match no rule:
 
 ```bash
-netsh advfirewall firewall show rule name="temper-chess smithy" verbose
+netsh advfirewall firewall show rule name="kalo-games smithy" verbose
 ```
 
 ```bash
-netsh advfirewall firewall show rule name="temper-chess arena" verbose
+netsh advfirewall firewall show rule name="kalo-games arena" verbose
 ```
 
 ```bash
