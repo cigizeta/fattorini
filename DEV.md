@@ -128,7 +128,7 @@ cp examples/engines.yaml data/chess/engines.yaml
 The opening positions and the Syzygy tablebases (about 150 GB), into the repository's `data/`:
 
 ```bash
-./bin/lichess-book.sh
+./bin/uho-book.sh
 ```
 
 ```bash

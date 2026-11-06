@@ -1,5 +1,5 @@
 //! The data root: the repository's gitignored `data/`, which holds the machine's own files and the
-//! third-party downloads (the opening book and the Syzygy tables, fetched by `bin/lichess-book.sh`
+//! third-party downloads (the opening book and the Syzygy tables, fetched by `bin/uho-book.sh`
 //! and `bin/syzygy.sh`). The two scripts compute the same root in shell, and the two must agree.
 //!
 //! Development only, and nothing here reads the environment: `%LOCALAPPDATA%` belongs to a release,

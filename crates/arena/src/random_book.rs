@@ -1,5 +1,5 @@
 //! The opening book -- `UHO_Lichess_4852_v1.epd` in the data root (`data_root::book_path`,
-//! downloaded by `bin/lichess-book.sh`), read a line at a time rather than loaded wholesale, since
+//! downloaded by `bin/uho-book.sh`), read a line at a time rather than loaded wholesale, since
 //! only a handful of lines (one per game pair, or one per self-play game) are ever needed out of its
 //! 2.6M positions. Used by the matches, the gate and self-play alike.
 
@@ -21,7 +21,7 @@ pub struct RandomBook {
 
 impl RandomBook {
     pub fn open(path: &str) -> RandomBook {
-        let file = File::open(path).unwrap_or_else(|error| panic!("failed to open opening book {path}: {error} -- run bin/lichess-book.sh first"));
+        let file = File::open(path).unwrap_or_else(|error| panic!("failed to open opening book {path}: {error} -- run bin/uho-book.sh first"));
         let mut reader = BufReader::new(file);
         let mut offsets = Vec::new();
         let mut position: u64 = 0;
