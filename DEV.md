@@ -148,7 +148,7 @@ is made on the local disk and reaches Drive only whole, never written or appende
 - a tune's files every 15 minutes, then the whole tune beside its network at its end;
 - the sources' corpora, segment by segment.
 
-Every reader (`arena duel`, `smithy install`, the page's View) looks on the local disk
+Every reader (`arena duel`, an install, the page's View) looks on the local disk
 first, then on Drive. Folders may be made available offline in Drive's settings to read them faster.
 
 A Python environment named `.kalo-games` with PyTorch, for `smithy`: on the GPU machine to train, and
@@ -170,7 +170,7 @@ source .kalo-games/Scripts/activate
 uv pip install "torch==2.11.0" numpy --torch-backend=auto
 ```
 
-On a machine without an NVIDIA GPU (to run `smithy`'s tests or `smithy install`), name the CPU
+On a machine without an NVIDIA GPU (to run `smithy`'s tests), name the CPU
 backend instead of `auto`:
 
 ```bash

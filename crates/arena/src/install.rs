@@ -1,6 +1,7 @@
 //! An install, asked by the smithy (`protocol::INSTALL_PATH`): a fresh release `temper-chess` and the
-//! network it plays, put where lichess-bot runs them, the release root's `bin/`. Run on a thread of the arena's own (`chores.rs`), its workers playing on: their games
-//! run in-process, so no `temper-chess.exe` of theirs is replaced.
+//! network it plays, put where lichess-bot runs them, the release root's `bin/`. Run on a thread of
+//! the arena's own (`chores.rs`), its workers playing on: their games run in-process, so no
+//! `temper-chess.exe` of theirs is replaced.
 //!
 //! The names in `bin/` never change (`temper-chess.exe`, `temper-chess.nnue`):
 //! the engine loads the `temper-chess.nnue` beside its own binary at startup, so no GUI needs an `EvalFile`,

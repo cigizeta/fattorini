@@ -11,7 +11,7 @@ unset, and development data sits outside the repository. A release ships no tabl
 - **Development:** the book and the tablebases live in the repository's gitignored `data/`:
   `data/chess/books/` and `data/chess/syzygy/`. Nothing in development reads `LOCALAPPDATA`.
 - **Release:** the engine `install` sets up stays in `%LOCALAPPDATA%\kalo-games\bin`, the only use
-  left. lichess-bot's PGN goes to `data/lichess/games`, created by every install.
+  left. An install creates no folder for lichess-bot's PGN: that is lichess-bot's own setup.
 - **No books in an install:** the Install screen offers a machine and a player, nothing else.
 - **The Books screen stays, unchanged, on Drive:** it reads its sources from and writes its books
   to `G:/My Drive/kalo-games/data/chess/books/`, and an install no longer takes one (the developer,
@@ -30,7 +30,7 @@ unset, and development data sits outside the repository. A release ships no tabl
   taking the starting directory and the test for the repository, so its tests need no process state.
   Drop `BASE_VARIABLE`.
 - `crates/arena/src/install.rs`: a new `release_root()` is the one reader of `LOCALAPPDATA`, used by
-  `run`, `installed` and `games_dir`, its test moved from `data_root.rs`. Remove `BookChoice`,
+  `run` and `installed`, its test moved from `data_root.rs`. Remove `games_dir`, `BookChoice`,
   `Install.book`, `install_book`, `kept_book_fields`, `with_book_fields` and their tests.
 - `crates/temper-chess/src/pipeline/protocol.rs` and its callers: drop `book` from `InstallRequest`.
 - `crates/smithy/src/page.html`: remove the Book row and its value from the request, and the book

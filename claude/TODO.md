@@ -12,16 +12,20 @@ documents use the old name: `rotor`, `ROTOR_*`, `.rotor`.
 the venv are named `temper-games`, and older entries here use the older paths and names.
 
 **Kalo Games from 2026-11-06 (kalo-games-rename.md).** The repository, roots and venv are now
-`kalo-games`; the engine stays Temper Chess.
+`kalo-games`; the engine stays Temper Chess. The opening positions and the tablebases moved to the
+repository's `data/`, and `%LOCALAPPDATA%\kalo-games` holds the installed engine alone
+(data-root-in-repository.md).
 
 ## Next (the developer, 2026-11-05)
 
-- **Finish kalo-games-rename.md:** Drive, then every machine's data root, venv and firewall rules.
+- **Finish kalo-games-rename.md:** every other machine's `books/` and `syzygy/` into `data/chess/`,
+  venv and firewall rules. Drive is done.
 
 - **Finish temper-games-restart.md:** tests, then the Drive folders, one first commit, every machine
   on a fresh clone. The old repository is `temper-chess-archive`, archived and private.
 - **Lichess:** the account `temper-chess` is a bot since 2026-11-05 with no game played. After an
-  install, PeSTO plays its first one or two games on it. lichess-bot's local configuration to update.
+  install, PeSTO plays its first one or two games on it. lichess-bot's configuration is updated;
+  any other copy of it still names the old paths.
 
 ## Status (2026-11-05, read this first)
 

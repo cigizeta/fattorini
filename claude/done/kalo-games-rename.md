@@ -29,7 +29,8 @@ comments, and the note at the top of `TODO.md`.
 
 On every machine, with no build, training, self-play, replay or Lichess play running, and Drive
 fully synced. Drive first, on one machine: renaming the folder in Drive carries over to the others.
-Then, per machine: move the data root, recreate the venv, update the firewall rules, fix any
+Then, per machine: move `books/` and `syzygy/` into `data/chess/` (data-root-in-repository.md),
+keep the installed engine under `%LOCALAPPDATA%\kalo-games\bin`, recreate the venv, update the firewall rules, fix any
 gitignored local file and the lichess-bot config if they name an old path, then rebuild. Machines
 other than this one also update their remote and rename their folder.
 
