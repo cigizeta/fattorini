@@ -12,11 +12,6 @@ use crate::net_config::{ArchitectureKind, NetConfig};
 use crate::stack_head::HeadShape;
 use crate::{checkpoint_store, export, history, nnue_network, stages};
 
-/// A network's tuned search parameters, beside its engine file (`nnue::parameters_file_beside`): a
-/// candidate's in its lambda's directory, a champion's in its generation's. It replaced the single
-/// margin of `margin.txt`, retired when the pawn scale moved to label space.
-pub(crate) const PARAMETERS_FILE: &str = "parameters.txt";
-
 /// Exports one lambda's candidate to `gen-<g>/lambda-<l>/candidate.nnue`, with `candidate.txt`
 /// beside it naming the checkpoint. Called by `export_best` when the lambda's run stops, so the
 /// round robin always has every candidate without a separate command.

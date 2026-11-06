@@ -9,8 +9,7 @@
 //! `SyzygyPath` plays on without tables and says nothing, so the match loads them in-process first
 //! (`pairing::load_tablebase`), which stops the run when they are missing.
 //!
-//! - `pesto`: the release `kalo-chess` with the PeSTO evaluation, asked for through an empty
-//!   `EvalFile`.
+//! - `pesto`: Kalo Chess with the PeSTO evaluation.
 //! - `stockfish-<level>`, level 0 to 20: the executable of the registry's `stockfish` entry, at that
 //!   `Skill Level`. The bare `stockfish` only says where Stockfish is and is no player: full strength
 //!   is `stockfish-20`, its one spelling, so its records never split between two folders.
@@ -18,8 +17,8 @@
 //!   rating through `UCI_LimitStrength` and `UCI_Elo`.
 //! - Any other `kind: uci` engine of the registry, by its name, e.g. `reckless`, with its options.
 //! - `<config>-g<g>-l<lambda>-r<n>`, e.g. `pesto-psq-g1-l0.95-r1`, a forge run's network
-//!   (`players::parse_network_name`): the release `kalo-chess` evaluating with that lambda's candidate in
-//!   generation `g`, loaded through `EvalFile`.
+//!   (`players::parse_network_name`): Kalo Chess evaluating with that lambda's candidate in
+//!   generation `g`.
 //! - `<config>-g<g>-r<n>`, e.g. `pesto-psq-g1-r1`: generation `g`'s winner, as its `generations.tsv`
 //!   records it. This machine's copy of the run first, then the remote's, where its closed
 //!   generations move.
@@ -27,24 +26,22 @@
 //! A Kalo Chess player, pesto or a network, is always followed by what it searches with, so that its name
 //! says it:
 //!
-//! - `@default`: the untuned `SearchParameters::DEFAULT`, whatever its `parameters.txt` says.
-//! - `@t1`: its tune, the `parameters.txt` beside a network or pesto's in `players::PESTO_TUNING_DIR`;
-//!   refused when it has none. One tune a network for now, so `@t2` and above are refused.
-//! - `@<cp>`, e.g. `pesto@150`: a margin per ply of `<cp>` in pesto's pawn (`search::MARGIN_PER_PLY`'s
-//!   unit) wherever a static evaluation meets a bound.
+//! - `@untuned`: the untuned `SearchParameters::DEFAULT`, whatever its `parameters.txt` says.
+//! - `@tuned`: its tune, the `parameters.txt` beside a network or pesto's in
+//!   `players::PESTO_TUNING_DIR`; refused when it has none.
 //!
-//! In-process, the suffix sets the parameters. Over UCI, against an external engine, it cannot: the
-//! subprocess plays the `parameters.txt` beside its network if there is one, else the defaults, and
-//! pesto the defaults. So there the suffix must say exactly that, `@t1` or `@default`, and `@<cp>` is
-//! refused. An external engine takes no suffix.
+//! In-process, the suffix sets the parameters. Over UCI, against an external engine, the player is
+//! built with its network and those parameters embedded, as a snapshot is (`snapshot::build_embedded`,
+//! `build_uci_player`), into `UCI_PLAYERS_DIR`: the engine takes no option choosing either. An
+//! external engine takes no suffix.
 //!
 //! The name is also the player's label in the PGN and the database.
 
 use std::collections::HashMap;
 
-use super::data_root;
 use super::engines::{self, EngineEntry, EngineKind, DEFAULT_HASH_MB};
-use kalo_chess::pipeline::{players, remote};
+use super::{data_root, snapshot};
+use kalo_chess::pipeline::{players, protocol, remote};
 // Read by arena's other modules through this one, where every player's name is read.
 pub use kalo_chess::pipeline::players::parse_network_name;
 use kalo_chess::nnue::Tuning;
@@ -58,12 +55,36 @@ const MAX_STOCKFISH_SKILL: u64 = 20;
 const MIN_STOCKFISH_ELO: u64 = 1320;
 const MAX_STOCKFISH_ELO: u64 = 3190;
 
-/// Kalo Chess as a UCI engine: the release binary itself, which `bin/arena` builds together with
-/// `arena`, so it is as fresh as the arena. Never the `bin/kalo-chess` wrapper: Windows cannot
+/// Where a Kalo Chess player that plays over UCI is built, one binary per player name, rebuilt at
+/// each match so it is of the current commit. Never the `bin/kalo-chess` wrapper: Windows cannot
 /// spawn a Bash script, and a wrapper process in between would take the pin and the kill meant for
 /// the engine.
-fn kalo_chess_binary() -> String {
-    format!("target/release/kalo-chess{}", std::env::consts::EXE_SUFFIX)
+const UCI_PLAYERS_DIR: &str = "target/uci-players";
+
+/// The binary the Kalo Chess player `name` (suffix included) plays over UCI from.
+fn uci_player_path(name: &str) -> String {
+    format!("{UCI_PLAYERS_DIR}/{}{}", name.replace('@', "-"), std::env::consts::EXE_SUFFIX)
+}
+
+/// Builds the binary of `entry`, the player `name`, when it is a Kalo Chess player over UCI
+/// (`resolve_player`): its network and parameters embedded, as a snapshot's. Any other entry needs
+/// nothing. Minutes at most, the engine crate alone recompiled when only what it embeds changed.
+pub fn build_uci_player(name: &str, entry: &EngineEntry) -> Result<(), String> {
+    let Some(path) = entry.path.as_deref().filter(|path| path.starts_with(UCI_PLAYERS_DIR)) else {
+        return Ok(());
+    };
+    let parameters_file = match entry.parameters {
+        Some(parameters) if parameters != SearchParameters::DEFAULT => {
+            let file = format!("{}.parameters.txt", path.trim_end_matches(std::env::consts::EXE_SUFFIX));
+            std::fs::create_dir_all(UCI_PLAYERS_DIR).map_err(|error| format!("{UCI_PLAYERS_DIR}: {error}"))?;
+            parameters.write_file(&file)?;
+            Some(file)
+        }
+        _ => None,
+    };
+    let description =
+        snapshot::describe(name, &protocol::current_commit(), &snapshot::now_text(), entry.net.as_deref(), parameters_file.as_deref())?;
+    snapshot::build_embedded(entry.net.as_deref(), parameters_file.as_deref(), &description, path)
 }
 
 /// Set on every UCI player, so equal footing does not rest on two engines' defaults happening to
@@ -211,37 +232,23 @@ pub fn plays_in_process(one: &str, two: &str, engines: &Engines) -> bool {
 /// What a Kalo Chess player's name says it searches with, after its `@`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Suffix {
-    /// `@default`: `SearchParameters::DEFAULT`.
-    Default,
-    /// `@t1`: its tune's `parameters.txt`.
-    Tune,
-    /// `@<cp>`: a margin per ply of that many centipawns (`SearchParameters::with_margin`).
-    Margin(i32),
+    /// `@untuned`: `SearchParameters::DEFAULT`.
+    Untuned,
+    /// `@tuned`: its tune's `parameters.txt`.
+    Tuned,
 }
 
-/// `name` split into the player and its suffix, `None` when it has no `@`: `pesto-psq-g1-r1@t1` is
-/// `pesto-psq-g1-r1` with `Suffix::Tune`. A margin is a positive whole number of centipawns; a tune
-/// past `t1` is refused, a network having one tune for now.
+/// `name` split into the player and its suffix, `None` when it has no `@`: `pesto-psq-g1-r1@tuned` is
+/// `pesto-psq-g1-r1` with `Suffix::Tuned`.
 fn split_suffix(name: &str) -> Result<(&str, Option<Suffix>), String> {
     let Some((player, suffix)) = name.split_once('@') else {
         return Ok((name, None));
     };
-    if suffix == "default" {
-        return Ok((player, Some(Suffix::Default)));
+    match suffix {
+        "untuned" => Ok((player, Some(Suffix::Untuned))),
+        "tuned" => Ok((player, Some(Suffix::Tuned))),
+        _ => Err(format!("{name:?}: a suffix is tuned (its tune) or untuned, as in {player}@tuned or {player}@untuned")),
     }
-    if suffix == "t1" {
-        return Ok((player, Some(Suffix::Tune)));
-    }
-    if suffix.strip_prefix('t').is_some_and(|n| n.parse::<u32>().is_ok()) {
-        return Err(format!("{name:?}: a network has one tune for now, t1"));
-    }
-    let margin: i32 = suffix.parse().ok().filter(|&margin| margin > 0).ok_or_else(|| {
-        format!(
-            "{name:?}: a suffix is default, t1 (its tune) or a positive number of centipawns, as in {player}@default, \
-             {player}@t1 or {player}@150"
-        )
-    })?;
-    Ok((player, Some(Suffix::Margin(margin))))
 }
 
 /// The parameters the Kalo Chess player `player` has tuned, `None` if it has none: pesto's in
@@ -255,16 +262,6 @@ fn tuned_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, Strin
         Tuning::Parameters(parameters) => Some(parameters),
         Tuning::Untuned => None,
     })
-}
-
-/// What a Kalo Chess player plays over UCI by itself, which no suffix can change: a network the
-/// `parameters.txt` beside it, if any, else the defaults; pesto the defaults, the release `kalo-chess`
-/// reading no tune of pesto's.
-fn uci_suffix(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Suffix, String> {
-    if player == "pesto" {
-        return Ok(Suffix::Default);
-    }
-    Ok(if tuned_parameters(player, run_dir)?.is_some() { Suffix::Tune } else { Suffix::Default })
 }
 
 /// The player `name` names, or why it names none. `in_process` is `plays_in_process` for the whole
@@ -287,17 +284,15 @@ fn in_process_entry(net: Option<String>) -> EngineEntry {
 }
 
 /// Kalo Chess with the network at `net`, or the PeSTO evaluation when `None`: in-process when
-/// `in_process`, the release `kalo-chess` over UCI otherwise. Also the gate's two players, built from paths
-/// rather than names.
-pub fn kalo_chess_entry(net: Option<String>, in_process: bool) -> EngineEntry {
+/// `in_process`; over UCI otherwise, a binary of its own with `net` embedded, whose path and
+/// parameters `resolve_player_with` gives it once the suffix is known, and `build_uci_player` builds.
+fn kalo_chess_entry(net: Option<String>, in_process: bool) -> EngineEntry {
     if in_process {
         return in_process_entry(net);
     }
-    // An explicitly empty `EvalFile`, not Kalo Chess's default: an engine with a `kalo-chess.nnue` beside its
-    // binary loads it at startup, and the PeSTO evaluation must never depend on that file
-    // being absent.
-    let eval_file = net.unwrap_or_else(|| "<empty>".to_string());
-    uci_entry(&kalo_chess_binary(), vec![("EvalFile", serde_yaml::Value::String(eval_file))])
+    let mut entry = uci_entry(UCI_PLAYERS_DIR, Vec::new());
+    entry.net = net;
+    entry
 }
 
 /// `resolve_player`, with where a run's directory is, so the tests can use temporary ones.
@@ -311,29 +306,15 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
         return Ok(entry);
     }
     let Some(suffix) = suffix else {
-        return Err(format!(
-            "{name:?}: a Kalo Chess player says what it searches with, {name}@default, {name}@t1 (its tune) or {name}@<cp> (a margin)"
-        ));
+        return Err(format!("{name:?}: a Kalo Chess player says what it searches with, {name}@tuned (its tune) or {name}@untuned"));
     };
-    if !in_process {
-        let plays = uci_suffix(player, run_dir)?;
-        if suffix != plays {
-            let named = match plays {
-                Suffix::Tune => "t1",
-                _ => "default",
-            };
-            return Err(format!(
-                "{name:?}: over UCI, against an external engine, it plays what it has by itself, so it is {player}@{named}; \
-                 other parameters only in-process, against another Kalo Chess player"
-            ));
-        }
-        return Ok(entry);
-    }
     entry.parameters = Some(match suffix {
-        Suffix::Default => SearchParameters::DEFAULT,
-        Suffix::Margin(margin) => SearchParameters::with_margin(margin),
-        Suffix::Tune => tuned_parameters(player, run_dir)?.ok_or_else(|| format!("{name:?}: {player} has no tune, so no t1"))?,
+        Suffix::Untuned => SearchParameters::DEFAULT,
+        Suffix::Tuned => tuned_parameters(player, run_dir)?.ok_or_else(|| format!("{name:?}: {player} has no tune, so no @tuned"))?,
     });
+    if !in_process {
+        entry.path = Some(uci_player_path(name));
+    }
     Ok(entry)
 }
 
@@ -511,16 +492,16 @@ mod tests {
     }
 
     #[test]
-    fn pesto_is_kalo_chess_over_uci_with_an_explicitly_empty_eval_file() {
-        let entry = resolve_player("pesto@default", false, &Engines::none()).unwrap();
+    fn pesto_over_uci_is_a_build_of_its_own_with_nothing_to_set() {
+        let entry = resolve_player("pesto@untuned", false, &Engines::none()).unwrap();
         assert_equal_footing(&entry);
-        assert_eq!(entry.binary_path(), kalo_chess_binary());
-        assert_eq!(entry.options["EvalFile"], serde_yaml::Value::String("<empty>".to_string()));
+        assert_eq!(entry.binary_path(), uci_player_path("pesto@untuned"));
+        assert_eq!((entry.net, entry.parameters), (None, Some(SearchParameters::DEFAULT)));
     }
 
     #[test]
     fn at_a_fixed_depth_pesto_plays_in_process_and_stockfish_stays_uci() {
-        let entry = resolve_player("pesto@default", true, &engines()).unwrap();
+        let entry = resolve_player("pesto@untuned", true, &engines()).unwrap();
         assert_eq!((entry.kind, entry.net), (EngineKind::Builtin, None));
         let entry = resolve_player("stockfish-5", true, &engines()).unwrap();
         assert_equal_footing(&entry);
@@ -530,7 +511,7 @@ mod tests {
     #[test]
     fn set_hash_sizes_a_uci_and_an_in_process_player_alike() {
         let mut uci = resolve_player("stockfish-5", false, &engines()).unwrap();
-        let mut in_process = resolve_player("pesto@default", true, &engines()).unwrap();
+        let mut in_process = resolve_player("pesto@untuned", true, &engines()).unwrap();
         assert_eq!((uci.hash_mb(), in_process.hash_mb()), (16, 16), "the default");
         set_hash(&mut uci, 256);
         set_hash(&mut in_process, 256);
@@ -541,31 +522,25 @@ mod tests {
     #[test]
     fn kalo_chess_plays_in_process_only_against_kalo_chess() {
         let engines = engines();
-        assert!(plays_in_process("amanda-g1-r1@t1", "pesto@default", &engines));
-        assert!(plays_in_process("amanda-g1-r1@150", "amanda-g1-r1@default", &engines));
-        assert!(!plays_in_process("amanda-g1-r1@t1", "stockfish-0", &engines), "an external engine puts both on UCI");
-        assert!(!plays_in_process("stockfish-elo-1500", "pesto@default", &engines));
-        assert!(!plays_in_process("reckless", "amanda-g1-r1@t1", &engines), "a registered engine is external");
+        assert!(plays_in_process("amanda-g1-r1@tuned", "pesto@untuned", &engines));
+        assert!(!plays_in_process("amanda-g1-r1@tuned", "stockfish-0", &engines), "an external engine puts both on UCI");
+        assert!(!plays_in_process("stockfish-elo-1500", "pesto@untuned", &engines));
+        assert!(!plays_in_process("reckless", "amanda-g1-r1@tuned", &engines), "a registered engine is external");
     }
 
     #[test]
     fn a_kalo_chess_player_always_says_what_it_searches_with() {
         let engines = engines();
-        let entry = resolve_player("pesto@150", true, &engines).unwrap();
-        assert_eq!((entry.kind, entry.parameters), (EngineKind::Builtin, Some(SearchParameters::with_margin(150))));
-        let entry = resolve_player("pesto@default", true, &engines).unwrap();
-        assert_eq!(entry.parameters, Some(SearchParameters::DEFAULT));
+        let entry = resolve_player("pesto@untuned", true, &engines).unwrap();
+        assert_eq!((entry.kind, entry.parameters), (EngineKind::Builtin, Some(SearchParameters::DEFAULT)));
         assert!(resolve_player("pesto", true, &engines).unwrap_err().contains("says what it searches with"));
         assert!(resolve_player("pesto", false, &engines).is_err(), "over UCI too");
-        assert!(resolve_player("pesto@default", false, &engines).is_ok(), "over UCI pesto plays the defaults");
-        assert!(resolve_player("pesto@t1", false, &engines).unwrap_err().contains("pesto@default"), "and nothing else");
-        for name in ["pesto@0", "pesto@x", "pesto@", "pesto@-5", "pesto@Default", "pesto@t0", "pesto@T1", "pesto@default+blend"] {
+        for name in ["pesto@150", "pesto@x", "pesto@", "pesto@t2", "pesto@Tuned", "pesto@untuned+blend"] {
             assert!(resolve_player(name, true, &engines).is_err(), "{name:?}");
+            assert!(resolve_player(name, false, &engines).is_err(), "{name:?}");
         }
-        assert!(resolve_player("pesto@t2", true, &engines).unwrap_err().contains("one tune"));
-        assert!(resolve_player("pesto@150", false, &engines).is_err(), "a UCI subprocess cannot be given a margin");
-        assert!(resolve_player("stockfish-5@150", false, &engines).is_err());
-        assert!(resolve_player("reckless@150", false, &engines).is_err());
+        assert!(resolve_player("stockfish-5@untuned", false, &engines).is_err(), "an external engine takes no suffix");
+        assert!(resolve_player("reckless@tuned", false, &engines).is_err());
     }
 
     #[test]
@@ -636,7 +611,7 @@ mod tests {
     #[test]
     fn a_registry_name_a_built_in_player_has_is_refused() {
         let path = test_executable();
-        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "kalo-chess@150"] {
+        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "kalo-chess@tuned"] {
             let entries = HashMap::from([(name.to_string(), registered(&path, &[]))]);
             assert!(Engines::from_entries(Some(entries), "test").is_err(), "{name:?}");
         }
@@ -655,32 +630,32 @@ mod tests {
         std::fs::write(&candidate, b"").unwrap();
 
         let name = "fine-g1-l0.05-r1";
-        let entry = resolve_player_with(&format!("{name}@default"), false, &Engines::none(), &runs).unwrap();
+        let entry = resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &runs).unwrap();
         assert_equal_footing(&entry);
-        assert_eq!(entry.binary_path(), kalo_chess_binary());
-        assert_eq!(entry.options["EvalFile"], serde_yaml::Value::String(candidate.clone()));
-        let entry = resolve_player_with(&format!("{name}@default"), true, &Engines::none(), &runs).unwrap();
+        assert_eq!(entry.binary_path(), uci_player_path(&format!("{name}@untuned")));
+        assert_eq!((entry.net.clone(), entry.parameters), (Some(candidate.clone()), Some(SearchParameters::DEFAULT)), "what its build embeds");
+        let entry = resolve_player_with(&format!("{name}@untuned"), true, &Engines::none(), &runs).unwrap();
         assert_eq!((entry.kind, entry.net, entry.parameters), (EngineKind::Network, Some(candidate.clone()), Some(SearchParameters::DEFAULT)));
-        let error = resolve_player_with("other-g1-r1@default", false, &Engines::none(), &runs).unwrap_err();
+        let error = resolve_player_with("other-g1-r1@untuned", false, &Engines::none(), &runs).unwrap_err();
         assert!(error.contains("no forge run"), "{error}");
         for name in ["fine", "fine-g0-r1", "fine-x", "-g1-r1", "fine-g1-l1.50-r1", "fine-g1-l0.x-r1", "fine-0001-0.05", "fine-g1-l0.5-r1", "fine-g1-a1-l0.05-r1"] {
-            assert!(resolve_player_with(&format!("{name}@default"), false, &Engines::none(), &runs).is_err(), "{name:?}");
+            assert!(resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &runs).is_err(), "{name:?}");
         }
 
-        // Untuned: no t1, and over UCI only @default.
+        // Untuned: no @tuned.
         for in_process in [false, true] {
             assert!(resolve_player_with(name, in_process, &Engines::none(), &runs).is_err(), "no suffix");
-            assert!(resolve_player_with(&format!("{name}@t1"), in_process, &Engines::none(), &runs).is_err(), "no tune");
+            assert!(resolve_player_with(&format!("{name}@tuned"), in_process, &Engines::none(), &runs).is_err(), "no tune");
         }
-        // Tuned: t1 is its parameters.txt in-process, and over UCI only @t1, since the subprocess reads it.
-        let tuned = SearchParameters::with_margin(120);
+        // Tuned: @tuned is its parameters.txt, in-process and over UCI alike, and @untuned the defaults.
+        let tuned = SearchParameters { razoring_margin: 120, ..SearchParameters::DEFAULT };
         tuned.write_file(&kalo_chess::nnue::parameters_file_beside(&candidate)).unwrap();
-        let entry = resolve_player_with(&format!("{name}@t1"), true, &Engines::none(), &runs).unwrap();
-        assert_eq!(entry.parameters, Some(tuned));
-        assert!(resolve_player_with(&format!("{name}@t1"), false, &Engines::none(), &runs).is_ok());
-        let error = resolve_player_with(&format!("{name}@default"), false, &Engines::none(), &runs).unwrap_err();
-        assert!(error.contains(&format!("{name}@t1")), "{error}");
-        assert_eq!(resolve_player_with(&format!("{name}@default"), true, &Engines::none(), &runs).unwrap().parameters, Some(SearchParameters::DEFAULT));
+        for in_process in [false, true] {
+            let entry = resolve_player_with(&format!("{name}@tuned"), in_process, &Engines::none(), &runs).unwrap();
+            assert_eq!(entry.parameters, Some(tuned));
+            let entry = resolve_player_with(&format!("{name}@untuned"), in_process, &Engines::none(), &runs).unwrap();
+            assert_eq!(entry.parameters, Some(SearchParameters::DEFAULT));
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -1116,8 +1116,7 @@ pub struct QuantizedPsqNetwork {
 }
 
 /// A player's tuned search, as the files beside its network (or pesto's tuning directory)
-/// give it: `parameters.txt`, else nothing. The older single margin of `margin.txt` was retired
-/// when the pawn scale moved to label space: tuned at the old scale, it no longer meant its value.
+/// give it: `parameters.txt`, else nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tuning {
     Untuned,
@@ -5287,9 +5286,8 @@ pub(crate) mod tests {
         assert_eq!(network.pawn_percent(), measure_label_percent(|board| quantized.evaluate(board)));
         assert_eq!(network.pawn_percent() % PAWN_SCALE_STEP_PERCENT, 0);    }
 
-    /// A network without `parameters.txt` is untuned, a retired `margin.txt` beside it ignored;
-    /// `parameters.txt` round trips every field, and a malformed one is refused rather than falling
-    /// back.
+    /// A network without `parameters.txt` is untuned; `parameters.txt` round trips every field, and a
+    /// malformed one is refused rather than falling back.
     #[test]
     fn a_loaded_network_carries_the_parameters_beside_it() {
         let dir = std::env::temp_dir().join(format!("kalo-chess-nnue-parameters-{}", std::process::id()));
@@ -5299,8 +5297,7 @@ pub(crate) mod tests {
         assert_eq!(Path::new(&parameters_path), dir.join("parameters.txt"));
         sample_network(16, &[8]).write(&path).unwrap();
         std::fs::remove_file(&parameters_path).ok();
-        std::fs::write(dir.join("margin.txt"), "margin_per_ply\t150\n").unwrap();
-        assert_eq!(Network::load(&path).unwrap().tuning(), Tuning::Untuned, "margin.txt is ignored");
+        assert_eq!(Network::load(&path).unwrap().tuning(), Tuning::Untuned);
 
         let tuned = SearchParameters::from_values([1, 2, 3, 4, 5, 6, 7, 8, -9, -10]);
         tuned.write_file(&parameters_path).unwrap();

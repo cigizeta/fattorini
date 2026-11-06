@@ -185,7 +185,7 @@ fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
                 Some(None) => "running".to_string(),
                 Some(Some(line)) => line.clone(),
             };
-            let snapshot_record = snapshot::record();
+            let snapshots = snapshot::snapshots();
             let dealing = arena.dealing();
             let alive = Alive {
                 session: dealing.joined.as_ref().map_or("-".to_string(), |(session, _, _)| session.clone()),
@@ -194,7 +194,7 @@ fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
                 sent: dealing.sent,
                 outbox,
                 snapshot,
-                snapshot_record,
+                snapshots,
             };
             Reply::status("OK", alive.text().as_bytes())
         }

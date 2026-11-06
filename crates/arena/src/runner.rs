@@ -442,13 +442,13 @@ pub fn play<T: SequentialTest + Send>(
     };
     // What each side searches with, as a suffixed name already shows it: a gate's players read theirs
     // from the files beside their networks, and nothing else in the output says which one played.
-    let with_margin = |name: &str| -> String { registry.resolve(name).label(name) };
+    let label = |name: &str| -> String { registry.resolve(name).label(name) };
     say(
         run,
         format!(
             "{prefix}: {} (champion) vs {} (challenger), {}",
-            with_margin(run.champion_name),
-            with_margin(run.challenger_name),
+            label(run.champion_name),
+            label(run.challenger_name),
             test.describe()
         ),
     );

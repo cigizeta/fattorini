@@ -79,7 +79,7 @@ use super::buckets::{self, BucketStream, Labelling, Prepared};
 use super::pgn_train_stream;
 use super::stacked_network::StackedNetwork;
 use super::train_stream::BatchSource;
-use super::candidates::{export_best, feature_set_of, PARAMETERS_FILE};
+use super::candidates::{export_best, feature_set_of};
 use super::lockstep::{self, open_stack, train_in_lockstep, Arm, LockstepParts};
 use super::{batch, candidates, checkpoint_store, nnue_network, round, round_robin};
 
@@ -2197,7 +2197,7 @@ impl Claims {
                         state: format!("{standing}{commit}"),
                         outbox: arena.alive.as_ref().map_or(0, |alive| alive.outbox),
                         snapshot: arena.alive.as_ref().map_or("-".to_string(), |alive| alive.snapshot.clone()),
-                        snapshot_record: arena.alive.as_ref().map_or(Vec::new(), |alive| alive.snapshot_record.clone()),
+                        snapshots: arena.alive.as_ref().map_or(Vec::new(), |alive| alive.snapshots.clone()),
                     }
                 }
                 None => {
@@ -2212,7 +2212,7 @@ impl Claims {
                         state: format!("{note}{retry}"),
                         outbox: 0,
                         snapshot: "-".to_string(),
-                        snapshot_record: Vec::new(),
+                        snapshots: Vec::new(),
                     }
                 }
             })
@@ -2664,9 +2664,9 @@ struct MachineView {
     state: String,
     outbox: usize,
     /// Its snapshot, as its `Alive` says (`-`, `running`, or how the last one ended), and its
-    /// `kalo-chess.txt`, field by field; `-` and none for a machine not held.
+    /// snapshots' file names, newest first; `-` and none for a machine not held.
     snapshot: String,
-    snapshot_record: Vec<(String, String)>,
+    snapshots: Vec<String>,
 }
 
 impl Status {
@@ -3945,15 +3945,21 @@ fn publish(path: &str) -> Result<String, String> {
 /// How long a snapshot waits for an arena it has just claimed to say hello.
 const SNAPSHOT_JOIN_WAIT: Duration = Duration::from_secs(15);
 
-/// The page's Snapshot, its body `<target>` (a listed machine, as `Claims::targets` names it) and
-/// `<player>` a line each: the network the player plays put in the store
-/// (`snapshot_network`), the arena claimed as a full job's when this smithy does not hold it (the
-/// developer, 2026-10-29), then the snapshot asked of it, which answers at once and takes it on its
-/// own; its `Alive` says how it goes. The arena is kept claimed until its snapshot ends.
+/// The page's Snapshot, its body `<target>` (a listed machine, as `Claims::targets` names it),
+/// `<player>` and `tuned` or `untuned`, a line each: the network the player plays and its parameters
+/// put in the store (`snapshot_files`), the arena claimed as a full job's when this smithy does not
+/// hold it (the developer, 2026-10-29), then the snapshot asked of it, which answers at once and
+/// takes it on its own; its `Alive` says how it goes. The arena is kept claimed until its snapshot
+/// ends.
 fn ask_snapshot(claims: &Claims, body: &str) -> Reply {
     let lines: Vec<&str> = body.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
-    let [target, player] = lines[..] else {
-        return Reply::error(400, "a snapshot is a machine and a player, a line each");
+    let [target, player, tuning] = lines[..] else {
+        return Reply::error(400, "a snapshot is a machine, a player and tuned or untuned, a line each");
+    };
+    let tuned = match tuning {
+        "tuned" => true,
+        "untuned" => false,
+        other => return Reply::error(400, &format!("a snapshot is tuned or untuned, not {other:?}")),
     };
     if let Err(message) = may_snapshot(player) {
         return Reply::error(400, &message);
@@ -3962,13 +3968,13 @@ fn ask_snapshot(claims: &Claims, body: &str) -> Reply {
         return Reply::error(400, &format!("{target} is not in {MACHINES_PATH}"));
     }
     claims.snapshotting.lock().expect("the lock should not be poisoned").insert(target.to_string());
-    let reply = snapshot_on(claims, target, player);
+    let reply = snapshot_on(claims, target, player, tuned);
     claims.snapshotting.lock().expect("the lock should not be poisoned").remove(target);
     reply
 }
 
 /// `ask_snapshot`'s claim, if needed, and its request, `target` kept claimed meanwhile.
-fn snapshot_on(claims: &Claims, target: &str, player: &str) -> Reply {
+fn snapshot_on(claims: &Claims, target: &str, player: &str, tuned: bool) -> Reply {
     if !claims.held().contains_key(target) {
         claims.claim_one(target, false, Instant::now());
         if !claims.held().contains_key(target) {
@@ -3976,11 +3982,11 @@ fn snapshot_on(claims: &Claims, target: &str, player: &str) -> Reply {
             return Reply::error(409, &format!("{target}'s arena could not be claimed: {note}"));
         }
     }
-    let network = match snapshot_network(player) {
-        Ok(network) => network,
+    let (network, parameters) = match snapshot_files(player, tuned) {
+        Ok(files) => files,
         Err(message) => return Reply::error(400, &message),
     };
-    let request = SnapshotRequest { boot: claims.claim.boot.clone(), network };
+    let request = SnapshotRequest { boot: claims.claim.boot.clone(), player: player.to_string(), network, parameters };
     // A claim just taken: the arena says hello within a few seconds.
     let started = Instant::now();
     let mut answer = claims.post(target, SNAPSHOT_PATH, request.text().as_bytes());
@@ -4004,20 +4010,38 @@ fn snapshot_on(claims: &Claims, target: &str, player: &str) -> Reply {
     }
 }
 
-/// The network the player `player` plays, by its name in the store, put there first with its records
-/// (`publish`); `pesto` as it is. Its `candidate.txt` and `parameters.txt` go first and every time, so
-/// they are there as soon as the network is, a tune's parameters as they now are.
-fn snapshot_network(player: &str) -> Result<String, String> {
-    let Some(path) = players::KaloChessPlayer::resolve(player)?.network else {
-        return Ok(PESTO.to_string());
-    };
-    let dir = Path::new(&path).parent().map_or(String::new(), |dir| dir.to_string_lossy().into_owned());
-    for record in [generation::candidate_record_path(&dir), format!("{dir}/{PARAMETERS_FILE}")] {
-        if Path::new(&record).is_file() && !record.starts_with(&format!("{}/", remote::this_root())) {
-            remote::copy_replacing(&record, &remote::remote_path(&record)).map_err(|error| error.to_string())?;
+/// What a snapshot of `player` embeds, by their names in the store: its network (`pesto` for the
+/// PeSTO evaluation), put there first (`publish`), and, when `tuned`, its `parameters.txt` as a tune
+/// has now left it, copied there every time and before the network, so it is there as soon as the
+/// network is; `protocol::UNTUNED` otherwise. Tuned with no tune is refused.
+fn snapshot_files(player: &str, tuned: bool) -> Result<(String, String), String> {
+    let resolved = players::KaloChessPlayer::resolve(player)?;
+    let parameters = if tuned {
+        let path = &resolved.parameters_path;
+        if !Path::new(path).is_file() && !Path::new(&remote::remote_path(path)).is_file() {
+            return Err(format!("{player} has no tune: snapshot it untuned"));
         }
+        publish_replacing(path)?
+    } else {
+        protocol::UNTUNED.to_string()
+    };
+    let network = match &resolved.network {
+        Some(path) => publish(path)?,
+        None => PESTO.to_string(),
+    };
+    Ok((network, parameters))
+}
+
+/// The file at `path` by its name in the store, copied there whenever this machine holds it: unlike a
+/// network, a `parameters.txt` changes when its player is tuned again.
+fn publish_replacing(path: &str) -> Result<String, String> {
+    if let Some(name) = path.strip_prefix(&format!("{}/", remote::this_root())) {
+        return Ok(name.to_string());
     }
-    publish(&path)
+    if Path::new(path).is_file() {
+        remote::copy_replacing(path, &remote::remote_path(path)).map_err(|error| error.to_string())?;
+    }
+    Ok(path.to_string())
 }
 
 /// Where generation `generation` of run `run` is read: this machine's copy while it has one, else the
@@ -5841,7 +5865,7 @@ mod tests {
                                 sent: 0,
                                 outbox: 2,
                                 snapshot: "-".to_string(),
-                                snapshot_record: Vec::new(),
+                                snapshots: Vec::new(),
                             };
                             Reply::status("OK", alive.text().as_bytes())
                         }

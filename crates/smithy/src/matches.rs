@@ -85,7 +85,7 @@ impl Kind {
 
 /// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`), and
 /// whether it plays its tune (`parameters.txt`) or the defaults. Written as a player, the network
-/// with what it searches with: `<network>@t1` or `<network>@default`.
+/// with what it searches with: `<network>@tuned` or `<network>@untuned`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Side {
     pub player: String,
@@ -93,21 +93,21 @@ pub struct Side {
 }
 
 impl Side {
-    /// As a player's name: `<network>@t1` or `<network>@default`.
+    /// As a player's name: `<network>@tuned` or `<network>@untuned`.
     pub fn text(&self) -> String {
-        format!("{}@{}", self.player, if self.tuned { "t1" } else { "default" })
+        format!("{}@{}", self.player, if self.tuned { "tuned" } else { "untuned" })
     }
 
-    /// `text` read back. A test plays a side's tune or the defaults, never a margin.
+    /// `text` read back.
     pub fn parse(text: &str) -> Result<Side, String> {
-        let wrong = || format!("a side is <network>@default or <network>@t1, not {text:?}");
+        let wrong = || format!("a side is <network>@tuned or <network>@untuned, not {text:?}");
         let (player, suffix) = text.split_once('@').ok_or_else(wrong)?;
         if player.is_empty() {
             return Err(wrong());
         }
         let tuned = match suffix {
-            "t1" => true,
-            "default" => false,
+            "tuned" => true,
+            "untuned" => false,
             _ => return Err(wrong()),
         };
         Ok(Side { player: player.to_string(), tuned })
@@ -129,7 +129,7 @@ impl Spec {
     pub fn parse(words: &[String]) -> Result<Spec, String> {
         let [kind, settings, challenger, champion, limit] = words else {
             return Err(
-                "a test is --test <duel|match|sprt> <settings> <challenger>@<default|t1> <champion>@<default|t1> <limit>".to_string()
+                "a test is --test <duel|match|sprt> <settings> <challenger>@<tuned|untuned> <champion>@<tuned|untuned> <limit>".to_string()
             );
         };
         Ok(Spec {
@@ -388,7 +388,7 @@ pub struct Record {
     pub ended: String,
     pub kind: String,
     pub settings: String,
-    /// Each side as a player, `<network>@t1` or `<network>@default` (`Side::text`).
+    /// Each side as a player, `<network>@tuned` or `<network>@untuned` (`Side::text`).
     pub challenger: String,
     pub champion: String,
     pub limit: String,
@@ -558,30 +558,29 @@ mod tests {
 
     #[test]
     fn a_test_s_words_read_back() {
-        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@t1 pesto@default", "clock 10+0.1")).unwrap();
+        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@tuned pesto@untuned", "clock 10+0.1")).unwrap();
         assert_eq!(spec.kind, Kind::Sprt { elo0: 0.0, elo1: 5.0 });
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
         assert_eq!(spec.challenger, Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true });
-        assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@t1".to_string(), "pesto@default".to_string()));
+        assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@tuned".to_string(), "pesto@untuned".to_string()));
         assert!(spec.mixed());
-        assert_eq!(Spec::parse(&words("match 500 aa@default bb@default", "depth 9")).unwrap().kind, Kind::Match { pairs: 500 });
+        assert_eq!(Spec::parse(&words("match 500 aa@untuned bb@untuned", "depth 9")).unwrap().kind, Kind::Match { pairs: 500 });
         for wrong in [
-            "match 0 aa@default bb@default",
-            "sprt 5,0 aa@default bb@default",
-            "trio - aa@default bb@default",
+            "match 0 aa@untuned bb@untuned",
+            "sprt 5,0 aa@untuned bb@untuned",
+            "trio - aa@untuned bb@untuned",
             // The old words, a side's parameters apart from it.
-            "duel - aa default bb default",
-            "duel - aa bb@default",
-            "duel - aa@tuned bb@default",
-            "duel - aa@150 bb@default",
-            "duel - aa@t2 bb@default",
-            "duel - @t1 bb@default",
+            "duel - aa untuned bb untuned",
+            "duel - aa bb@untuned",
+            "duel - aa@150 bb@untuned",
+            "duel - aa@t2 bb@untuned",
+            "duel - @tuned bb@untuned",
             // The search switches, removed 2026-11-02.
-            "duel - aa@default+blend bb@default",
+            "duel - aa@untuned+blend bb@untuned",
         ] {
             assert!(Spec::parse(&words(wrong, "depth 9")).is_err(), "{wrong}");
         }
-        assert!(Spec::parse(&words("duel - aa@default bb@default", "nodes 9")).is_err());
+        assert!(Spec::parse(&words("duel - aa@untuned bb@untuned", "nodes 9")).is_err());
     }
 
     /// arena's duel's own cases: six pairs 2-0 the earliest win, an even duel (every pair 1-1)
@@ -638,8 +637,8 @@ mod tests {
             ended: "e".to_string(),
             kind: "duel".to_string(),
             settings: "-".to_string(),
-            challenger: "aa@default".to_string(),
-            champion: "bb@t1".to_string(),
+            challenger: "aa@untuned".to_string(),
+            champion: "bb@tuned".to_string(),
             limit: "depth 9".to_string(),
             games: 10,
             challenger_points: 7.5,
@@ -673,7 +672,7 @@ mod tests {
         let stopped = Record { verdict: "stopped: no games yet".to_string(), ..record(4) };
         put(&dir, &stopped).unwrap();
         assert!(read_log(&dir)[0].stopped());
-        assert_eq!(read_log(&dir)[0].spec().unwrap(), Spec::parse(&words("duel - aa@default bb@t1", "depth 9")).unwrap());
+        assert_eq!(read_log(&dir)[0].spec().unwrap(), Spec::parse(&words("duel - aa@untuned bb@tuned", "depth 9")).unwrap());
         put(&dir, &record(4)).unwrap();
         assert_eq!(read_log(&dir), [record(4)]);
         std::fs::remove_dir_all(&dir).ok();

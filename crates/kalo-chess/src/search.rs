@@ -261,15 +261,12 @@ const CHECK_INTERVAL: u64 = 1024;
 /// own pawn (`EvalMargins`), and SEE pruning, which compares material with material, reads it as it
 /// is.
 ///
-/// Also the margin of a network never tuned (`parameters.txt` absent), and the unit `arena margin`
-/// searches in.
+/// Also the margins of a player never tuned (`parameters.txt` absent), `SearchParameters::DEFAULT`'s.
 pub const MARGIN_PER_PLY: i32 = 2 * piece_value(PieceType::Pawn);
 
 /// The values a search prunes, orders and windows by, as run-time parameters rather than constants,
-/// so that one process can play two sets against each other. `DEFAULT` is the search as it always
-/// was; `with_margin` is a player with its own margin per ply (`@<cp>`, or `arena margin`'s winner), which moves
-/// the five margins that meet a static evaluation and leaves SEE pruning's at `MARGIN_PER_PLY`, as
-/// that one has never followed a player's margin. The margins are in `piece_value`'s pawn.
+/// so that one process can play two sets against each other. `DEFAULT` is the untuned search; a
+/// tune moves every value (`parameters.txt`). The margins are in `piece_value`'s pawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchParameters {
     /// Razoring, per ply: a node whose evaluation is this far below alpha goes to quiescence.
@@ -328,19 +325,6 @@ impl SearchParameters {
         history_pruning_multiplier: -35,
         good_quiet_threshold: -128,
     };
-
-    /// `DEFAULT` with the five margins that meet a static evaluation at `margin_per_ply`: a player
-    /// with its own margin, an arena player's `@<cp>` or the `parameters.txt` `arena margin` writes.
-    pub fn with_margin(margin_per_ply: i32) -> SearchParameters {
-        SearchParameters {
-            razoring_margin: margin_per_ply,
-            reverse_futility_margin: margin_per_ply,
-            futility_margin: margin_per_ply,
-            null_move_margin: margin_per_ply,
-            delta_margin: margin_per_ply,
-            ..SearchParameters::DEFAULT
-        }
-    }
 
     /// The fields' names, in declaration order: the keys of a parameters file, and the order of
     /// `values` and `from_values`.
@@ -3725,24 +3709,8 @@ pub fn choose_best_move(
     board: &Board, max_depth: u32, limit: Option<TimeLimit>, ancestors: &[u64], tt: &TranspositionTable,
     tablebase: &SyzygyTablebase, evaluator: Option<&Network>, thread_idx: u32, stop_signal: &AtomicBool,
 ) -> (Vec<IterationReport>, Option<Move>) {
-    choose_best_move_with_margin(
-        board, max_depth, limit, ancestors, tt, tablebase, evaluator, None, thread_idx, stop_signal,
-    )
-}
-
-/// `choose_best_move` with `margin_per_ply`, when given, in place of the evaluator's own margin
-/// wherever a static evaluation meets a bound, in `piece_value`'s pawn (scaled to the evaluator's
-/// like the default; `SearchParameters::with_margin`): the arena's in-process players, each with its
-/// own margin.
-#[allow(clippy::too_many_arguments)]
-pub fn choose_best_move_with_margin(
-    board: &Board, max_depth: u32, limit: Option<TimeLimit>, ancestors: &[u64], tt: &TranspositionTable,
-    tablebase: &SyzygyTablebase, evaluator: Option<&Network>, margin_per_ply: Option<i32>, thread_idx: u32,
-    stop_signal: &AtomicBool,
-) -> (Vec<IterationReport>, Option<Move>) {
     choose_best_move_with_progress(
-        board, max_depth, limit, ancestors, tt, tablebase, evaluator, margin_per_ply.map(SearchParameters::with_margin),
-        thread_idx, stop_signal, None, |_| {},
+        board, max_depth, limit, ancestors, tt, tablebase, evaluator, None, thread_idx, stop_signal, None, |_| {},
     )
 }
 
@@ -7002,53 +6970,9 @@ mod tests {
         assert_eq!(observed_depths, reports.iter().map(|r| r.depth).collect::<Vec<_>>());
     }
 
-    /// `choose_best_move_with_margin` at `MARGIN_PER_PLY` is `choose_best_move` exactly, and another
-    /// margin reaches the pruning: half of it searches a different tree.
     #[test]
-    fn a_search_given_a_margin_prunes_by_it() {
-        let (board, _) =
-            Board::from_fen("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4").unwrap();
-        let nodes = |margin_per_ply: i32| {
-            let (reports, _) = choose_best_move_with_margin(
-                &board, 6, None, &[], &TranspositionTable::new(16), &SyzygyTablebase::new(), None,
-                Some(margin_per_ply), 0, &AtomicBool::new(false),
-            );
-            reports.last().unwrap().nodes
-        };
-        let (default_reports, _) = choose_best_move(
-            &board, 6, None, &[], &TranspositionTable::new(16), &SyzygyTablebase::new(), None, 0,
-            &AtomicBool::new(false),
-        );
-        assert_eq!(nodes(MARGIN_PER_PLY), default_reports.last().unwrap().nodes);
-        assert_ne!(nodes(MARGIN_PER_PLY / 2), nodes(MARGIN_PER_PLY));
-    }
-
-    #[test]
-    fn with_margin_moves_the_five_evaluation_margins_and_nothing_else() {
-        let parameters = SearchParameters::with_margin(150);
-        let default = SearchParameters::DEFAULT;
-        assert_eq!(
-            [
-                parameters.razoring_margin,
-                parameters.reverse_futility_margin,
-                parameters.futility_margin,
-                parameters.null_move_margin,
-                parameters.delta_margin,
-            ],
-            [150; 5]
-        );
-        // SEE pruning never followed a player's margin, so a tuned network's stays at the default.
-        let restored = SearchParameters {
-            razoring_margin: MARGIN_PER_PLY,
-            reverse_futility_margin: MARGIN_PER_PLY,
-            futility_margin: MARGIN_PER_PLY,
-            null_move_margin: MARGIN_PER_PLY,
-            delta_margin: MARGIN_PER_PLY,
-            ..parameters
-        };
-        assert_eq!(restored, default);
-        assert_eq!(SearchParameters::with_margin(MARGIN_PER_PLY), default);
-        assert_eq!(default_parameters_for(None), default);
+    fn the_pesto_evaluation_searches_untuned_by_default() {
+        assert_eq!(default_parameters_for(None), SearchParameters::DEFAULT);
     }
 
     /// `choose_best_move_with_parameters` at the defaults is `choose_best_move` exactly, and each of

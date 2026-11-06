@@ -44,10 +44,10 @@ pub struct EngineEntry {
     pub net: Option<String>,
     #[serde(default)]
     pub options: HashMap<String, serde_yaml::Value>,
-    /// An in-process player's search parameters from a player name's suffix, `@default`, `@t1` or
-    /// `@<cp>` (`SearchParameters::with_margin`); `None` plays the player's own tuning (`tuning`), as
-    /// a player built from paths does (the gate's). Never set on a UCI entry: a subprocess cannot be
-    /// given any.
+    /// A Kalo Chess player's search parameters from its name's suffix, `@untuned` or `@tuned`: an
+    /// in-process player searches with them, a UCI one has them embedded in its build
+    /// (`match_player::build_uci_player`). `None` plays the player's own tuning (`tuning`), as a
+    /// player built from paths does (the gate's); always `None` for an external engine.
     #[serde(skip)]
     pub parameters: Option<SearchParameters>,
 }
@@ -91,14 +91,14 @@ impl EngineEntry {
     }
 
     /// `name` with what this player searches with, for the run's header line: a suffixed name as it
-    /// is, else `@default` for an untuned player, ` (parameters.txt)` for a tuned one; a UCI player's
+    /// is, else `@untuned` for an untuned player, ` (parameters.txt)` for a tuned one; a UCI player's
     /// name as it is. A malformed file shows as untuned here, and the player's own start reports it.
     pub fn label(&self, name: &str) -> String {
         if name.contains('@') || self.kind == EngineKind::Uci {
             return name.to_string();
         }
         match self.own_tuning().unwrap_or(Tuning::Untuned) {
-            Tuning::Untuned => format!("{name}@default"),
+            Tuning::Untuned => format!("{name}@untuned"),
             Tuning::Parameters(_) => format!("{name} (parameters.txt)"),
         }
     }

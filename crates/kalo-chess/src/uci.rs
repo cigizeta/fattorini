@@ -9,7 +9,7 @@ use crate::nnue::Network;
 use crate::perft::perft;
 use crate::search::{
     choose_best_move_multipv_with_progress, choose_best_move_with_parameters, choose_best_move_with_progress,
-    default_parameters_for, select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
+    select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
     SearchParameters, MATE_SCORE, MAX_PLY,
 };
 use crate::tablebase::SyzygyTablebase;
@@ -113,10 +113,6 @@ pub enum UciCommand {
     /// completed depth, following the same dedicated-variant pattern `SetOptionThreads` already
     /// established.
     SetOptionMultiPv(u32),
-    /// `setoption name EvalFile value <path.nnue>` -- the network to evaluate with. An empty value
-    /// (or the `<empty>` default a GUI may echo back) means the PeSTO evaluation, the default.
-    /// The path is rejoined from its tokens, like `SyzygyPath`'s, so one with a space survives.
-    SetOptionEvalFile(String),
     /// `setoption name Ponder value true|false`: whether `bestmove` offers a ponder move. Only `go
     /// ponder` makes Kalo Chess ponder; with no ponder move, a GUI has nothing to ponder on.
     SetOptionPonder(bool),
@@ -232,11 +228,6 @@ fn parse_setoption(tokens: &[&str]) -> UciCommand {
             Ok(n) => UciCommand::SetOptionMultiPv(n),
             Err(_) => UciCommand::Unknown,
         },
-        ["name", "EvalFile", "value", rest @ ..] => {
-            let path = rest.join(" ");
-            UciCommand::SetOptionEvalFile(if path == "<empty>" { String::new() } else { path })
-        }
-        ["name", "EvalFile"] => UciCommand::SetOptionEvalFile(String::new()),
         ["name", "Ponder", "value", "true"] => UciCommand::SetOptionPonder(true),
         ["name", "Ponder", "value", "false"] => UciCommand::SetOptionPonder(false),
         _ => UciCommand::Unknown,
@@ -559,17 +550,15 @@ pub struct Engine {
     /// parameter), and that thread outlives the `handle` call spawning it -- see `tt`'s own doc
     /// comment for the full reasoning, which applies here unchanged.
     tablebase: Arc<SyzygyTablebase>,
-    /// The network every search evaluates with, loaded by `setoption name EvalFile`; `None` is the
-    /// PeSTO evaluation. `Arc` for the same reason as `tt`: the search's background thread
+    /// The network every search evaluates with, the embedded one (`embedded_evaluator`); `None` is
+    /// the PeSTO evaluation. `Arc` for the same reason as `tt`: the search's background thread
     /// outlives the `handle` call that spawns it.
     evaluator: Option<Arc<Network>>,
-    /// The search parameters every search uses: the evaluator's own tuning (`default_parameters_for`)
-    /// from each `EvalFile`, then any field a `setoption` of its UCI name sets, until the next
-    /// `EvalFile`. MultiPV, an analysis setting, keeps the evaluator's own.
+    /// The search parameters every search uses: the embedded ones (`embedded_parameters`), then any
+    /// field a `setoption` of its UCI name sets.
     parameters: SearchParameters,
-    /// The network loaded at startup and advertised as `EvalFile`'s default, empty for the
-    /// PeSTO evaluation. See `startup_eval_file` for where it comes from.
-    default_eval_file: String,
+    /// What the build is (`embedded_description`), said in `id name`; empty for a development build.
+    description: String,
     /// Whether the next `go` pins this process to a core group (`core_pinning.rs`): set by `run`
     /// under `--lichess`, cleared by the first `go`, so the engine pins at most once. At a `go`,
     /// not at startup, because the group's size comes from `Threads`, sent before the first `go`.
@@ -619,26 +608,19 @@ impl Engine {
             tablebase: Arc::new(SyzygyTablebase::new()),
             evaluator: None,
             parameters: SearchParameters::DEFAULT,
-            default_eval_file: String::new(),
+            description: String::new(),
             pin_at_next_go: false,
             last_score: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// `new`, evaluating with the network at `path` until a GUI's `EvalFile` says otherwise, and
-    /// advertising it as that option's default. An empty `path` is `new` itself.
-    pub fn with_default_eval_file(path: String) -> Engine {
+    /// `new`, playing what the build embeds: its network, its parameters, its description.
+    pub fn embedded() -> Engine {
         let mut engine = Engine::new();
-        engine.set_evaluator(&path);
-        engine.default_eval_file = path;
+        engine.evaluator = embedded_evaluator();
+        engine.parameters = embedded_parameters();
+        engine.description = embedded_description();
         engine
-    }
-
-    /// Evaluates with the network at `path` from now on, the PeSTO evaluation when it is
-    /// empty.
-    fn set_evaluator(&mut self, path: &str) {
-        self.evaluator = load_evaluator_or_exit(path);
-        self.parameters = default_parameters_for(self.evaluator.as_deref());
     }
 
     /// Waits for a previous search's own background thread to fully finish, if one hasn't been
@@ -694,8 +676,13 @@ impl Engine {
         match command {
             UciCommand::Uci => {
                 vec![
-                    // The release is named by the workspace's version, which every crate inherits.
-                    format!("id name Kalo Chess {}", env!("CARGO_PKG_VERSION")),
+                    // Named by the workspace's version, which every crate inherits, then by what the
+                    // build embeds, so a GUI and Lichess show which snapshot plays.
+                    if self.description.is_empty() {
+                        format!("id name Kalo Chess {}", env!("CARGO_PKG_VERSION"))
+                    } else {
+                        format!("id name Kalo Chess {} {}", env!("CARGO_PKG_VERSION"), self.description)
+                    },
                     "id author Calogero Zarba".to_string(),
                     format!("option name Hash type spin default {DEFAULT_HASH_MB} min {HASH_MB_MIN} max {HASH_MB_MAX}"),
                     format!(
@@ -704,10 +691,6 @@ impl Engine {
                     "option name SyzygyPath type string default <empty>".to_string(),
                     format!(
                         "option name MultiPV type spin default {DEFAULT_MULTIPV} min {MULTIPV_MIN} max {MULTIPV_MAX}"
-                    ),
-                    format!(
-                        "option name EvalFile type string default {}",
-                        if self.default_eval_file.is_empty() { "<empty>" } else { self.default_eval_file.as_str() }
                     ),
                     "option name Ponder type check default false".to_string(),
                     "uciok".to_string(),
@@ -732,11 +715,6 @@ impl Engine {
             UciCommand::SetOptionMultiPv(n) => {
                 // Same "read fresh on every go_search call" convention as SetOptionThreads.
                 self.multipv = n;
-                Vec::new()
-            }
-            UciCommand::SetOptionEvalFile(path) => {
-                self.join_running_search();
-                self.set_evaluator(&path);
                 Vec::new()
             }
             UciCommand::SetOptionPonder(ponder) => {
@@ -1173,69 +1151,49 @@ fn ponder_move(board: &Board, pv: &[Move], tt: &TranspositionTable) -> Option<Mo
     })
 }
 
-/// The network for `path`, `None` (the PeSTO evaluation) when `path` is empty. A network
-/// that fails to load ends the process, rather than being skipped the way a bad SyzygyPath is:
-/// playing on with the PeSTO evaluation would silently be a different engine from the one
-/// asked for, and a match, a GUI or a Lichess game would get the wrong thing. That holds for the
-/// network beside the binary as much as for a GUI's `EvalFile`. stdout is UCI-only, so the reason goes to
-/// stderr.
-fn load_evaluator_or_exit(path: &str) -> Option<Arc<Network>> {
-    if path.is_empty() {
+/// The `.nnue` a build embeds when `KALO_CHESS_EVALFILE` names one at build time (`build.rs`), empty
+/// otherwise: a snapshot and a release are built this way. The engine plays nothing else: no
+/// option nor file beside the binary chooses a network.
+const EMBEDDED_NETWORK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded.nnue"));
+
+/// The `parameters.txt` a build embeds (`KALO_CHESS_PARAMETERS`), empty for the untuned defaults.
+const EMBEDDED_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-parameters.txt"));
+
+/// What the build is (`KALO_CHESS_DESCRIPTION`), one line, empty for a development build.
+const EMBEDDED_DESCRIPTION: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-description.txt"));
+
+/// The embedded network, `None` (the PeSTO evaluation) when the build has none. One that fails to
+/// load ends the process: playing on with the PeSTO evaluation would silently be another engine
+/// than the one built. stdout is UCI-only, so the reason goes to stderr.
+pub fn embedded_evaluator() -> Option<Arc<Network>> {
+    if EMBEDDED_NETWORK.is_empty() {
         return None;
     }
-    let loaded = if path == EMBEDDED_EVAL_FILE {
-        Network::from_bytes(EMBEDDED_NETWORK, EMBEDDED_EVAL_FILE)
-    } else {
-        Network::load(path)
-    };
-    match loaded {
+    match Network::from_bytes(EMBEDDED_NETWORK, "the embedded network") {
         Ok(network) => Some(Arc::new(network)),
         Err(error) => {
-            eprintln!("failed to load EvalFile {path}: {error}");
+            eprintln!("{error}");
             std::process::exit(1);
         }
     }
 }
 
-/// The name of the network an engine plays with when it sits next to its binary: a snapshot puts its
-/// network there (the arena's `snapshot.rs`), so every GUI and lichess-bot get it with no `EvalFile`
-/// to configure. A build in `target/` has none beside it, so development, matches and gates keep the
-/// PeSTO evaluation unless they send `EvalFile`.
-const EVAL_FILE_BESIDE: &str = "kalo-chess.nnue";
-
-/// The `.nnue` a build embeds when `KALO_CHESS_EVALFILE` names one at build time (`build.rs`), empty
-/// otherwise. A release will be built this way. No tuning comes with it: no file sits beside it.
-const EMBEDDED_NETWORK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded.nnue"));
-
-/// `EvalFile`'s value for `EMBEDDED_NETWORK`, advertised as its default when it is the startup
-/// network; a GUI sending it back keeps that network.
-const EMBEDDED_EVAL_FILE: &str = "<embedded>";
-
-/// The network an engine starts with: `EVAL_FILE_BESIDE` beside the running executable if it
-/// exists, else the embedded network if the build has one, else empty, the PeSTO
-/// evaluation. `current_exe` resolves a symlink to the binary, so a link elsewhere still finds the
-/// network beside it.
-pub fn startup_eval_file() -> String {
-    let beside = std::env::current_exe().ok().map(|executable| eval_file_beside(&executable)).filter(|path| path.is_file());
-    if let Some(path) = beside {
-        return path.to_string_lossy().into_owned();
+/// The embedded parameters, `SearchParameters::DEFAULT` when the build has none; malformed ones end
+/// the process, as a bad network does.
+pub fn embedded_parameters() -> SearchParameters {
+    if EMBEDDED_PARAMETERS.is_empty() {
+        return SearchParameters::DEFAULT;
     }
-    if !EMBEDDED_NETWORK.is_empty() {
-        return EMBEDDED_EVAL_FILE.to_string();
-    }
-    String::new()
+    let text = String::from_utf8_lossy(EMBEDDED_PARAMETERS);
+    SearchParameters::parse_file_text("the embedded parameters", &text).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(1);
+    })
 }
 
-/// The network at `path` as the engine would load it (`startup_eval_file`'s value included), the
-/// PeSTO evaluation for an empty one: what `kalo-chess bench` searches with.
-pub fn evaluator_for(path: &str) -> Option<Arc<Network>> {
-    load_evaluator_or_exit(path)
-}
-
-/// Where `startup_eval_file` looks, for `executable`. The whole file name is replaced, so
-/// Windows' `kalo-chess.exe` gets `kalo-chess.nnue` too.
-fn eval_file_beside(executable: &std::path::Path) -> std::path::PathBuf {
-    executable.with_file_name(EVAL_FILE_BESIDE)
+/// What the build is, empty for a development build.
+pub fn embedded_description() -> String {
+    String::from_utf8_lossy(EMBEDDED_DESCRIPTION).trim().to_string()
 }
 
 /// The only place that actually touches stdin/stdout -- everything it does (parsing,
@@ -1254,8 +1212,11 @@ fn eval_file_beside(executable: &std::path::Path) -> std::path::PathBuf {
 /// `lichess` is the command line's `--lichess`: the first `go` pins the process to a free core
 /// group (`core_pinning.rs`).
 pub fn run(lichess: bool) {
-    let mut engine = Engine::with_default_eval_file(startup_eval_file());
+    let mut engine = Engine::embedded();
     engine.pin_at_next_go = lichess;
+    if !engine.description.is_empty() {
+        println!("info string {}", engine.description);
+    }
     let stdin = std::io::stdin();
 
     for line in stdin.lines() {
@@ -1522,21 +1483,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_command_reads_setoption_eval_file_and_its_empty_values() {
-        assert_eq!(
-            parse_command("setoption name EvalFile value data/chess/networks/self-psq/run-1/gen-1/lambda-0.95/candidate.nnue"),
-            UciCommand::SetOptionEvalFile("data/chess/networks/self-psq/run-1/gen-1/lambda-0.95/candidate.nnue".to_string())
-        );
-        assert_eq!(
-            parse_command("setoption name EvalFile value My Drive/net.nnue"),
-            UciCommand::SetOptionEvalFile("My Drive/net.nnue".to_string())
-        );
-        for line in ["setoption name EvalFile value <empty>", "setoption name EvalFile value", "setoption name EvalFile"] {
-            assert_eq!(parse_command(line), UciCommand::SetOptionEvalFile(String::new()), "{line:?}");
-        }
-    }
-
-    #[test]
     fn parse_command_reads_a_single_syzygy_path() {
         assert_eq!(
             parse_command("setoption name SyzygyPath value /data/syzygy-6-wdl"),
@@ -1699,7 +1645,6 @@ mod tests {
                 "option name Threads type spin default 1 min 1 max 128".to_string(),
                 "option name SyzygyPath type string default <empty>".to_string(),
                 "option name MultiPV type spin default 1 min 1 max 500".to_string(),
-                "option name EvalFile type string default <empty>".to_string(),
                 "option name Ponder type check default false".to_string(),
                 "uciok".to_string(),
             ]
@@ -1707,54 +1652,37 @@ mod tests {
     }
 
     #[test]
-    fn a_search_with_an_eval_file_plays_a_legal_move() {
-        // The network's values do not matter here, only that the search runs with it loaded and
-        // answers: nnue.rs's own small fixture, written in the engine's format.
-        let path = std::env::temp_dir().join(format!("kalo-chess-uci-evalfile-test-{}.nnue", std::process::id()));
+    fn a_described_build_says_what_it_is_in_its_name() {
+        let mut engine = Engine::new();
+        engine.description = "pesto@untuned, commit abc".to_string();
+        let replies = engine.handle(UciCommand::Uci);
+        assert_eq!(replies[0], format!("id name Kalo Chess {} pesto@untuned, commit abc", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn a_search_with_a_network_plays_a_legal_move() {
+        // The network's values do not matter here, only that the search runs with it and answers:
+        // nnue.rs's own small fixture, given to the engine as a build would embed it.
+        let path = std::env::temp_dir().join(format!("kalo-chess-uci-network-test-{}.nnue", std::process::id()));
         let path = path.to_str().unwrap().to_string();
         crate::nnue::tests::sample_network(8, &[4]).write(&path).expect("failed to write the test network");
 
         let mut engine = Engine::new();
-        engine.handle(parse_command(&format!("setoption name EvalFile value {path}")));
-        assert!(engine.evaluator.is_some(), "the network should be loaded");
+        engine.evaluator = Some(Arc::new(Network::load(&path).expect("the test network loads")));
         engine.handle(parse_command("go depth 3"));
         let output = engine.join_and_take_last_search_output();
         let bestmove = output.last().expect("a search prints its bestmove");
         assert!(bestmove.starts_with("bestmove ") && bestmove != "bestmove 0000", "{bestmove}");
-
-        engine.handle(parse_command("setoption name EvalFile value <empty>"));
-        assert!(engine.evaluator.is_none(), "an empty EvalFile is the PeSTO evaluation again");
         std::fs::remove_file(&path).ok();
     }
 
     #[test]
-    fn a_default_eval_file_is_loaded_at_startup_and_advertised() {
-        let path = std::env::temp_dir().join(format!("kalo-chess-uci-default-evalfile-test-{}.nnue", std::process::id()));
-        let path = path.to_str().unwrap().to_string();
-        crate::nnue::tests::sample_network(8, &[4]).write(&path).expect("failed to write the test network");
-
-        let mut engine = Engine::with_default_eval_file(path.clone());
-        assert!(engine.evaluator.is_some(), "the default network should be loaded before any setoption");
-        let advertised = engine.handle(UciCommand::Uci);
-        assert!(advertised.contains(&format!("option name EvalFile type string default {path}")), "{advertised:?}");
-
-        engine.handle(parse_command("setoption name EvalFile value <empty>"));
-        assert!(engine.evaluator.is_none(), "a GUI can still ask for the PeSTO evaluation");
-        std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn no_default_eval_file_is_the_pesto_evaluation() {
-        let engine = Engine::with_default_eval_file(String::new());
+    fn a_development_build_embeds_nothing() {
+        // `cargo test` builds with no `KALO_CHESS_*` set.
+        let engine = Engine::embedded();
         assert!(engine.evaluator.is_none());
-    }
-
-    #[test]
-    fn the_startup_eval_file_sits_beside_the_executable() {
-        assert_eq!(
-            eval_file_beside(std::path::Path::new("C:/engines/kalo-chess.exe")),
-            std::path::PathBuf::from("C:/engines/kalo-chess.nnue")
-        );
+        assert_eq!(engine.parameters, SearchParameters::DEFAULT);
+        assert!(engine.description.is_empty());
     }
 
     #[test]

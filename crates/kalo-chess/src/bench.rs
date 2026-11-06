@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::bench_positions::{board, POSITIONS};
 use crate::nnue::Network;
-use crate::search::choose_best_move;
+use crate::search::{choose_best_move_with_parameters, default_parameters_for, SearchParameters};
 use crate::tablebase::SyzygyTablebase;
 use crate::tt::TranspositionTable;
 
@@ -26,13 +26,21 @@ pub fn bench(evaluator: Option<&Network>) -> (u64, f64) {
 /// `bench` to another depth (`kalo-chess bench <depth>`): what a search of that depth costs a position,
 /// a fresh table each, as a replay or a filter pass over unrelated positions pays it.
 pub fn bench_at_depth(evaluator: Option<&Network>, depth: u32) -> (u64, f64) {
+    bench_with(evaluator, default_parameters_for(evaluator), depth)
+}
+
+/// `bench_at_depth` with `parameters` in place of the evaluator's own: what a build plays, its
+/// embedded parameters (`kalo-chess bench`).
+pub fn bench_with(evaluator: Option<&Network>, parameters: SearchParameters, depth: u32) -> (u64, f64) {
     let tablebase = SyzygyTablebase::new();
     let mut nodes = 0;
     let started = Instant::now();
     for line in POSITIONS {
         let position = board(line);
         let tt = TranspositionTable::new(BENCH_HASH_MB);
-        let (reports, _) = choose_best_move(&position, depth, None, &[], &tt, &tablebase, evaluator, 0, &AtomicBool::new(false));
+        let (reports, _) = choose_best_move_with_parameters(
+            &position, depth, None, &[], &tt, &tablebase, evaluator, parameters, 0, &AtomicBool::new(false),
+        );
         nodes += reports.last().map_or(0, |report| report.nodes);
     }
     (nodes, started.elapsed().as_secs_f64())

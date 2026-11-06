@@ -56,8 +56,9 @@ its config, then each part marked by a letter, the run always and last:
 
 A generation has at most one winner, so the winner's name leaves its lambda out; the page shows it
 beside it. A player is a network with what it searches with,
-always written after an `@`: `@default`, the untuned defaults; `@t1`, its tune; or `@<cp>`, a margin
-per ply (`pesto-psq-g1-r1@t1`, `pesto@default`). Only a generation's winner is tuned.
+always written after an `@`: `@tuned`, its tune, or `@untuned`, the defaults
+(`pesto-psq-g1-r1@tuned`, `pesto@untuned`). Only a generation's winner is tuned; a new tune replaces
+the old one.
 
 **Generation 1** trains on its source's whole corpus, judged on the source's whole frozen test set,
 with no play phase, and refuses to start until the corpus is complete; the run records the sizes in
@@ -304,7 +305,7 @@ by a tune scaled as their run, to debug the tune itself.
 ## Matches
 
 ```bash
-./bin/arena duel pesto@default pesto-psq-g1-r1@t1 --time 10+0.1
+./bin/arena duel pesto@untuned pesto-psq-g1-r1@tuned --time 10+0.1
 ```
 
 - `match <a> <b> <n>`: n games.
@@ -312,10 +313,21 @@ by a tune scaled as their run, to debug the tune itself.
 - `duel <a> <b>`: until one is shown stronger, or 1000 games.
 
 Each needs `--depth <d>` or `--time <base+inc>`. A player is a Kalo Chess player, `pesto` or a forge run's
-network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@default`, `@t1` or
-`@<cp>`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
-`data/chess/engines.yaml`, with no suffix. Against an external engine, Kalo Chess plays over UCI what it has by
-itself, so its suffix must say it: a tuned network `@t1`, an untuned one or pesto `@default`.
+network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@tuned` or
+`@untuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
+`data/chess/engines.yaml`, with no suffix. Against an external engine, the Kalo Chess player plays over
+UCI: the arena first builds it with its network and parameters embedded, as a snapshot, into
+`target/uci-players/`.
+
+## Snapshots
+
+A snapshot is a release build of `kalo-chess` with a player's network and parameters embedded, taken
+from the page's Snapshot screen on any claimed machine. It is written to that machine's
+`data/chess/snapshots/kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe` (UTC), never
+replaced; delete old ones by hand. The engine has no option choosing a network: it plays what it
+embeds. `kalo-chess about`, its UCI name and a first `info string` say exactly what it is: the
+player, the commit, when, and a hash of the network and of the parameters. lichess-bot's
+`config.yml` names the snapshot it plays. A release on GitHub will be built the same way.
 
 ## Tuning search parameters
 

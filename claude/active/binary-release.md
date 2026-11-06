@@ -54,6 +54,12 @@ Tests: an embedded tuning round-trips, and an absent one is untuned.
 Optional, to decide: the embedded network's name recorded at build time (from `ROTOR_EVALFILE`'s
 folder name), so the startup `info string` says which network `<embedded>` is.
 
+**To redesign (the developer, 2026-11-06):** releases get a design of their own, aligned with
+snapshots.md (one build, network and tuned parameters embedded, no `EvalFile`). Proposed then: a
+Release on the smithy's page, sharing the snapshot's build, ending in a GitHub draft through `gh`
+that the developer publishes; GitHub Actions cannot build it, the networks being on Drive. The
+script below predates that.
+
 ## The build script, `bin/release`
 
 One Bash script, run from Git Bash, the flags written once:

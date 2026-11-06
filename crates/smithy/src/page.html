@@ -156,7 +156,7 @@ function duration(seconds) {
 }
 
 // A test's title: its kind and settings, then its two sides by role, the champion first as on the
-// form and the gauge, each a player whose name says the parameters it plays (`@t1`, `@default`).
+// form and the gauge, each a player whose name says the parameters it plays (`@tuned`, `@untuned`).
 function testTitle(view) {
   const settings = view.test === "match" ? ` of ${view.settings} pairs` : view.test === "sprt" ? ` [${view.settings.replace(",", ", ")}]` : "";
   return `${view.test}${settings}: champion ${view.champion} against challenger ${view.challenger}`;
@@ -419,7 +419,7 @@ const SNAPSHOT = "snapshot";
 // The New test form's choices, kept across its redraws.
 const testForm = {
   kind: "duel", pairs: "500", elo0: "0", elo1: "5", challenger: "", champion: "pesto",
-  challengerParameters: "default", championParameters: "default", limit: "depth", depth: "9", clock: "10+0.1",
+  challengerParameters: "untuned", championParameters: "untuned", limit: "depth", depth: "9", clock: "10+0.1",
 };
 
 const option = (value, label, selected) => `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
@@ -593,8 +593,8 @@ function boxLine(name) {
     if (busy.length > 0) return `<span class="tag">running</span> taking a snapshot on ${escape(busy.join(", "))}`;
     // A machine's snapshot is known only from its arena's answer to a poll, so only of an arena held.
     if (claimedMachines().length === 0) return `<span class="muted">no machine claimed: each one's snapshot is unknown</span>`;
-    const count = state.machines.filter((m) => m.snapshot_record.length > 0).length;
-    return count === 0 ? `<span class="muted">no snapshot on a claimed machine</span>` : count === 1 ? "1 machine with a snapshot" : `${count} machines with a snapshot`;
+    const count = state.machines.reduce((sum, m) => sum + m.snapshots.length, 0);
+    return count === 0 ? `<span class="muted">no snapshot on a claimed machine</span>` : count === 1 ? "1 snapshot" : `${count} snapshots`;
   }
   if (isRunning(name)) {
     const where = state.phase ? `: generation ${state.generation}, ${phaseName(state.phase)}` : "";
@@ -712,10 +712,10 @@ function drawConfig() {
       const value = (field) => element.querySelector(`[data-snapshot="${field}"]`).value;
       const machine = value("machine");
       sayPending(take, `claiming ${machine}'s arena if this smithy does not hold it, then asking its snapshot...`);
-      const error = await send("control/snapshot", [machine, value("player")].join("\n"));
+      const error = await send("control/snapshot", [machine, value("player"), value("tuning")].join("\n"));
       const said = take.parentElement.querySelector(".said");
       said.classList.toggle("bad", Boolean(error));
-      said.textContent = error || `asked of ${machine}: it builds kalo-chess and takes the snapshot, its last snapshot above says how it went`;
+      said.textContent = error || `asked of ${machine}: it builds kalo-chess with the player embedded, its last snapshot above says how it went`;
     };
   }
 }
@@ -747,14 +747,17 @@ function snapshotScreen() {
   return machines + `<section><h2>Take a snapshot</h2>`
     + `<div class="row"><label>Machine</label><select data-snapshot="machine">${listed.map((m) => option(m, m, false)).join("")}</select></div>`
     + `<div class="row"><label>Player</label><select data-snapshot="player">${players}</select></div>`
+    // A player with no tune is refused tuned, by the smithy, with why.
+    + `<div class="row"><label>Parameters</label><select data-snapshot="tuning">${option("tuned", "its tune", true)}${option("untuned", "untuned", false)}</select></div>`
     + `<div class="row"><label></label><button id="snapshotButton">Take a snapshot</button><span class="said bad"></span></div></section>`;
 }
 
 // The player a new snapshot offers first.
 const PESTO_NAME = "pesto";
 
-// Each claimed machine's snapshot, on the snapshot's screen: how its last one went, and its
-// `kalo-chess.txt`'s network, commit and time. Drawn at each poll into its own place.
+// Each claimed machine's snapshots, on the snapshot's screen: how its last one went, then every
+// snapshot's file name, newest first, which says the player, tuned or untuned, and when. Drawn at
+// each poll into its own place.
 function drawSnapshot() {
   const section = document.getElementById("snapshotMachines");
   if (!section) return;
@@ -763,11 +766,11 @@ function drawSnapshot() {
     redraw(section, `<h2>Snapshots</h2><div class="muted">no machine claimed</div>`);
     return;
   }
-  const field = (m, name) => (m.snapshot_record.find(([key]) => key === name) || [name, ""])[1];
   const said = (m) => m.snapshot === "-" ? "" : m.snapshot;
-  redraw(section, `<h2>Snapshots</h2>` + table(["machine", "network", "commit", "taken", "last snapshot"],
-    held.map((m) => m.snapshot_record.length === 0 ? [m.machine, { html: `<span class="muted">nothing yet</span>` }, "", "", said(m)]
-      : [m.machine, field(m, "network"), field(m, "commit").slice(0, 12), field(m, "taken"), said(m)])));
+  const rows = held.flatMap((m) => m.snapshots.length === 0
+    ? [[m.machine, { html: `<span class="muted">nothing yet</span>` }, said(m)]]
+    : m.snapshots.map((file, i) => [i === 0 ? m.machine : "", file, i === 0 ? said(m) : ""]));
+  redraw(section, `<h2>Snapshots</h2>` + table(["machine", "snapshot", "last snapshot"], rows));
 }
 
 // The books' screen: the job beside the arena job while a book job runs, then one section a source
@@ -872,9 +875,9 @@ function sideRow(label, side) {
       }).join(""));
   }
   const tunable = network.tuned;
-  if (!tunable) testForm[side + "Parameters"] = "default";
-  const parameters = option("default", "default parameters", testForm[side + "Parameters"] === "default")
-    + (tunable ? option("t1", "its tune", testForm[side + "Parameters"] === "t1") : "");
+  if (!tunable) testForm[side + "Parameters"] = "untuned";
+  const parameters = option("untuned", "untuned", testForm[side + "Parameters"] === "untuned")
+    + (tunable ? option("tuned", "its tune", testForm[side + "Parameters"] === "tuned") : "");
   return `<div class="row"><label>${label}</label>${steps}<select data-field="${side}Parameters">${parameters}</select></div>`;
 }
 
@@ -883,7 +886,7 @@ function testWords() {
   const f = testForm;
   const settings = f.kind === "match" ? f.pairs.trim() : f.kind === "sprt" ? `${f.elo0.trim()},${f.elo1.trim()}` : "-";
   const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${f.clock.trim()}`;
-  // Each side a player, its parameters after its `@`: `default` or `t1`.
+  // Each side a player, its parameters after its `@`: `tuned` or `untuned`.
   return ["--test", f.kind, settings, `${f.challenger}@${f.challengerParameters}`, `${f.champion}@${f.championParameters}`, limit];
 }
 

@@ -27,7 +27,7 @@ pub struct InProcessPlayer {
     /// Shared, unlike the table: probing is stateless and the loaded tables are never mutated, so
     /// there is no reason for each of 32 players to hold its own copy of the six-piece set.
     tablebase: Arc<SyzygyTablebase>,
-    /// The search parameters it plays with: a suffix's (`@<cp>`, `@default`), or pesto's tuning;
+    /// The search parameters it plays with: a suffix's (`@tuned`, `@untuned`), or pesto's tuning;
     /// `None` searches with the network's own tuning, or
     /// the defaults (`search::choose_best_move_with_progress`).
     parameters: Option<SearchParameters>,
@@ -158,7 +158,7 @@ mod tests {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let (board, _) = Board::from_fen(fen).unwrap();
         let mut player =
-            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters::with_margin(150)));
+            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters { razoring_margin: 150, ..SearchParameters::DEFAULT }));
         player.new_game().expect("an in-process player never faults");
         let ancestors = vec![board.hash()];
         let remaining = Duration::from_secs(2);
