@@ -50,7 +50,8 @@ the static C runtime, the notices, debugging while private.
     Measured again for each release against the same Stockfish version while it can be, so
     releases compare. Each row a full match, `bin/arena match stockfish-<level> <player>@tuned
     --full ...`: 400 games, all played (the developer, 2026-11-06), at 10+0.1, one thread, 64 MB,
-    the UHO book, as the duels. "Beats" is the match's own verdict, a score above 50%; exactly 50%
+    the UHO book, as the duels, both sides with Syzygy tables up to 6 pieces (the arena gives them
+    `SyzygyPath` and refuses to start without the tables). "Beats" is the match's own verdict, a score above 50%; exactly 50%
     is not expected (the developer).
 
 11. **The version checked** (the developer, 2026-11-06): `arena release` refuses when the tag,

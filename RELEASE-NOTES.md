@@ -29,7 +29,8 @@ Add `kalo-chess-v0.1.0.exe` to any UCI GUI (Cute Chess, Arena, BanksiaGUI, Nibbl
 
 No rating is claimed. Two matches against Stockfish at fixed Skill Levels bracket the strength:
 the highest level this release beats and the lowest that beats it. 400 games each, all played, in
-colour-reversed pairs from the UHO book, at 10+0.1, one thread and 64 MB each.
+colour-reversed pairs from the UHO book, at 10+0.1, one thread and 64 MB each, both sides with
+6-piece Syzygy tablebases.
 
 | Opponent | Games | Wins - Losses - Draws | Score |
 |---|---|---|---|
