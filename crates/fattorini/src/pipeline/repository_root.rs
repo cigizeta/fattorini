@@ -10,7 +10,7 @@ use std::sync::Once;
 pub fn enter_for_tests() {
     static ENTER: Once = Once::new();
     ENTER.call_once(|| {
-        // This crate is `crates/kalo-chess`, two levels below the root, whichever crate's test calls this.
+        // This crate is `crates/fattorini`, two levels below the root, whichever crate's test calls this.
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
         std::env::set_current_dir(root).unwrap_or_else(|error| panic!("failed to enter {root}: {error}"));
     });

@@ -8,7 +8,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-kalo-chess.workspace = true
+fattorini.workspace = true
 pgn-replay.workspace = true
 progress.workspace = true
 # The claim, the work, the page and the control, over HTTP with the arenas (`smithy.rs`).
@@ -30,7 +30,7 @@ flate2.workspace = true
 # Replays Lc0's games to write them as PGN, checking every board (`lc0/convert.rs`).
 shakmaty.workspace = true
 # `tch`'s build script (`torch-sys`) searches for a real `libtorch` install at build time. Only this
-# crate depends on it, so `kalo-chess` and `arena` never need `libtorch` to build.
+# crate depends on it, so `fattorini` and `arena` never need `libtorch` to build.
 tch = "0.24"
 
 [lints]

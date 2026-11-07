@@ -1,6 +1,6 @@
-//! The players `arena match`, `sprt` and `duel` take on their command line. Kalo Chess's are built in
+//! The players `arena match`, `sprt` and `duel` take on their command line. Fattorini's are built in
 //! code, the same way `run_selection` builds its pairings'; every external engine's executable comes
-//! from `data/engines.yaml` (`Engines`), never from a name on the `PATH`. Between two Kalo Chess players,
+//! from `data/engines.yaml` (`Engines`), never from a name on the `PATH`. Between two Fattorini players,
 //! at a fixed depth or under a clock, both play in-process, as in the gate. **Against an external
 //! engine every one is a UCI subprocess**, so both sides play on equal footing: the same protocol,
 //! the same kind of process, each managing its own time, and the same `Hash` and `Threads`
@@ -9,7 +9,7 @@
 //! `SyzygyPath` plays on without tables and says nothing, so the match loads them in-process first
 //! (`pairing::load_tablebase`), which stops the run when they are missing.
 //!
-//! - `pesto`: Kalo Chess with the PeSTO evaluation.
+//! - `pesto`: Fattorini with the PeSTO evaluation.
 //! - `stockfish-<level>`, level 0 to 20: the executable of the registry's `stockfish` entry, at that
 //!   `Skill Level`. The bare `stockfish` only says where Stockfish is and is no player: full strength
 //!   is `stockfish-20`, its one spelling, so its records never split between two folders.
@@ -17,13 +17,13 @@
 //!   rating through `UCI_LimitStrength` and `UCI_Elo`.
 //! - Any other `kind: uci` engine of the registry, by its name, e.g. `reckless`, with its options.
 //! - `<config>-g<g>-l<lambda>-r<n>`, e.g. `pesto-psq-g1-l0.95-r1`, a forge run's network
-//!   (`players::parse_network_name`): Kalo Chess evaluating with that lambda's candidate in
+//!   (`players::parse_network_name`): Fattorini evaluating with that lambda's candidate in
 //!   generation `g`.
 //! - `<config>-g<g>-r<n>`, e.g. `pesto-psq-g1-r1`: generation `g`'s winner, as its `generations.tsv`
 //!   records it. This machine's copy of the run first, then the remote's, where its closed
 //!   generations move.
 //!
-//! A Kalo Chess player, pesto or a network, is always followed by what it searches with, so that its name
+//! A Fattorini player, pesto or a network, is always followed by what it searches with, so that its name
 //! says it:
 //!
 //! - `@untuned`: the untuned `SearchParameters::DEFAULT`, whatever its `parameters.txt` says.
@@ -41,11 +41,11 @@ use std::collections::HashMap;
 
 use super::engines::{self, EngineEntry, EngineKind, DEFAULT_HASH_MB};
 use super::{data_root, snapshot};
-use kalo_chess::pipeline::{players, protocol, remote};
+use fattorini::pipeline::{players, protocol, remote};
 // Read by arena's other modules through this one, where every player's name is read.
-pub use kalo_chess::pipeline::players::parse_network_name;
-use kalo_chess::nnue::Tuning;
-use kalo_chess::search::SearchParameters;
+pub use fattorini::pipeline::players::parse_network_name;
+use fattorini::nnue::Tuning;
+use fattorini::search::SearchParameters;
 
 /// Stockfish's `Skill Level` option ranges over 0 to 20.
 const MAX_STOCKFISH_SKILL: u64 = 20;
@@ -55,18 +55,18 @@ const MAX_STOCKFISH_SKILL: u64 = 20;
 const MIN_STOCKFISH_ELO: u64 = 1320;
 const MAX_STOCKFISH_ELO: u64 = 3190;
 
-/// Where a Kalo Chess player that plays over UCI is built, one binary per player name, rebuilt at
-/// each match so it is of the current commit. Never the `bin/kalo-chess` wrapper: Windows cannot
+/// Where a Fattorini player that plays over UCI is built, one binary per player name, rebuilt at
+/// each match so it is of the current commit. Never the `bin/fattorini` wrapper: Windows cannot
 /// spawn a Bash script, and a wrapper process in between would take the pin and the kill meant for
 /// the engine.
 const UCI_PLAYERS_DIR: &str = "target/uci-players";
 
-/// The binary the Kalo Chess player `name` (suffix included) plays over UCI from.
+/// The binary the Fattorini player `name` (suffix included) plays over UCI from.
 fn uci_player_path(name: &str) -> String {
     format!("{UCI_PLAYERS_DIR}/{}{}", name.replace('@', "-"), std::env::consts::EXE_SUFFIX)
 }
 
-/// Builds the binary of `entry`, the player `name`, when it is a Kalo Chess player over UCI
+/// Builds the binary of `entry`, the player `name`, when it is a Fattorini player over UCI
 /// (`resolve_player`): its network and parameters embedded, as a snapshot's. Any other entry needs
 /// nothing. Minutes at most, the engine crate alone recompiled when only what it embeds changed.
 pub fn build_uci_player(name: &str, entry: &EngineEntry) -> Result<(), String> {
@@ -98,7 +98,7 @@ pub fn set_hash(entry: &mut EngineEntry, hash_mb: usize) {
 }
 
 /// The data root's Syzygy directories as one `SyzygyPath` value, joined with the OS path-list
-/// separator both Kalo Chess and Stockfish split it on.
+/// separator both Fattorini and Stockfish split it on.
 fn syzygy_path() -> String {
     let joined = std::env::join_paths(data_root::syzygy_directories()).unwrap_or_else(|error| {
         eprintln!("cannot join the Syzygy directories into one SyzygyPath: {error}");
@@ -132,7 +132,7 @@ const STOCKFISH_ENTRY: &str = "stockfish";
 
 /// The external engines this machine has: `data/engines.yaml`'s `kind: uci` entries, by name (see
 /// `examples/engines.yaml`). Read once per run, so every game of it plays the same executables.
-/// Without the file there are none, and a run of Kalo Chess against Kalo Chess needs none.
+/// Without the file there are none, and a run of Fattorini against Fattorini needs none.
 pub struct Engines {
     origin: String,
     entries: Option<HashMap<String, EngineEntry>>,
@@ -145,7 +145,7 @@ impl Engines {
         Engines::from_entries(entries, engines::ENGINE_REGISTRY_PATH)
     }
 
-    /// No registry at all: enough for a player known to be Kalo Chess's.
+    /// No registry at all: enough for a player known to be Fattorini's.
     #[cfg(test)]
     pub fn none() -> Engines {
         Engines { origin: engines::ENGINE_REGISTRY_PATH.to_string(), entries: None }
@@ -192,14 +192,14 @@ impl Engines {
 
 /// Refuses a registry name that a built-in player has or could have, so a name always means one
 /// player: `pesto`, `stockfish-...`, a network's (`players::parse_network_name`), and anything
-/// with `@`, which a Kalo Chess player's suffix would take apart. `stockfish` itself is the entry Stockfish's
+/// with `@`, which a Fattorini player's suffix would take apart. `stockfish` itself is the entry Stockfish's
 /// players read, and is no player.
 fn check_engine_name(name: &str) -> Result<(), String> {
     if name == "pesto" || name.starts_with("stockfish-") || parse_network_name(name).is_ok() {
         return Err(format!("{name:?} is a built-in player's name: give the engine another"));
     }
     if name.contains('@') {
-        return Err(format!("{name:?} holds an @, which a Kalo Chess player's parameters follow: give the engine another name"));
+        return Err(format!("{name:?} holds an @, which a Fattorini player's parameters follow: give the engine another name"));
     }
     Ok(())
 }
@@ -213,13 +213,13 @@ fn external_entry(entry: &EngineEntry, handicap: Vec<(&str, serde_yaml::Value)>)
     uci_entry(entry.binary_path(), options)
 }
 
-/// Whether `name` is an engine other than Kalo Chess, which can only play over UCI: one of Stockfish's
+/// Whether `name` is an engine other than Fattorini, which can only play over UCI: one of Stockfish's
 /// players, or an engine of `engines`.
 pub fn is_external(name: &str, engines: &Engines) -> bool {
     name.starts_with("stockfish-") || engines.get(name).is_some()
 }
 
-/// Whether a run between `one` and `two` plays Kalo Chess in-process. Only when both players are Kalo Chess,
+/// Whether a run between `one` and `two` plays Fattorini in-process. Only when both players are Fattorini,
 /// at a fixed depth or under a clock: then both play in-process, exactly as in the gate (same search,
 /// same table, no subprocess per game, no protocol latency on either side), and each can carry its
 /// own parameters (its suffix). Otherwise both play over UCI, so the two sides are on equal footing --
@@ -228,7 +228,7 @@ pub fn plays_in_process(one: &str, two: &str, engines: &Engines) -> bool {
     !is_external(one, engines) && !is_external(two, engines)
 }
 
-/// What a Kalo Chess player's name says it searches with, after its `@`.
+/// What a Fattorini player's name says it searches with, after its `@`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Suffix {
     /// `@untuned`: `SearchParameters::DEFAULT`.
@@ -250,21 +250,21 @@ fn split_suffix(name: &str) -> Result<(&str, Option<Suffix>), String> {
     }
 }
 
-/// The parameters the Kalo Chess player `player` has tuned, `None` if it has none: pesto's in
+/// The parameters the Fattorini player `player` has tuned, `None` if it has none: pesto's in
 /// `players::PESTO_TUNING_DIR`, a network's beside its file (`nnue::read_tuning_beside`).
 fn tuned_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<SearchParameters>, String> {
     if player == "pesto" {
         return players::pesto_parameters();
     }
     let path = players::resolve_network_file_in(player, run_dir)?;
-    Ok(match kalo_chess::nnue::read_tuning_beside(&path)? {
+    Ok(match fattorini::nnue::read_tuning_beside(&path)? {
         Tuning::Parameters(parameters) => Some(parameters),
         Tuning::Untuned => None,
     })
 }
 
 /// The player `name` names, or why it names none. `in_process` is `plays_in_process` for the whole
-/// run: `pesto` and networks then play in-process; otherwise every player, Kalo Chess included, is
+/// run: `pesto` and networks then play in-process; otherwise every player, Fattorini included, is
 /// a UCI subprocess. An external engine's executable comes from `engines`.
 pub fn resolve_player(name: &str, in_process: bool, engines: &Engines) -> Result<EngineEntry, String> {
     // This machine's copy of a run first, then the remote's, where its closed generations move.
@@ -282,10 +282,10 @@ fn in_process_entry(net: Option<String>) -> EngineEntry {
     EngineEntry { kind, path: None, net, options: HashMap::new(), parameters: None }
 }
 
-/// Kalo Chess with the network at `net`, or the PeSTO evaluation when `None`: in-process when
+/// Fattorini with the network at `net`, or the PeSTO evaluation when `None`: in-process when
 /// `in_process`; over UCI otherwise, a binary of its own with `net` embedded, whose path and
 /// parameters `resolve_player_with` gives it once the suffix is known, and `build_uci_player` builds.
-fn kalo_chess_entry(net: Option<String>, in_process: bool) -> EngineEntry {
+fn fattorini_entry(net: Option<String>, in_process: bool) -> EngineEntry {
     if in_process {
         return in_process_entry(net);
     }
@@ -300,12 +300,12 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
     let mut entry = resolve_player_without_suffix(player, in_process, engines, run_dir)?;
     if is_external(player, engines) {
         if suffix.is_some() {
-            return Err(format!("{name:?}: an external engine takes no suffix, which only a Kalo Chess player has"));
+            return Err(format!("{name:?}: an external engine takes no suffix, which only a Fattorini player has"));
         }
         return Ok(entry);
     }
     let Some(suffix) = suffix else {
-        return Err(format!("{name:?}: a Kalo Chess player says what it searches with, {name}@tuned (its tune) or {name}@untuned"));
+        return Err(format!("{name:?}: a Fattorini player says what it searches with, {name}@tuned (its tune) or {name}@untuned"));
     };
     entry.parameters = Some(match suffix {
         Suffix::Untuned => SearchParameters::DEFAULT,
@@ -320,7 +320,7 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
 /// `resolve_player_with` for a name with no `@` suffix.
 fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<EngineEntry, String> {
     if name == "pesto" {
-        return Ok(kalo_chess_entry(None, in_process));
+        return Ok(fattorini_entry(None, in_process));
     }
     if name == STOCKFISH_ENTRY {
         return Err(format!(
@@ -355,7 +355,7 @@ fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines
     }
 
     let path = players::resolve_network_file_in(name, run_dir)?;
-    Ok(kalo_chess_entry(Some(path), in_process))
+    Ok(fattorini_entry(Some(path), in_process))
 }
 
 /// Where every match between two players is recorded, one dated folder each:
@@ -519,7 +519,7 @@ mod tests {
 
     /// Both in-process or both over UCI, never one of each.
     #[test]
-    fn kalo_chess_plays_in_process_only_against_kalo_chess() {
+    fn fattorini_plays_in_process_only_against_fattorini() {
         let engines = engines();
         assert!(plays_in_process("amanda-g1-r1@tuned", "pesto@untuned", &engines));
         assert!(!plays_in_process("amanda-g1-r1@tuned", "stockfish-0", &engines), "an external engine puts both on UCI");
@@ -528,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn a_kalo_chess_player_always_says_what_it_searches_with() {
+    fn a_fattorini_player_always_says_what_it_searches_with() {
         let engines = engines();
         let entry = resolve_player("pesto@untuned", true, &engines).unwrap();
         assert_eq!((entry.kind, entry.parameters), (EngineKind::Builtin, Some(SearchParameters::DEFAULT)));
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn a_registry_name_a_built_in_player_has_is_refused() {
         let path = test_executable();
-        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "kalo-chess@tuned"] {
+        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "fattorini@tuned"] {
             let entries = HashMap::from([(name.to_string(), registered(&path, &[]))]);
             assert!(Engines::from_entries(Some(entries), "test").is_err(), "{name:?}");
         }
@@ -648,7 +648,7 @@ mod tests {
         }
         // Tuned: @tuned is its parameters.txt, in-process and over UCI alike, and @untuned the defaults.
         let tuned = SearchParameters { razoring_margin: 120, ..SearchParameters::DEFAULT };
-        tuned.write_file(&kalo_chess::nnue::parameters_file_beside(&candidate)).unwrap();
+        tuned.write_file(&fattorini::nnue::parameters_file_beside(&candidate)).unwrap();
         for in_process in [false, true] {
             let entry = resolve_player_with(&format!("{name}@tuned"), in_process, &Engines::none(), &runs).unwrap();
             assert_eq!(entry.parameters, Some(tuned));
@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn the_latest_unfinished_match_is_resumed_and_a_finished_one_starts_a_new_one() {
-        let pairing = std::env::temp_dir().join(format!("kalo-chess-evolve-match-dirs-{}", std::process::id()));
+        let pairing = std::env::temp_dir().join(format!("fattorini-evolve-match-dirs-{}", std::process::id()));
         let pairing = pairing.to_str().unwrap().to_string();
         std::fs::remove_dir_all(&pairing).ok();
 

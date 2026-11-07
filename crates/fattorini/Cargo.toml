@@ -1,10 +1,10 @@
 [package]
-name = "kalo-chess"
+name = "fattorini"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# Never on crates.io: Kalo Chess is released as a binary on its own repository, and `cargo-about` leaves
+# Never on crates.io: Fattorini is released as a binary on its own repository, and `cargo-about` leaves
 # unpublished crates out of the release's third-party notices.
 publish = false
 # Every bench is declared below via `[[bench]]`.
@@ -21,7 +21,7 @@ serde_yaml.workspace = true
 shakmaty.workspace = true
 # The one sanctioned exception to "no chess crates as a dependency": hand-writing a Syzygy WDL parser
 # from scratch is a binary-format/compression exercise, not a chess-engine-internals one, so this one
-# subsystem depends on niklasf's own pure-Rust prober instead. Nothing else in the shipped `kalo-chess`
+# subsystem depends on niklasf's own pure-Rust prober instead. Nothing else in the shipped `fattorini`
 # binary depends on a chess crate.
 #
 # `mmap`: the tables are read through memory maps (`tablebase.rs`), not one system call per read.
@@ -56,7 +56,7 @@ node-stats = []
 bench = false
 
 [[bin]]
-name = "kalo-chess"
+name = "fattorini"
 path = "src/main.rs"
 bench = false
 
@@ -69,7 +69,7 @@ name = "nnue_bench"
 harness = false
 # In-process, unlike `search_bench` above, which drives a real UCI engine: this measures the cost of
 # one `evaluate` call rather than what a search does with it, and a process boundary would bury a
-# microsecond-scale number. Needs no libtorch -- the whole point of `kalo_chess::nnue` is that running a
+# microsecond-scale number. Needs no libtorch -- the whole point of `fattorini::nnue` is that running a
 # trained network never touches `tch`/`libtorch`.
 
 [[bench]]

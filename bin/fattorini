@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds (if needed -- cargo's own freshness check is a fast no-op once nothing has changed) and
-# runs target/release/kalo-chess. No libtorch dependency, so no environment variables to set here
+# runs target/release/fattorini. No libtorch dependency, so no environment variables to set here
 # (unlike bin/smithy). Exists purely so every binary in this repo can be invoked the same way,
 # without needing .bashrc or a sourced venv first. Safe for a UCI GUI to launch directly despite the
 # build step: cargo's own compile/progress/error output goes to stderr, never stdout, so it can
@@ -10,5 +10,5 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-cargo build --release --bin kalo-chess
-exec "$REPO_ROOT/target/release/kalo-chess.exe" "$@"
+cargo build --release --bin fattorini
+exec "$REPO_ROOT/target/release/fattorini.exe" "$@"

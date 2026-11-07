@@ -1,10 +1,10 @@
-# Developing Kalo Chess
+# Developing Fattorini
 
-For what Kalo Chess is and how to run it, see [README.md](README.md).
+For what Fattorini is and how to run it, see [README.md](README.md).
 
-Kalo Chess is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
+Fattorini is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
 PowerShell or cmd. Development also requires **Google Drive for desktop**, with My Drive on `G:`:
-what the machines share, such as Lc0's converted games, lives in `G:/My Drive/kalo-chess`, and the scripts
+what the machines share, such as Lc0's converted games, lives in `G:/My Drive/fattorini`, and the scripts
 and binaries read and write it there.
 
 ## The workspace
@@ -12,7 +12,7 @@ and binaries read and write it there.
 The repository holds the engine, an arena that plays engines against each other, and a trainer for
 their networks. Three binaries, each with its own crate:
 
-- `kalo-chess`, the engine.
+- `fattorini`, the engine.
 - `arena`, which plays games: matches, and, as one of the smithy's arenas, every game of a forge or
   a tune.
 - `smithy`, which makes the sources' corpora and trains networks (the smithy, dealing its jobs to
@@ -24,7 +24,7 @@ Run every binary through its script in `bin/`, which builds it when needed and r
 repository root:
 
 ```bash
-./bin/kalo-chess
+./bin/fattorini
 ```
 
 ## One generation
@@ -137,7 +137,7 @@ The opening positions and the Syzygy tablebases (about 150 GB), into the reposit
 ```
 
 Google Drive for desktop, in streaming mode with My Drive on `G:`, on every machine, the arenas'
-included: Drive is Kalo Chess's store, `G:/My Drive/kalo-chess`, the same tree as the repository's `data/`. A file
+included: Drive is Fattorini's store, `G:/My Drive/fattorini`, the same tree as the repository's `data/`. A file
 is made on the local disk and reaches Drive only whole, never written or appended there in place:
 
 - a run's networks (every candidate, every teacher) as soon as they are complete; the arenas read
@@ -152,7 +152,7 @@ is made on the local disk and reaches Drive only whole, never written or appende
 Every reader (`arena duel`, a snapshot, the page's View) looks on the local disk
 first, then on Drive. Folders may be made available offline in Drive's settings to read them faster.
 
-A Python environment named `.kalo-chess` with PyTorch, for `smithy`: on the GPU machine to train, and
+A Python environment named `.fattorini` with PyTorch, for `smithy`: on the GPU machine to train, and
 on any other machine that runs `smithy` or its tests:
 
 ```bash
@@ -160,11 +160,11 @@ winget install --id astral-sh.uv
 ```
 
 ```bash
-uv venv .kalo-chess --python 3.14
+uv venv .fattorini --python 3.14
 ```
 
 ```bash
-source .kalo-chess/Scripts/activate
+source .fattorini/Scripts/activate
 ```
 
 ```bash
@@ -201,7 +201,7 @@ the arenas. Written once, on Drive, so every machine reads the same copy.
 Its shape is `examples/machines.yaml`'s:
 
 ```bash
-cp examples/machines.yaml "/g/My Drive/kalo-chess/data/machines.yaml"
+cp examples/machines.yaml "/g/My Drive/fattorini/data/machines.yaml"
 ```
 
 Then the names in that copy edited. A local `data/machines.yaml` is no longer read; the older
@@ -312,16 +312,16 @@ by a tune scaled as their run, to debug the tune itself.
 - `sprt <a> <b> <elo>`: whether b is at least that many Elo stronger.
 - `duel <a> <b>`: until one is shown stronger, or 800 games (400 pairs).
 
-Each needs `--depth <d>` or `--time <base+inc>`. A player is a Kalo Chess player, `pesto` or a forge run's
+Each needs `--depth <d>` or `--time <base+inc>`. A player is a Fattorini player, `pesto` or a forge run's
 network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@tuned` or
 `@untuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
-`data/engines.yaml`, with no suffix. Against an external engine, the Kalo Chess player plays over
+`data/engines.yaml`, with no suffix. Against an external engine, the Fattorini player plays over
 UCI: the arena first builds it with its network and parameters embedded, as a snapshot, into
 `target/uci-players/`.
 
 ## Snapshots
 
-A snapshot is a release build of `kalo-chess` with a player's network and parameters embedded:
+A snapshot is a release build of `fattorini` with a player's network and parameters embedded:
 
 ```bash
 ./bin/arena snapshot pesto-psq-g1-r1@tuned
@@ -329,17 +329,17 @@ A snapshot is a release build of `kalo-chess` with a player's network and parame
 
 The player is `pesto` or a full run's generation winner, `@tuned` or `@untuned`. The snapshot is
 written straight to Drive, never locally:
-`/g/My Drive/kalo-chess/data/snapshots/kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`
+`/g/My Drive/fattorini/data/snapshots/fattorini-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`
 (UTC). A new snapshot replaces the older ones of the same player and suffix, so lichess-bot's
 `config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
-embeds. `kalo-chess about`, its UCI name and a first `info string` say exactly what it is: the
+embeds. `fattorini about`, its UCI name and a first `info string` say exactly what it is: the
 player, the commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`). lichess-bot's
 `config.yml` names the snapshot it plays. A release on GitHub is built the same way.
 
 ## Releases
 
 A release is a snapshot built at a tag: the C runtime static, the third-party notices embedded
-(`kalo-chess licenses`), uploaded to GitHub as a draft. Only the `.exe` is uploaded; the release's
+(`fattorini licenses`), uploaded to GitHub as a draft. Only the `.exe` is uploaded; the release's
 text is `RELEASE-NOTES.md`, passed as it is. Once, on the machine that releases: `cargo install
 cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), GitHub's `gh` installed, and `gh auth login`.
 
@@ -401,22 +401,24 @@ netsh advfirewall firewall delete rule name="arena"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="kalo-chess smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\kalo-chess\target\release\smithy.exe"
+netsh advfirewall firewall add rule name="fattorini smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\fattorini\target\release\smithy.exe"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="kalo-chess arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\kalo-chess\target\release\arena.exe"
+netsh advfirewall firewall add rule name="fattorini arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\fattorini\target\release\arena.exe"
 ```
 
-The first two remove Windows' own rules, if any were made. To check, each rule should show Profiles
+The first two remove Windows' own rules, if any were made. A machine set up under an older project
+name may still hold rules of that name, such as `kalo-chess smithy` and `kalo-chess arena`: delete
+those the same way. To check, each rule should show Profiles
 Private, TCP and its LocalPort, and `name="smithy"` and `name="arena"` should match no rule:
 
 ```bash
-netsh advfirewall firewall show rule name="kalo-chess smithy" verbose
+netsh advfirewall firewall show rule name="fattorini smithy" verbose
 ```
 
 ```bash
-netsh advfirewall firewall show rule name="kalo-chess arena" verbose
+netsh advfirewall firewall show rule name="fattorini arena" verbose
 ```
 
 ```bash

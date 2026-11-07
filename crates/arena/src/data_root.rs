@@ -1,12 +1,12 @@
 //! The third-party downloads in the data root: the opening book and the Syzygy tables, downloaded
 //! there by `bin/uho-book.sh` and `bin/syzygy.sh`. Where the root itself is lives in
-//! `kalo_chess::pipeline::data_root`, shared with `smithy`.
+//! `fattorini::pipeline::data_root`, shared with `smithy`.
 
 use std::process;
 
-use kalo_chess::tablebase::SyzygyTablebase;
+use fattorini::tablebase::SyzygyTablebase;
 
-pub use kalo_chess::pipeline::data_root::{data_root, syzygy_directories};
+pub use fattorini::pipeline::data_root::{data_root, syzygy_directories};
 
 /// The opening book every match, gate and self-play game draws its openings from.
 pub fn book_path() -> String {

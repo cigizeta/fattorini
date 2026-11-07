@@ -1,4 +1,4 @@
-/// `kalo-chess bench`: the node count and speed an SPSA client reports, and its clock is scaled by.
+/// `fattorini bench`: the node count and speed an SPSA client reports, and its clock is scaled by.
 pub mod bench;
 pub mod bench_positions;
 pub mod board;

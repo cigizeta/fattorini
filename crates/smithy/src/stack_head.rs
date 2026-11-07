@@ -1,5 +1,5 @@
 //! A `psq_stack` network's head: two hidden layers and the output, each one of several weight sets,
-//! picked per position by its buckets (`kalo_chess::stack_buckets`): the first layer by our king, the
+//! picked per position by its buckets (`fattorini::stack_buckets`): the first layer by our king, the
 //! second by their king, the output by the material.
 //!
 //! Trained factorised: each stage holds a shared weight and bias, trained by every position, and a
@@ -14,8 +14,8 @@
 
 use tch::{nn, Kind, Tensor};
 
-use kalo_chess::pesto::PHASE_MAX;
-use kalo_chess::stack_buckets::{COUNT_BUCKETS, MATERIAL_BUCKETS, OUR_KING_BUCKETS, PHASE_BUCKETS, TAPER_SETS, THEIR_KING_BUCKETS};
+use fattorini::pesto::PHASE_MAX;
+use fattorini::stack_buckets::{COUNT_BUCKETS, MATERIAL_BUCKETS, OUR_KING_BUCKETS, PHASE_BUCKETS, TAPER_SETS, THEIR_KING_BUCKETS};
 
 use super::value_head::Activation;
 
@@ -143,7 +143,7 @@ pub fn kings_output_input(ours: &Tensor, theirs: &Tensor, squares: &Tensor) -> T
 
 /// A taper's two outputs, `[..., 2]`, middlegame then endgame, blended by `phase` (`Int64 [rows]`,
 /// the batch's capped phase column, broadcast over any leading arm dimension):
-/// `(phase * middlegame + (24 - phase) * endgame) / 24`, `[...]`, as `kalo_chess::stack_buckets::taper`
+/// `(phase * middlegame + (24 - phase) * endgame) / 24`, `[...]`, as `fattorini::stack_buckets::taper`
 /// computes it in the engine. The gradient reaches each set scaled by its weight, by autograd.
 pub fn taper(outputs: &Tensor, phase: &Tensor) -> Tensor {
     let weight = phase.clamp_max(PHASE_MAX as i64).to_kind(Kind::Float) / PHASE_MAX as f64;

@@ -15,8 +15,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kalo_chess::board::color::Color;
-use kalo_chess::board::Board;
+use fattorini::board::color::Color;
+use fattorini::board::Board;
 
 use super::clock::TimeControl;
 
@@ -115,7 +115,7 @@ pub enum MoveLimit {
 /// How long a fixed-depth search is allowed to take before the subprocess is treated as having
 /// stopped answering. There is no clock at a fixed depth, so this is a hang backstop rather than a
 /// time control, and it is set far above any plausible real search -- the deepest gate search is
-/// depth 9, seconds of work, and Kalo Chess's own in-process player cannot reach this path at all since
+/// depth 9, seconds of work, and Fattorini's own in-process player cannot reach this path at all since
 /// it returns from `choose_best_move` or not at all.
 const FIXED_DEPTH_BACKSTOP: Duration = Duration::from_secs(3600);
 

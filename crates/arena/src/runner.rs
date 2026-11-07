@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-use kalo_chess::board::color::Color;
+use fattorini::board::color::Color;
 
 use super::random_book::RandomBook;
 use super::cpu_topology;
@@ -638,7 +638,7 @@ fn run_worker<T: SequentialTest>(
     worker: usize,
     run: &Run,
     registry: &EngineRegistry,
-    tablebase: &Arc<kalo_chess::tablebase::SyzygyTablebase>,
+    tablebase: &Arc<fattorini::tablebase::SyzygyTablebase>,
     book: &RandomBook,
     shared: &Mutex<Shared<T>>,
     finish: &Arc<AtomicBool>,
@@ -743,7 +743,7 @@ fn run_worker<T: SequentialTest>(
 pub fn play_games(
     prefix: &str, worker: usize, recording: &Recording, control: Control, pair_index: u32, games_to_play: &[u32],
     starting_fen: &str, challenger: &mut dyn Player, champion: &mut dyn Player,
-    early_stop: Option<&kalo_chess::tablebase::SyzygyTablebase>, finish: &Arc<AtomicBool>,
+    early_stop: Option<&fattorini::tablebase::SyzygyTablebase>, finish: &Arc<AtomicBool>,
     after_first: &mut dyn FnMut(&mut FinishedGame),
 ) -> Vec<FinishedGame> {
     let mut finished: Vec<FinishedGame> = Vec::with_capacity(2);

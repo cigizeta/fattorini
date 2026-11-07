@@ -1,19 +1,19 @@
-//! `arena snapshot <player>@<tuned|untuned>`: a release build of `kalo-chess` with that player's
+//! `arena snapshot <player>@<tuned|untuned>`: a release build of `fattorini` with that player's
 //! network and parameters embedded, and a description of itself (`build.rs`), written straight to
 //! Drive's `data/snapshots/` (never locally), under a name saying what it plays and when it was
-//! taken: `kalo-chess-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`, UTC. A command line feature only,
+//! taken: `fattorini-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`, UTC. A command line feature only,
 //! run on any machine, no smithy nor claim involved. One a player and suffix: a new
 //! snapshot replaces the older ones of the same player and suffix. lichess-bot's `config.yml` names the one it plays.
 //!
-//! The same build (`build_embedded`) gives a match against an external engine its Kalo Chess side
+//! The same build (`build_embedded`) gives a match against an external engine its Fattorini side
 //! (`match_player.rs`), and a release its `.exe` (`release.rs`).
 //!
 //! Nothing here, nor anywhere in the repository, writes outside it and Drive.
 
 use std::process;
 
-use kalo_chess::pipeline::{players, protocol, remote};
-use kalo_chess::search::SearchParameters;
+use fattorini::pipeline::{players, protocol, remote};
+use fattorini::search::SearchParameters;
 
 use super::match_player::{self, Engines};
 
@@ -47,14 +47,14 @@ fn take(name: &str) -> Result<String, String> {
         return Err(format!("{name:?}: say what it searches with, {name}@tuned or {name}@untuned"));
     };
     may_snapshot(player)?;
-    // Kalo Chess players only reach here, so the registry is read only to tell them from an engine.
+    // Fattorini players only reach here, so the registry is read only to tell them from an engine.
     let entry = match_player::resolve_player(name, false, &Engines::load()?)?;
     // Straight to Drive, so every machine (the Lichess one included) runs the same file.
     remote::check_mounted().map_err(|error| error.to_string())?;
     let dir = remote::remote_path(SNAPSHOTS_DIR);
     let now = time::OffsetDateTime::now_utc();
     let stamp = format!("{:04}{:02}{:02}-{:02}{:02}", now.year(), u8::from(now.month()), now.day(), now.hour(), now.minute());
-    let prefix = format!("kalo-chess-{player}-{suffix}-");
+    let prefix = format!("fattorini-{player}-{suffix}-");
     let stem = format!("{prefix}{stamp}");
     let out = format!("{dir}/{stem}.exe");
     let parameters_file = parameters_file(entry.parameters, EMBEDDED_TARGET_DIR, &stem)?;
@@ -130,7 +130,7 @@ fn scale_of(path: &str) -> Option<u64> {
     config.get("scale")?.as_u64()
 }
 
-/// What a build embeds as its description (`kalo-chess about`, UCI's `id name`), each word said
+/// What a build embeds as its description (`fattorini about`, UCI's `id name`), each word said
 /// once: the player and its suffix, the commit (`-dirty` when modified, as git says it), and when,
 /// as `pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`.
 pub(crate) fn describe(player: &str, commit: &str, taken: &str) -> String {
@@ -177,32 +177,32 @@ impl<'a> EmbeddedBuild<'a> {
 /// `rustflags` rather than adding to them, so the CPU level is said again.
 const STATIC_RUSTFLAGS: &str = "-C target-cpu=x86-64-v3 -C target-feature=+crt-static";
 
-/// Builds `kalo-chess` in release as `build` says, then copies the binary to `out`. cargo's own
+/// Builds `fattorini` in release as `build` says, then copies the binary to `out`. cargo's own
 /// output goes to the terminal as it builds.
 pub(crate) fn build_embedded(build: &EmbeddedBuild, out: &str) -> Result<(), String> {
-    println!("building kalo-chess for {out}: {}", build.description);
+    println!("building fattorini for {out}: {}", build.description);
     let mut command = process::Command::new("cargo");
-    command.args(["build", "--release", "--bin", "kalo-chess", "--target-dir", build.target_dir]);
+    command.args(["build", "--release", "--bin", "fattorini", "--target-dir", build.target_dir]);
     // Absolute: cargo runs `build.rs` from the engine's crate directory, not from here, so a path
     // relative to the repository's root would name nothing there.
     let absolute = |path: &str| {
         std::path::absolute(path).map(|path| path.into_os_string()).map_err(|error| format!("{path}: {error}"))
     };
-    for (variable, path) in [("KALO_CHESS_EVALFILE", build.network), ("KALO_CHESS_PARAMETERS", build.parameters), ("KALO_CHESS_NOTICES", build.notices)] {
+    for (variable, path) in [("FATTORINI_EVALFILE", build.network), ("FATTORINI_PARAMETERS", build.parameters), ("FATTORINI_NOTICES", build.notices)] {
         match path {
             Some(path) => command.env(variable, absolute(path)?),
             None => command.env_remove(variable),
         };
     }
-    command.env("KALO_CHESS_DESCRIPTION", build.description);
+    command.env("FATTORINI_DESCRIPTION", build.description);
     if build.static_runtime {
         command.env("RUSTFLAGS", STATIC_RUSTFLAGS);
     }
     let status = command.status().map_err(|error| format!("failed to run cargo: {error}"))?;
     if !status.success() {
-        return Err(format!("cargo build --release --bin kalo-chess failed ({status}): nothing written"));
+        return Err(format!("cargo build --release --bin fattorini failed ({status}): nothing written"));
     }
-    let built = format!("{}/release/kalo-chess{}", build.target_dir, std::env::consts::EXE_SUFFIX);
+    let built = format!("{}/release/fattorini{}", build.target_dir, std::env::consts::EXE_SUFFIX);
     // Via `.partial` and a rename: no reader, on Drive or in a match, sees a half-copied `.exe`.
     remote::copy_replacing(&built, out).map_err(|error| error.to_string())
 }
@@ -221,13 +221,13 @@ mod tests {
 
     #[test]
     fn a_new_snapshot_replaces_only_the_same_players_older_ones() {
-        let prefix = "kalo-chess-pesto-untuned-";
-        let stem = "kalo-chess-pesto-untuned-20261106-1532";
-        assert!(is_older_snapshot("kalo-chess-pesto-untuned-20261105-0900.exe", prefix, stem));
-        assert!(!is_older_snapshot("kalo-chess-pesto-untuned-20261106-1532.exe", prefix, stem));
-        assert!(!is_older_snapshot("kalo-chess-pesto-tuned-20261105-0900.exe", prefix, stem));
-        assert!(!is_older_snapshot("kalo-chess-pesto-psq-g1-r1-untuned-20261105-0900.exe", "kalo-chess-pesto-", stem));
-        assert!(!is_older_snapshot("kalo-chess-pesto-untuned-20261105-0900.exe.partial", prefix, stem));
+        let prefix = "fattorini-pesto-untuned-";
+        let stem = "fattorini-pesto-untuned-20261106-1532";
+        assert!(is_older_snapshot("fattorini-pesto-untuned-20261105-0900.exe", prefix, stem));
+        assert!(!is_older_snapshot("fattorini-pesto-untuned-20261106-1532.exe", prefix, stem));
+        assert!(!is_older_snapshot("fattorini-pesto-tuned-20261105-0900.exe", prefix, stem));
+        assert!(!is_older_snapshot("fattorini-pesto-psq-g1-r1-untuned-20261105-0900.exe", "fattorini-pesto-", stem));
+        assert!(!is_older_snapshot("fattorini-pesto-untuned-20261105-0900.exe.partial", prefix, stem));
     }
 
     #[test]

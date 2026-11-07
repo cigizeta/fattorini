@@ -18,8 +18,8 @@ case "${1:-}" in
     *) control=0 ;;
 esac
 if [ "$control" = 0 ] || [ ! -f "$REPO_ROOT/target/release/arena.exe" ]; then
-    # kalo-chess too: every timed match spawns target/release/kalo-chess as a UCI engine, directly rather than
-    # through bin/kalo-chess, so it must be as fresh as the arena itself.
-    cargo build --release --bin arena --bin kalo-chess
+    # fattorini too: every timed match spawns target/release/fattorini as a UCI engine, directly rather than
+    # through bin/fattorini, so it must be as fresh as the arena itself.
+    cargo build --release --bin arena --bin fattorini
 fi
 exec "$REPO_ROOT/target/release/arena.exe" "$@"

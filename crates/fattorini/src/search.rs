@@ -51,7 +51,7 @@ pub(crate) const INFINITY: i32 = i32::MAX;
 
 /// Absolute ceiling on distance from the root (`ply`), spanning main search and quiescence
 /// combined -- real, load-bearing insurance against runaway recursion, not merely symbolic the
-/// way a comparable cap is in an engine with proper repetition detection behind it: Kalo Chess has
+/// way a comparable cap is in an engine with proper repetition detection behind it: Fattorini has
 /// none yet, so nothing else would otherwise stop a perpetual-check-shaped sequence (a capture
 /// that incidentally gives check, chaining into mandatory evasion search, repeating) from
 /// recursing indefinitely.
@@ -84,7 +84,7 @@ pub const MAX_PLY: u32 = 100;
 /// Whether `score` falls in the range that can only mean a detected forced mate for the side
 /// to move -- not a graded "how bad does this look" scale, a narrow binary test. Reused
 /// directly from Stockfish's own `is_loss(Value)` (fetched from `types.h`, not recalled --
-/// CLAUDE.md rule 2), collapsed to one comparison since Kalo Chess has no tablebase layer to
+/// CLAUDE.md rule 2), collapsed to one comparison since Fattorini has no tablebase layer to
 /// distinguish "search proved a mate" from "a tablebase says this is lost" the way Stockfish's
 /// own three-constant version does (see `search.md`'s "Quiescence move-count pruning" design
 /// section for the full derivation). Gates the move-count cap inside `quiescence`: while the
@@ -127,11 +127,11 @@ fn mated_in(ply: u32) -> i32 {
 }
 
 /// Sentinel magnitude for a tablebase-proven win with no known distance to conversion --
-/// Kalo Chess's tablebases (`tablebase.rs`) are WDL-only (no DTZ), so unlike a search-proven mate
+/// Fattorini's tablebases (`tablebase.rs`) are WDL-only (no DTZ), so unlike a search-proven mate
 /// there is no ply count to report here, only "this position is a win." Sits strictly below the
 /// real mate band (`MATE_SCORE - MAX_PLY`) so it can never be confused with one, and strictly
 /// above any ordinary material-only evaluation. Mirrors Stockfish's own real, fetched constant
-/// (`types.h`): `VALUE_TB = VALUE_MATE_IN_MAX_PLY - 1`, translated onto Kalo Chess's own `MATE_SCORE`/
+/// (`types.h`): `VALUE_TB = VALUE_MATE_IN_MAX_PLY - 1`, translated onto Fattorini's own `MATE_SCORE`/
 /// `MAX_PLY` rather than Stockfish's (`246`, chosen for unrelated reasons -- see `MAX_PLY`'s own
 /// doc comment).
 pub const TB_WIN_SCORE: i32 = (MATE_SCORE - MAX_PLY as i32) - 1;
@@ -183,7 +183,7 @@ fn score_to_tt(score: i32, ply: u32) -> i32 {
 }
 
 /// The reverse of `score_to_tt`: a stored, node-relative `score` made relative to the root again
-/// from the node at `ply`. Stockfish's `value_from_tt`, without its fifty-move guard (Kalo Chess scores a
+/// from the node at `ply`. Stockfish's `value_from_tt`, without its fifty-move guard (Fattorini scores a
 /// fifty-move draw as `0` when the search reaches it, so leaving the guard out costs only a rare
 /// stored mate that the rule turns into a draw).
 fn score_from_tt(score: i32, ply: u32) -> i32 {
@@ -458,7 +458,7 @@ const NULL_MOVE_BASE_PLIES: u32 = 3;
 
 /// The null search loses one more ply per this much remaining depth: about 5 plies at depth 9 and 6
 /// at depth 13. Stockfish's form around its versions 9 and 10; its later `7 + depth / 3` prunes far
-/// harder, tuned together with features Kalo Chess lacks, and Kalo Chess does not prune harder.
+/// harder, tuned together with features Fattorini lacks, and Fattorini does not prune harder.
 const NULL_MOVE_DEPTH_DIVISOR: u32 = 4;
 
 /// The most extra plies the evaluation's margin over beta adds, one per null move margin: a position
@@ -484,7 +484,7 @@ fn null_move_plies(remaining: u32, eval_margin: i32, margin_per_ply: i32) -> u32
 
 /// Internal Iterative Reduction: a node with no TT move to order by is searched one ply shallower.
 /// One ply at every node type; Stockfish's larger reductions on cut nodes rest on node types, which
-/// Kalo Chess does not track.
+/// Fattorini does not track.
 const IIR_REDUCTION: u32 = 1;
 
 /// The least remaining depth IIR applies at: four, Stockfish's `depth >= 4`. Shallower, a missing TT
@@ -643,7 +643,7 @@ fn try_killer(moves: &mut [Move], from: usize, until: usize, killer: Option<Move
 
 /// Looks up `history`'s recorded bonus for `mv`, indexed by the moving piece and destination
 /// square -- `[piece][to]`, not `[from][to]` (see the design doc for why this shape fits
-/// Kalo Chess's own node-count scale better than the other standard one). The piece is read straight
+/// Fattorini's own node-count scale better than the other standard one). The piece is read straight
 /// off `board` at `mv`'s own origin square: `board` here is always the position *before* `mv`
 /// is made, so `mv.from()` is guaranteed to hold whichever piece is about to move.
 fn history_score(history: &[[i32; 64]; 12], board: &Board, mv: Move) -> i32 {
@@ -730,7 +730,7 @@ fn is_quiet(board: &Board, mv: Move) -> bool {
 /// "just try a different quiet move" isn't a safe substitute -- the identical reasoning
 /// null-move pruning's own zugzwang guard needs this same check for (see
 /// `is_null_move_pruning_applicable`'s own call site in `alpha_beta_with_buffer`), not a
-/// hypothetical technique Kalo Chess doesn't have -- both consumers share this one function rather
+/// hypothetical technique Fattorini doesn't have -- both consumers share this one function rather
 /// than each rolling their own copy of the same material check.
 fn has_non_pawn_material(board: &Board, color: Color) -> bool {
     board.bitboard(Piece::new(color, PieceType::Knight)) != Bitboard::EMPTY
@@ -773,7 +773,7 @@ fn is_late_move_pruned(
 /// reduced-depth probe before the normal null-window scout. `remaining >= 3`, not Stockfish's own
 /// literal entry gate (`depth >= 2`, fetched, not recalled -- rule 2): Stockfish's real formula
 /// pairs that entry gate with its own floor (`std::max(1, ...)`) guaranteeing the reduced child
-/// never drops below 1 ply of real search of its own. Kalo Chess's reduction is expressed as `lmr_
+/// never drops below 1 ply of real search of its own. Fattorini's reduction is expressed as `lmr_
 /// reduction(remaining, moves_tried)` extra plies taken from `target_depth` on top of the move's
 /// own normal decrement (see the call site and `lmr_reduction`'s own doc comment for why `remaining
 /// >= 3` is still exactly the right floor even now that the reduction itself grows with `remaining`
@@ -1843,7 +1843,7 @@ impl<'a> Search<'a> {
             // the tree, or a deeper iterative-deepening depth -- gets a free, still-
             // correct hit instead of re-probing the table from scratch. `Bound::Exact`
             // (already true, not a choice -- see `wdl_to_result`'s own doc comment for
-            // why Kalo Chess's collapsed three-way TbResult carries no cursed-value ambiguity
+            // why Fattorini's collapsed three-way TbResult carries no cursed-value ambiguity
             // left to represent as a Lower/Upper bound the way Stockfish's own five-way
             // Wdl still needs to). `MAX_PLY` as the stored depth, not this node's own
             // `remaining`: unlike an ordinary search score (only as trustworthy as how
@@ -1870,7 +1870,7 @@ impl<'a> Search<'a> {
         // from Stockfish's own version (it has no such gate): a bare cutoff here reports a score
         // with no legal move and no `pv[0]` behind it, the identical `bestmove 0000` bug class
         // the TT probe, razoring, and reverse futility pruning below already guard against --
-        // Kalo Chess's own `pv` mechanism is why this needs the gate, not a disagreement with
+        // Fattorini's own `pv` mechanism is why this needs the gate, not a disagreement with
         // Stockfish's own reasoning.
         alpha = alpha.max(mated_in(ply));
         beta = beta.min(mate_in(ply + 1));
@@ -2456,7 +2456,7 @@ impl<'a> Search<'a> {
                             // the missing depth won't matter because this move wasn't going to
                             // beat `alpha` anyway. `target_depth - lmr_reduction(remaining,
                             // moves_tried)` is how "that many plies less remaining" is expressed
-                            // here -- Kalo Chess has no separate depth-budget parameter to shrink the
+                            // here -- Fattorini has no separate depth-budget parameter to shrink the
                             // way Stockfish does, but `remaining = target_depth - ply` everywhere
                             // else in this function means handing the child a smaller
                             // `target_depth` already *is* handing it less remaining depth, by that
@@ -3981,7 +3981,7 @@ pub fn choose_best_move_multipv_with_progress(
 /// thread, plus a special case preferring the shorter mate. Deliberately not adopted here -- that
 /// vote is a hedge against threads genuinely disagreeing, which only pays for itself statistically
 /// at Stockfish's own much larger thread counts, and needs a `RootMove` list with vote-tracking
-/// infrastructure Kalo Chess doesn't have. A directionally-reasoned simplification, not a measured one,
+/// infrastructure Fattorini doesn't have. A directionally-reasoned simplification, not a measured one,
 /// to revisit only if real multi-threaded self-play data ever shows threads disagreeing often
 /// enough for it to matter.
 ///
@@ -4978,7 +4978,7 @@ mod tests {
 
     #[test]
     fn apply_history_bonus_clamps_an_oversized_bonus_to_max_before_applying_it() {
-        // A single event's raw bonus can exceed `max` outright (Kalo Chess's own flat-history bonus
+        // A single event's raw bonus can exceed `max` outright (Fattorini's own flat-history bonus
         // does, at deep plies: see `FLAT_HISTORY_MAX`'s own doc comment) -- it must still behave
         // exactly as if `max` itself had been passed, not overshoot in one step.
         let mut clamped = 0;
@@ -5800,8 +5800,8 @@ mod tests {
 
     #[test]
     fn a_deep_tt_hit_at_the_root_still_produces_a_real_move_not_an_empty_pv() {
-        // A real position from an actual Kalo Chess against Stockfish game (cutechess-cli, 5+3):
-        // 1.d4 d5 2.Qd3 c5 3.dxc5 Nf6 4.e4 Nxe4 5.Nc3 Nxc3, White to move. Kalo Chess reported an
+        // A real position from an actual Fattorini against Stockfish game (cutechess-cli, 5+3):
+        // 1.d4 d5 2.Qd3 c5 3.dxc5 Nf6 4.e4 Nxe4 5.Nc3 Nxc3, White to move. Fattorini reported an
         // illegal `bestmove 0000` here even though White has plenty of legal replies (bxc3,
         // Qxc3, and everything else -- White isn't even in check) -- root-caused to the TT
         // cutoff above firing at `ply == 0` itself, whenever this exact position already had

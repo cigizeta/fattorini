@@ -11,7 +11,7 @@
 //! - `write`, at `points` or `counts` weights: the graph's moves played at least N times (the
 //!   graph's own N), as the Polyglot book `book-n<N>-<weights>.bin` and its record
 //!   `book-n<N>-<weights>.txt`. No min-score
-//!   and no search: Kalo Chess's search, tried as a correction of the masters' shares, moved them by about
+//!   and no search: Fattorini's search, tried as a correction of the masters' shares, moved them by about
 //!   3 cp at the root, not worth a network and an hour per book.
 //!
 //! **N from the database's size.** `N = max(3, ceil(10 * (G / 1,000,000)^alpha))`, G the games read.
@@ -51,9 +51,9 @@ use std::time::{Duration, Instant};
 use pgn_reader::{RawTag, Reader, SanPlus, Visitor};
 use serde::{Deserialize, Serialize};
 
-use kalo_chess::board::chess_move::Move;
-use kalo_chess::board::Board;
-use kalo_chess::polyglot::{book_bytes, polyglot_key, polyglot_move, scaled_weights, Entry};
+use fattorini::board::chess_move::Move;
+use fattorini::board::Board;
+use fattorini::polyglot::{book_bytes, polyglot_key, polyglot_move, scaled_weights, Entry};
 
 use pgn_replay::{try_resolve_san, STARTING_POSITION_FEN};
 use super::remote;

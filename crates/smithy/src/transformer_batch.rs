@@ -138,11 +138,11 @@ fn kings_only_mask(sequences: &[Vec<usize>], seq_len: usize) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalo_chess::features::{extract_canonical, CanonicalPosition};
-    use kalo_chess::board::castling_rights::CastlingRights;
-    use kalo_chess::board::color::Color;
-    use kalo_chess::board::square::Square;
-    use kalo_chess::board::Board;
+    use fattorini::features::{extract_canonical, CanonicalPosition};
+    use fattorini::board::castling_rights::CastlingRights;
+    use fattorini::board::color::Color;
+    use fattorini::board::square::Square;
+    use fattorini::board::Board;
     use tch::Kind;
 
     const STARTING_POSITION_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

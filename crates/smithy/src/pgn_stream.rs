@@ -24,8 +24,8 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 use super::cache::{CacheRecord, Progress};
-use kalo_chess::labels::Curve;
-use kalo_chess::tablebase::SyzygyTablebase;
+use fattorini::labels::Curve;
+use fattorini::tablebase::SyzygyTablebase;
 
 use super::game_labels::{self_play_game_kept, self_play_game_labels, self_play_game_tablebase, ReadWait, SelfPlaySegmentReader, Stopped};
 
@@ -312,7 +312,7 @@ mod tests {
             keep_probability,
             seed: 1,
             tablebase: None,
-            curve: Curve::Atan(kalo_chess::labels::LC0_FILES),
+            curve: Curve::Atan(fattorini::labels::LC0_FILES),
             stop: None,
         }
     }
@@ -356,8 +356,8 @@ mod tests {
             let mut reader = SelfPlaySegmentReader::open(&path);
             while let Some((game_index, collected)) = reader.next_game(&path) {
                 let keeps = self_play_game_kept(&collected, game_index).1;
-                let first = self_play_game_labels(&collected, 0.7, game_index, &Curve::Atan(kalo_chess::labels::LC0_FILES));
-                let second = self_play_game_labels(&collected, 1.0, game_index, &Curve::Atan(kalo_chess::labels::LC0_FILES));
+                let first = self_play_game_labels(&collected, 0.7, game_index, &Curve::Atan(fattorini::labels::LC0_FILES));
+                let second = self_play_game_labels(&collected, 1.0, game_index, &Curve::Atan(fattorini::labels::LC0_FILES));
                 reader_labels.extend(first.into_iter().zip(second).zip(keeps).filter(|&(_, keep)| keep).map(|(pair, _)| pair));
             }
         }

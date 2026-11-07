@@ -1,27 +1,27 @@
-//! Self-play games: Kalo Chess playing itself, in-process -- no UCI subprocess, no
+//! Self-play games: Fattorini playing itself, in-process -- no UCI subprocess, no
 //! `EngineRegistry`/`UciClient`, both of which exist specifically for driving *arbitrary external*
 //! engines -- at a fixed depth. `chores` plays them for `smithy start --forge`'s self-play
 //! chores and sends each to the smithy as it ends. Without a trained network, it plays with the PeSTO
-//! evaluation (`eval::evaluate`) a plain `kalo-chess` build uses.
+//! evaluation (`eval::evaluate`) a plain `fattorini` build uses.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use rand::RngExt;
 
-use kalo_chess::board::chess_move::Move;
-use kalo_chess::board::color::Color;
-use kalo_chess::board::Board;
-use kalo_chess::movegen::attacks::is_in_check;
-use kalo_chess::movegen::legal::legal_moves;
-use kalo_chess::nnue::Network;
-use kalo_chess::search::{
+use fattorini::board::chess_move::Move;
+use fattorini::board::color::Color;
+use fattorini::board::Board;
+use fattorini::movegen::attacks::is_in_check;
+use fattorini::movegen::legal::legal_moves;
+use fattorini::nnue::Network;
+use fattorini::search::{
     choose_best_move_multipv_with_progress, choose_best_move_with_progress, is_insufficient_material, MultiPvLine, SearchParameters,
     MATE_SCORE, MAX_PLY,
 };
-use kalo_chess::tablebase::SyzygyTablebase;
-use kalo_chess::tt::TranspositionTable;
-use kalo_chess::uci::format_move;
+use fattorini::tablebase::SyzygyTablebase;
+use fattorini::tt::TranspositionTable;
+use fattorini::uci::format_move;
 
 use super::pgn::{self, GameHeaders, MoveAnnotation, Termination};
 use super::tablebase_label::{self_play_tablebase_move, tablebase_score};
@@ -29,7 +29,7 @@ use super::tablebase_label::{self_play_tablebase_move, tablebase_score};
 /// The tests' search depth, the server's: the labels are Search(9) scores, and the round robin ranks
 /// the candidates under that same search. A client plays the depth its order gives.
 #[cfg(test)]
-const DEFAULT_SEARCH_DEPTH: u32 = kalo_chess::pipeline::generation::SEARCH_DEPTH;
+const DEFAULT_SEARCH_DEPTH: u32 = fattorini::pipeline::generation::SEARCH_DEPTH;
 /// Per game, both sides sharing it, fixed. The arena's default (`engines.rs`): a depth-9 search
 /// needs about 1 MB of entries, so 16 MB is ample and keeps a game per core within a small machine's
 /// memory.
@@ -70,7 +70,7 @@ pub(crate) fn play_game_pgn(
     };
     let pgn_text = pgn::format_game(
         &GameHeaders {
-            event: "kalo-chess self-play".to_string(),
+            event: "fattorini self-play".to_string(),
             round: 0,
             white: player.to_string(),
             black: player.to_string(),
@@ -248,7 +248,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    use kalo_chess::tablebase::TbResult;
+    use fattorini::tablebase::TbResult;
 
     use super::super::data_root;
 
@@ -296,22 +296,22 @@ mod tests {
         }
     }
 
-    /// Self-play's speed on this machine without a smithy: `KALO_CHESS_SELF_PLAYER` (a network's name, or
+    /// Self-play's speed on this machine without a smithy: `FATTORINI_SELF_PLAYER` (a network's name, or
     /// `pesto`) playing itself as a chore's worker plays it (`play_game_pgn`, a 16 MB table each,
     /// cleared between games, the data root's book and tables), a game per logical core, for
-    /// `KALO_CHESS_SELF_SECONDS` (default 600). Prints every minute the positions a second since the start,
+    /// `FATTORINI_SELF_SECONDS` (default 600). Prints every minute the positions a second since the start,
     /// each game's final one included, and the games. Run with the machine otherwise idle.
     #[test]
-    #[ignore = "a timing on this machine: KALO_CHESS_SELF_PLAYER names the player"]
+    #[ignore = "a timing on this machine: FATTORINI_SELF_PLAYER names the player"]
     fn self_play_speed() {
         use std::sync::atomic::AtomicU64;
         use std::sync::Arc;
 
-        let player = std::env::var("KALO_CHESS_SELF_PLAYER").expect("KALO_CHESS_SELF_PLAYER: a network's name, or pesto");
-        let seconds: u64 = std::env::var("KALO_CHESS_SELF_SECONDS").map_or(600, |text| text.parse().expect("KALO_CHESS_SELF_SECONDS: seconds"));
+        let player = std::env::var("FATTORINI_SELF_PLAYER").expect("FATTORINI_SELF_PLAYER: a network's name, or pesto");
+        let seconds: u64 = std::env::var("FATTORINI_SELF_SECONDS").map_or(600, |text| text.parse().expect("FATTORINI_SELF_SECONDS: seconds"));
         std::env::set_current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).expect("the repository root");
         let network = (player != "pesto").then(|| {
-            let path = kalo_chess::pipeline::players::resolve_network_file(&player).unwrap_or_else(|problem| panic!("{problem}"));
+            let path = fattorini::pipeline::players::resolve_network_file(&player).unwrap_or_else(|problem| panic!("{problem}"));
             Arc::new(Network::load(&path).unwrap_or_else(|problem| panic!("{problem}")))
         });
         let tablebase = Arc::new(data_root::load_tablebase());

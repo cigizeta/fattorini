@@ -29,27 +29,27 @@ pub fn pesto_parameters() -> Result<Option<SearchParameters>, String> {
     SearchParameters::read_file(&remote::remote_path(&local))
 }
 
-/// A Kalo Chess player as a tune sees it: the network it evaluates with (`None` for pesto), where
+/// A Fattorini player as a tune sees it: the network it evaluates with (`None` for pesto), where
 /// its tuned parameters are read and written, and the folder its tune keeps its files in.
 #[derive(Debug, Clone, PartialEq)]
-pub struct KaloChessPlayer {
+pub struct FattoriniPlayer {
     pub network: Option<String>,
     pub parameters_path: String,
     pub tune_dir: String,
 }
 
-impl KaloChessPlayer {
+impl FattoriniPlayer {
     /// `name`, `pesto` or a network player, from this machine's files alone
     /// (`resolve_network_file`).
-    pub fn resolve(name: &str) -> Result<KaloChessPlayer, String> {
-        KaloChessPlayer::resolve_under(name, &|path| path.to_string())
+    pub fn resolve(name: &str) -> Result<FattoriniPlayer, String> {
+        FattoriniPlayer::resolve_under(name, &|path| path.to_string())
     }
 
     /// `resolve`, every local path placed by `local`, which maps a path under `data/` to where this
     /// process keeps it. The remote is the mirrored tree's, as always.
-    pub fn resolve_under(name: &str, local: &dyn Fn(&str) -> String) -> Result<KaloChessPlayer, String> {
+    pub fn resolve_under(name: &str, local: &dyn Fn(&str) -> String) -> Result<FattoriniPlayer, String> {
         if name == super::protocol::PESTO {
-            return Ok(KaloChessPlayer {
+            return Ok(FattoriniPlayer {
                 network: None,
                 parameters_path: local(&format!("{PESTO_TUNING_DIR}/parameters.txt")),
                 tune_dir: local(PESTO_TUNING_DIR),
@@ -61,7 +61,7 @@ impl KaloChessPlayer {
         // `tune/`. A candidate has no tune of its own: the `parameters.txt` beside it exists only when
         // it is the winner, and is then the winner's, so it points at the winner's folder too.
         let tune_dir = local(&format!("{}/{}/tune", run_dir(&parsed.run())?, generation_dir_name(parsed.generation)));
-        Ok(KaloChessPlayer { parameters_path: nnue::parameters_file_beside(&network), network: Some(network), tune_dir })
+        Ok(FattoriniPlayer { parameters_path: nnue::parameters_file_beside(&network), network: Some(network), tune_dir })
     }
 
     /// The parameters it plays with when its name has no suffix: a network's file beside it,
@@ -233,7 +233,7 @@ pub fn resolve_network_file(name: &str) -> Result<String, String> {
     resolve_network_file_under(name, &|path| path.to_string())
 }
 
-/// `resolve_network_file`, this machine's runs placed by `local` (`KaloChessPlayer::resolve_under`).
+/// `resolve_network_file`, this machine's runs placed by `local` (`FattoriniPlayer::resolve_under`).
 fn resolve_network_file_under(name: &str, local: &dyn Fn(&str) -> String) -> Result<String, String> {
     // A name that is no network's is said once, not looked for twice.
     parse_network_name(name)?;
@@ -368,7 +368,7 @@ mod tests {
 
     /// A fresh temporary root named after `test`, with its network and run directory functions.
     fn root(test: &str) -> String {
-        let root = std::env::temp_dir().join(format!("kalo-chess-players-{test}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("fattorini-players-{test}-{}", std::process::id()));
         let root = root.to_str().unwrap().to_string();
         std::fs::remove_dir_all(&root).ok();
         root
@@ -420,7 +420,7 @@ mod tests {
             "generation\twinner\tgate_games\tgate_share\tpassed\n1\t0.03\t300\t0.5600\ttrue\n",
         )
         .unwrap();
-        let tune_dir = |name: &str| KaloChessPlayer::resolve_under(name, &local).unwrap().tune_dir;
+        let tune_dir = |name: &str| FattoriniPlayer::resolve_under(name, &local).unwrap().tune_dir;
         assert_eq!(tune_dir("fine-g1-r1"), format!("{generation_dir}/tune"), "the winner's, its generation's");
         assert_eq!(tune_dir("fine-g1-l0.03-r1"), format!("{generation_dir}/tune"), "a candidate has none of its own");
         std::fs::remove_dir_all(&root).ok();

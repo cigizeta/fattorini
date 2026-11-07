@@ -1,5 +1,5 @@
-//! A UCI *client*: Kalo Chess driving an arbitrary engine subprocess over its own stdin/stdout --
-//! the reverse role of `uci.rs`, which is a UCI *server* (Kalo Chess answering as the engine).
+//! A UCI *client*: Fattorini driving an arbitrary engine subprocess over its own stdin/stdout --
+//! the reverse role of `uci.rs`, which is a UCI *server* (Fattorini answering as the engine).
 //! `uci.rs`'s command-parsing/dispatch loop is not reusable here; only its pure move-notation
 //! functions (`format_move`/`parse_move`) are shared surface -- see the tournament design's "1. UCI
 //! client" section.

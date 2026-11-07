@@ -9,11 +9,11 @@
 //! sub-1% regression, just the order-of-magnitude change real pruning should produce, so one
 //! deterministic pass per position is enough.
 //!
-//! Runs each position through an external UCI engine -- Kalo Chess's own compiled binary by
+//! Runs each position through an external UCI engine -- Fattorini's own compiled binary by
 //! default, or any other engine via `--engine PATH` -- single-threaded with a fixed hash
-//! size, rather than calling into Kalo Chess's `search` module in-process: one engine, one code
+//! size, rather than calling into Fattorini's `search` module in-process: one engine, one code
 //! path, one way of measuring every engine compared this way, so the comparison is never
-//! skewed by different engines being measured differently. Reading Kalo Chess's own node/time
+//! skewed by different engines being measured differently. Reading Fattorini's own node/time
 //! numbers back over UCI also keeps this benchmark honest about what a real `go depth N`
 //! reports, the same numbers a GUI would see.
 //!
@@ -22,14 +22,14 @@
 //! Defaults to depth 4 when no flag is given.
 //!
 //! `--engine PATH` (space-separated, same as `--depth N`) runs the suite through that
-//! external UCI engine instead of Kalo Chess -- one engine per run, not a combined report, so
-//! comparing several is just diffing each run's own `total` line (e.g. Kalo Chess, Stockfish, and
+//! external UCI engine instead of Fattorini -- one engine per run, not a combined report, so
+//! comparing several is just diffing each run's own `total` line (e.g. Fattorini, Stockfish, and
 //! a third UCI engine, three separate invocations). The report line's own engine name is
 //! taken from `PATH`'s file name, not hardcoded, so it's accurate for whichever binary is
 //! passed -- `--engine stockfish` (resolved via `$PATH`, same as typing `stockfish` at a
 //! shell) reports as "stockfish", `--engine /some/other/engine` reports as "other-engine".
-//! Running Kalo Chess itself (the default, no flag needed) reads its compiled `[[bin]]` from
-//! `target/release/kalo-chess`, which `cargo bench` does not build
+//! Running Fattorini itself (the default, no flag needed) reads its compiled `[[bin]]` from
+//! `target/release/fattorini`, which `cargo bench` does not build
 //! automatically -- run `cargo build --release` first.
 
 use std::io::{BufRead, BufReader, Write};
@@ -38,7 +38,7 @@ use std::process::{Command, Stdio};
 const TT_SIZE_MB: usize = 64;
 const DEFAULT_DEPTH: u32 = 4;
 
-use kalo_chess::bench_positions::POSITIONS;
+use fattorini::bench_positions::POSITIONS;
 
 /// Reads `--depth N` from the process's own arguments (not `cargo bench`'s -- the `--`
 /// separator on the command line forwards everything after it straight to this binary).
@@ -64,8 +64,8 @@ fn parse_depth_arg() -> u32 {
 /// arbitrary engines the way `"stockfish"` was a reasonable one for Stockfish specifically -- so
 /// `=`'s original justification never applied here, and this project's own file-wide
 /// consistency matters more than preserving an inherited convention that no longer earns its
-/// keep. `Some(path)` means run the suite through that external UCI engine instead of Kalo Chess;
-/// `None` means the flag wasn't passed, the original default, Kalo Chess alone.
+/// keep. `Some(path)` means run the suite through that external UCI engine instead of Fattorini;
+/// `None` means the flag wasn't passed, the original default, Fattorini alone.
 fn parse_engine_arg() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     for i in 0..args.len() {
@@ -77,14 +77,14 @@ fn parse_engine_arg() -> Option<String> {
     None
 }
 
-/// Path to Kalo Chess's own compiled `[[bin]]`, used when `--engine` isn't given. `cargo bench`
-/// only builds this benchmark's own binary, not `[[bin]] kalo-chess` -- running Kalo Chess over UCI
+/// Path to Fattorini's own compiled `[[bin]]`, used when `--engine` isn't given. `cargo bench`
+/// only builds this benchmark's own binary, not `[[bin]] fattorini` -- running Fattorini over UCI
 /// needs that binary to already exist, so this is a `cargo build --release` prerequisite,
 /// not something this benchmark builds for you. `CARGO_MANIFEST_DIR` is baked in at compile
 /// time, so the resulting path is correct regardless of where `cargo bench` is actually
 /// invoked from. The workspace's `target/` is two levels above this crate.
-fn default_kalo_chess_binary_path() -> String {
-    format!("{}/../../target/release/kalo-chess{}", env!("CARGO_MANIFEST_DIR"), std::env::consts::EXE_SUFFIX)
+fn default_fattorini_binary_path() -> String {
+    format!("{}/../../target/release/fattorini{}", env!("CARGO_MANIFEST_DIR"), std::env::consts::EXE_SUFFIX)
 }
 
 /// Formats `n` with `,` as a thousands separator (e.g. `23426862` -> `"23,426,862"`).
@@ -108,7 +108,7 @@ fn send_uci(stdin: &mut std::process::ChildStdin, command: &str) {
     writeln!(stdin, "{command}").expect("failed to write to the engine's stdin");
 }
 
-/// Runs one suite entry through an external UCI engine at a fixed depth -- Kalo Chess and
+/// Runs one suite entry through an external UCI engine at a fixed depth -- Fattorini and
 /// Stockfish alike, both spoken to the same way: single-threaded, `TT_SIZE_MB` MB of hash,
 /// searched via `go depth N`. `entry` is passed straight through as `position fen <entry>`
 /// -- it already has any trailing `moves ...` in exactly the shape UCI's own `position`
@@ -188,15 +188,15 @@ fn main() {
 
     // The report line's own engine name: derived from `path`'s own file name for `--engine`
     // (so an arbitrary third engine reports as itself, not as a hardcoded "stockfish"), or
-    // the plain `"kalo-chess"` literal for the no-flag default -- `default_kalo_chess_binary_path()`'s
-    // own file name would technically also just be `"kalo-chess"`, but naming it directly here
+    // the plain `"fattorini"` literal for the no-flag default -- `default_fattorini_binary_path()`'s
+    // own file name would technically also just be `"fattorini"`, but naming it directly here
     // avoids depending on that path's own shape for something this simple.
     let (engine_name, binary) = match &engine_binary {
         Some(path) => {
             let name = std::path::Path::new(path).file_name().and_then(|f| f.to_str()).unwrap_or(path).to_string();
             (name, path.clone())
         }
-        None => ("kalo-chess".to_string(), default_kalo_chess_binary_path()),
+        None => ("fattorini".to_string(), default_fattorini_binary_path()),
     };
     println!(
         "search_bench: engine {engine_name} ({binary}), depth {depth}, {} positions, {TT_SIZE_MB} MB hash, single-threaded",

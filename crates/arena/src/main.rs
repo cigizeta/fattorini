@@ -21,7 +21,7 @@
 //! each other's clocks (`cpu_topology.rs`), and one pair per logical core at a fixed depth, where
 //! timing does not matter.
 //!
-//! `smithy` and this binary talk only through the files `kalo_chess::pipeline` defines.
+//! `smithy` and this binary talk only through the files `fattorini::pipeline` defines.
 
 mod best_of;
 mod bracket;
@@ -66,7 +66,7 @@ use runner::{Labels, Placement, Resolution, Run};
 use sprt::Sprt;
 
 // Self-play's threads all allocate at once, and Windows' system allocator does not scale with them;
-// the measurement is beside `mimalloc` in Cargo.toml. The engine `kalo-chess` keeps the system
+// the measurement is beside `mimalloc` in Cargo.toml. The engine `fattorini` keeps the system
 // allocator: a GUI game searches with one thread unless told otherwise.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -121,9 +121,9 @@ fn print_usage_and_exit() -> ! {
     eprintln!("                    together must stay under half the machine's RAM");
     eprintln!("  games are played in colour-reversed pairs");
     eprintln!("  a player is stockfish-<level> (0 to 20), stockfish-elo-<rating> (1320 to 3190), an engine of");
-    eprintln!("  data/engines.yaml, or a Kalo Chess player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
+    eprintln!("  data/engines.yaml, or a Fattorini player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
     eprintln!("  or <config>-g<g>-l<lambda>-r<n>, that lambda's candidate in generation g");
-    eprintln!("  a Kalo Chess player is always followed by what it searches with: @tuned, its tune, or @untuned,");
+    eprintln!("  a Fattorini player is always followed by what it searches with: @tuned, its tune, or @untuned,");
     eprintln!("  the defaults; against an external engine it plays over UCI, built first with both embedded");
     process::exit(1);
 }
@@ -208,9 +208,9 @@ fn parse_flags(flags: &[String]) -> Result<(ControlSpec, usize), String> {
                 let mb: usize = value
                     .parse()
                     .ok()
-                    .filter(|mb| (kalo_chess::uci::HASH_MB_MIN..=kalo_chess::uci::HASH_MB_MAX).contains(mb))
+                    .filter(|mb| (fattorini::uci::HASH_MB_MIN..=fattorini::uci::HASH_MB_MAX).contains(mb))
                     .ok_or_else(|| {
-                        format!("--hash is {} to {} MB, got {value:?}", kalo_chess::uci::HASH_MB_MIN, kalo_chess::uci::HASH_MB_MAX)
+                        format!("--hash is {} to {} MB, got {value:?}", fattorini::uci::HASH_MB_MIN, fattorini::uci::HASH_MB_MAX)
                     })?;
                 hash_mb.replace(mb).is_some()
             }

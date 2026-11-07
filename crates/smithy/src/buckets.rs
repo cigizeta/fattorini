@@ -38,12 +38,12 @@ use std::time::Instant;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use kalo_chess::features::CanonicalPosition;
-use kalo_chess::pipeline::data_root;
-use kalo_chess::labels::Curve;
-use kalo_chess::tablebase::SyzygyTablebase;
+use fattorini::features::CanonicalPosition;
+use fattorini::pipeline::data_root;
+use fattorini::labels::Curve;
+use fattorini::tablebase::SyzygyTablebase;
 
-use kalo_chess::pipeline::preprocessing_config::ArmLambda;
+use fattorini::pipeline::preprocessing_config::ArmLambda;
 
 use super::cache::{self, CacheRecord, Progress};
 use super::polyline::Polyline;
@@ -569,7 +569,7 @@ impl Drop for BucketStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalo_chess::labels::{LC0_FILES, LOGISTIC};
+    use fattorini::labels::{LC0_FILES, LOGISTIC};
 
     /// Lc0's corpus as the tests' fixtures are written: through the frozen curve.
     const LC0_CURVE: Curve = Curve::Atan(LC0_FILES);

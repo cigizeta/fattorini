@@ -89,7 +89,7 @@ name = "arena"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
- "kalo-chess",
+ "fattorini",
  "lan-http",
  "log",
  "mimalloc",
@@ -443,6 +443,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
+name = "fattorini"
+version = "0.1.0"
+dependencies = [
+ "num_enum",
+ "pgn-reader",
+ "serde",
+ "serde_yaml",
+ "shakmaty",
+ "shakmaty-syzygy",
+ "windows-sys",
+ "zstd 0.13.3",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -753,24 +767,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "kalo-chess"
-version = "0.1.0"
-dependencies = [
- "num_enum",
- "pgn-reader",
- "serde",
- "serde_yaml",
- "shakmaty",
- "shakmaty-syzygy",
- "windows-sys",
- "zstd 0.13.3",
-]
-
-[[package]]
 name = "lan-http"
 version = "0.1.0"
 dependencies = [
- "kalo-chess",
+ "fattorini",
  "tiny_http",
  "ureq",
 ]
@@ -1022,7 +1022,7 @@ dependencies = [
 name = "pgn-replay"
 version = "0.1.0"
 dependencies = [
- "kalo-chess",
+ "fattorini",
  "shakmaty",
 ]
 
@@ -1384,8 +1384,8 @@ name = "smithy"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "fattorini",
  "flate2",
- "kalo-chess",
  "lan-http",
  "log",
  "pgn-reader",

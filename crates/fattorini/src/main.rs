@@ -1,4 +1,4 @@
-/// `kalo-chess` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
+/// `fattorini` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
 /// `config.yml` (`engine_options`), pins each game's engine to its own physical cores
 /// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints the third-party notices
 /// a release embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
@@ -10,20 +10,20 @@ fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     match arguments.as_slice() {
-        [] => kalo_chess::uci::run(false),
-        ["--lichess"] => kalo_chess::uci::run(true),
+        [] => fattorini::uci::run(false),
+        ["--lichess"] => fattorini::uci::run(true),
         ["about"] => about(),
         ["licenses"] => licenses(),
-        ["bench"] => run_bench(kalo_chess::bench::BENCH_DEPTH),
+        ["bench"] => run_bench(fattorini::bench::BENCH_DEPTH),
         ["bench", depth] => match depth.parse::<u32>() {
             Ok(depth) if depth > 0 => run_bench(depth),
             _ => {
-                eprintln!("kalo-chess bench: the depth must be a positive integer, not {depth}");
+                eprintln!("fattorini bench: the depth must be a positive integer, not {depth}");
                 std::process::exit(2);
             }
         },
         _ => {
-            eprintln!("usage: kalo-chess [--lichess] | kalo-chess about | kalo-chess licenses | kalo-chess bench [<depth>]");
+            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini bench [<depth>]");
             std::process::exit(2);
         }
     }
@@ -47,24 +47,24 @@ fn refuse_an_older_cpu() {
     }
     if !missing.is_empty() {
         eprintln!(
-            "kalo-chess needs an x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell or later, AMD Zen or later; this one lacks {}",
+            "fattorini needs an x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell or later, AMD Zen or later; this one lacks {}",
             missing.join(", ")
         );
         std::process::exit(1);
     }
 }
 
-/// `kalo-chess bench [<depth>]`, with what the build embeds, as the engine plays.
+/// `fattorini bench [<depth>]`, with what the build embeds, as the engine plays.
 fn run_bench(depth: u32) {
-    let evaluator = kalo_chess::uci::embedded_evaluator();
-    let parameters = kalo_chess::uci::embedded_parameters();
-    let (nodes, seconds) = kalo_chess::bench::bench_with(evaluator.as_deref(), parameters, depth);
-    println!("{}", kalo_chess::bench::bench_line(nodes, seconds));
+    let evaluator = fattorini::uci::embedded_evaluator();
+    let parameters = fattorini::uci::embedded_parameters();
+    let (nodes, seconds) = fattorini::bench::bench_with(evaluator.as_deref(), parameters, depth);
+    println!("{}", fattorini::bench::bench_line(nodes, seconds));
 }
 
-/// `kalo-chess licenses`: the third-party notices, which only a release embeds.
+/// `fattorini licenses`: the third-party notices, which only a release embeds.
 fn licenses() {
-    let notices = kalo_chess::uci::embedded_notices();
+    let notices = fattorini::uci::embedded_notices();
     if notices.is_empty() {
         println!("no notices embedded: a development build");
     } else {
@@ -72,12 +72,12 @@ fn licenses() {
     }
 }
 
-/// `kalo-chess about`: what the build embeds, as its description says.
+/// `fattorini about`: what the build embeds, as its description says.
 fn about() {
-    let description = kalo_chess::uci::embedded_description();
+    let description = fattorini::uci::embedded_description();
     if description.is_empty() {
-        println!("Kalo Chess {}: a development build, PeSTO, untuned", env!("CARGO_PKG_VERSION"));
+        println!("Fattorini {}: a development build, PeSTO, untuned", env!("CARGO_PKG_VERSION"));
     } else {
-        println!("Kalo Chess {} {description}", env!("CARGO_PKG_VERSION"));
+        println!("Fattorini {} {description}", env!("CARGO_PKG_VERSION"));
     }
 }

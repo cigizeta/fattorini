@@ -75,10 +75,10 @@ impl BatchSource for GroupedTestSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalo_chess::board::castling_rights::CastlingRights;
-    use kalo_chess::board::color::Color;
-    use kalo_chess::board::square::Square;
-    use kalo_chess::features::CanonicalPosition;
+    use fattorini::board::castling_rights::CastlingRights;
+    use fattorini::board::color::Color;
+    use fattorini::board::square::Square;
+    use fattorini::features::CanonicalPosition;
 
     /// A flat source over `records`, read in order and stopping short at its end, as `CacheFile` is.
     struct Flat(Vec<CacheRecord>);

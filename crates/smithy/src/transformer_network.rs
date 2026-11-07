@@ -1,4 +1,4 @@
-//! Step 4 (the transformer plan's Plan): the Kalo Chess Transformer's own model --
+//! Step 4 (the transformer plan's Plan): the Fattorini Transformer's own model --
 //! see the transformer design's "Shared transformer encoder" and "Value head" sections for the
 //! settled design this implements. Its own standalone type, not a `network::Network` variant
 //! (design point H): nothing here is reached through `FeatureSet`/`DenseBatch` at all.
@@ -65,7 +65,7 @@ impl Embeddings {
 /// point C of the transformer design's Attention section) -- what differs between the two is only the
 /// `attention_mask` passed into `forward`, never this struct or its weights. Built on `Tensor::
 /// scaled_dot_product_attention` (the built-in ATen op) rather than hand-rolled matmul/softmax,
-/// per design point C: this is standard, generically-documented ML machinery, not specific to Kalo Chess
+/// per design point C: this is standard, generically-documented ML machinery, not specific to Fattorini
 /// logic CLAUDE.md rule 3 requires hand-deriving.
 pub struct SelfAttention {
     qkv: nn::Linear,
@@ -417,10 +417,10 @@ mod tests {
 
     fn sample_batch(attention: super::super::net_config::Attention) -> TransformerBatch {
         use super::super::cache::CacheRecord;
-        use kalo_chess::features::CanonicalPosition;
-        use kalo_chess::board::castling_rights::CastlingRights;
-        use kalo_chess::board::color::Color;
-        use kalo_chess::board::square::Square;
+        use fattorini::features::CanonicalPosition;
+        use fattorini::board::castling_rights::CastlingRights;
+        use fattorini::board::color::Color;
+        use fattorini::board::square::Square;
 
         let record = |label: f32| {
             let canonical = CanonicalPosition {
@@ -462,11 +462,11 @@ mod tests {
         use super::super::cache::CacheRecord;
         use super::super::net_config::Attention;
         use super::super::transformer_batch::to_transformer_batch;
-        use kalo_chess::board::castling_rights::CastlingRights;
-        use kalo_chess::board::color::Color;
-        use kalo_chess::board::piece_type::PieceType;
-        use kalo_chess::board::square::Square;
-        use kalo_chess::features::{pack_canonical_piece, CanonicalPosition};
+        use fattorini::board::castling_rights::CastlingRights;
+        use fattorini::board::color::Color;
+        use fattorini::board::piece_type::PieceType;
+        use fattorini::board::square::Square;
+        use fattorini::features::{pack_canonical_piece, CanonicalPosition};
 
         let record = |pawns: &[Square]| {
             let canonical = CanonicalPosition {

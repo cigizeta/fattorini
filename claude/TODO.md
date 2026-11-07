@@ -9,13 +9,14 @@ commit that pruned it. The documents in `claude/` keep their own history as writ
 
 **Names:** the project was Rotor until 2026-11-04, then Temper, Temper Games from 2026-11-05, and
 Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Kalo Chess alone,
-with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md).
-Older documents use the older names and paths.
+with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
+and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
 ## Next (the developer, 2026-11-06)
 
-- **Finish kalo-chess-repository.md, step 5, when every machine is idle:** Drive, GitHub, each
-  machine. Until then that commit stays off the other machines: it cannot find the old Drive root.
+- **Finish fattorini-rename.md, steps 4 to 7, when every machine is idle:** the networks' magic,
+  the firewall rules, each machine. It replaces step 5 of kalo-chess-repository.md. Undecided: whether
+  the Lichess account stays `kalo-chess`.
 
 In this order:
 

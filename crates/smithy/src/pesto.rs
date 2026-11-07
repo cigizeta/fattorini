@@ -10,7 +10,7 @@
 
 use serde::Deserialize;
 
-use kalo_chess::pipeline::{preprocessing_config, remote, segments};
+use fattorini::pipeline::{preprocessing_config, remote, segments};
 
 use super::tune::TuneConfig;
 
@@ -91,10 +91,10 @@ mod tests {
 
     #[test]
     fn pesto_s_config_sizes_its_corpus_and_holds_its_tune() {
-        kalo_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let config = load().unwrap();
         assert!(config.training_positions > 0 && config.test_positions > 0);
-        assert!(crate::tune::args_of(&config.tune, kalo_chess::pipeline::protocol::PESTO).is_ok());
+        assert!(crate::tune::args_of(&config.tune, fattorini::pipeline::protocol::PESTO).is_ok());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `kalo-chess --lichess`: each Lichess game's engine pinned to its own physical cores.
+//! `fattorini --lichess`: each Lichess game's engine pinned to its own physical cores.
 //!
 //! lichess-bot starts one engine process per game, all with the same `uci_options`, so nothing in
 //! UCI tells two games apart; the flag comes on the command line (`engine_options` in lichess-bot's
@@ -10,7 +10,7 @@
 //! and `Threads`: two games of `Threads 4` on an SMT CPU take cores 0-3, and later groups are never
 //! claimed. With every group reserved, the engine plays unpinned; it never refuses to play.
 //!
-//! A group is reserved by creating a named mutex, `Local\kalo-chess-lichess-group-<n>`. Creation is
+//! A group is reserved by creating a named mutex, `Local\fattorini-lichess-group-<n>`. Creation is
 //! atomic in the kernel: of two engines creating one name at once, exactly one creates it and the
 //! other gets `ERROR_ALREADY_EXISTS`, so two engines never share a group. The owner keeps its
 //! handle open until the process exits, crash included, when Windows closes it and the group is
@@ -110,7 +110,7 @@ fn reserve(index: usize) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
 
-    let name: Vec<u16> = format!("Local\\kalo-chess-lichess-group-{index}").encode_utf16().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = format!("Local\\fattorini-lichess-group-{index}").encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: `name` is a NUL-terminated UTF-16 string that outlives the call; no attributes.
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
     if handle.is_null() {

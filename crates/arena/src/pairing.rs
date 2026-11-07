@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use rusqlite::Connection;
 
-use kalo_chess::board::color::Color;
-use kalo_chess::nnue::Network;
-use kalo_chess::tablebase::SyzygyTablebase;
+use fattorini::board::color::Color;
+use fattorini::nnue::Network;
+use fattorini::tablebase::SyzygyTablebase;
 
 use super::random_book;
 use super::data_root;

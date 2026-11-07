@@ -5,9 +5,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeatureSet {
     Psq,
-    /// Psq's rows plus each perspective's own threats (`kalo_chess::features::psq_threats`).
+    /// Psq's rows plus each perspective's own threats (`fattorini::features::psq_threats`).
     PsqThreats,
-    /// Stockfish's HalfKAv2_hm with psq_threats' threats (`kalo_chess::features::halfk`), each piece row
+    /// Stockfish's HalfKAv2_hm with psq_threats' threats (`fattorini::features::halfk`), each piece row
     /// followed in training by its factor row (`halfk::TRAINING_ROWS`).
     HalfKav2Hm,
 }

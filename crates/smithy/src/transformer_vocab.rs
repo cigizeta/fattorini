@@ -1,4 +1,4 @@
-//! The Kalo Chess Transformer's piece-centric token vocabulary -- see the transformer design's own
+//! The Fattorini Transformer's piece-centric token vocabulary -- see the transformer design's own
 //! "Vocabulary" section for the settled design this implements. Every square/file/rank here is
 //! relative to the side to move (own's forward is always increasing rank), never the absolute
 //! board -- `oriented_square` (made `pub(crate)` in `features.rs` for this module's sake) is what
@@ -9,11 +9,11 @@
 //! and this is a different kind of thing entirely (a variable-length token sequence, no
 //! accumulator).
 
-use kalo_chess::board::color::Color;
-use kalo_chess::board::piece_type::PieceType;
-use kalo_chess::board::square::Square;
+use fattorini::board::color::Color;
+use fattorini::board::piece_type::PieceType;
+use fattorini::board::square::Square;
 
-use kalo_chess::features::{oriented_square, unpack_canonical_piece, CanonicalPosition};
+use fattorini::features::{oriented_square, unpack_canonical_piece, CanonicalPosition};
 
 /// One `[CLS]` token, prepended once per sequence -- see the Vocabulary section's item 1.
 const CLS_TOKENS: usize = 1;
@@ -223,8 +223,8 @@ pub fn token_sequence(canonical: &CanonicalPosition) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalo_chess::features::extract_canonical;
-    use kalo_chess::board::Board;
+    use fattorini::features::extract_canonical;
+    use fattorini::board::Board;
 
     const STARTING_POSITION_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     const STARTING_POSITION_BLACK_TO_MOVE_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1";

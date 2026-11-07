@@ -3,7 +3,7 @@
 //! log, the latest `KEPT` tests each with its games.
 //!
 //! **The duel** is arena's rule (`arena/src/duel.rs`), copied as `sprt.rs` copies arena's SPRT, the two
-//! binaries sharing no code beyond `kalo-chess`: per pair, S the mean pair score (the challenger's points
+//! binaries sharing no code beyond `fattorini`: per pair, S the mean pair score (the challenger's points
 //! in a pair, halved), an engine past `0.5 + C * sigma_hat / sqrt(P)` wins, `sigma_hat` the pair
 //! scores' deviation with a 0-2 and a 2-0 pair added; at `DUEL_MAX_PAIRS` with neither past it the
 //! duel is drawn, and it is drawn at once when neither could pass its bound at any later check,
@@ -12,7 +12,7 @@
 
 use serde::Serialize;
 
-use kalo_chess::pipeline::protocol::Limit;
+use fattorini::pipeline::protocol::Limit;
 
 use super::sprt::{Sprt, Verdict};
 
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn the_log_keeps_the_latest_tests_with_their_games() {
-        let dir = std::env::temp_dir().join(format!("kalo-chess-smithy-matches-{}", std::process::id())).display().to_string();
+        let dir = std::env::temp_dir().join(format!("fattorini-smithy-matches-{}", std::process::id())).display().to_string();
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         for number in 1..=4 {

@@ -12,7 +12,7 @@
 # .part names (wget wrote straight to the final name), and is moved back to .part and resumed. The
 # engine loads only .rtbw and .rtbz files, never a .part.
 #
-# Never run while a Kalo Chess process has the tables open: Kalo Chess reads them through memory maps, and a
+# Never run while a Fattorini process has the tables open: Fattorini reads them through memory maps, and a
 # table resumed under its final name would change under the map.
 set -euo pipefail
 

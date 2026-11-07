@@ -4,7 +4,7 @@
 //! A release is a snapshot's build (`snapshot::build_embedded`, the snapshot's rule) made at a tag,
 //! with three differences: the description says the tag where a snapshot says the commit; the C
 //! runtime is linked statically, so no Visual C++ Redistributable is needed where it runs; and the
-//! third-party notices are embedded, `kalo-chess licenses` printing them. Only the `.exe` is
+//! third-party notices are embedded, `fattorini licenses` printing them. Only the `.exe` is
 //! uploaded; the release's text is `RELEASE-NOTES.md`, committed before the tag and passed as it is.
 //!
 //! Every check comes before the upload, each refusal saying why: the player; HEAD exactly at a tag,
@@ -67,7 +67,7 @@ fn release(name: &str, dry_run: bool) -> Result<(), String> {
     } else {
         let tag = output("git", &["describe", "--exact-match", "--tags", "HEAD"])
             .map_err(|error| format!("HEAD is at no tag, and a release is made only at one: {error}"))?;
-        if kalo_chess::pipeline::protocol::current_commit().contains("modified") {
+        if fattorini::pipeline::protocol::current_commit().contains("modified") {
             return Err("the working tree is modified: a release is built from its tag alone".to_string());
         }
         check_tag(&tag, VERSION)?;
@@ -91,12 +91,12 @@ fn release(name: &str, dry_run: bool) -> Result<(), String> {
     let notices = format!("{RELEASE_TARGET_DIR}/notices.txt");
     output(
         "cargo",
-        &["about", "generate", "--manifest-path", "crates/kalo-chess/Cargo.toml", "--config", "about.toml", "--output-file", &notices, "about.hbs"],
+        &["about", "generate", "--manifest-path", "crates/fattorini/Cargo.toml", "--config", "about.toml", "--output-file", &notices, "about.hbs"],
     )
     .map_err(|error| format!("cargo about failed to write the notices: {error}"))?;
 
     // 5. The build.
-    let stem = format!("kalo-chess-{tag}");
+    let stem = format!("fattorini-{tag}");
     let exe = format!("{RELEASE_TARGET_DIR}/{stem}.exe");
     let parameters_file = snapshot::parameters_file(entry.parameters, RELEASE_TARGET_DIR, &stem)?;
     let description = snapshot::describe_release(name, &tag, &snapshot::now_text());
@@ -133,7 +133,7 @@ fn release(name: &str, dry_run: bool) -> Result<(), String> {
         println!("dry run passed: {exe}, not uploaded");
         return Ok(());
     }
-    let title = format!("Kalo Chess {tag}");
+    let title = format!("Fattorini {tag}");
     let status = process::Command::new("gh")
         .args(["release", "create", &tag, &exe, "--draft", "--verify-tag", "--title", &title, "--notes-file", NOTES])
         .status()
@@ -203,10 +203,10 @@ mod tests {
 
     #[test]
     fn the_notes_must_name_the_version_whole() {
-        assert!(names_version("# Kalo Chess 0.1.0\n", "0.1.0"));
+        assert!(names_version("# Fattorini 0.1.0\n", "0.1.0"));
         assert!(names_version("its tag, `v0.1.0`.", "0.1.0"));
         assert!(names_version("released as 0.1.0.", "0.1.0"));
-        assert!(!names_version("# Kalo Chess 0.0.9\n", "0.1.0"));
+        assert!(!names_version("# Fattorini 0.0.9\n", "0.1.0"));
         assert!(!names_version("version 0.1.01", "0.1.0"));
         assert!(!names_version("version 10.1.0", "0.1.0"));
         assert!(!names_version("version 0.1.0.1", "0.1.0"));

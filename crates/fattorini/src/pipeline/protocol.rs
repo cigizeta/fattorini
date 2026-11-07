@@ -549,7 +549,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str, contents: Option<&str>) -> String {
-        let path = std::env::temp_dir().join(format!("kalo-chess-protocol-test-{name}-{}.yaml", std::process::id())).display().to_string();
+        let path = std::env::temp_dir().join(format!("fattorini-protocol-test-{name}-{}.yaml", std::process::id())).display().to_string();
         std::fs::remove_file(&path).ok();
         if let Some(contents) = contents {
             std::fs::write(&path, contents).unwrap();
@@ -631,7 +631,7 @@ mod tests {
     fn hello_and_its_reply_read_back() {
         let hello = Hello { machine: "alpha".to_string(), workers: 8, commit: "abc (modified)".to_string() };
         assert_eq!(Hello::parse(&hello.text()), Ok(hello));
-        let reply = HelloReply { session: "alpha-3".to_string(), token: "t0k3n".to_string(), store: "G:/My Drive/kalo-chess".to_string() };
+        let reply = HelloReply { session: "alpha-3".to_string(), token: "t0k3n".to_string(), store: "G:/My Drive/fattorini".to_string() };
         assert_eq!(HelloReply::parse(&reply.text()), Ok(reply));
     }
 

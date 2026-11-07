@@ -23,7 +23,7 @@ use super::pgn_stream::splitmix64;
 use super::pgn_stream::{PgnStream, StreamFile, StreamOptions};
 #[cfg(test)]
 use super::train_stream::TrainStream;
-use kalo_chess::pipeline::segments;
+use fattorini::pipeline::segments;
 
 use super::{preprocessing_config, remote};
 
@@ -234,7 +234,7 @@ fn start_epoch(files: &[StreamFile], lambdas: &[f64], threads: usize, seed: u64)
         keep_probability: 1.0,
         seed,
         tablebase: None,
-        curve: kalo_chess::labels::Curve::Atan(*kalo_chess::labels::LC0),
+        curve: fattorini::labels::Curve::Atan(*fattorini::labels::LC0),
         // The transformer's stream has no job stop to hand: a read waits until it succeeds.
         stop: None,
     };

@@ -1,5 +1,5 @@
 //! The smithy, `smithy start`, on any machine: its jobs dealt as chores to the arenas (`arena start`), over HTTP
-//! (`kalo_chess::pipeline::protocol`), on `127.0.0.1` and on the LAN. It claims an arena on each machine
+//! (`fattorini::pipeline::protocol`), on `127.0.0.1` and on the LAN. It claims an arena on each machine
 //! that file's `arenas` lists that answers, unclaimed, and polls those it holds
 //! (`keep_claims`). Its jobs are started and stopped from its page. A job of the arena slot, one at a time,
 //! is a tune (`--tune <player>`, `tune.rs`), PeSTO's Play (`--play pesto`, its corpus, `pesto.rs`), or
@@ -43,25 +43,25 @@ use std::time::{Duration, Instant};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
-use kalo_chess::pipeline::lan::{self, first_line_bytes};
+use fattorini::pipeline::lan::{self, first_line_bytes};
 use lan_http::{Listener, Reply, Request};
-use kalo_chess::pipeline::protocol::{
+use fattorini::pipeline::protocol::{
     self, entries_text, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, TaskKind, ALIVE_PATH, ARENA_PORT,
     CHORE_PATH, CHORE_TAG, CLAIM_PATH, CLAIM_POLL, HELLO_PATH, JOBS_PATH, LATE_AFTER, LOOPBACK, MACHINES_PATH, PESTO, RELEASE_AFTER,
     RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
 };
-use kalo_chess::pipeline::preprocessing_config;
-use kalo_chess::pipeline::preprocessing_config::{lambdas_text, ArmLambda};
-use kalo_chess::pipeline::segments::{self, SegmentMeta, META_SUFFIX};
-use kalo_chess::pipeline::{generation, players, remote};
+use fattorini::pipeline::preprocessing_config;
+use fattorini::pipeline::preprocessing_config::{lambdas_text, ArmLambda};
+use fattorini::pipeline::segments::{self, SegmentMeta, META_SUFFIX};
+use fattorini::pipeline::{generation, players, remote};
 
 use super::archive::{self, Archiver};
 use super::{lease, tree};
 use super::scale;
 use super::cache::CacheRecord;
-use kalo_chess::nnue::Tuning;
-use kalo_chess::labels::{Curve, LOGISTIC};
-use kalo_chess::search::SearchParameters;
+use fattorini::nnue::Tuning;
+use fattorini::labels::{Curve, LOGISTIC};
+use fattorini::search::SearchParameters;
 
 use super::matches;
 use super::rounds_display;
@@ -1660,7 +1660,7 @@ struct NetworkEntry {
 /// generation that passed its gate, then the generation's candidates, by lambda.
 fn test_networks(runs: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
     let tuned = |name: &str| {
-        players::KaloChessPlayer::resolve(name)
+        players::FattoriniPlayer::resolve(name)
             .and_then(|player| player.own_tuning())
             .is_ok_and(|tuning| matches!(tuning, Tuning::Parameters(_)))
     };
@@ -3828,7 +3828,7 @@ impl TestSet {
 /// still play, but neither teaches self-play nor seeds a student, since its centipawns are in the old
 /// unit, not what `sigma(cp / S)` reads.
 fn refuse_atan_teacher(path: &str) -> Result<(), String> {
-    if kalo_chess::nnue::file_version(path)? == kalo_chess::nnue::ATAN_VERSION {
+    if fattorini::nnue::file_version(path)? == fattorini::nnue::ATAN_VERSION {
         return Err(format!(
             "{path} was trained under the old atan curve: it may still play, but neither teaches nor is trained further; start a new run"
         ));
@@ -4355,7 +4355,7 @@ fn tune_job(status: &Status, player: &str) -> Result<String, String> {
     }
     remember_job(&["--tune".to_string(), player.to_string()]);
     let network = match &tune.network {
-        Some(path) => Some(kalo_chess::nnue::Network::load(path).map_err(|error| format!("failed to load network {path}: {error}"))?),
+        Some(path) => Some(fattorini::nnue::Network::load(path).map_err(|error| format!("failed to load network {path}: {error}"))?),
         None => None,
     };
     // The speed every arena's clock is scaled to: this machine's, loaded as an arena's would be.
@@ -4379,13 +4379,13 @@ fn tune_job(status: &Status, player: &str) -> Result<String, String> {
 struct TestPlayer {
     name: String,
     parameters: SearchParameters,
-    network: Option<kalo_chess::nnue::Network>,
+    network: Option<fattorini::nnue::Network>,
 }
 
 /// `side` resolved: a forge run's network or PeSTO, with its tune when it plays tuned, which it must
 /// then have.
 fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
-    let player = players::KaloChessPlayer::resolve(&side.player)?;
+    let player = players::FattoriniPlayer::resolve(&side.player)?;
     let parameters = match (side.tuned, player.own_tuning()?) {
         (false, _) => SearchParameters::DEFAULT,
         (true, Tuning::Parameters(parameters)) => parameters,
@@ -4393,7 +4393,7 @@ fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
     };
     let (name, network) = match &player.network {
         Some(path) => {
-            let network = kalo_chess::nnue::Network::load(path).map_err(|error| format!("failed to load network {path}: {error}"))?;
+            let network = fattorini::nnue::Network::load(path).map_err(|error| format!("failed to load network {path}: {error}"))?;
             (publish(path)?, Some(network))
         }
         None => (PESTO.to_string(), None),
@@ -4524,11 +4524,11 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
     ))
 }
 
-/// The nodes per second of one search thread on this machine with `network`, loaded: `kalo-chess bench` on
+/// The nodes per second of one search thread on this machine with `network`, loaded: `fattorini bench` on
 /// `threads` threads at once, the mean of the threads.
-fn loaded_bench(network: Option<&kalo_chess::nnue::Network>, threads: usize) -> f64 {
+fn loaded_bench(network: Option<&fattorini::nnue::Network>, threads: usize) -> f64 {
     let runs: Vec<(u64, f64)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || kalo_chess::bench::bench(network))).collect();
+        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || fattorini::bench::bench(network))).collect();
         handles.into_iter().map(|handle| handle.join().expect("a bench thread panicked")).collect()
     });
     runs.iter().map(|&(nodes, seconds)| nodes as f64 / seconds.max(1e-9)).sum::<f64>() / runs.len().max(1) as f64
@@ -4922,8 +4922,8 @@ mod tests {
     #[test]
     fn an_atan_teacher_is_refused_and_a_logistic_one_accepted() {
         let path = std::env::temp_dir().join(format!("smithy-teacher-{}.nnue", std::process::id())).to_str().unwrap().to_string();
-        for (version, refused) in [(kalo_chess::nnue::ATAN_VERSION, true), (kalo_chess::nnue::VERSION, false)] {
-            let mut bytes = kalo_chess::nnue::MAGIC.to_vec();
+        for (version, refused) in [(fattorini::nnue::ATAN_VERSION, true), (fattorini::nnue::VERSION, false)] {
+            let mut bytes = fattorini::nnue::MAGIC.to_vec();
             bytes.extend_from_slice(&version.to_le_bytes());
             std::fs::write(&path, &bytes).unwrap();
             assert_eq!(refuse_atan_teacher(&path).is_err(), refused, "version {version}");
@@ -4965,7 +4965,7 @@ mod tests {
 
     #[test]
     fn a_scaled_run_s_own_config_is_scaled_and_configs_refuse_a_scale() {
-        kalo_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let (full, full_net) = load_config(&preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
         assert_eq!(full.scale, None);
         let text = std::fs::read_to_string(preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
@@ -4987,7 +4987,7 @@ mod tests {
     fn a_config_of_a_kind_this_binary_does_not_know_is_an_error_not_a_panic() {
         // The server reads every config in `configs/`: one written for a newer binary must leave it
         // running, that config simply not a forge to it.
-        kalo_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let text = std::fs::read_to_string(preprocessing_config::net_config_path("lc0-psq-threats-screlu")).unwrap();
         let (kind, unknown) = ("kind: psq_threats_screlu", "kind: a_kind_from_the_future");
         assert!(text.contains(kind), "lc0-psq-threats-screlu's kind line");
@@ -5138,11 +5138,11 @@ mod tests {
         assert_eq!(GenState::parse(text).map(|state| state.step_hundredths), Ok(STEP_HUNDREDTHS));
     }
 
-    use kalo_chess::pipeline::protocol::task_body;
+    use fattorini::pipeline::protocol::task_body;
 
     /// A fresh directory for one test.
     fn scratch(name: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("kalo-chess-smithy-test-{name}-{}", std::process::id())).display().to_string();
+        let dir = std::env::temp_dir().join(format!("fattorini-smithy-test-{name}-{}", std::process::id())).display().to_string();
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -5184,7 +5184,7 @@ mod tests {
 
     #[test]
     fn every_committed_forge_config_loads_and_the_others_are_not_forges() {
-        kalo_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         for (name, source) in [("pesto-psq-threats-screlu", Some(Source::Pesto)), ("lc0-psq-threats-screlu", Some(Source::Lc0)),
             ("lc0-halfk-threats-screlu", Some(Source::Lc0)),
             ("pesto-halfk-threats-screlu", Some(Source::Pesto)), ("lc0-halfk-threats-screlu-hidden", Some(Source::Lc0)),
@@ -5258,14 +5258,14 @@ mod tests {
 
     #[test]
     fn only_a_source_s_generation_1_trains_on_its_corpus() {
-        kalo_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let (config, _) = load_config(&preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
         assert_eq!((config.on_source(1), config.on_source(2)), (Some(Source::Pesto), None));
     }
 
     #[test]
     fn a_scaled_run_s_scale_shrinks_a_forge_by_kind_and_one_is_the_config_itself() {
-        kalo_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let load = || load_config(&preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
         let (config, net) = load();
         let sizes = |config: &GenConfig, net: &NetConfig| {

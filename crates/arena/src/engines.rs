@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use kalo_chess::nnue::Tuning;
-use kalo_chess::search::SearchParameters;
+use fattorini::nnue::Tuning;
+use fattorini::search::SearchParameters;
 use serde::Deserialize;
 
 /// The registry's one place, per machine and gitignored.
@@ -19,7 +19,7 @@ pub const ENGINE_REGISTRY_PATH: &str = "data/engines.yaml";
 ///
 /// `Builtin` and `Network` both become an `InProcessPlayer` and differ only in the evaluation they
 /// carry. They exist because the gate compares two evaluations inside one search, which driving
-/// Kalo Chess over UCI could not do: that would compare two whole engine builds instead, and would put a
+/// Fattorini over UCI could not do: that would compare two whole engine builds instead, and would put a
 /// subprocess boundary in the way of the one thing being measured.
 #[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -44,7 +44,7 @@ pub struct EngineEntry {
     pub net: Option<String>,
     #[serde(default)]
     pub options: HashMap<String, serde_yaml::Value>,
-    /// A Kalo Chess player's search parameters from its name's suffix, `@untuned` or `@tuned`: an
+    /// A Fattorini player's search parameters from its name's suffix, `@untuned` or `@tuned`: an
     /// in-process player searches with them, a UCI one has them embedded in its build
     /// (`match_player::build_uci_player`). `None` plays the player's own tuning (`tuning`), as a
     /// player built from paths does (the gate's); always `None` for an external engine.
@@ -52,7 +52,7 @@ pub struct EngineEntry {
     pub parameters: Option<SearchParameters>,
 }
 
-pub use kalo_chess::pipeline::players::pesto_parameters;
+pub use fattorini::pipeline::players::pesto_parameters;
 
 impl EngineEntry {
     /// The binary to spawn. Panics if absent, which `validate` has already ruled out at load time --
@@ -84,7 +84,7 @@ impl EngineEntry {
     /// player, whose search is its own business.
     pub fn own_tuning(&self) -> Result<Tuning, String> {
         match (self.kind, &self.net) {
-            (EngineKind::Network, Some(net)) => kalo_chess::nnue::read_tuning_beside(net),
+            (EngineKind::Network, Some(net)) => fattorini::nnue::read_tuning_beside(net),
             (EngineKind::Builtin, _) => Ok(pesto_parameters()?.map_or(Tuning::Untuned, Tuning::Parameters)),
             _ => Ok(Tuning::Untuned),
         }
@@ -104,10 +104,10 @@ impl EngineEntry {
     }
 }
 
-/// Every player's table size unless `--hash` says otherwise: `bin/kalo-chess`'s own UCI default, 16 MB,
+/// Every player's table size unless `--hash` says otherwise: `bin/fattorini`'s own UCI default, 16 MB,
 /// also the self-play size. A depth-9 search visits some 20k-70k nodes, about 1 MB of entries, so
 /// 16 MB leaves ample room for what carries over between moves.
-pub const DEFAULT_HASH_MB: usize = kalo_chess::uci::DEFAULT_HASH_MB;
+pub const DEFAULT_HASH_MB: usize = fattorini::uci::DEFAULT_HASH_MB;
 
 #[derive(Debug, Deserialize)]
 struct EngineRegistryFile {

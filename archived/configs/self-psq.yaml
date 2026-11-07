@@ -1,4 +1,4 @@
-# psq on Kalo Chess's self-play: the teacher's games in data/self, streamed by forge. Generation 1 is
+# psq on Fattorini's self-play: the teacher's games in data/self, streamed by forge. Generation 1 is
 # taught by caroline-0001 (smithy teacher self-psq caroline-0001), whose games every self- shape
 # trains on, so the shapes differ in nothing else; lc0-psq is the same shape on Lc0's games. It
 # starts from random weights, and its gate is against the hand-crafted evaluation, as every

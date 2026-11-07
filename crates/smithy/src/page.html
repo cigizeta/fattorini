@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kalo Chess smithy</title>
+<title>Fattorini smithy</title>
 <style>
   :root {
     --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4; --panel: #ffffff;
@@ -97,7 +97,7 @@
 <body>
 <main>
   <div id="home">
-    <h1>Kalo Chess smithy</h1>
+    <h1>Fattorini smithy</h1>
     <div class="sub" id="sub">waiting for the smithy</div>
     <section class="live hidden"></section>
     <div id="boxes"></div>
@@ -424,7 +424,7 @@ const testForm = {
 const option = (value, label, selected) => `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
 
 async function send(path, body) {
-  const response = await fetch(path, { method: "POST", headers: { "X-Kalo-Chess-Token": token }, body });
+  const response = await fetch(path, { method: "POST", headers: { "X-Fattorini-Token": token }, body });
   return response.ok ? "" : (await response.text()).trim() || `refused (${response.status})`;
 }
 
@@ -1076,7 +1076,7 @@ function draw() {
   document.getElementById("home").classList.toggle("hidden", current !== null);
   document.getElementById("page").classList.toggle("hidden", current === null);
   if (!state) return;
-  const smithy = "Kalo Chess smithy";
+  const smithy = "Fattorini smithy";
   document.title = current ? `${current} - ${smithy}` : smithy;
   document.querySelector("h1").textContent = smithy;
   const stopping = (state.slot.running ? `; beside it, ${state.slot.holder || "a job"}` : "") + (state.stopping ? "; the smithy is stopping" : "");

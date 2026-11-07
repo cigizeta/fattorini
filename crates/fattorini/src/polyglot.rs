@@ -380,7 +380,7 @@ mod tests {
         );
         // A white pawn two files away does not stand beside it.
         assert_eq!(key_of("4k3/8/8/3p1P2/8/8/8/4K3 w - d6 0 2"), key_of("4k3/8/8/3p1P2/8/8/8/4K3 w - - 0 2"));
-        // On the board's own moves, the same: after 1. e4 Kalo Chess's board may record e3, but the key
+        // On the board's own moves, the same: after 1. e4 Fattorini's board may record e3, but the key
         // is the specification's.
         let (mut board, _) = Board::from_fen(STARTING_POSITION_FEN).unwrap();
         board.make_move(Move::double_pawn_push(Square::E2, Square::E4));

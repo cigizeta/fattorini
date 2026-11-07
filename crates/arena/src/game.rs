@@ -13,15 +13,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kalo_chess::board::color::Color;
-use kalo_chess::board::piece::Piece;
-use kalo_chess::board::piece_type::PieceType;
-use kalo_chess::board::Board;
-use kalo_chess::movegen::attacks::is_in_check;
-use kalo_chess::movegen::legal::legal_moves;
-use kalo_chess::search::is_insufficient_material;
-use kalo_chess::tablebase::{SyzygyTablebase, TbResult};
-use kalo_chess::uci::{format_move, parse_move};
+use fattorini::board::color::Color;
+use fattorini::board::piece::Piece;
+use fattorini::board::piece_type::PieceType;
+use fattorini::board::Board;
+use fattorini::movegen::attacks::is_in_check;
+use fattorini::movegen::legal::legal_moves;
+use fattorini::search::is_insufficient_material;
+use fattorini::tablebase::{SyzygyTablebase, TbResult};
+use fattorini::uci::{format_move, parse_move};
 
 use super::clock::Clock;
 use super::pgn::{MoveAnnotation, Termination};

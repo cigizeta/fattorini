@@ -40,7 +40,7 @@ pub const DEFAULT_HASH_MB: usize = 16;
 /// `parse_setoption`) doesn't clamp to this range, since respecting it is the GUI's own
 /// responsibility per the UCI spec, and `TranspositionTable::new` already tolerates any
 /// `usize` gracefully (including values outside it). `pub`: `arena --hash` refuses a value
-/// outside this range, since Kalo Chess over UCI advertises it.
+/// outside this range, since Fattorini over UCI advertises it.
 pub const HASH_MB_MIN: usize = 1;
 pub const HASH_MB_MAX: usize = 1024;
 
@@ -92,11 +92,11 @@ pub enum UciCommand {
     Uci,
     IsReady,
     UciNewGame,
-    /// `setoption name Hash value <MB>` -- the only option Kalo Chess currently supports, so this
+    /// `setoption name Hash value <MB>` -- the only option Fattorini currently supports, so this
     /// is specific to it rather than a generic `{ name: String, value: String }` shape; worth
     /// generalizing once a second option actually needs one, not before.
     SetOptionHash(usize),
-    /// `setoption name Threads value <N>` -- the second option Kalo Chess supports, following the
+    /// `setoption name Threads value <N>` -- the second option Fattorini supports, following the
     /// exact same pattern `SetOptionHash` already established (a dedicated variant per option,
     /// not yet a generic `{ name, value }` shape).
     SetOptionThreads(u32),
@@ -114,7 +114,7 @@ pub enum UciCommand {
     /// established.
     SetOptionMultiPv(u32),
     /// `setoption name Ponder value true|false`: whether `bestmove` offers a ponder move. Only `go
-    /// ponder` makes Kalo Chess ponder; with no ponder move, a GUI has nothing to ponder on.
+    /// ponder` makes Fattorini ponder; with no ponder move, a GUI has nothing to ponder on.
     SetOptionPonder(bool),
     Position { fen: String, moves: Vec<String> },
     /// A plain `go`, or `go perft <depth>` when `perft_depth` is `Some`. The time-control
@@ -679,9 +679,9 @@ impl Engine {
                     // Named by the workspace's version, which every crate inherits, then by what the
                     // build embeds, so a GUI and Lichess show which snapshot plays.
                     if self.description.is_empty() {
-                        format!("id name Kalo Chess {}", env!("CARGO_PKG_VERSION"))
+                        format!("id name Fattorini {}", env!("CARGO_PKG_VERSION"))
                     } else {
-                        format!("id name Kalo Chess {} {}", env!("CARGO_PKG_VERSION"), self.description)
+                        format!("id name Fattorini {} {}", env!("CARGO_PKG_VERSION"), self.description)
                     },
                     "id author Calogero Zarba".to_string(),
                     format!("option name Hash type spin default {DEFAULT_HASH_MB} min {HASH_MB_MIN} max {HASH_MB_MAX}"),
@@ -1151,15 +1151,15 @@ fn ponder_move(board: &Board, pv: &[Move], tt: &TranspositionTable) -> Option<Mo
     })
 }
 
-/// The `.nnue` a build embeds when `KALO_CHESS_EVALFILE` names one at build time (`build.rs`), empty
+/// The `.nnue` a build embeds when `FATTORINI_EVALFILE` names one at build time (`build.rs`), empty
 /// otherwise: a snapshot and a release are built this way. The engine plays nothing else: no
 /// option nor file beside the binary chooses a network.
 const EMBEDDED_NETWORK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded.nnue"));
 
-/// The `parameters.txt` a build embeds (`KALO_CHESS_PARAMETERS`), empty for the untuned defaults.
+/// The `parameters.txt` a build embeds (`FATTORINI_PARAMETERS`), empty for the untuned defaults.
 const EMBEDDED_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-parameters.txt"));
 
-/// What the build is (`KALO_CHESS_DESCRIPTION`), one line, empty for a development build.
+/// What the build is (`FATTORINI_DESCRIPTION`), one line, empty for a development build.
 const EMBEDDED_DESCRIPTION: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-description.txt"));
 
 /// The embedded network, `None` (the PeSTO evaluation) when the build has none. One that fails to
@@ -1196,7 +1196,7 @@ pub fn embedded_description() -> String {
     String::from_utf8_lossy(EMBEDDED_DESCRIPTION).trim().to_string()
 }
 
-/// The third-party notices a release embeds (`KALO_CHESS_NOTICES`, written by `cargo-about`), empty
+/// The third-party notices a release embeds (`FATTORINI_NOTICES`, written by `cargo-about`), empty
 /// for every other build. Their licenses (MIT, Apache and others) ask that a distributed binary
 /// carry them, and the ODbL asks the training data's attribution: one file, so they live inside it.
 const EMBEDDED_NOTICES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-notices.txt"));
@@ -1649,7 +1649,7 @@ mod tests {
         assert_eq!(
             engine.handle(UciCommand::Uci),
             vec![
-                format!("id name Kalo Chess {}", env!("CARGO_PKG_VERSION")),
+                format!("id name Fattorini {}", env!("CARGO_PKG_VERSION")),
                 "id author Calogero Zarba".to_string(),
                 "option name Hash type spin default 16 min 1 max 1024".to_string(),
                 "option name Threads type spin default 1 min 1 max 128".to_string(),
@@ -1666,14 +1666,14 @@ mod tests {
         let mut engine = Engine::new();
         engine.description = "pesto@untuned, commit abc".to_string();
         let replies = engine.handle(UciCommand::Uci);
-        assert_eq!(replies[0], format!("id name Kalo Chess {} pesto@untuned, commit abc", env!("CARGO_PKG_VERSION")));
+        assert_eq!(replies[0], format!("id name Fattorini {} pesto@untuned, commit abc", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
     fn a_search_with_a_network_plays_a_legal_move() {
         // The network's values do not matter here, only that the search runs with it and answers:
         // nnue.rs's own small fixture, given to the engine as a build would embed it.
-        let path = std::env::temp_dir().join(format!("kalo-chess-uci-network-test-{}.nnue", std::process::id()));
+        let path = std::env::temp_dir().join(format!("fattorini-uci-network-test-{}.nnue", std::process::id()));
         let path = path.to_str().unwrap().to_string();
         crate::nnue::tests::sample_network(8, &[4]).write(&path).expect("failed to write the test network");
 
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[test]
     fn a_development_build_embeds_nothing() {
-        // `cargo test` builds with no `KALO_CHESS_*` set.
+        // `cargo test` builds with no `FATTORINI_*` set.
         let engine = Engine::embedded();
         assert!(engine.evaluator.is_none());
         assert_eq!(engine.parameters, SearchParameters::DEFAULT);

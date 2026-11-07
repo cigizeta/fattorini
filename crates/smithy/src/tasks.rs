@@ -133,7 +133,7 @@ fn check(collected: Collector) -> Result<TaskGame, String> {
 mod tests {
     use super::*;
 
-    const GAME: &str = "[Event \"kalo-chess self-play\"]\n[White \"pesto\"]\n[Black \"pesto\"]\n[Result \"1/2-1/2\"]\n\
+    const GAME: &str = "[Event \"fattorini self-play\"]\n[White \"pesto\"]\n[Black \"pesto\"]\n[Result \"1/2-1/2\"]\n\
         [FEN \"8/8/8/4k3/8/8/8/4K2R w K - 0 1\"]\n[SetUp \"1\"]\n[Chore \"c000001\"]\n\n\
         1. O-O {0.31 g1g2} Kd5 {#-4} 1/2-1/2\n\n";
 

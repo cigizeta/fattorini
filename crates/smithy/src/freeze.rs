@@ -33,12 +33,12 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 
-use kalo_chess::features::CanonicalPosition;
-use kalo_chess::labels::Curve;
-use kalo_chess::pipeline::data_root;
-use kalo_chess::pipeline::preprocessing_config::{lambda_dir_name, lambdas_text, ArmLambda};
-use kalo_chess::pipeline::segments::SEGMENT_SUFFIX;
-use kalo_chess::tablebase::SyzygyTablebase;
+use fattorini::features::CanonicalPosition;
+use fattorini::labels::Curve;
+use fattorini::pipeline::data_root;
+use fattorini::pipeline::preprocessing_config::{lambda_dir_name, lambdas_text, ArmLambda};
+use fattorini::pipeline::segments::SEGMENT_SUFFIX;
+use fattorini::tablebase::SyzygyTablebase;
 
 use super::buckets::{blend, Labelling};
 use super::cache::{is_bare_kings, read_label, read_position, write_label, write_position, CacheHeader, CacheRecord, LabelHeader, Progress};
@@ -592,7 +592,7 @@ fn write_label_sets(dir: &str, labelling: &Labelling, labels: &[Vec<f32>], manif
 mod tests {
     use super::*;
     use crate::polyline::Polyline;
-    use kalo_chess::labels::{Curve, LC0_FILES};
+    use fattorini::labels::{Curve, LC0_FILES};
 
     /// Lc0's corpus as the tests' fixtures are written: through the frozen curve.
     const LC0_CURVE: Curve = Curve::Atan(LC0_FILES);

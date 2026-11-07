@@ -9,9 +9,9 @@ use tch::Tensor;
 use super::batch::DenseBatch;
 use super::feature_set::FeatureSet;
 use super::net_config::Architecture;
-use kalo_chess::features::{halfk, psq, psq_threats};
-use kalo_chess::labels::S_PAWNS;
-use kalo_chess::stack_buckets::TAPER_SETS;
+use fattorini::features::{halfk, psq, psq_threats};
+use fattorini::labels::S_PAWNS;
+use fattorini::stack_buckets::TAPER_SETS;
 pub use super::stack_head::HeadShape;
 use super::stack_head::{hidden_output_input, kings_stage_input, taper, StackHead, TAPER_PHASE_COLUMN};
 use super::value_head::{Activation, ValueHead};
@@ -44,7 +44,7 @@ pub const FIRST_HIDDEN_WEIGHT_BOUND: f64 = 127.0 / 64.0;
 /// The name `VarStore` files a psq network's first hidden layer weights under.
 pub const FIRST_HIDDEN_WEIGHT: &str = "value_head.hidden0.weight";
 
-/// Kalo Chess's own eval network, one variant per feature set (there is no bypass, no
+/// Fattorini's own eval network, one variant per feature set (there is no bypass, no
 /// piece-square-table term, and no MoE mixture any more).
 pub enum Network {
     Psq(NetworkPsq),
@@ -461,8 +461,8 @@ mod tests {
     fn each_arms_losses_equal_those_of_a_batch_built_from_its_labels_alone() {
         use super::super::batch::to_dense_batch;
         use super::super::cache::CacheRecord;
-        use kalo_chess::board::Board;
-        use kalo_chess::features::extract_canonical;
+        use fattorini::board::Board;
+        use fattorini::features::extract_canonical;
 
         let fens = [
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",

@@ -1,7 +1,7 @@
 /target/
 /data/
 
-.kalo-chess
+.fattorini
 
 # Claude Code's per-user settings, beside the shared .claude/settings.json.
 .claude/settings.local.json

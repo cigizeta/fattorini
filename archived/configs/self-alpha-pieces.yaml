@@ -1,4 +1,4 @@
-# zelda's alpha_pieces transformer on Kalo Chess's self-play, as lc0-alpha-pieces is on Lc0's games:
+# zelda's alpha_pieces transformer on Fattorini's self-play, as lc0-alpha-pieces is on Lc0's games:
 # generation 1 taught by caroline-0001 (smithy teacher self-alpha-pieces caroline-0001), on the same
 # games as every self- shape, from random weights. No gate: the engine cannot run a transformer, so a
 # lambda's run ends at its candidate.txt.

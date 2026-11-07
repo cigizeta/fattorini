@@ -15,13 +15,13 @@
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
 
-use kalo_chess::move_stats::{bucket, bucket_low, take, MoveStats, BUCKETS, DEPTHS, OUTCOMES};
-use kalo_chess::nnue::Network;
-use kalo_chess::search::choose_best_move;
-use kalo_chess::tablebase::SyzygyTablebase;
-use kalo_chess::tt::TranspositionTable;
+use fattorini::move_stats::{bucket, bucket_low, take, MoveStats, BUCKETS, DEPTHS, OUTCOMES};
+use fattorini::nnue::Network;
+use fattorini::search::choose_best_move;
+use fattorini::tablebase::SyzygyTablebase;
+use fattorini::tt::TranspositionTable;
 
-use kalo_chess::bench_positions::{board as board_from_line, POSITIONS};
+use fattorini::bench_positions::{board as board_from_line, POSITIONS};
 
 /// Fresh per search, so one position's history and entries never carry into the next.
 const TT_SIZE_MB: usize = 64;

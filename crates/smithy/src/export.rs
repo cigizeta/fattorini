@@ -1,7 +1,7 @@
-//! Converting a trained `tch` `VarStore` into the engine's own `kalo_chess::nnue::PsqNetwork`.
+//! Converting a trained `tch` `VarStore` into the engine's own `fattorini::nnue::PsqNetwork`.
 //!
 //! The only place the two representations meet. Everything about the file format itself lives in
-//! `kalo_chess::nnue`, so this module is purely the extraction: pull each parameter out of the store by
+//! `fattorini::nnue`, so this module is purely the extraction: pull each parameter out of the store by
 //! name, put the feature transform into the orientation the engine's gather wants, and hand over a
 //! plain struct.
 
@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use tch::nn;
 use tch::Tensor;
 
-use kalo_chess::features::{halfk, psq, psq_threats};
-use kalo_chess::nnue::{Layer, PsqNetwork, StackLayers};
-use kalo_chess::stack_buckets::TAPER_SETS;
+use fattorini::features::{halfk, psq, psq_threats};
+use fattorini::nnue::{Layer, PsqNetwork, StackLayers};
+use fattorini::stack_buckets::TAPER_SETS;
 #[cfg(test)]
-use kalo_chess::stack_buckets::{COUNT_BUCKETS, MATERIAL_BUCKETS, PHASE_BUCKETS};
+use fattorini::stack_buckets::{COUNT_BUCKETS, MATERIAL_BUCKETS, PHASE_BUCKETS};
 
 use super::nnue_network::{FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND};
 use super::stack_head::{BUCKETS, STAGES};
@@ -343,7 +343,7 @@ pub fn material_network_from(
 /// Builds the engine-side network from a `VarStore` loaded with a psq_threats_screlu_taper
 /// checkpoint: psq_threats' transform, and the head's one layer of two outputs (`value_head.output`,
 /// `[2, 2 * embedding_dim]`, not factorised) split into the engine's two sets, middlegame then
-/// endgame, which it blends by the phase (`kalo_chess::stack_buckets::taper`).
+/// endgame, which it blends by the phase (`fattorini::stack_buckets::taper`).
 pub fn taper_network_from(vs: &nn::VarStore, embedding_dim: i64, step: u64, learning_rate: f64) -> PsqNetwork {
     let variables = vs.variables();
     let transform_weight = parameter(&variables, "transform.weight");
@@ -445,7 +445,7 @@ fn weights_from(
 mod tests {
     use super::*;
 
-    use kalo_chess::board::Board;
+    use fattorini::board::Board;
 
     use super::super::batch::to_dense_batch;
     use super::super::cache::CacheRecord;
@@ -468,7 +468,7 @@ mod tests {
 
     /// Reads `path` back, insisting it is a psq network.
     fn load_psq(path: &str) -> PsqNetwork {
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(path).expect("what the exporter wrote should load");
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(path).expect("what the exporter wrote should load");
         engine
     }
 
@@ -494,7 +494,7 @@ mod tests {
             Network::PsqThreats(_) => FeatureSet::PsqThreats,
             Network::HalfKav2Hm(_) => FeatureSet::HalfKav2Hm,
         };
-        let record = CacheRecord::new(kalo_chess::features::extract_canonical(board), 0.0);
+        let record = CacheRecord::new(fattorini::features::extract_canonical(board), 0.0);
         let batch = to_dense_batch(&[record], feature_set);
         let output = tch::no_grad(|| network.pawns(&batch));
         f32::try_from(&output.view([-1])).expect("the network produces one value per row")
@@ -537,7 +537,7 @@ mod tests {
         // hidden layer: exporter, file, loader, f32 forward pass.
         for (embedding_dim, hidden_dims) in [(256, &[][..]), (16, &[8][..])] {
             let path = std::env::temp_dir()
-                .join(format!("kalo-chess-export-pairwise-agreement-{embedding_dim}-{}.nnue", std::process::id()))
+                .join(format!("fattorini-export-pairwise-agreement-{embedding_dim}-{}.nnue", std::process::id()))
                 .to_str()
                 .unwrap()
                 .to_string();
@@ -564,7 +564,7 @@ mod tests {
         for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats] {
             let threats = feature_set == FeatureSet::PsqThreats;
             let path = std::env::temp_dir()
-                .join(format!("kalo-chess-export-stack-agreement-{threats}-{}.nnue", std::process::id()))
+                .join(format!("fattorini-export-stack-agreement-{threats}-{}.nnue", std::process::id()))
                 .to_str()
                 .unwrap()
                 .to_string();
@@ -579,7 +579,7 @@ mod tests {
             });
 
             stack_network_from(&vs, threats, 16, &[8, 8], 512, 1e-3).write(&path).expect("export should succeed");
-            let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+            let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
             assert!(engine.stack.is_some() && engine.pairwise, "a stack export must load as a stack");
             assert_eq!(engine.threats, threats, "{feature_set:?}");
 
@@ -597,7 +597,7 @@ mod tests {
         // position's material bucket matters: exporter (shared + delta), file under its own tag,
         // loader, f32 forward pass. The fixtures span many materials, the start to bare kings.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-material-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-material-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -612,7 +612,7 @@ mod tests {
         });
 
         material_network_from(&vs, false, MATERIAL_BUCKETS, 16, 512, 1e-3).write(&path).expect("export should succeed");
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert!(engine.material.is_some() && engine.pairwise && engine.threats, "a material export must load as one");
 
         for fen in AGREEMENT_POSITIONS {
@@ -627,7 +627,7 @@ mod tests {
         // psq_threats_screlu_material at a small width, as the pairwise one: the deltas randomised,
         // exporter (shared + delta over the squares), file under tag 13, loader, f32 forward pass.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-screlu-material-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-screlu-material-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -643,8 +643,8 @@ mod tests {
 
         material_network_from(&vs, true, MATERIAL_BUCKETS, 16, 512, 1e-3).write(&path).expect("export should succeed");
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_MATERIAL);
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), fattorini::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_MATERIAL);
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert!(engine.material.is_some() && engine.screlu && !engine.pairwise && engine.threats, "a screlu material export must load as one");
 
         for fen in AGREEMENT_POSITIONS {
@@ -659,7 +659,7 @@ mod tests {
         // psq_threats_screlu_phase, as the material one: the trainer's bucket from the batch's phase
         // column, the engine's from the board, through a file under tag 14.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-screlu-phase-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-screlu-phase-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -675,8 +675,8 @@ mod tests {
 
         material_network_from(&vs, true, PHASE_BUCKETS, 16, 512, 1e-3).write(&path).expect("export should succeed");
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_PHASE);
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), fattorini::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_PHASE);
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert_eq!(engine.material.as_ref().map(|material| material.len()), Some(PHASE_BUCKETS));
 
         for fen in AGREEMENT_POSITIONS {
@@ -691,7 +691,7 @@ mod tests {
         // psq_threats_screlu_count, as the phase one: the trainer's bucket from the batch's count
         // column, the engine's from the board, through a file under tag 15.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-screlu-count-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-screlu-count-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -707,8 +707,8 @@ mod tests {
 
         material_network_from(&vs, true, COUNT_BUCKETS, 16, 512, 1e-3).write(&path).expect("export should succeed");
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_COUNT);
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), fattorini::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_COUNT);
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert_eq!(engine.material.as_ref().map(|material| material.len()), Some(COUNT_BUCKETS));
 
         for fen in AGREEMENT_POSITIONS {
@@ -724,7 +724,7 @@ mod tests {
         // the engine its two sets by the board's phase, through a file under tag 16. The two sets
         // start from `nn::linear`'s random initialisation, so they differ and a swap shows.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-screlu-taper-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-screlu-taper-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -733,8 +733,8 @@ mod tests {
 
         taper_network_from(&vs, 16, 512, 1e-3).write(&path).expect("export should succeed");
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_TAPER);
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), fattorini::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_TAPER);
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert_eq!(engine.material.as_ref().map(|material| material.len()), Some(TAPER_SETS));
 
         for fen in AGREEMENT_POSITIONS {
@@ -750,7 +750,7 @@ mod tests {
         // kings matter: exporter (shared + delta for each side's stage, the plain output as is),
         // file under tag 17, loader, f32 forward pass, their king flipped on both sides alike.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-screlu-kings-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-screlu-kings-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -766,8 +766,8 @@ mod tests {
 
         kings_network_from(&vs, 16, &[8], 512, 1e-3).write(&path).expect("export should succeed");
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_KINGS);
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), fattorini::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_KINGS);
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert!(engine.screlu && engine.threats && !engine.pairwise, "a kings export must load as one");
         assert_eq!(engine.stack.as_ref().map(|stack| stack.output.len()), Some(1));
 
@@ -783,11 +783,11 @@ mod tests {
         // psq_threats_screlu_hidden and psq_threats_pairwise_hidden at a small width: exporter (the
         // hidden layer and the output as they are), file under tag 18 or 19, loader, f32 forward pass.
         for (kind, pairwise, tag) in [
-            ("screlu", false, kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_HIDDEN),
-            ("pairwise", true, kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN),
+            ("screlu", false, fattorini::nnue::FEATURE_SET_PSQ_THREATS_SCRELU_HIDDEN),
+            ("pairwise", true, fattorini::nnue::FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN),
         ] {
             let path = std::env::temp_dir()
-                .join(format!("kalo-chess-export-{kind}-hidden-agreement-{}.nnue", std::process::id()))
+                .join(format!("fattorini-export-{kind}-hidden-agreement-{}.nnue", std::process::id()))
                 .to_str()
                 .unwrap()
                 .to_string();
@@ -797,7 +797,7 @@ mod tests {
             hidden_beside_network_from(&vs, pairwise, 16, &[8], 512, 1e-3).write(&path).expect("export should succeed");
             let bytes = std::fs::read(&path).unwrap();
             assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), tag, "{kind}");
-            let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+            let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
             assert!(
                 engine.screlu == !pairwise && engine.pairwise == pairwise && engine.threats && engine.hidden.len() == 1,
                 "a {kind} hidden export must load as one"
@@ -825,7 +825,7 @@ mod tests {
         // search's quantized path cannot meet this tolerance by design; `nnue.rs` tests it exactly
         // against its own from-scratch reference instead.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-psq-threats-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-psq-threats-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -833,7 +833,7 @@ mod tests {
         let oracle = Network::new(&vs.root(), FeatureSet::PsqThreats, 256, &[16]);
 
         psq_threats_network_from(&vs, false, 256, &[16], 512, 1e-3).write(&path).expect("export should succeed");
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert!(engine.threats && !engine.pairwise, "a psq_threats export must load as psq_threats");
 
         for fen in AGREEMENT_POSITIONS {
@@ -849,7 +849,7 @@ mod tests {
         // with a hidden layer: exporter, file, loader, f32 forward pass, threats of both sides.
         for (embedding_dim, hidden_dims) in [(256, &[][..]), (16, &[8][..])] {
             let path = std::env::temp_dir()
-                .join(format!("kalo-chess-export-psq-threats-pairwise-agreement-{embedding_dim}-{}.nnue", std::process::id()))
+                .join(format!("fattorini-export-psq-threats-pairwise-agreement-{embedding_dim}-{}.nnue", std::process::id()))
                 .to_str()
                 .unwrap()
                 .to_string();
@@ -857,7 +857,7 @@ mod tests {
             let oracle = Network::with_pairwise(&vs.root(), FeatureSet::PsqThreats, true, embedding_dim, hidden_dims);
 
             psq_threats_network_from(&vs, true, embedding_dim, hidden_dims, 512, 1e-3).write(&path).expect("export should succeed");
-            let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+            let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
             assert!(engine.threats && engine.pairwise, "a psq_threats_pairwise export must load as both");
 
             for fen in AGREEMENT_POSITIONS {
@@ -873,7 +873,7 @@ mod tests {
         // The experiment's shape, (4876 -> 256) x 2 squared -> 1: exporter, file, loader, f32 forward
         // pass, threats of both sides.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-psq-threats-screlu-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-psq-threats-screlu-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -882,8 +882,8 @@ mod tests {
 
         screlu_network_from(&vs, 256, 512, 1e-3).write(&path).expect("export should succeed");
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), kalo_chess::nnue::FEATURE_SET_PSQ_THREATS_SCRELU);
-        let kalo_chess::nnue::Network::Psq(engine, _) = kalo_chess::nnue::Network::load(&path).expect("the export should load");
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), fattorini::nnue::FEATURE_SET_PSQ_THREATS_SCRELU);
+        let fattorini::nnue::Network::Psq(engine, _) = fattorini::nnue::Network::load(&path).expect("the export should load");
         assert!(engine.threats && engine.screlu && !engine.pairwise, "a psq_threats_screlu export must load as one");
 
         for fen in AGREEMENT_POSITIONS {
@@ -900,12 +900,12 @@ mod tests {
         // no hidden layer and with two, over the squares and over the products, the first hidden
         // layer's weights drawn beyond psq's bound, which halfk does not keep.
         for (pairwise, hidden_dims, tag) in [
-            (false, &[][..], kalo_chess::nnue::FEATURE_SET_HALFK_THREATS_SCRELU),
-            (false, &[16, 32][..], kalo_chess::nnue::FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN),
-            (true, &[16, 32][..], kalo_chess::nnue::FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN),
+            (false, &[][..], fattorini::nnue::FEATURE_SET_HALFK_THREATS_SCRELU),
+            (false, &[16, 32][..], fattorini::nnue::FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN),
+            (true, &[16, 32][..], fattorini::nnue::FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN),
         ] {
             let path = std::env::temp_dir()
-                .join(format!("kalo-chess-export-halfk-agreement-{tag}-{}.nnue", std::process::id()))
+                .join(format!("fattorini-export-halfk-agreement-{tag}-{}.nnue", std::process::id()))
                 .to_str()
                 .unwrap()
                 .to_string();
@@ -946,7 +946,7 @@ mod tests {
         // in-memory `PsqNetwork`, so it would not notice a format that wrote or read a block in
         // the wrong place.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-psq-agreement-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-psq-agreement-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();
@@ -1062,7 +1062,7 @@ mod tests {
         // Ties this module to the format: what the exporter builds has to be something
         // `Network::load` accepts, including every shape agreement `validate` enforces.
         let path = std::env::temp_dir()
-            .join(format!("kalo-chess-export-round-trip-{}.nnue", std::process::id()))
+            .join(format!("fattorini-export-round-trip-{}.nnue", std::process::id()))
             .to_str()
             .unwrap()
             .to_string();

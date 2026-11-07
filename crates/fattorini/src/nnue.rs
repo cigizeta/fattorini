@@ -39,7 +39,7 @@ use crate::simd::{
 /// Identifies the file at all, before anything is trusted about its contents. Its length is free:
 /// every field after it is copied out with `from_le_bytes`, never read in place, so no alignment
 /// depends on it.
-pub const MAGIC: &[u8; 4] = b"KALO";
+pub const MAGIC: &[u8; 4] = b"FATT";
 
 /// Bumped whenever the byte layout changes in a way an older reader would misread. A reader that
 /// does not recognise a version refuses the file rather than guessing, which is the whole point of
@@ -65,7 +65,7 @@ pub fn curve_of_version(version: u32) -> crate::labels::Curve {
 pub fn file_version(path: &str) -> Result<u32, String> {
     let bytes = fs::read(path).map_err(|error| format!("{path}: {error}"))?;
     if bytes.len() < MAGIC.len() + 4 || &bytes[..MAGIC.len()] != MAGIC {
-        return Err(format!("{path}: not a Kalo Chess network file (bad magic)"));
+        return Err(format!("{path}: not a Fattorini network file (bad magic)"));
     }
     Ok(u32::from_le_bytes(bytes[MAGIC.len()..MAGIC.len() + 4].try_into().expect("four bytes")))
 }
@@ -983,7 +983,7 @@ const PRODUCT_ONE: f32 = (HALF_ONE * HALF_ONE) as f32 / 512.0;
 
 /// Two halves' activations, each in `0..=255`, multiplied and brought back to `0..=127` with
 /// Stockfish's divisor, 512, rounding to nearest (Stockfish truncates, its trainer modelling it;
-/// Kalo Chess's does not, and a truncation bias across lanes is what `QuantizedPsqNetwork::rounding`
+/// Fattorini's does not, and a truncation bias across lanes is what `QuantizedPsqNetwork::rounding`
 /// exists to avoid). At most `(65025 + 256) >> 9 = 127`.
 fn product_of(a: i32, b: i32) -> i32 {
     (a * b + 256) >> 9
@@ -2438,14 +2438,14 @@ impl Network {
 
     /// A network from a `.nnue` file's bytes, `name` standing for the file in every error, untuned:
     /// no file sits beside bytes, so `load` adds the tuning. Also the network a build embeds
-    /// (`KALO_CHESS_EVALFILE`, `uci::embedded_network`).
+    /// (`FATTORINI_EVALFILE`, `uci::embedded_network`).
     pub fn from_bytes(bytes: &[u8], name: &str) -> Result<Network, String> {
         let path = name;
         let mut reader = Reader { bytes, at: 0, path };
 
         let magic = reader.take(MAGIC.len())?;
         if magic != MAGIC {
-            return Err(format!("{path}: not a Kalo Chess network file (bad magic)"));
+            return Err(format!("{path}: not a Fattorini network file (bad magic)"));
         }
         let version = reader.u32()?;
         if version != VERSION && version != ATAN_VERSION {
@@ -2790,7 +2790,7 @@ pub(crate) mod tests {
 
     fn temp_path(name: &str) -> String {
         let pid = std::process::id();
-        std::env::temp_dir().join(format!("kalo-chess-nnue-{name}-{pid}.nnue")).to_str().unwrap().to_string()
+        std::env::temp_dir().join(format!("fattorini-nnue-{name}-{pid}.nnue")).to_str().unwrap().to_string()
     }
 
     /// Reads `path` back, insisting it is a psq network.
@@ -5290,7 +5290,7 @@ pub(crate) mod tests {
     /// malformed one is refused rather than falling back.
     #[test]
     fn a_loaded_network_carries_the_parameters_beside_it() {
-        let dir = std::env::temp_dir().join(format!("kalo-chess-nnue-parameters-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("fattorini-nnue-parameters-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("champion.nnue").to_str().unwrap().to_string();
         let parameters_path = parameters_file_beside(&path);

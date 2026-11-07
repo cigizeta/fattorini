@@ -3,7 +3,7 @@
 //! synchronous crates, `tiny_http` and `ureq`, under it, so neither binary writes HTTP by hand.
 //!
 //! The protocol's answers are all `200`, their body starting with a status word line
-//! (`kalo_chess::pipeline::protocol`); the HTTP code says only what HTTP knows: a malformed request
+//! (`fattorini::pipeline::protocol`); the HTTP code says only what HTTP knows: a malformed request
 //! (`400`), an unknown path (`404`), a body over `BODY_LIMIT` (`413`).
 
 use std::io::Read;
@@ -11,10 +11,10 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use kalo_chess::pipeline::protocol::{LOOPBACK, STOP_PATH};
+use fattorini::pipeline::protocol::{LOOPBACK, STOP_PATH};
 
 /// The header every request after `hello` carries its token in.
-pub const TOKEN_HEADER: &str = "X-Kalo-Chess-Token";
+pub const TOKEN_HEADER: &str = "X-Fattorini-Token";
 
 /// The largest body either side takes: a job's compressed games or a network are a few MB.
 pub const BODY_LIMIT: u64 = 64 * 1024 * 1024;

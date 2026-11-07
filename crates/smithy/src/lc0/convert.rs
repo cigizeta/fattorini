@@ -13,7 +13,7 @@ use shakmaty::fen::Fen;
 use shakmaty::san::SanPlus;
 use shakmaty::{CastlingMode, Chess, Color, File, Move, Piece, Position, Role, Square};
 
-use kalo_chess::labels::LC0;
+use fattorini::labels::LC0;
 
 use super::moves::{IndexedMove, Promotion, MOVE_COUNT};
 use super::record::{records, Record, Squares};
@@ -76,7 +76,7 @@ pub(super) fn convert_game(game_id: &str, game: &[u8], table: &[IndexedMove], co
 }
 
 /// Lc0's visit count of every legal move at `position`, the moves sorted by their UCI text: an order
-/// independent of any move generator, so a change to Kalo Chess's never reorders a file already written,
+/// independent of any move generator, so a change to Fattorini's never reorders a file already written,
 /// and no move named, the position already saying which they are. The record's policy target holds
 /// each move's share of the root's visits but the first, so a share times `visits - 1` is its count,
 /// exactly; one that is not a whole count is an error, as is an entry for a move not legal or a legal
@@ -309,7 +309,7 @@ mod tests {
         let mut reader = SelfPlaySegmentReader::open(&path);
         let (index, collected) = reader.next_game(&path).expect("one game");
         assert_eq!(self_play_game_positions(&collected, index).len(), 70);
-        assert_eq!(self_play_game_labels(&collected, 0.98, index, &kalo_chess::labels::Curve::Atan(*LC0)).len(), 70);
+        assert_eq!(self_play_game_labels(&collected, 0.98, index, &fattorini::labels::Curve::Atan(*LC0)).len(), 70);
         assert!(reader.next_game(&path).is_none());
         std::fs::remove_dir_all(&dir).ok();
     }

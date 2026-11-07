@@ -1,6 +1,6 @@
-# Kalo Chess 0.1.0
+# Fattorini 0.1.0
 
-Kalo Chess is a UCI chess engine written in Rust, with a neural network evaluation (NNUE) trained
+Fattorini is a UCI chess engine written in Rust, with a neural network evaluation (NNUE) trained
 on a limited compute budget. This release plays with the network `NETWORK@tuned`, embedded in the
 executable: there is no network file to set.
 
@@ -13,7 +13,7 @@ executable: there is no network file to set.
 
 ## Use
 
-Add `kalo-chess-v0.1.0.exe` to any UCI GUI (Cute Chess, Arena, BanksiaGUI, Nibbler, ...). Options:
+Add `fattorini-v0.1.0.exe` to any UCI GUI (Cute Chess, Arena, BanksiaGUI, Nibbler, ...). Options:
 
 | Option | Default | |
 |---|---|---|
@@ -23,7 +23,7 @@ Add `kalo-chess-v0.1.0.exe` to any UCI GUI (Cute Chess, Arena, BanksiaGUI, Nibbl
 | `MultiPV` | 1 | lines reported, 1 to 500 |
 | `Ponder` | false | thinking on the opponent's time |
 
-`kalo-chess about` prints what the executable is: its version, network and build.
+`fattorini about` prints what the executable is: its version, network and build.
 
 ## Strength
 
@@ -39,12 +39,12 @@ colour-reversed pairs from the UHO book, at 10+0.1, one thread and 64 MB each, b
 
 ## License
 
-Kalo Chess is free software under the GNU Affero General Public License, version 3 only. The source
-of this release is the repository at its tag, `v0.1.0`. `kalo-chess licenses` prints the notices of
+Fattorini is free software under the GNU Affero General Public License, version 3 only. The source
+of this release is the repository at its tag, `v0.1.0`. `fattorini licenses` prints the notices of
 the third-party code built into the executable.
 
 The network was trained on positions from the self-play games of
 [Leela Chess Zero](https://lczero.org), test91 run's training data (storage.lczero.org), made
 available under the [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/),
 its contents under the [Database Contents License (DbCL) 1.0](https://opendatacommons.org/licenses/dbcl/1-0/).
-The conversion of that data into Kalo Chess's training positions is in `crates/smithy/src/lc0/`.
+The conversion of that data into Fattorini's training positions is in `crates/smithy/src/lc0/`.
