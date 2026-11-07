@@ -14,10 +14,6 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 ## Next (the developer, 2026-11-06)
 
-- **Finish fattorini-rename.md, steps 4 to 7, when every machine is idle:** the networks' magic,
-  the firewall rules, each machine. It replaces step 5 of kalo-chess-repository.md. Undecided: whether
-  the Lichess account stays `kalo-chess`.
-
 In this order:
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`), SPSA from the smithy's page.

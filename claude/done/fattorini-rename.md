@@ -1,8 +1,7 @@
 # The engine becomes Fattorini
 
-**Status:** steps 1 to 4 done 2026-11-07 on this machine (tests passed); steps 5 to 7 wait until every
-machine is idle. The GitHub repository, `origin`
-and the Drive root were already renamed.
+**Status:** complete 2026-11-07: all seven steps done on every machine, and smithy and arenas run
+together under the new name. The GitHub repository, `origin` and the Drive root were already renamed.
 
 ## Decisions (the developer, 2026-11-07)
 
