@@ -8,7 +8,7 @@ Zero publishes. No other engine's network is used.
 
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
-Fattorini's account on Lichess is [kalo-chess](https://lichess.org/@/kalo-chess).
+Fattorini's account on Lichess is [fattorini-bot](https://lichess.org/@/fattorini-bot).
 
 ## Running Fattorini
 

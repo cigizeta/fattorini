@@ -24,7 +24,8 @@ and the Drive root were already renamed.
   old magic included, and lichess-bot's configured path only needs the new Drive root. Snapshots
   keep their old file names; `arena snapshot`'s cleanup of older ones will not match them.
 - The Lichess account is a separate question: README.md links to it, and the `sed` below must not
-  be allowed to change that link to an account that does not exist.
+  be allowed to change that link to an account that does not exist. Settled 2026-11-07: the
+  account is `fattorini-bot`, and README.md links to it.
 
 ## Order
 
