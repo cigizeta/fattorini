@@ -1,10 +1,7 @@
 # Fattorini
 
 Fattorini is a UCI chess engine written in Rust. Its evaluation networks are trained on a limited compute
-budget. Its training is starting again from scratch, along two routes: networks that learn
-only from Fattorini itself, the first generation from the PeSTO evaluation and every later one from the
-previous winner; and networks whose first generation learns from the training games Leela Chess
-Zero publishes. No other engine's network is used.
+budget.
 
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
