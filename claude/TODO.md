@@ -22,7 +22,7 @@ In this order:
    Before the training machine trains on it: delete any local `data/pesto` and
    `data/buckets/pesto*` there, left from the old partial corpus.
 3. **Lichess, the tuned lc0 network:** a `@tuned` snapshot (`bin/arena snapshot`), lichess-bot's
-   `engine.name` pointed at it. The bot `kalo-chess` plays the untuned snapshot until then.
+   `engine.name` pointed at it. The bot `fattorini-bot` plays the untuned snapshot until then.
    `temper-chess` to close.
 4. **The first release** (binary-release.md, binary-release-implementation.md): the code done and
    its dry run passed 2026-11-06. Left: the two Skill Level matches, `RELEASE-NOTES.md` filled, a
@@ -33,9 +33,9 @@ In this order:
 ## Before the release or CCRL
 
 - **A repeating-control check.** Lichess sends only Fischer, so the `movestogo` path has never
-  played a real game, while CCRL plays 40/15 repeating. A few dozen games at `tc=40/60`, Kalo Chess
+  played a real game, while CCRL plays 40/15 repeating. A few dozen games at `tc=40/60`, Fattorini
   against itself, on an idle machine: no time forfeits, a sensible clock at move 40, no move near
-  the control spending close to the 0.5 cap. Kalo Chess subtracts no move overhead; if forfeits
+  the control spending close to the 0.5 cap. Fattorini subtracts no move overhead; if forfeits
   appear, a `Move Overhead` UCI option.
 - **README at the release** (readme-for-humans.md): Strength from the release's two Skill Level
   matches, the network named; Inside brought to the released architecture; the opening paragraph

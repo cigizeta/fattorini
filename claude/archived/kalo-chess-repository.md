@@ -1,7 +1,7 @@
 # The repository becomes kalo-chess
 
-**Status:** steps 1 to 4 done 2026-11-06 (tests passed, this machine's venv recreated); step 5 waits
-until the other machines are idle.
+**Status:** superseded, see fattorini-rename.md, which replaced step 5. Steps 1 to 4 done 2026-11-06
+(tests passed, this machine's venv recreated).
 
 ## Decisions (the developer, 2026-11-06)
 
