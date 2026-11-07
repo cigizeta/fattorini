@@ -36,7 +36,20 @@ In this order:
   played a real game, while CCRL plays 40/15 repeating. A few dozen games at `tc=40/60`, Fattorini
   against itself, on an idle machine: no time forfeits, a sensible clock at move 40, no move near
   the control spending close to the 0.5 cap. Fattorini subtracts no move overhead; if forfeits
-  appear, a `Move Overhead` UCI option.
+  appear, a margin built into the time management, safe at default settings: testers are assumed
+  to set no option (the developer, 2026-11-07).
+- **Clock safety at default settings, after that check:** no margin for lag is subtracted, on the
+  assumption that the GUI hands over a reduced clock, which is lichess-bot's setting, not a tester's.
+  - `MAX_CLOCK_FRACTION` is relative: at 20 ms left it allows 10 ms, while lag does not shrink.
+  - `(alpha + 1/M) * T` always exceeds an even share of the time left. Rough estimate: moves using
+    their full target reach the last move of a 900 s control with about 3 s, about 0.4 s at 120 s.
+    Log the clock left at moves 38 to 40.
+  - `CHECK_INTERVAL`'s 10 ms rests on an old 99,000 nodes/second figure: re-measure with a network.
+    Neither `go`'s arrival nor writing `bestmove` is counted.
+  - Whether depth 1 always finishes on a near-empty clock (`movetime 0` still returns a real move),
+    and what it costs.
+  - Candidate fix, not decided: a fixed reserve subtracted from `T`, a smaller `alpha` under
+    `movestogo`. Run the check through a GUI with no margin of its own.
 - **README at the release** (readme-for-humans.md): Strength from the release's two Skill Level
   matches, the network named; Inside brought to the released architecture; the opening paragraph
   up to date; "Download" linking to this repository's releases page.
