@@ -642,14 +642,15 @@ fn searched_in(dir: &str, open: &SegmentWriter) -> Result<u64, String> {
 enum Work {
     Idle,
     /// Self-play with `teacher`: `test_left` positions into `test_dir` for the test set first, then
-    /// `train_left` into `train_dir`. A forge run counts the searched positions, as its training and
-    /// its freezer keep them (`searched`); PeSTO's play counts every position read, its corpus shared
-    /// by every config. `before`, the positions each set held when this play began (test, training):
+    /// `train_left` into `train_dir`. Every count is of searched positions, those with a search
+    /// evaluation, all but each game's final one, as training and the freezer keep them: counting
+    /// the final ones too left a corpus short of its test set. `before`, the positions each set held
+    /// when this play began (test, training):
     /// the page shows the run's totals, a resume moving their start and never their total, its rate
     /// and ETA this play's alone. `targets`, each set's whole target (test, training), as the page
     /// shows it: a set already past its target, its last game overshooting, has none left, and
     /// `before` plus what is left would show the overshoot as the target.
-    SelfPlay { teacher: String, test_dir: String, test_left: u64, train_dir: String, train_left: u64, searched: bool, before: (u64, u64), targets: (u64, u64) },
+    SelfPlay { teacher: String, test_dir: String, test_left: u64, train_dir: String, train_left: u64, before: (u64, u64), targets: (u64, u64) },
     /// Pairs: for each pairing, `(challenger, teacher)` by name (`publish`), `wanted` pairs each, every result
     /// appended to `record` as `pairing<TAB>r<TAB>chore<TAB>session<TAB>seq`, its games to the PGN
     /// beside it (`Dirs::games_of`).
@@ -1303,11 +1304,11 @@ impl Shared {
     /// Writes a task of the current work to disk and counts it.
     fn record(&mut self, games: &[tasks::TaskGame], text: &str, pairing: Option<usize>, key: &(String, String, String)) -> Result<(), String> {
         match (self.work(), pairing) {
-            (Work::SelfPlay { test_dir, test_left, train_dir, searched, .. }, None) => {
-                // The segment's `.meta` counts every position read; a forge's targets, the searched
-                // ones, all but the final position (`searched_in`).
+            (Work::SelfPlay { test_dir, test_left, train_dir, .. }, None) => {
+                // The segment's `.meta` counts every position read; the targets, the searched ones,
+                // all but the final position (`searched_in`).
                 let positions = games[0].positions();
-                let counted = if searched { positions - 1 } else { positions };
+                let counted = positions - 1;
                 let test = self.test_got < test_left;
                 let (slot, dir) = if test { (&mut self.test_segment, test_dir) } else { (&mut self.train_segment, train_dir) };
                 if slot.is_none() {
@@ -2885,11 +2886,10 @@ impl Status {
         let shared = self.shared.lock().expect("the lock should not be poisoned");
         let work = match shared.work() {
             Work::Idle => format!("nothing: {}", shared.wait_reason()),
-            Work::SelfPlay { teacher, searched, before, targets, .. } => format!(
-                "self-play with {teacher}: test set {} of {} {}positions, training set {} of {}",
+            Work::SelfPlay { teacher, before, targets, .. } => format!(
+                "self-play with {teacher}: test set {} of {} searched positions, training set {} of {}",
                 before.0 + shared.test_got,
                 targets.0,
-                if searched { "searched " } else { "" },
                 before.1 + shared.train_got,
                 targets.1
             ),
@@ -3153,7 +3153,7 @@ impl Run<'_> {
         );
         let started = Instant::now();
         let targets = (self.config.test_positions, train_target);
-        let work = Work::SelfPlay { teacher, test_dir, test_left, train_dir, train_left, searched: true, before, targets };
+        let work = Work::SelfPlay { teacher, test_dir, test_left, train_dir, train_left, before, targets };
         if let Ended::Stopped = deal_self_play(&self.shared, &self.stop, work, test_segment, train_segment)? {
             return Ok(Ended::Stopped);
         }
@@ -4283,7 +4283,7 @@ fn play_pesto(status: &Status) -> Result<String, String> {
     begin(&status.shared, &format!("{local_root}/chores.txt"), None)?;
     let started = Instant::now();
     let (test_segment, train_segment) = (SegmentWriter::open(&test_dir)?, SegmentWriter::open(&train_dir)?);
-    let work = Work::SelfPlay { teacher: PESTO.to_string(), test_dir, test_left, train_dir, train_left, searched: false, before: (test_done, train_done), targets: (config.test_positions, config.training_positions) };
+    let work = Work::SelfPlay { teacher: PESTO.to_string(), test_dir, test_left, train_dir, train_left, before: (test_done, train_done), targets: (config.test_positions, config.training_positions) };
     let ended = deal_self_play(&status.shared, &status.job_stop, work, test_segment, train_segment)?;
     // Stopped, the open files are closed too: their whole games go to the remote, and a resume
     // starts new files.
@@ -5343,7 +5343,7 @@ mod tests {
         let (test_dir, train_dir) = (format!("{dir}/test"), format!("{dir}/train"));
         let shared = Mutex::new(Shared::default());
         shared.lock().unwrap().work =
-            Some(Work::SelfPlay { teacher: PESTO.to_string(), test_dir: test_dir.clone(), test_left: 3, train_dir: train_dir.clone(), train_left: 100, searched: false, before: (0, 0), targets: (3, 100) });
+            Some(Work::SelfPlay { teacher: PESTO.to_string(), test_dir: test_dir.clone(), test_left: 2, train_dir: train_dir.clone(), train_left: 100, before: (0, 0), targets: (2, 100) });
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!((dealt.kind, &dealt.limit, dealt.entries[0].count), (TaskKind::SelfPlay, &Limit::Depth(generation::SEARCH_DEPTH), TASKS_PER_WORKER));
@@ -5356,12 +5356,12 @@ mod tests {
             let shared = shared.lock().unwrap();
             (shared.test_got, shared.train_got)
         };
-        assert_eq!(got, (3, 0), "counted once, into the test set");
+        assert_eq!(got, (2, 0), "counted once, into the test set: 3 positions read, the final one not searched");
         let second = task_body(&session, &self_play_game(&dealt.id, &session, 1));
         let reply = post(&shared, TASK_PATH, &second);
         assert_eq!(word(&reply), "ADD", "1 left: topped up");
         assert_eq!(protocol::parse_entries(&String::from_utf8(lan_http::status_of(&reply).unwrap().1).unwrap()).unwrap()[0].count, TASKS_PER_WORKER);
-        assert_eq!(shared.lock().unwrap().train_got, 3, "then the training set");
+        assert_eq!(shared.lock().unwrap().train_got, 2, "then the training set");
 
         let unscored = self_play_game(&dealt.id, &session, 2).replace(" {#-4}", "");
         assert_eq!(post(&shared, TASK_PATH, &task_body(&session, &unscored)).code, 400, "a game training could not read");
@@ -5418,7 +5418,6 @@ mod tests {
                 test_left: 30,
                 train_dir: String::new(),
                 train_left: 100,
-                searched: true,
                 before: (70, 0),
                 targets: (100, 100),
             }),
@@ -5441,7 +5440,6 @@ mod tests {
                 test_left: 0,
                 train_dir: String::new(),
                 train_left: 60,
-                searched: false,
                 before: (103, 40),
                 targets: (100, 100),
             }),
@@ -5455,7 +5453,7 @@ mod tests {
     }
 
     #[test]
-    fn a_forge_runs_self_play_counts_its_searched_positions() {
+    fn self_play_counts_its_searched_positions() {
         let dir = scratch("self-play-kept");
         let (test_dir, train_dir) = (format!("{dir}/test"), format!("{dir}/train"));
         let shared = Mutex::new(Shared::default());
@@ -5465,7 +5463,6 @@ mod tests {
             test_left: 3,
             train_dir: train_dir.clone(),
             train_left: 100,
-            searched: true,
             before: (0, 0),
             targets: (3, 100),
         });

@@ -60,14 +60,21 @@ pub(crate) fn train_dir() -> String {
     preprocessing_config::source_train_dir(preprocessing_config::PESTO_ROOT)
 }
 
-/// The positions of the finished segments under the remote counterpart of `dir`.
+/// The searched positions of the finished segments under the remote counterpart of `dir`: those
+/// with a search evaluation, as training and the freezer count them.
 pub(crate) fn remote_positions(dir: &str) -> Result<u64, String> {
     let names = segments::list_remote(dir).map_err(|error| error.to_string())?;
-    let mut positions = 0;
+    let mut metas = Vec::with_capacity(names.len());
     for name in names {
-        positions += segments::read_remote_meta(dir, &name)?.positions;
+        metas.push(segments::read_remote_meta(dir, &name)?);
     }
-    Ok(positions)
+    Ok(searched_of(&metas))
+}
+
+/// The searched positions of segments with these `.meta`s: every position read but each game's
+/// final one.
+fn searched_of(metas: &[segments::SegmentMeta]) -> u64 {
+    metas.iter().map(|meta| meta.positions - meta.games).sum()
 }
 
 /// The page's line for the corpus: complete, with what it holds, or what it is to hold.
@@ -121,6 +128,13 @@ mod tests {
     #[test]
     fn its_games_go_under_data_pesto() {
         assert_eq!((test_dir(), train_dir()), ("data/pesto/test".to_string(), "data/pesto/train".to_string()));
+    }
+
+    #[test]
+    fn its_remote_counts_leave_out_each_game_s_final_position() {
+        let metas = [segments::SegmentMeta { positions: 300, games: 2 }, segments::SegmentMeta { positions: 50, games: 1 }];
+        assert_eq!(searched_of(&metas), 347);
+        assert_eq!(searched_of(&[]), 0);
     }
 
     #[test]
