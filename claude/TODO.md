@@ -33,6 +33,9 @@ In this order:
    ideally, CCRL lists it: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
    it is trained on a limited compute budget; links to the repository, releases and ratings).
    Claude drafts it from the README and `claude/` for the developer to edit; an account is needed.
+   Beside it, a minimal author page: the developer's name and GitHub profile, filled in by the
+   developer on the wiki and never in a file here, and their other public chess projects, as Aio64
+   (a chess tool, not an engine) once its repository is public.
 
 ## Before the release or CCRL
 
