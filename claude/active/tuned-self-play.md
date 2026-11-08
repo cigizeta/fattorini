@@ -1,7 +1,7 @@
 # Tuned self-play: each generation's teacher plays its own tune
 
-**Status:** design, open, 2026-11-08. Nothing decided beyond the wish; seven questions below.
-Answers question 2 of search-defaults.md, if adopted.
+**Status:** design settled 2026-11-08, its seven questions answered by the developer; the
+implementation plan next. Answers question 2 of search-defaults.md.
 
 ## The wish (the developer, 2026-11-08)
 
@@ -42,29 +42,43 @@ so that each generation changes the network alone.
    against `@untuned`, the new defaults since the code change, at depth 9: drawn, curtailed at 385
    pairs, the tune 403.0 to 367.0 (52.3%, about +16 Elo), `+234 -270 =266` from the defaults' side.
    The tune's tighter pruning costs nothing at the forge's search, leaning if anything its way.
-2. **The labels.** With tuned self-play, each generation's labels depend on its tune, which is noisy
-   (16k pairs). A tune that prunes more changes depth-9 scores; whether for better or worse is not
-   known. To check before or alongside, how not yet designed.
-3. **The gate and the round robin.** The gate comes before the tune: the challenger has none yet.
-   Proposed: the gate and round robin keep one fixed parameter set for both sides (today's pinned
-   values, or the new defaults), so they still judge the network alone; only self-play plays the
-   tune.
-4. **Time per generation.** A tune is about 7 hours at 16,384 pairs on today's arenas, 15 at 32,768,
-   added to every generation before its self-play can start. Proposed: the default length per
-   generation, a longer tune for a release only.
-5. **Where each tune starts.** Every tune starts from the defaults (the developer, 2026-10-23: no
-   fine-tune from another player's values), so any generation can be tuned in any order. "Retune"
-   could instead start from the previous generation's tune: fewer pairs, but it reverses that rule
-   and chains every tune to the one before.
-6. **PeSTO's corpus.** PeSTO's played corpus exists, played with the old defaults. The wish means
-   replaying it with tuned PeSTO: a PeSTO tune first (`data/spsa/pesto/`), then a full self-play
-   run. Or the current corpus stays for generation 1, the pattern starting at generation 2.
-7. **The forge's code.** `FORGE_PARAMETERS` stops being one fixed set: self-play plays the teacher's
-   tune (`parameters.txt` beside it, or PeSTO's), the gate and round robin whatever question 3
-   decides, and the forge refuses to start a generation's self-play while its teacher has no
-   finished tune.
+2. **The labels. Decided 2026-11-08: not measured** (the developer). With tuned self-play, each
+   generation's labels depend on its tune, which is noisy (16k pairs), and a tune that prunes more
+   changes depth-9 scores. Equal Elo at depth 9 (question 1) is taken as enough evidence; tuned
+   self-play is judged by the next generations' gates instead.
+3. **The gate and the round robin. Decided 2026-11-08** (the developer): for the lc0 line, the new
+   defaults (`SearchParameters::DEFAULT`) on both sides, so the gate judges the network alone; for
+   the PeSTO line, PeSTO plays its tune. Read as: wherever PeSTO itself is a side, as the champion of
+   a PeSTO line's generation-1 gate, it plays its tune (`data/spsa/pesto/`), the challenger network
+   the new defaults, a deliberately harder bar: the network must beat the tuned PeSTO that taught
+   it. A network against a network plays the new defaults on both sides. `FORGE_PARAMETERS`' old
+   values retire.
+4. **Time per generation. Decided 2026-11-08: 32,768 pairs every generation** (the developer). Every
+   teacher is tuned as well as a release, about 15 hours on today's arenas added to each generation
+   before its self-play can start. A config's `tune: length:` becomes 32768, and
+   `spsa::DEFAULT_TUNE_PAIRS` with it, so the default is the generation's.
+5. **Where each tune starts. Decided 2026-11-08: from the previous generation's tune** (the
+   developer), reversing the rule of 2026-10-23 (every tune from the defaults). Generation g+1's
+   tune starts at its teacher's tuned values, generation g's; a tune without a tuned teacher (the
+   lc0 line's generation 1, PeSTO's own) from the defaults. So generations are tuned in order, each
+   chained to the one before, its noise included; each tune records its starting values in its
+   `spec.txt`, as today. Read as: a PeSTO line's generation-1 network starts from PeSTO's tune, its
+   teacher's. Unchanged: each parameter's range and `c_end` (`spsa::SPECS`).
+6. **PeSTO's corpus. Decided 2026-11-08: replayed with tuned PeSTO** (the developer). PeSTO is
+   tuned first (`data/spsa/pesto/`, 32,768 pairs from the defaults, about 15 hours), then its played
+   corpus is played again by tuned PeSTO, a full self-play run of many hours; the old corpus, played
+   with the old defaults, is set aside. How PeSTO's Play takes parameters (today the defaults), and
+   where the old corpus goes, belong to the plan.
+7. **The forge's code. Decided 2026-11-08: refuse to start** (the developer). `FORGE_PARAMETERS`
+   stops being one fixed set: self-play plays the teacher's tune (`parameters.txt` beside it, or
+   PeSTO's), the gate and round robin as question 3. Resuming a generation whose self-play needs a
+   tune its teacher lacks is refused with a message saying so, no waiting state: the developer
+   tunes the teacher from the page, then resumes.
 
 ## Next
 
 1. ~~Question 1's duel, at depth 9.~~ Answered: even, leaning to the tune.
-2. Questions 2 to 7 settled one by one, then an implementation plan.
+2. ~~Questions 2 to 7 settled one by one.~~ Done.
+3. The implementation plan: forge parameters by role, tune starts from the teacher's tune, the
+   default length 32,768, PeSTO's Play with its tune, the refusal; then the order of work (lc0's
+   generation-1 tune from the new defaults, PeSTO's tune, PeSTO's corpus replayed).
