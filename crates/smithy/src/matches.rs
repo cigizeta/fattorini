@@ -286,13 +286,13 @@ fn judge_duel(pairs: &[i32]) -> Judged {
     let sigma = side.sigma();
     let threshold = if side.count == 0 { 1.0 } else { duel_threshold(side.count, sigma).min(1.0) };
     // Said from the challenger's side, as its gauge reads: the question a test asks is the challenger's.
+    // The challenger's score is left out: the table's challenger column already shows it.
     Judged {
         pairs: counted,
         games,
         challenger_points,
         status: format!(
-            "challenger {:.1}%, thresholds {:.1}% and {:.1}%, sigma {sigma:.3}",
-            100.0 * score,
+            "thresholds {:.1}% and {:.1}%, sigma {sigma:.3}",
             100.0 * (1.0 - threshold),
             100.0 * threshold
         ),
@@ -342,7 +342,8 @@ fn judge_match(total: u32, pairs: &[i32]) -> Judged {
         pairs: counted,
         games,
         challenger_points,
-        status: format!("{} of {} pairs, challenger {:.1}%, {estimate}", progress::grouped(counted), progress::grouped(total), 100.0 * score),
+        // The challenger's score is left out: the table's challenger column already shows it.
+        status: format!("{} of {} pairs, {estimate}", progress::grouped(counted), progress::grouped(total)),
         // Not a gauge but progress: the page draws it as a bar of pairs.
         gauge: Gauge { value: counted as f64, lower: 0.0, upper: f64::from(total), left: "", right: "" },
         expected_games: Some(2 * u64::from(total)),
@@ -361,8 +362,6 @@ fn judge_sprt(elo0: f64, elo1: f64, pairs: &[i32]) -> Judged {
         }
     }
     let (lower, upper) = sprt.bounds();
-    // The challenger's share, as a duel's and a match's.
-    let score = if sprt.games() == 0 { 0.0 } else { sprt.score() / sprt.games() as f64 };
     let verdict = match sprt.verdict() {
         Verdict::Promote => Some(format!("H1: the challenger is stronger by {elo1} Elo or more")),
         Verdict::Fail => Some(format!("H0: the challenger is not stronger by more than {elo0} Elo")),
@@ -373,7 +372,8 @@ fn judge_sprt(elo0: f64, elo1: f64, pairs: &[i32]) -> Judged {
         pairs: counted,
         games: sprt.games(),
         challenger_points: sprt.score(),
-        status: format!("challenger {:.1}%, llr {:+.2} [{lower:+.2}, {upper:+.2}]", 100.0 * score, sprt.llr()),
+        // The challenger's score is left out: the table's challenger column already shows it.
+        status: format!("llr {:+.2} [{lower:+.2}, {upper:+.2}]", sprt.llr()),
         gauge: Gauge { value: sprt.llr(), lower, upper, left: "fail", right: "pass" },
         expected_games: None,
         verdict,
