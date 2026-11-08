@@ -61,7 +61,8 @@ gave the same values (question 1).
 
 **Validated before any code changes**, as `@tuned` (new) against `@untuned` (old), by a
 `parameters.txt` holding the new values. The validation duels in the test log are named `@tuned`.
-**Temporary, to undo afterwards:**
+**Temporary, undone 2026-11-08** (PeSTO's file deleted, the lc0 tune's values restored; its copy
+`parameters.tune-16k.txt` kept):
 
 - `data/spsa/pesto/parameters.txt` (local), written for this: PeSTO had no tune. To delete.
 - The lc0 network's `gen-1/lambda-polyline/parameters.txt` on the remote: its tune result moved
@@ -146,9 +147,14 @@ beside each side's speed at that depth:
 | new loses | fewer | a real trade-off, noisier labels against more positions an hour: this question |
 | new wins | either | clearly better |
 
-- **The speed is still to measure:** a duel gives the score, not each side's nodes a position.
-  Either `bench` at depth 9 with each parameter set, or the same self-play run timed with each.
-  Without it, the middle row says what is lost but not what it buys.
+- **The speed, by `bin/fattorini bench`** (the developer, 2026-11-08): a development build benches
+  PeSTO with the built-in defaults, every bench position to depth 9, one thread, a fresh table each;
+  its node count is exact for one binary, so the bench before the code change against the bench
+  after it is the old defaults' cost against the new ones'.
+  - Old defaults (2026-11-08, before the change): **3,684,206 nodes**, 4,730,673 nps.
+  - New defaults: to run after the code change.
+  - The lc0 network's would need a snapshot embedding it; a new `@untuned` snapshot replaces the
+    older one, which lichess-bot's `config.yml` may name, so PeSTO's alone unless asked.
 - **Elo is a proxy:** the forge trains on depth-9 scores, not on the moves. Pruning can shift a
   score without changing the move chosen, so a depth-9 draw does not prove the labels unchanged; Elo
   and score accuracy usually move together, so it is a fair first signal.
@@ -168,9 +174,8 @@ Directions to weigh, none chosen:
 
 1. ~~The tune ends; its end values and the duel's result go in "Where things stand".~~ Done.
 2. ~~Question 1 discussed parameter by parameter.~~ Done.
-3. The validation duels end (PeSTO and lc0, 10+0.1 and depth 9); their results go above.
-4. The temporary files undone: PeSTO's `parameters.txt` deleted, the lc0 network's tune result
-   restored from `parameters.tune-16k.txt`.
+3. ~~The validation duels end (PeSTO and lc0, 10+0.1 and depth 9); their results go above.~~ Passed.
+4. ~~The temporary files undone.~~ Done.
 5. A plan, then the code: the new values in `SearchParameters::DEFAULT`, which becomes the one
    source of the tune's starting values (`spsa::SPECS` keeps each parameter's range and `c_end`
    alone), the ranges re-centred on the new values, and `aspiration_delta`'s floor of 5 lowered, the
