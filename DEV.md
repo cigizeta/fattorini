@@ -369,12 +369,19 @@ control, the run's frozen copy for a network, `configs/pesto.yaml` for `pesto`:
 
 ```yaml
 tune:
-  length: default          # 16,384 pairs; or a number of pairs, at least 100
+  length: default          # 32,768 pairs; or a number of pairs, at least 100
   control: 10+0.1          # or {depth: d}
 ```
 
-Every tune starts from the default parameters, whatever the player, so a run's generations may be
-tuned in any order.
+A tune starts from its teacher's tune: generation g's from generation g - 1's winner's, a PeSTO
+run's generation 1 from PeSTO's; an Lc0 run's generation 1 and PeSTO itself from the default
+parameters. So a run's generations are tuned in order: a tune whose teacher has no finished tune is
+refused, saying which to run first.
+
+The forge uses the tunes too. A generation's self-play plays its teacher's tune, and PeSTO's Play
+plays PeSTO's: either is refused, saying so, while that tune is missing. Gates and round robins play
+the default parameters on both sides, so they judge the networks alone, except PeSTO, which plays
+its tune wherever it is a side.
 
 Under a clock the smithy benches its own machine at the start, and every arena scales its clock to
 its speed against that one. The result goes to the network's `parameters.txt`. A forge run's

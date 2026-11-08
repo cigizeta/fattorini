@@ -7,16 +7,20 @@
 //! Chosen with the developer on 2026-10-16, `r_end` revised on 2026-10-20: one `r_end` for all
 //! parameters (`R_END`), and each
 //! parameter's range and `c_end` from its scale (`SPECS`). The number of pairs N is each tune's own,
-//! its config's `length:`, `default` (`DEFAULT_TUNE_PAIRS`) or a number. Every tune starts from
-//! `SPECS`' starts, the default parameters (the developer, 2026-10-23: no fine-tune from another
-//! player's values). theta is kept as real numbers, a player rounding each value to the nearest
-//! integer when it plays.
+//! its config's `length:`, `default` (`DEFAULT_TUNE_PAIRS`) or a number. A tune starts from its
+//! teacher's tune (`specs_from`), or from `SPECS`' starts, the default parameters, when its player
+//! has no tuned teacher (the developer, 2026-11-08, reversing 2026-10-23's "every tune from the
+//! defaults": each generation's teacher plays its tune in self-play, and the next tune goes on from
+//! it). theta is kept as real numbers, a player rounding each value to the nearest integer when it
+//! plays.
 
 use crate::search::SearchParameters;
 
-/// `length: default`: a tune of 32,768 games, about 14 hours on two machines together (an
-/// estimate, 2026-10-20).
-pub const DEFAULT_TUNE_PAIRS: u32 = 16_384;
+/// `length: default`: a tune of 65,536 games, every generation's (the developer, 2026-11-08: each
+/// teacher tuned as well as a release, since it plays its tune in self-play), about 15 hours on the
+/// arenas of 2026-11-08; 16,384 pairs before, which gained the lc0 network about 130 Elo with its
+/// parameters still moving at the end.
+pub const DEFAULT_TUNE_PAIRS: u32 = 32_768;
 
 /// The tests' tune length, the N of 2026-10-16's first tunes: about four hours on one machine at 10+0.1
 /// with every game played out.
@@ -73,6 +77,17 @@ pub const SPECS: [Spec; 10] = [
 
 /// theta, the tune's current point, as real numbers in `SearchParameters::NAMES`' order.
 pub type Theta = [f64; 10];
+
+/// `SPECS` starting from `start` instead of the defaults, each value clamped into its parameter's
+/// range: a tune going on from its teacher's tune. The ranges and perturbations stay `SPECS`'.
+pub fn specs_from(start: &SearchParameters) -> [Spec; 10] {
+    let values = start.values();
+    let mut specs = SPECS;
+    for (spec, value) in specs.iter_mut().zip(values) {
+        spec.start = value.clamp(spec.min, spec.max);
+    }
+    specs
+}
 
 /// The specs' starts as theta.
 pub fn start_theta(specs: &[Spec; 10]) -> Theta {
@@ -192,6 +207,17 @@ mod tests {
         for (i, spec) in SPECS.iter().enumerate() {
             assert!(spec.min <= spec.start && spec.start <= spec.max, "{}", SearchParameters::NAMES[i]);
             assert!(spec.c_end > 0.0);
+        }
+    }
+
+    #[test]
+    fn a_tune_from_its_teacher_s_tune_starts_there_clamped_its_ranges_kept() {
+        assert_eq!(specs_from(&SearchParameters::DEFAULT), SPECS, "from the defaults, the specs themselves");
+        let teacher = SearchParameters { reverse_futility_margin: 96, aspiration_delta: 1, good_quiet_threshold: -600, ..SearchParameters::DEFAULT };
+        let specs = specs_from(&teacher);
+        assert_eq!(rounded(&start_theta(&specs)), SearchParameters { aspiration_delta: 3, good_quiet_threshold: -512, ..teacher }, "clamped");
+        for (spec, default) in specs.iter().zip(SPECS) {
+            assert_eq!((spec.min, spec.max, spec.c_end), (default.min, default.max, default.c_end));
         }
     }
 

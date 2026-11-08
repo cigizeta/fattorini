@@ -16,7 +16,8 @@ round_robin_pairs: 400
 gate_elo_d: 35
 
 # The tune of each generation that passed its gate, started by hand, at 10+0.1: the default
-# length, 16,384 pairs, every one from the default parameters.
+# length, 32,768 pairs, from its teacher's tune (generation 1's from the defaults); the next
+# generation's self-play plays it.
 tune:
   length: default
   control: 10+0.1

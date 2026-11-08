@@ -10,7 +10,8 @@ training_positions: 1073741824
 # 4 x 1024 x 1024: the frozen test set every `pesto-` run's generation 1 is judged on.
 test_positions: 4194304
 
-# Its tune: the default length, 16,384 pairs from the default parameters, at 10+0.1.
+# Its tune: the default length, 32,768 pairs from the default parameters, at 10+0.1. Its Play plays
+# that tune, and is refused until it is finished.
 tune:
   length: default
   control: 10+0.1

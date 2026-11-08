@@ -649,40 +649,69 @@ enum Work {
     /// the page shows the run's totals, a resume moving their start and never their total, its rate
     /// and ETA this play's alone. `targets`, each set's whole target (test, training), as the page
     /// shows it: a set already past its target, its last game overshooting, has none left, and
-    /// `before` plus what is left would show the overshoot as the target.
-    SelfPlay { teacher: String, test_dir: String, test_left: u64, train_dir: String, train_left: u64, before: (u64, u64), targets: (u64, u64) },
+    /// `before` plus what is left would show the overshoot as the target. `parameters`, what the
+    /// teacher plays: its tune.
+    SelfPlay {
+        teacher: String,
+        parameters: SearchParameters,
+        test_dir: String,
+        test_left: u64,
+        train_dir: String,
+        train_left: u64,
+        before: (u64, u64),
+        targets: (u64, u64),
+    },
     /// Pairs: for each pairing, `(challenger, teacher)` by name (`publish`), `wanted` pairs each, every result
     /// appended to `record` as `pairing<TAB>r<TAB>chore<TAB>session<TAB>seq`, its games to the PGN
-    /// beside it (`Dirs::games_of`).
-    Pairs { pairings: Vec<(String, String)>, wanted: u32, record: String },
+    /// beside it (`Dirs::games_of`). `sides`, what the challenger and the teacher play in a gate or a
+    /// round robin (a test's sides play `Shared::test`'s).
+    Pairs { pairings: Vec<(String, String)>, wanted: u32, record: String, sides: [SearchParameters; 2] },
     /// A tune (`Shared::tune`) of the player whose network is `network`, by name or `PESTO`:
     /// one pair per `k`, each with its own parameters.
     Tune { network: String },
 }
 
-/// What every network plays a forge's self-play, round robins and gates with: fixed values, never a
-/// `parameters.txt` beside it (the developer, 2026-11-03). A tune maximises Elo on a clock, while the
-/// forge searches to a fixed depth, where margins traded for speed only cost accuracy; and each
-/// generation changes the network alone, never whether someone tuned it first. Tunes are for what
-/// plays on a clock: the release and Lichess.
-///
-/// The defaults before 2026-11-08, spelt out, not `SearchParameters::DEFAULT`: the new defaults drew
-/// the old at depth 9 for PeSTO and the lc0 network alike, but whether the forge should take them,
-/// for speed at the same quality, waits on a bench of their nodes at depth 9 and on that decision
-/// (the developer, 2026-11-08). A test holds these values, so no change of `DEFAULT` moves the forge
-/// unnoticed.
-const FORGE_PARAMETERS: Option<SearchParameters> = Some(SearchParameters {
-    razoring_margin: 200,
-    reverse_futility_margin: 200,
-    futility_margin: 200,
-    null_move_margin: 200,
-    delta_margin: 200,
-    see_prune_margin: 200,
-    see_margin: 50,
-    aspiration_delta: 20,
-    history_pruning_multiplier: -35,
-    good_quiet_threshold: -128,
-});
+// What the forge's sides play (the developer, 2026-11-08, reversing 2026-11-03's "the forge never
+// plays a tune"): the tune cannot be escaped, every network that ships being tuned, so it is used.
+// Self-play plays its teacher's tune, the gate and round robin the defaults so they judge the network
+// alone, except PeSTO, which plays its tune wherever it is a side. The tune at depth 9 cost no
+// quality: the lc0 network's against the defaults drew at depth 9, leaning to the tune.
+
+/// `player`'s finished tune, its `parameters.txt` (PeSTO's in its tune's folder); `None` while it has
+/// none, a tune under way included, which writes it only at its end.
+fn finished_tune(player: &str) -> Result<Option<SearchParameters>, String> {
+    if player == PESTO {
+        return players::pesto_parameters();
+    }
+    match players::FattoriniPlayer::resolve(player)?.own_tuning()? {
+        Tuning::Parameters(parameters) => Ok(Some(parameters)),
+        Tuning::Untuned => Ok(None),
+    }
+}
+
+/// `player`'s finished tune, refused while it has none (the developer, 2026-11-08: refused, not
+/// waited for), saying what needs it and what to run.
+fn required_tune(player: &str, needed_by: &str) -> Result<SearchParameters, String> {
+    finished_tune(player)?.ok_or_else(|| format!("{player} has no finished tune, which {needed_by}: tune {player} first, from the page"))
+}
+
+/// The player that taught generation `generation` of `run`: generation g - 1's winner, or for
+/// generation 1 its source's player, PeSTO for a PeSTO run; `None` for an Lc0 run's generation 1,
+/// Lc0 being no Fattorini player.
+fn teacher_player(run: &str, generation: u32, source: Option<Source>) -> Option<String> {
+    if generation > 1 {
+        Some(players::network_player_name(run, generation - 1, None))
+    } else if source == Some(Source::Pesto) {
+        Some(PESTO.to_string())
+    } else {
+        None
+    }
+}
+
+/// What a forge's gate or round robin side plays: PeSTO its tune, every network the defaults.
+fn side_parameters(player: &str, needed_by: &str) -> Result<SearchParameters, String> {
+    if player == PESTO { required_tune(PESTO, needed_by) } else { Ok(SearchParameters::DEFAULT) }
+}
 
 /// A tune's `k`s per arena worker in a chore and in each top-up: each `k` is played at theta as it
 /// was when dealt, so fewer than other chores' tasks, keeping theta fresh.
@@ -783,7 +812,7 @@ struct Shared {
     tune: Option<Tune>,
     reference_nps: Option<f64>,
     /// A test's limit and its two sides' parameters, which its pair chores carry; none for a forge's
-    /// pairs, at the forge's depth with `FORGE_PARAMETERS`.
+    /// pairs, at the forge's depth with their `Work::Pairs::sides`.
     test: Option<TestDealing>,
     /// The running forge's depth (`GenConfig::depth`), scaled for a scaled run;
     /// `generation::SEARCH_DEPTH` without a forge.
@@ -954,12 +983,15 @@ impl Shared {
 
     /// `shares` of `pairings` as a tournament's entries, and counted into chore `id`'s matchups.
     fn tournament_entries(&mut self, id: &str, pairings: &[(String, String)], shares: &[(usize, u64)]) -> Vec<Entry> {
+        let [first, second] = match self.work() {
+            Work::Pairs { sides, .. } => sides.map(Some),
+            _ => [Some(SearchParameters::DEFAULT); 2],
+        };
         let dealt = self.chores.get_mut(id).expect("the chore is there");
         let mut entries = Vec::new();
         for &(pairing, share) in shares {
             let (challenger, teacher) = pairings[pairing].clone();
-            let players =
-                vec![Player { network: challenger, parameters: FORGE_PARAMETERS }, Player { network: teacher, parameters: FORGE_PARAMETERS }];
+            let players = vec![Player { network: challenger, parameters: first }, Player { network: teacher, parameters: second }];
             match dealt.matchups.iter_mut().find(|m| m.pairing == pairing) {
                 Some(matchup) => matchup.dealt += share,
                 None => dealt.matchups.push(Matchup { pairing, players: players.clone(), dealt: share, arrived: 0 }),
@@ -1054,24 +1086,24 @@ impl Shared {
         let (kind, limit, players, pairing, count) = match self.work() {
             Work::Idle => return None,
             Work::Tune { network } => return self.deal_tune(session, workers, &network),
-            Work::SelfPlay { teacher, .. } => {
+            Work::SelfPlay { teacher, parameters, .. } => {
                 if self.wanted(None) == 0 {
                     return None;
                 }
-                (TaskKind::SelfPlay, Limit::Depth(self.depth()), vec![Player { network: teacher, parameters: FORGE_PARAMETERS }], None, size)
+                (TaskKind::SelfPlay, Limit::Depth(self.depth()), vec![Player { network: teacher, parameters: Some(parameters) }], None, size)
             }
             Work::Pairs { pairings, .. } if pairings.len() > 1 => return self.deal_tournament(session, size, &pairings),
-            Work::Pairs { pairings, .. } => {
+            Work::Pairs { pairings, sides, .. } => {
                 // A gate's or a test's one pairing, while it wants more.
                 let pairing = (0..pairings.len())
                     .filter(|&p| self.wanted(Some(p)) > 0)
                     .min_by_key(|&p| self.pairs.get(p).map_or(0, Vec::len) as u64 + self.outstanding(p))?;
                 let (challenger, teacher) = pairings[pairing].clone();
-                // A test's sides play the parameters it gives them, under its limit; a gate's the
-                // forge's, at the forge's depth.
+                // A test's sides play the parameters it gives them, under its limit; a gate's its
+                // `sides`, at the forge's depth.
                 let (limit, [first, second]) = match &self.test {
                     Some(test) => (test.limit.clone(), test.parameters.map(Some)),
-                    None => (Limit::Depth(self.depth()), [FORGE_PARAMETERS; 2]),
+                    None => (Limit::Depth(self.depth()), sides.map(Some)),
                 };
                 let players = vec![Player { network: challenger, parameters: first }, Player { network: teacher, parameters: second }];
                 (TaskKind::Pair, limit, players, Some(pairing), size.min(self.wanted(Some(pairing))))
@@ -1939,6 +1971,12 @@ fn tune_args(player: &str) -> Result<tune::TuneArgs, String> {
     let mut args = tune::args_of(&config.tune, player).map_err(|message| format!("{run}'s {RUN_CONFIG}: {message}"))?;
     // A scaled network's tune is scaled as its run, for debugging the tune alone.
     args.scale = config.scale;
+    // It goes on from its teacher's tune (the developer, 2026-11-08), refused while the teacher has
+    // none; an Lc0 run's generation 1, taught by no Fattorini player, from the defaults.
+    args.start = match teacher_player(&run, generation, config.source) {
+        Some(teacher) => Some(required_tune(&teacher, &format!("{player}'s tune starts from"))?),
+        None => None,
+    };
     Ok(args)
 }
 
@@ -3189,15 +3227,20 @@ impl Run<'_> {
         let train_target = self.config.training_positions();
         let train_left = train_target.saturating_sub(before.1);
         let teacher = self.teacher(generation)?;
+        // The teacher plays its tune, refused while it has none (the developer, 2026-11-08).
+        let parameters = match teacher_player(&self.name, generation, self.config.source) {
+            Some(player) => required_tune(&player, &format!("generation {generation}'s self-play plays"))?,
+            None => SearchParameters::DEFAULT,
+        };
         log::info!(
-            "playing: self-play with {teacher}, test set {} of {} searched positions, training set {} of {train_target}",
+            "playing: self-play with {teacher}, its tune, test set {} of {} searched positions, training set {} of {train_target}",
             self.config.test_positions - test_left,
             self.config.test_positions,
             train_target - train_left
         );
         let started = Instant::now();
         let targets = (self.config.test_positions, train_target);
-        let work = Work::SelfPlay { teacher, test_dir, test_left, train_dir, train_left, before, targets };
+        let work = Work::SelfPlay { teacher, parameters, test_dir, test_left, train_dir, train_left, before, targets };
         if let Ended::Stopped = deal_self_play(&self.shared, &self.stop, work, test_segment, train_segment)? {
             return Ok(Ended::Stopped);
         }
@@ -3416,9 +3459,11 @@ impl Run<'_> {
     }
 
     /// Plays `pairings`, `wanted` pairs each, as chores, recording into `record`, until `decided`
-    /// says so (given every pairing's results so far) or every pairing is complete.
+    /// says so (given every pairing's results so far) or every pairing is complete; the challengers
+    /// and teachers playing `sides`.
     fn play_pairs(
-        &self, pairings: Vec<(String, String)>, wanted: u32, record: &str, mut decided: impl FnMut(&[Vec<i32>]) -> bool,
+        &self, pairings: Vec<(String, String)>, sides: [SearchParameters; 2], wanted: u32, record: &str,
+        mut decided: impl FnMut(&[Vec<i32>]) -> bool,
     ) -> Result<(Ended, Vec<Vec<i32>>), String> {
         let results = recorded_pairs(record, pairings.len())?;
         mark_start(record)?;
@@ -3429,7 +3474,7 @@ impl Run<'_> {
             shared.pairs = results.clone();
             shared.pair_wdl = recorded_wdl(record, pairings.len());
             shared.pair_times = recorded_times(record);
-            shared.work = Some(Work::Pairs { pairings, wanted, record: record.to_string() });
+            shared.work = Some(Work::Pairs { pairings, wanted, record: record.to_string(), sides });
         }
         let mut seen = usize::MAX;
         loop {
@@ -3476,7 +3521,8 @@ impl Run<'_> {
         let record = self.dirs.round_robin(state.generation);
         // Its progress is its section's graphical bar alone, timed from its record (`round_robin_view`).
         self.lock().view = View::RoundRobin { lambdas: lambdas.to_vec(), players: players.clone() };
-        let (ended, results) = self.play_pairs(pairings, wanted, &record, |_| false)?;
+        // Candidates against candidates: the defaults, judging the networks alone.
+        let (ended, results) = self.play_pairs(pairings, [SearchParameters::DEFAULT; 2], wanted, &record, |_| false)?;
         self.lock().view = View::None;
         if let Ended::Stopped = ended {
             return Ok((Ended::Stopped, 0.0));
@@ -3498,12 +3544,15 @@ impl Run<'_> {
     fn gate(&self, state: &GenState, winner: ArmLambda) -> Result<(Ended, bool, f64), String> {
         let challenger = self.candidate(state, winner)?;
         let teacher = self.teacher(state.generation)?;
+        // The challenger the defaults, untuned yet; the teacher the defaults too, so the gate judges
+        // the networks alone, or PeSTO's tune when PeSTO teaches.
+        let sides = [SearchParameters::DEFAULT, side_parameters(&teacher, &format!("generation {}'s gate plays", state.generation))?];
         log::info!("gate: lambda {winner} against {teacher}, SPRT at {} Elo", self.config.gate_elo_d());
         let started = Instant::now();
         let elo_d = self.config.gate_elo_d();
         let record = self.dirs.gate(state.generation);
         self.lock().view = View::Gate { elo_d };
-        let (ended, results) = self.play_pairs(vec![(challenger, teacher)], GATE_MAX_PAIRS, &record, |results| {
+        let (ended, results) = self.play_pairs(vec![(challenger, teacher)], sides, GATE_MAX_PAIRS, &record, |results| {
             sprt_of(elo_d, &results[0]).verdict() != Verdict::Continue
         })?;
         self.lock().view = View::None;
@@ -4335,6 +4384,9 @@ fn play_pesto(status: &Status) -> Result<String, String> {
         return Ok(format!("{} is complete already: nothing to play", Source::Pesto.corpus()));
     }
     // One smithy at a time adds to the corpus.
+    // PeSTO plays its tune (the developer, 2026-11-08), refused while it has none: a corpus played
+    // with other parameters is set aside by hand first.
+    let parameters = required_tune(PESTO, "PeSTO's play plays")?;
     let lease_path = remote::remote_path(&format!("{}/{}", preprocessing_config::PESTO_ROOT, lease::FILE));
     let _lease = lease::take(&lease_path, "PeSTO's play")?;
     remember_job(&[PLAY.to_string(), PESTO.to_string()]);
@@ -4349,7 +4401,7 @@ fn play_pesto(status: &Status) -> Result<String, String> {
     let day = format!("{:04}{:02}{:02}", now.year(), u8::from(now.month()), now.day());
     let (test_dir, train_dir) = (segments::day_dir(&test_root, &day), segments::day_dir(&train_root, &day));
     log::info!(
-        "playing: PeSTO's self-play into its corpus, test set {test_done} of {} positions, training set {train_done} of {}",
+        "playing: PeSTO's self-play into its corpus, PeSTO's tune, test set {test_done} of {} positions, training set {train_done} of {}",
         config.test_positions, config.training_positions
     );
     let local_root = preprocessing_config::PESTO_ROOT;
@@ -4357,7 +4409,16 @@ fn play_pesto(status: &Status) -> Result<String, String> {
     begin(&status.shared, &format!("{local_root}/chores.txt"), None)?;
     let started = Instant::now();
     let (test_segment, train_segment) = (SegmentWriter::open(&test_dir)?, SegmentWriter::open(&train_dir)?);
-    let work = Work::SelfPlay { teacher: PESTO.to_string(), test_dir, test_left, train_dir, train_left, before: (test_done, train_done), targets: (config.test_positions, config.training_positions) };
+    let work = Work::SelfPlay {
+        teacher: PESTO.to_string(),
+        parameters,
+        test_dir,
+        test_left,
+        train_dir,
+        train_left,
+        before: (test_done, train_done),
+        targets: (config.test_positions, config.training_positions),
+    };
     let ended = deal_self_play(&status.shared, &status.job_stop, work, test_segment, train_segment)?;
     // Stopped, the open files are closed too: their whole games go to the remote, and a resume
     // starts new files.
@@ -4554,7 +4615,12 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         shared.pairs = vec![pairs];
         shared.pair_wdl = recorded_wdl(&record, 1);
         shared.pair_times = recorded_times(&record);
-        shared.work = Some(Work::Pairs { pairings: vec![(challenger.name, champion.name)], wanted: spec.kind.max_pairs(), record: record.clone() });
+        shared.work = Some(Work::Pairs {
+            pairings: vec![(challenger.name, champion.name)],
+            wanted: spec.kind.max_pairs(),
+            record: record.clone(),
+            sides: [challenger.parameters, champion.parameters],
+        });
     }
     // Its progress, bar and gauge, is the page's, drawn from its view (`test_view`).
     let (judged, stopped) = loop {
@@ -5447,11 +5513,20 @@ mod tests {
         let (test_dir, train_dir) = (format!("{dir}/test"), format!("{dir}/train"));
         let shared = Mutex::new(Shared::default());
         shared.lock().unwrap().work =
-            Some(Work::SelfPlay { teacher: PESTO.to_string(), test_dir: test_dir.clone(), test_left: 2, train_dir: train_dir.clone(), train_left: 100, before: (0, 0), targets: (2, 100) });
+            Some(Work::SelfPlay {
+                teacher: PESTO.to_string(),
+                parameters: TEACHER_TUNE,
+                test_dir: test_dir.clone(),
+                test_left: 2,
+                train_dir: train_dir.clone(),
+                train_left: 100,
+                before: (0, 0),
+                targets: (2, 100),
+            });
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!((dealt.kind, &dealt.limit, dealt.entries[0].count), (TaskKind::SelfPlay, &Limit::Depth(generation::SEARCH_DEPTH), TASKS_PER_WORKER));
-        assert_eq!(dealt.entries[0].players, vec![Player { network: PESTO.to_string(), parameters: FORGE_PARAMETERS }]);
+        assert_eq!(dealt.entries[0].players, vec![Player { network: PESTO.to_string(), parameters: Some(TEACHER_TUNE) }], "the teacher plays its tune");
 
         let first = task_body(&session, &self_play_game(&dealt.id, &session, 0));
         assert_eq!(word(&post(&shared, TASK_PATH, &first)), "OK", "4 dealt, 1 arrived, 1 in flight: 2 left, enough");
@@ -5518,6 +5593,7 @@ mod tests {
         let shared = Shared {
             work: Some(Work::SelfPlay {
                 teacher: PESTO.to_string(),
+                parameters: TEACHER_TUNE,
                 test_dir: String::new(),
                 test_left: 30,
                 train_dir: String::new(),
@@ -5540,6 +5616,7 @@ mod tests {
         let shared = Shared {
             work: Some(Work::SelfPlay {
                 teacher: PESTO.to_string(),
+                parameters: TEACHER_TUNE,
                 test_dir: String::new(),
                 test_left: 0,
                 train_dir: String::new(),
@@ -5563,6 +5640,7 @@ mod tests {
         let shared = Mutex::new(Shared::default());
         shared.lock().unwrap().work = Some(Work::SelfPlay {
             teacher: PESTO.to_string(),
+            parameters: TEACHER_TUNE,
             test_dir: test_dir.clone(),
             test_left: 3,
             train_dir: train_dir.clone(),
@@ -5601,14 +5679,18 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             let pairings = vec![("aa".to_string(), "bb".to_string()), ("aa".to_string(), "cc".to_string())];
-            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone() });
+            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone(), sides: [SearchParameters::DEFAULT, TEACHER_TUNE] });
             shared.pairs = vec![vec![2], vec![]];
         }
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!(dealt.entries[0].players.iter().map(|player| player.network.as_str()).collect::<Vec<_>>(), ["aa", "cc"], "the pairing behind");
         assert_eq!(dealt.entries[0].count, 1, "never past wanted");
-        assert!(dealt.entries[0].players.iter().all(|player| player.parameters == FORGE_PARAMETERS), "a gate plays the defaults");
+        assert_eq!(
+            dealt.entries[0].players.iter().map(|player| player.parameters).collect::<Vec<_>>(),
+            [Some(SearchParameters::DEFAULT), Some(TEACHER_TUNE)],
+            "a gate's sides: the challenger the defaults, the teacher what the gate gives it"
+        );
 
         let swapped = format!(
             "{}{}",
@@ -5641,13 +5723,16 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             let pairings = ["bb", "cc", "dd"].iter().map(|second| ("aa".to_string(), second.to_string())).collect();
-            shared.work = Some(Work::Pairs { pairings, wanted: 4, record: record.clone() });
+            shared.work = Some(Work::Pairs { pairings, wanted: 4, record: record.clone(), sides: [SearchParameters::DEFAULT; 2] });
             shared.pairs = vec![vec![0, 0], vec![], vec![0]];
         }
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!(dealt.kind, TaskKind::Tournament);
-        assert!(dealt.entries.iter().flat_map(|entry| &entry.players).all(|player| player.parameters == FORGE_PARAMETERS), "a round robin plays the defaults");
+        assert!(
+            dealt.entries.iter().flat_map(|entry| &entry.players).all(|player| player.parameters == Some(SearchParameters::DEFAULT)),
+            "a round robin plays its sides, the defaults"
+        );
         let shares: Vec<(&str, u32)> = dealt.entries.iter().map(|entry| (entry.players[1].network.as_str(), entry.count)).collect();
         // Behind: 2, 0, 1; four tasks: cc, cc (the first of cc and dd at 1), dd, then bb (the first of
         // the three at 2).
@@ -5679,7 +5764,12 @@ mod tests {
             let mut shared = shared.lock().unwrap();
             shared.reference_nps = Some(1_000_000.0);
             shared.test = Some(TestDealing { limit: Limit::Clock("10+0.1".to_string()), parameters: [tuned, SearchParameters::DEFAULT] });
-            shared.work = Some(Work::Pairs { pairings: vec![("aa".to_string(), "bb".to_string())], wanted: 3, record: format!("{dir}/test-0001.tsv") });
+            shared.work = Some(Work::Pairs {
+                pairings: vec![("aa".to_string(), "bb".to_string())],
+                wanted: 3,
+                record: format!("{dir}/test-0001.tsv"),
+                sides: [SearchParameters::DEFAULT; 2],
+            });
         }
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
@@ -5698,7 +5788,7 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             let pairings = vec![("aa".to_string(), "bb".to_string()), ("aa".to_string(), "cc".to_string())];
-            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone() });
+            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone(), sides: [SearchParameters::DEFAULT; 2] });
         }
         let lost = hello(&shared, 1);
         let first = chore(&post(&shared, CHORE_PATH, lost.as_bytes()));
@@ -5783,11 +5873,17 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// A tune, told apart from the defaults: what a teacher plays in the tests.
+    const TEACHER_TUNE: SearchParameters = SearchParameters { reverse_futility_margin: 96, aspiration_delta: 7, ..SearchParameters::DEFAULT };
+
     #[test]
-    fn the_forge_plays_the_old_defaults_until_it_is_decided_otherwise() {
-        let forge = FORGE_PARAMETERS.expect("the forge's parameters are fixed");
-        assert_eq!(forge.values(), [200, 200, 200, 200, 200, 200, 50, 20, -35, -128], "the defaults before 2026-11-08");
-        assert_ne!(forge, SearchParameters::DEFAULT, "the new defaults, not yet the forge's");
+    fn a_generation_s_teacher_is_the_previous_winner_or_its_source_s_player() {
+        assert_eq!(teacher_player("lc0-psq-r1", 2, Some(Source::Lc0)).as_deref(), Some("lc0-psq-g1-r1"));
+        assert_eq!(teacher_player("pesto-psq-r2", 3, Some(Source::Pesto)).as_deref(), Some("pesto-psq-g2-r2"));
+        assert_eq!(teacher_player("pesto-psq-r2", 1, Some(Source::Pesto)).as_deref(), Some(PESTO), "PeSTO taught a PeSTO run's first");
+        assert_eq!(teacher_player("lc0-psq-r1", 1, Some(Source::Lc0)), None, "Lc0 is no Fattorini player: the defaults");
+        // A network side of a gate or round robin plays the defaults, needing no tune.
+        assert_eq!(side_parameters("lc0-psq-g1-r1", "a test"), Ok(SearchParameters::DEFAULT));
     }
 
     #[test]
@@ -5841,7 +5937,8 @@ mod tests {
         let dir = scratch("lost");
         let record = format!("{dir}/round-robin.tsv");
         let shared = Mutex::new(Shared::default());
-        shared.lock().unwrap().work = Some(Work::Pairs { pairings: vec![("aa".to_string(), "bb".to_string())], wanted: 4, record: record.clone() });
+        shared.lock().unwrap().work =
+            Some(Work::Pairs { pairings: vec![("aa".to_string(), "bb".to_string())], wanted: 4, record: record.clone(), sides: [SearchParameters::DEFAULT; 2] });
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!(shared.lock().unwrap().outstanding(0), 4);
