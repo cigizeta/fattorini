@@ -25,10 +25,22 @@ where they meet a static evaluation (`EvalMargins`), so a network's score scale 
 | `history_pruning_multiplier` | -35 | history pruning's threshold, in bonuses of `remaining^2` (Stockfish's order) |
 | `good_quiet_threshold` | -128 | move picker: quiets at or below it go after the losing captures (duelled against 0) |
 
-The tune, at 10,399 of 16,384 pairs (63%): `reverse_futility_margin` 127, `razoring_margin` 153,
-`see_prune_margin` 162, `aspiration_delta` 9.4, `delta_margin` 221.5, `good_quiet_threshold`
--142; `futility_margin`, `null_move_margin`, `see_margin` and `history_pruning_multiplier` near
-their defaults. To be replaced by its end values, and by the duel of `@tuned` against `@untuned`.
+The tune's end values (16,384 pairs, ended 2026-11-08), beside where it stood at 63%:
+
+| Parameter | Default | at 63% | End | Still moving at the end |
+|---|---|---|---|---|
+| `reverse_futility_margin` | 200 | 127 | 95.7 | yes, down |
+| `razoring_margin` | 200 | 153 | 141.2 | yes, down, slowing |
+| `see_prune_margin` | 200 | 162 | 152.6 | yes, down, slowing |
+| `aspiration_delta` | 20 | 9.4 | 7.2 | yes, down |
+| `delta_margin` | 200 | 221.5 | 215.7 | turned back |
+| `good_quiet_threshold` | -128 | -142 | -139.9 | settled |
+| `futility_margin` | 200 | 191.6 | 189.8 | near its default |
+| `null_move_margin` | 200 | 202.9 | 204.0 | near its default |
+| `see_margin` | 50 | 49.1 | 49.8 | near its default |
+| `history_pruning_multiplier` | -35 | -37.8 | -37.6 | near its default |
+
+The duel of `@tuned` against `@untuned`: to be added.
 
 ## Question 1: reasoned defaults
 
