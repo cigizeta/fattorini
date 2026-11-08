@@ -836,7 +836,9 @@ function testsScreen() {
     + `<select data-field="limit">${option("depth", "fixed depth", f.limit === "depth")}${option("clock", "clock", f.limit === "clock")}</select>`
     + (f.limit === "depth" ? `<input data-field="depth" size="4" value="${escape(f.depth)}">` : `<input data-field="clock" size="8" value="${escape(f.clock)}"> <span class="muted">base+increment, in seconds</span>`)
     + `</div>`;
-  const mixed = f.challengerParameters !== f.championParameters ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
+  // As `Spec::mixed`: two different players, one tuned; one player against itself measures its tune.
+  const mixed = f.challengerParameters !== f.championParameters && f.challenger !== f.champion
+    ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
   const form = token
     ? `<section><h2>New test</h2><form onsubmit="return false">`
       + `<div class="row"><label>Kind</label><select data-field="kind">${kinds}</select></div>${settings}`

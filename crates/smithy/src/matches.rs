@@ -140,9 +140,11 @@ impl Spec {
         })
     }
 
-    /// Whether one side plays its tune and the other the defaults: allowed, and always said.
+    /// Whether two different players meet, one with its tune and the other with the defaults: allowed,
+    /// and always said, since the result then weighs the tune as much as the networks. One player
+    /// against itself, tuned against untuned, is not mixed: it is how a tune is measured.
     pub fn mixed(&self) -> bool {
-        self.challenger.tuned != self.champion.tuned
+        self.challenger.tuned != self.champion.tuned && self.challenger.player != self.champion.player
     }
     pub fn name(&self) -> String {
         format!("{} of {} against {}", self.kind.name(), self.champion.text(), self.challenger.text())
@@ -564,6 +566,7 @@ mod tests {
         assert_eq!(spec.challenger, Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true });
         assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@tuned".to_string(), "pesto@untuned".to_string()));
         assert!(spec.mixed());
+        assert!(!Spec::parse(&words("duel - aa@tuned aa@untuned", "clock 10+0.1")).unwrap().mixed(), "a tune measured against its own defaults");
         assert_eq!(Spec::parse(&words("match 500 aa@untuned bb@untuned", "depth 9")).unwrap().kind, Kind::Match { pairs: 500 });
         for wrong in [
             "match 0 aa@untuned bb@untuned",
