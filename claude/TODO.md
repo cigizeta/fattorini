@@ -62,6 +62,11 @@ In this order:
   up to date; "Download" linking to this repository's releases page.
 - **Credit Lc0's data only if an Lc0 network ships:** `about.hbs` and `RELEASE-NOTES.md` credit it
   whatever the network.
+- **CalVer, not SemVer** (the developer, 2026-11-08): the scheme to design first. Cargo needs a
+  three-part version, so a CalVer such as `2026.11.0` fits it. Touches the workspace's version, the
+  `id name`, `arena release`'s tag rule (`v{version}` and `-rc.{n}`) and its tests,
+  binary-release.md decision 11, and `RELEASE-NOTES.md`. readme-for-humans.md already weighed a
+  `YYYY-MM` name.
 
 ## Code to clean up
 
