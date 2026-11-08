@@ -129,6 +129,18 @@ Directions to weigh, none chosen:
 
 ## Next
 
-1. The tune ends; its end values and the duel's result go in "Where things stand".
-2. Question 1 discussed parameter by parameter.
-3. Question 2 discussed, then a plan, if anything changes.
+1. ~~The tune ends; its end values and the duel's result go in "Where things stand".~~ Done.
+2. ~~Question 1 discussed parameter by parameter.~~ Done.
+3. The validation duels end (PeSTO and lc0, 10+0.1 and depth 9); their results go above.
+4. The temporary files undone: PeSTO's `parameters.txt` deleted, the lc0 network's tune result
+   restored from `parameters.tune-16k.txt`.
+5. A plan, then the code: the new values in `SearchParameters::DEFAULT`, which becomes the one
+   source of the tune's starting values (`spsa::SPECS` keeps each parameter's range and `c_end`
+   alone), the ranges re-centred on the new values, and `aspiration_delta`'s floor of 5 lowered, the
+   last tune having ended at 7.
+6. The new tune of the lc0 network (the developer, 2026-11-08): from the new defaults, double the
+   budget, `length: 32768` in its config (about 15 hours). One tune a network: its finished tune's
+   `gen-1/tune/` moved aside first, here and on the remote. `parameters.txt` beside the network
+   keeps the 16,384-pair tune's values, `@tuned` playing them, until the new tune ends and replaces
+   them; `parameters.tune-16k.txt` stays as their copy.
+7. Question 2 discussed, then a plan, if anything changes.
