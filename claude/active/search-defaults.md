@@ -189,5 +189,5 @@ Directions to weigh, none chosen:
    `gen-1/tune/` moved aside first, here and on the remote. `parameters.txt` beside the network
    keeps the 16,384-pair tune's values, `@tuned` playing them, until the new tune ends and replaces
    them; `parameters.tune-16k.txt` stays as their copy.
-7. Question 2: the depth-9 duels read beside a speed measurement at depth 9 (each parameter set's
-   nodes a position), then discussed, then a plan, if anything changes.
+7. Question 2: carried on in tuned-self-play.md (the developer, 2026-11-08: the teacher plays its
+   own tune in self-play, since the tune cannot be escaped).
