@@ -40,7 +40,10 @@ The tune's end values (16,384 pairs, ended 2026-11-08), beside where it stood at
 | `see_margin` | 50 | 49.1 | 49.8 | near its default |
 | `history_pruning_multiplier` | -35 | -37.8 | -37.6 | near its default |
 
-The duel of `@tuned` against `@untuned`: to be added.
+The duel of `@tuned` against `@untuned` (test 3, 2026-11-08, clock 10+0.1): won by the tune, 27 to
+13 over 40 games (67.5%), about +130 Elo, the duel stopping at its first threshold (67.3%) after
+20 pairs, so the direction is sure and the size rough. The defaults leave much on the table on a
+clock, and the parameters still moving at the end say a longer tune may find more.
 
 ## Question 1: reasoned defaults
 
