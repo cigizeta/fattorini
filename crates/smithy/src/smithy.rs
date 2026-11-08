@@ -646,8 +646,10 @@ enum Work {
     /// its freezer keep them (`searched`); PeSTO's play counts every position read, its corpus shared
     /// by every config. `before`, the positions each set held when this play began (test, training):
     /// the page shows the run's totals, a resume moving their start and never their total, its rate
-    /// and ETA this play's alone.
-    SelfPlay { teacher: String, test_dir: String, test_left: u64, train_dir: String, train_left: u64, searched: bool, before: (u64, u64) },
+    /// and ETA this play's alone. `targets`, each set's whole target (test, training), as the page
+    /// shows it: a set already past its target, its last game overshooting, has none left, and
+    /// `before` plus what is left would show the overshoot as the target.
+    SelfPlay { teacher: String, test_dir: String, test_left: u64, train_dir: String, train_left: u64, searched: bool, before: (u64, u64), targets: (u64, u64) },
     /// Pairs: for each pairing, `(challenger, teacher)` by name (`publish`), `wanted` pairs each, every result
     /// appended to `record` as `pairing<TAB>r<TAB>chore<TAB>session<TAB>seq`, its games to the PGN
     /// beside it (`Dirs::games_of`).
@@ -840,13 +842,13 @@ impl Shared {
     /// The work as the page draws it, its counts from memory.
     fn work_view(&self) -> WorkView {
         match (self.work(), &self.view) {
-            (Work::SelfPlay { teacher, test_left, train_left, before, .. }, _) => WorkView::SelfPlay {
+            (Work::SelfPlay { teacher, test_left, train_left, before, targets, .. }, _) => WorkView::SelfPlay {
                 teacher,
                 // The run's totals: what each set held when this play began, and this play's on top.
                 test_got: before.0 + self.test_got,
-                test_wanted: before.0 + test_left,
+                test_wanted: targets.0,
                 train_got: before.1 + self.train_got,
-                train_wanted: before.1 + train_left,
+                train_wanted: targets.1,
                 // Each set counted up to its own target, the test set's last game overshooting it.
                 time: Some(self_play_time(self.self_play_started, self.test_got.min(test_left) + self.train_got, test_left + train_left)),
             },
@@ -2883,13 +2885,13 @@ impl Status {
         let shared = self.shared.lock().expect("the lock should not be poisoned");
         let work = match shared.work() {
             Work::Idle => format!("nothing: {}", shared.wait_reason()),
-            Work::SelfPlay { teacher, test_left, train_left, searched, before, .. } => format!(
+            Work::SelfPlay { teacher, searched, before, targets, .. } => format!(
                 "self-play with {teacher}: test set {} of {} {}positions, training set {} of {}",
                 before.0 + shared.test_got,
-                before.0 + test_left,
+                targets.0,
                 if searched { "searched " } else { "" },
                 before.1 + shared.train_got,
-                before.1 + train_left
+                targets.1
             ),
             Work::Pairs { pairings, wanted, .. } => {
                 let played: usize = shared.pairs.iter().map(Vec::len).sum();
@@ -3150,7 +3152,8 @@ impl Run<'_> {
             train_target - train_left
         );
         let started = Instant::now();
-        let work = Work::SelfPlay { teacher, test_dir, test_left, train_dir, train_left, searched: true, before };
+        let targets = (self.config.test_positions, train_target);
+        let work = Work::SelfPlay { teacher, test_dir, test_left, train_dir, train_left, searched: true, before, targets };
         if let Ended::Stopped = deal_self_play(&self.shared, &self.stop, work, test_segment, train_segment)? {
             return Ok(Ended::Stopped);
         }
@@ -4280,7 +4283,7 @@ fn play_pesto(status: &Status) -> Result<String, String> {
     begin(&status.shared, &format!("{local_root}/chores.txt"), None)?;
     let started = Instant::now();
     let (test_segment, train_segment) = (SegmentWriter::open(&test_dir)?, SegmentWriter::open(&train_dir)?);
-    let work = Work::SelfPlay { teacher: PESTO.to_string(), test_dir, test_left, train_dir, train_left, searched: false, before: (test_done, train_done) };
+    let work = Work::SelfPlay { teacher: PESTO.to_string(), test_dir, test_left, train_dir, train_left, searched: false, before: (test_done, train_done), targets: (config.test_positions, config.training_positions) };
     let ended = deal_self_play(&status.shared, &status.job_stop, work, test_segment, train_segment)?;
     // Stopped, the open files are closed too: their whole games go to the remote, and a resume
     // starts new files.
@@ -5340,7 +5343,7 @@ mod tests {
         let (test_dir, train_dir) = (format!("{dir}/test"), format!("{dir}/train"));
         let shared = Mutex::new(Shared::default());
         shared.lock().unwrap().work =
-            Some(Work::SelfPlay { teacher: PESTO.to_string(), test_dir: test_dir.clone(), test_left: 3, train_dir: train_dir.clone(), train_left: 100, searched: false, before: (0, 0) });
+            Some(Work::SelfPlay { teacher: PESTO.to_string(), test_dir: test_dir.clone(), test_left: 3, train_dir: train_dir.clone(), train_left: 100, searched: false, before: (0, 0), targets: (3, 100) });
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!((dealt.kind, &dealt.limit, dealt.entries[0].count), (TaskKind::SelfPlay, &Limit::Depth(generation::SEARCH_DEPTH), TASKS_PER_WORKER));
@@ -5417,6 +5420,7 @@ mod tests {
                 train_left: 100,
                 searched: true,
                 before: (70, 0),
+                targets: (100, 100),
             }),
             test_got: 5,
             ..Default::default()
@@ -5426,6 +5430,28 @@ mod tests {
         };
         assert_eq!((test_got, test_wanted), (75, 100), "70 held before, 5 this play, of the whole 100");
         assert_eq!((train_got, train_wanted), (0, 100));
+    }
+
+    #[test]
+    fn a_self_play_resumed_past_its_test_target_shows_the_target_not_the_overshoot() {
+        let shared = Shared {
+            work: Some(Work::SelfPlay {
+                teacher: PESTO.to_string(),
+                test_dir: String::new(),
+                test_left: 0,
+                train_dir: String::new(),
+                train_left: 60,
+                searched: false,
+                before: (103, 40),
+                targets: (100, 100),
+            }),
+            ..Default::default()
+        };
+        let WorkView::SelfPlay { test_got, test_wanted, train_got, train_wanted, .. } = shared.work_view() else {
+            panic!("a self-play view");
+        };
+        assert_eq!((test_got, test_wanted), (103, 100), "the last test game overshot by 3");
+        assert_eq!((train_got, train_wanted), (40, 100));
     }
 
     #[test]
@@ -5441,6 +5467,7 @@ mod tests {
             train_left: 100,
             searched: true,
             before: (0, 0),
+            targets: (3, 100),
         });
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));

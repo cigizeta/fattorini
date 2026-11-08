@@ -72,17 +72,38 @@ pub(crate) fn remote_positions(dir: &str) -> Result<u64, String> {
 
 /// The page's line for the corpus: complete, with what it holds, or what it is to hold.
 pub(crate) fn summary() -> String {
+    let positions = |test: u64, training: u64| {
+        format!("{} test and {} training positions", progress::grouped(test), progress::grouped(training))
+    };
     let wanted = match load() {
-        Ok(config) => format!("{} test and {} training positions", config.test_positions, config.training_positions),
+        Ok(config) => positions(config.test_positions, config.training_positions),
         Err(message) => return message,
     };
     if is_complete() {
         return match remote::cat(COMPLETE_PATH) {
-            Ok(text) => format!("complete: {}", text.trim().replace('\t', " ").replace('\n', ", ")),
+            Ok(text) => match complete_counts(&text) {
+                Some((test, training)) => format!("complete: {}", positions(test, training)),
+                None => format!("complete: {}", text.trim().replace('\t', " ").replace('\n', ", ")),
+            },
             Err(_) => format!("complete: {wanted}"),
         };
     }
     format!("not complete: Play plays {wanted}")
+}
+
+/// The test and training positions `write_complete` wrote, or `None` for a file it did not write.
+fn complete_counts(text: &str) -> Option<(u64, u64)> {
+    let mut counts = (None, None);
+    for line in text.lines() {
+        let (name, value) = line.split_once('\t')?;
+        let value = value.trim().parse::<u64>().ok()?;
+        match name {
+            "test_positions" => counts.0 = Some(value),
+            "training_positions" => counts.1 = Some(value),
+            _ => {}
+        }
+    }
+    Some((counts.0?, counts.1?))
 }
 
 #[cfg(test)]
@@ -100,5 +121,12 @@ mod tests {
     #[test]
     fn its_games_go_under_data_pesto() {
         assert_eq!((test_dir(), train_dir()), ("data/pesto/test".to_string(), "data/pesto/train".to_string()));
+    }
+
+    #[test]
+    fn its_complete_file_reads_back_its_counts() {
+        assert_eq!(complete_counts("test_positions\t4194449\ntraining_positions\t1073741900\n"), Some((4194449, 1073741900)));
+        assert_eq!(complete_counts("test_positions\t5\n"), None, "no training count");
+        assert_eq!(complete_counts("garbage"), None);
     }
 }

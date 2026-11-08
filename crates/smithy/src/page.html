@@ -208,7 +208,7 @@ function work(view, waiting, stop = "") {
           + (pace === null ? "" : `, ${whole(Math.round(pace))} positions/s`)
           + (pace === null || left === 0 ? "" : `, ETA about ${duration(Math.round(left / pace))}`);
       const set = (name, got, wanted, timed) =>
-        `<div>${name}: ${whole(got)} of ${whole(wanted)} positions (${percent(wanted > 0 ? Math.min(1, got / wanted) : 0)})`
+        `<div>${name}: ${whole(got)} of ${whole(wanted)} positions (${percent(wanted > 0 ? got / wanted : 0)})`
         + `${timed ? time(Math.max(0, wanted - got)) : ""}</div>${bar(got, wanted)}`;
       const testing = view.test_got < view.test_wanted;
       return `<h2>Self-play with ${escape(view.teacher)}</h2>`
