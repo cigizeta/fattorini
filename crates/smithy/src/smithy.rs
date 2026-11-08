@@ -660,12 +660,29 @@ enum Work {
     Tune { network: String },
 }
 
-/// What every network plays a forge's self-play, round robins and gates with: the untuned defaults,
-/// never a `parameters.txt` beside it (the developer, 2026-11-03). A tune maximises Elo on a clock,
-/// while the forge searches to a fixed depth, where margins traded for speed only cost accuracy; and
-/// each generation changes the network alone, never whether someone tuned it first. Tunes are for
-/// what plays on a clock: the release and Lichess.
-const FORGE_PARAMETERS: Option<SearchParameters> = Some(SearchParameters::DEFAULT);
+/// What every network plays a forge's self-play, round robins and gates with: fixed values, never a
+/// `parameters.txt` beside it (the developer, 2026-11-03). A tune maximises Elo on a clock, while the
+/// forge searches to a fixed depth, where margins traded for speed only cost accuracy; and each
+/// generation changes the network alone, never whether someone tuned it first. Tunes are for what
+/// plays on a clock: the release and Lichess.
+///
+/// The defaults before 2026-11-08, spelt out, not `SearchParameters::DEFAULT`: the new defaults drew
+/// the old at depth 9 for PeSTO and the lc0 network alike, but whether the forge should take them,
+/// for speed at the same quality, waits on a bench of their nodes at depth 9 and on that decision
+/// (the developer, 2026-11-08). A test holds these values, so no change of `DEFAULT` moves the forge
+/// unnoticed.
+const FORGE_PARAMETERS: Option<SearchParameters> = Some(SearchParameters {
+    razoring_margin: 200,
+    reverse_futility_margin: 200,
+    futility_margin: 200,
+    null_move_margin: 200,
+    delta_margin: 200,
+    see_prune_margin: 200,
+    see_margin: 50,
+    aspiration_delta: 20,
+    history_pruning_multiplier: -35,
+    good_quiet_threshold: -128,
+});
 
 /// A tune's `k`s per arena worker in a chore and in each top-up: each `k` is played at theta as it
 /// was when dealt, so fewer than other chores' tasks, keeping theta fresh.
@@ -5434,7 +5451,7 @@ mod tests {
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!((dealt.kind, &dealt.limit, dealt.entries[0].count), (TaskKind::SelfPlay, &Limit::Depth(generation::SEARCH_DEPTH), TASKS_PER_WORKER));
-        assert_eq!(dealt.entries[0].players, vec![Player { network: PESTO.to_string(), parameters: Some(SearchParameters::DEFAULT) }]);
+        assert_eq!(dealt.entries[0].players, vec![Player { network: PESTO.to_string(), parameters: FORGE_PARAMETERS }]);
 
         let first = task_body(&session, &self_play_game(&dealt.id, &session, 0));
         assert_eq!(word(&post(&shared, TASK_PATH, &first)), "OK", "4 dealt, 1 arrived, 1 in flight: 2 left, enough");
@@ -5764,6 +5781,13 @@ mod tests {
         assert!(matches!(snapshot.work, WorkView::Tune { pairs: 4, time: None, .. }), "the tune, though idle, with no time");
         assert_eq!(snapshot.finished.as_deref(), Some("4 pairs done"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_forge_plays_the_old_defaults_until_it_is_decided_otherwise() {
+        let forge = FORGE_PARAMETERS.expect("the forge's parameters are fixed");
+        assert_eq!(forge.values(), [200, 200, 200, 200, 200, 200, 50, 20, -35, -128], "the defaults before 2026-11-08");
+        assert_ne!(forge, SearchParameters::DEFAULT, "the new defaults, not yet the forge's");
     }
 
     #[test]

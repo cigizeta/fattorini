@@ -52,18 +52,23 @@ pub struct Spec {
     pub c_end: f64,
 }
 
-/// The ten parameters, in `SearchParameters::NAMES`' order, each starting at its default.
+/// The ten parameters, in `SearchParameters::NAMES`' order, each starting at its default (a test
+/// holds the two together). Since the defaults moved (2026-11-08): a range re-centred where the new
+/// value sat near its edge, reverse futility's floor at half its value and the aspiration window's
+/// floor near where the last tune ended; and `c_end` kept at its old share of its value, an eighth
+/// for the margins and a fifth for the aspiration window, so a smaller value is not perturbed by a
+/// larger part of itself.
 pub const SPECS: [Spec; 10] = [
+    Spec { start: 150, min: 50, max: 400, c_end: 19.0 },
+    Spec { start: 100, min: 25, max: 300, c_end: 12.5 },
     Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
     Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
     Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
-    Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
-    Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
-    Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
+    Spec { start: 150, min: 50, max: 400, c_end: 19.0 },
     Spec { start: 50, min: 0, max: 200, c_end: 10.0 },
-    Spec { start: 20, min: 5, max: 60, c_end: 4.0 },
+    Spec { start: 10, min: 3, max: 40, c_end: 2.0 },
     Spec { start: -35, min: -100, max: -5, c_end: 5.0 },
-    Spec { start: -128, min: -512, max: 0, c_end: 32.0 },
+    Spec { start: -140, min: -512, max: 0, c_end: 32.0 },
 ];
 
 /// theta, the tune's current point, as real numbers in `SearchParameters::NAMES`' order.
@@ -223,18 +228,19 @@ mod tests {
         let k = PAIRS - 1;
         let plus = point(&theta, &schedule, &SPECS, k, &delta, 1).values();
         let minus = point(&theta, &schedule, &SPECS, k, &delta, -1).values();
-        assert_eq!(plus[0], 225);
-        assert_eq!(minus[0], 175);
-        assert_eq!(plus[1], 175);
-        assert_eq!(plus[7], 16, "20 - 4");
+        // Futility and null move: margins of 200, perturbed by 25 at the end, Delta +1 and -1.
+        assert_eq!(plus[2], 225);
+        assert_eq!(minus[2], 175);
+        assert_eq!(plus[3], 175);
+        assert_eq!(plus[7], 8, "10 - 2");
         // Clipped at the range: -6 + 5 is past the top, -5.
         let mut high = theta;
         high[8] = -6.0;
         assert_eq!(point(&high, &schedule, &SPECS, k, &delta, 1).values()[8], -5);
         // Rounded to the nearest integer.
         let mut fractional = theta;
-        fractional[0] = 200.4;
-        assert_eq!(point(&fractional, &schedule, &SPECS, k, &delta, 1).values()[0], 225);
+        fractional[2] = 200.4;
+        assert_eq!(point(&fractional, &schedule, &SPECS, k, &delta, 1).values()[2], 225);
     }
 
     #[test]
@@ -243,20 +249,21 @@ mod tests {
         let theta = start_theta(&SPECS);
         let delta: Delta = [1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
         assert_eq!(update(&theta, &schedule, &SPECS, 0, &delta, 0), theta, "a drawn pair moves nothing");
+        // Futility and null move: margins of 200 with the same spec, Delta +1 and -1.
         let won = update(&theta, &schedule, &SPECS, 0, &delta, 2);
-        let step = schedule.a_k(0, 0) / schedule.c_k(0, 0) * 2.0;
-        assert!(close(won[0], 200.0 + step), "{}", won[0]);
-        assert!(close(won[1], 200.0 - step));
+        let step = schedule.a_k(2, 0) / schedule.c_k(2, 0) * 2.0;
+        assert!(close(won[2], 200.0 + step), "{}", won[2]);
+        assert!(close(won[3], 200.0 - step));
         let lost = update(&theta, &schedule, &SPECS, 0, &delta, -2);
-        assert!(close(lost[0], 200.0 - step));
+        assert!(close(lost[2], 200.0 - step));
         // At the end, a 2-0 pair moves a margin by 2 * r_end * c_end.
         let k = PAIRS - 1;
         let end = update(&theta, &schedule, &SPECS, k, &delta, 2);
-        assert!(close(end[0] - 200.0, 2.0 * R_END * 25.0));
+        assert!(close(end[2] - 200.0, 2.0 * R_END * 25.0));
         // Clipped at the range.
         let mut low = theta;
-        low[0] = 50.0;
-        assert_eq!(update(&low, &schedule, &SPECS, 0, &delta, -2)[0], 50.0);
+        low[2] = 50.0;
+        assert_eq!(update(&low, &schedule, &SPECS, 0, &delta, -2)[2], 50.0);
     }
 
     #[test]

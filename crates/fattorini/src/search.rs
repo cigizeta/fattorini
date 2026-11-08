@@ -250,51 +250,64 @@ const FIFTY_MOVE_HALFMOVES: u8 = 100;
 /// placeholder like every other constant here, not a tuned value.
 const CHECK_INTERVAL: u64 = 1024;
 
-/// The pruning margin, per ply of remaining depth: two pawns, the default of the six margins in
-/// `SearchParameters` (razoring, reverse and classical futility, null move's eval term, delta
-/// pruning in quiescence at one ply, SEE pruning in the main search). They were four margins once,
-/// each picked by its own node-count sweep and none measured for strength, then one value
-/// (2026-10-03), now six again so that a tuning can move them apart, all six still starting here.
-/// Two pawns: wide enough that a pruned move would need to swing more than two pawns of material
-/// per ply searched to matter.
-/// In `piece_value`'s pawn; where a margin meets a static evaluation it is scaled to the evaluator's
-/// own pawn (`EvalMargins`), and SEE pruning, which compares material with material, reads it as it
-/// is.
-///
-/// Also the margins of a player never tuned (`parameters.txt` absent), `SearchParameters::DEFAULT`'s.
+/// Two pawns, per ply of remaining depth: the default of three of the six margins in
+/// `SearchParameters` (classical futility, null move's eval term, delta pruning in quiescence). The
+/// six shared it from 2026-10-03, never measured for strength, until a tune and four duels
+/// (2026-11-08) moved razoring, reverse futility and SEE pruning to values of their own, each argued
+/// in its field's doc comment. In `piece_value`'s pawn; where a margin meets a static evaluation it
+/// is scaled to the evaluator's own pawn (`EvalMargins`), so a default holds for any evaluator, and
+/// SEE pruning, which compares material with material, reads it as it is.
 pub const MARGIN_PER_PLY: i32 = 2 * piece_value(PieceType::Pawn);
 
 /// The values a search prunes, orders and windows by, as run-time parameters rather than constants,
 /// so that one process can play two sets against each other. `DEFAULT` is the untuned search; a
 /// tune moves every value (`parameters.txt`). The margins are in `piece_value`'s pawn.
+///
+/// Each default is argued from what its mechanism means in chess, not from one evaluator, since the
+/// margins are scaled to each evaluator's own pawn; what suits one evaluator better is its own tune's
+/// to find (the developer, 2026-11-08). Razoring, reverse futility, SEE pruning, the aspiration
+/// window and the good-quiet threshold moved on 2026-11-08, the lc0 network's first tune showing the
+/// way: new against old, PeSTO gained about 29 Elo and the lc0 network about 54 at 10+0.1, both even
+/// at depth 9.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchParameters {
-    /// Razoring, per ply: a node whose evaluation is this far below alpha goes to quiescence.
+    /// Razoring, per ply: a node whose evaluation is this far below alpha goes to quiescence. A pawn
+    /// and a half: how far a quiet move could still lift the node per ply, a pawn, and half a pawn
+    /// more for quiescence's blindness to anything but captures.
     pub razoring_margin: i32,
     /// Reverse futility, per ply: a node whose static evaluation is this far above beta needs no
-    /// search.
+    /// search. A pawn: how much the opponent can win back per ply without a tactic, a positional
+    /// swing.
     pub reverse_futility_margin: i32,
     /// Classical futility, per ply: a quiet move that cannot plausibly lift the static evaluation
-    /// this far, up to alpha, is skipped.
+    /// this far, up to alpha, is skipped. Two pawns (`MARGIN_PER_PLY`), wider than reverse
+    /// futility's pawn although it asks the mirror question: skipping a quiet wrongly can lose the
+    /// best move outright, while a wrong reverse-futility cut only misjudges a node's score.
     pub futility_margin: i32,
     /// Null move, per extra ply the null search loses: one ply for each of these by which the static
-    /// evaluation clears beta (`null_move_plies`).
+    /// evaluation clears beta (`null_move_plies`). Not a gate: a step of reduction. Two pawns
+    /// (`MARGIN_PER_PLY`) of surplus a ply.
     pub null_move_margin: i32,
     /// Delta pruning in quiescence: a capture whose victim plus this cannot lift the static
-    /// evaluation to alpha is skipped.
+    /// evaluation to alpha is skipped. Two pawns (`MARGIN_PER_PLY`): what a capture can bring beyond
+    /// its victim, a promotion threat included.
     pub delta_margin: i32,
     /// SEE pruning in the main search, per ply: a move losing more material than this by static
-    /// exchange is skipped, the margin growing with how much the remaining search could find.
+    /// exchange is skipped, the margin growing with how much the remaining search could find. A pawn
+    /// and a half: how much material a move may give up per ply for compensation the search could
+    /// still find. Must stay positive: the threshold is `-(margin * remaining)`.
     pub see_prune_margin: i32,
     /// How much material a capture may lose by static exchange and still be searched in quiescence:
     /// half a pawn. SEE counts material only, so a slightly losing capture can still be the right
     /// one for a reason it cannot see; Stockfish lets through `see_ge(move, -74)` for the same
     /// reason. Half a pawn is a little stricter than that.
     pub see_margin: i32,
-    /// The first aspiration window's half-width, around the previous depth's score: twenty
-    /// centipawns, a window of 40, Stockfish 10's value. Narrow enough to cut most of the tree when
-    /// the score holds, wide enough that it usually does; a failure only widens it and searches
-    /// again.
+    /// The first aspiration window's half-width, around the previous depth's score: ten
+    /// centipawns, a window of 20. Narrow enough to cut most of the tree when the score holds, wide
+    /// enough that it usually does; a failure only widens it and searches again. How far a score
+    /// moves from one depth to the next is the evaluator's own, so no value is right for every
+    /// evaluator: ten is a middle one, half Stockfish 10's twenty, the lc0 network's tune having
+    /// ended at seven.
     pub aspiration_delta: i32,
     /// History pruning's threshold, in units of `remaining^2`, the size of one history bonus at that
     /// depth: a quiet move is skipped once its history is worse than 35 such failures. Stockfish's
@@ -306,24 +319,25 @@ pub struct SearchParameters {
     /// points, a weighted net cutoff rate (`apply_history_bonus`), so it holds only for today's
     /// history: the `d * d` bonus, the two tables' ceilings, and tables fresh per search. At amanda's
     /// generation 1 about 6% of quiets score below it, Stockfish's "small tail" of clearly bad
-    /// quiets. Chosen by duels against `0`, the other measured candidate: drawn at depth 9 and at
-    /// 10s+0.1, both leaning to `-128` by about 20 Elo.
+    /// quiets. `-128` was chosen by duels against `0`, the other measured candidate: drawn at depth 9
+    /// and at 10s+0.1, both leaning to `-128` by about 20 Elo; `-140` since 2026-11-08, where the lc0
+    /// network's tune settled, a little stricter still.
     pub good_quiet_threshold: i32,
 }
 
 impl SearchParameters {
-    /// Every value its reasoned default.
+    /// Every value its reasoned default, each argued in its field's doc comment.
     pub const DEFAULT: SearchParameters = SearchParameters {
-        razoring_margin: MARGIN_PER_PLY,
-        reverse_futility_margin: MARGIN_PER_PLY,
+        razoring_margin: 3 * piece_value(PieceType::Pawn) / 2,
+        reverse_futility_margin: piece_value(PieceType::Pawn),
         futility_margin: MARGIN_PER_PLY,
         null_move_margin: MARGIN_PER_PLY,
         delta_margin: MARGIN_PER_PLY,
-        see_prune_margin: MARGIN_PER_PLY,
+        see_prune_margin: 3 * piece_value(PieceType::Pawn) / 2,
         see_margin: piece_value(PieceType::Pawn) / 2,
-        aspiration_delta: 20,
+        aspiration_delta: 10,
         history_pruning_multiplier: -35,
-        good_quiet_threshold: -128,
+        good_quiet_threshold: -140,
     };
 
     /// The fields' names, in declaration order: the keys of a parameters file, and the order of
@@ -4176,12 +4190,12 @@ mod tests {
         // moves), none captures or promotions, none giving check -- a clean, minimal position
         // for isolating futility pruning's own effect at `target_depth = 1` (`remaining == 1`,
         // well within `FUTILITY_MAX_DEPTH`). `alpha` set to exactly the pruning threshold
-        // (`static_eval + MARGIN_PER_PLY`) should skip every move but the mandatory
+        // (`static_eval + futility_margin`) should skip every move but the mandatory
         // first one; `-INFINITY` should skip none -- the same "identical algorithm, one
         // engineered value changed" methodology already used for delta pruning's own tests.
         let (board, _) = Board::from_fen("4k3/8/8/8/8/8/P6P/4K3 w - - 0 1").unwrap();
         let static_eval = evaluate(&board);
-        let high_alpha = static_eval + MARGIN_PER_PLY;
+        let high_alpha = static_eval + SearchParameters::DEFAULT.futility_margin;
 
         let tt = TranspositionTable::new(1);
         let stop_signal = AtomicBool::new(false);
@@ -4220,7 +4234,7 @@ mod tests {
         // true regardless of how much or how little gets searched beneath that first move.
         let (board, _) = Board::from_fen("4k3/8/8/8/8/8/P6P/4K3 w - - 0 1").unwrap();
         let static_eval = evaluate(&board);
-        let alpha = static_eval + MARGIN_PER_PLY * MAX_PLY as i32;
+        let alpha = static_eval + SearchParameters::DEFAULT.futility_margin * MAX_PLY as i32;
 
         let tt = TranspositionTable::new(1);
         let stop_signal = AtomicBool::new(false);
@@ -4250,7 +4264,7 @@ mod tests {
         // unfixed guard would prune at least as aggressively, never more loosely.
         let (board, _) = Board::from_fen("4k3/8/8/8/8/8/P6P/4K3 w - - 0 1").unwrap();
         let static_eval = evaluate(&board);
-        let high_alpha = static_eval + MARGIN_PER_PLY;
+        let high_alpha = static_eval + SearchParameters::DEFAULT.futility_margin;
         let mate_scale_alpha = MATE_SCORE - MAX_PLY as i32;
 
         let tt = TranspositionTable::new(1);
@@ -4283,7 +4297,7 @@ mod tests {
         // added alongside the tablebase work, for the identical reason.
         let (board, _) = Board::from_fen("4k3/8/8/8/8/8/P6P/4K3 w - - 0 1").unwrap();
         let static_eval = evaluate(&board);
-        let high_alpha = static_eval + MARGIN_PER_PLY;
+        let high_alpha = static_eval + SearchParameters::DEFAULT.futility_margin;
 
         let tt = TranspositionTable::new(1);
         let stop_signal = AtomicBool::new(false);
@@ -4312,7 +4326,7 @@ mod tests {
     #[test]
     fn reverse_futility_pruning_skips_the_whole_node_when_static_eval_beats_beta_by_a_wide_margin() {
         // White (a bare king plus a queen against a bare king) is up comfortably more than
-        // any plausible `MARGIN_PER_PLY * remaining` margin could ever eat through --
+        // any plausible `reverse_futility_margin * remaining` margin could ever eat through --
         // `evaluate`'s own material term alone clears `beta` here. `ply = 1`, not `0`:
         // reverse futility pruning is gated to `ply > 0` (see the implementation's own
         // comment for why), so this calls `alpha_beta_with_buffer` directly at a non-root
@@ -5326,7 +5340,7 @@ mod tests {
         // a comparison.
         let (board, _) = Board::from_fen("4k3/8/8/8/8/3p4/4P3/4K3 w - - 0 1").unwrap();
         let stand_pat = evaluate(&board);
-        let alpha = stand_pat + piece_value(PieceType::Pawn) + MARGIN_PER_PLY;
+        let alpha = stand_pat + piece_value(PieceType::Pawn) + SearchParameters::DEFAULT.delta_margin;
 
         let tt = TranspositionTable::new(1);
         let stop_signal = AtomicBool::new(false);
@@ -5342,7 +5356,7 @@ mod tests {
         // parent call alone, confirming the child recursion really happened.
         let (board, _) = Board::from_fen("4k3/8/8/8/8/3p4/4P3/4K3 w - - 0 1").unwrap();
         let stand_pat = evaluate(&board);
-        let alpha = stand_pat + piece_value(PieceType::Pawn) + MARGIN_PER_PLY - 1;
+        let alpha = stand_pat + piece_value(PieceType::Pawn) + SearchParameters::DEFAULT.delta_margin - 1;
 
         let tt = TranspositionTable::new(1);
         let stop_signal = AtomicBool::new(false);
@@ -6367,7 +6381,7 @@ mod tests {
     #[test]
     fn null_move_plies_grow_with_depth_and_margin_and_always_leave_a_ply() {
         // The shallowest null move loses today's three plies, whatever the margin: the floor.
-        let per_ply = MARGIN_PER_PLY;
+        let per_ply = SearchParameters::DEFAULT.null_move_margin;
         assert_eq!(null_move_plies(NULL_MOVE_MIN_REMAINING, 0, per_ply), 3);
         assert_eq!(null_move_plies(NULL_MOVE_MIN_REMAINING, 10 * per_ply, per_ply), 3);
         // The depth term: one more ply per four of remaining depth.
@@ -6456,10 +6470,9 @@ mod tests {
     fn is_see_pruned_is_true_for_a_move_that_hangs_a_piece_for_nothing_at_shallow_remaining() {
         let (board, _) = Board::from_fen("4k3/8/8/8/p7/8/8/N3K3 w - - 0 1").unwrap();
         let mv = Move::new(Square::A1, Square::B3, None);
-        // remaining = 1: whatever `MARGIN_PER_PLY` is currently set to (this constant is
-        // under active sweeping -- see its own doc comment), one ply's worth of it is still far
+        // remaining = 1: whatever `see_prune_margin` is set to, one ply's worth of it is still far
         // short of a whole knight's value, so the knight's own SEE value (-320) fails the margin
-        // outright regardless of which candidate value is live.
+        // outright whichever value is live.
         assert!(is_see_pruned(true, &board, mv, 1, SearchParameters::DEFAULT.see_prune_margin));
     }
 
@@ -6468,10 +6481,10 @@ mod tests {
         let (board, _) = Board::from_fen("4k3/8/8/8/p7/8/8/N3K3 w - - 0 1").unwrap();
         let mv = Move::new(Square::A1, Square::B3, None);
         let knight_value = piece_value(PieceType::Knight);
-        // Derived from `MARGIN_PER_PLY` itself, not a hardcoded remaining -- this constant is
-        // under active sweeping (its own doc comment), and a literal like `4` would silently stop
-        // meaning what its own comment claimed the moment the margin changed underneath it.
-        // `(knight_value - 1) / MARGIN_PER_PLY` is the largest `remaining` whose margin still
+        // Derived from `see_prune_margin` itself, not a hardcoded remaining -- a tune or a new
+        // default moves it, and a literal like `4` would silently stop meaning what its own
+        // comment claimed the moment the margin changed underneath it.
+        // `(knight_value - 1) / see_prune_margin` is the largest `remaining` whose margin still
         // strictly undershoots the knight's own loss (integer division floors, and the `- 1`
         // guards against an exact multiple counting as "still pruned" when it would actually
         // already clear the threshold).
@@ -7236,14 +7249,17 @@ mod tests {
     /// was kept (every static evaluation corrected by the correction history), and when `blend`
     /// was kept (reverse futility and stand pat returning the midpoint of their value and beta), and
     /// when `pv`, `root` and `ttquiet` were reverted, leaving `corr` and `blend`. Unchanged when the
-    /// switches were removed, `corr` and `blend` becoming the search's own code.
+    /// switches were removed, `corr` and `blend` becoming the search's own code. Re-recorded when the
+    /// defaults moved (2026-11-08: razoring and SEE pruning a pawn and a half, reverse futility a
+    /// pawn, the aspiration window 10, the good-quiet threshold -140): 16,896 nodes in all against
+    /// 24,154, the same move in four positions of six.
     const FIXED_SEARCH_EXPECTED: &[(u64, i32, &str)] = &[
-        (2445, 1, "Some(Move { from: G1, to: F3, promotion: None, kind: Quiet })"),
-        (6358, -109, "Some(Move { from: E2, to: A6, promotion: None, kind: Quiet })"),
-        (7655, 3, "Some(Move { from: F5, to: C2, promotion: None, kind: Quiet })"),
-        (5351, -45, "Some(Move { from: H5, to: D1, promotion: None, kind: Quiet })"),
-        (976, -80, "Some(Move { from: E4, to: D6, promotion: None, kind: Quiet })"),
-        (1369, 76, "Some(Move { from: B4, to: F4, promotion: None, kind: Quiet })"),
+        (807, 22, "Some(Move { from: G1, to: F3, promotion: None, kind: Quiet })"),
+        (4703, -37, "Some(Move { from: E2, to: A6, promotion: None, kind: Quiet })"),
+        (4616, 101, "Some(Move { from: F5, to: D3, promotion: None, kind: Quiet })"),
+        (4711, -51, "Some(Move { from: H2, to: H3, promotion: None, kind: Quiet })"),
+        (830, -80, "Some(Move { from: E4, to: D6, promotion: None, kind: Quiet })"),
+        (1229, 76, "Some(Move { from: B4, to: F4, promotion: None, kind: Quiet })"),
     ];
 
     #[test]

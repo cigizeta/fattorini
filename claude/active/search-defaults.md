@@ -152,7 +152,13 @@ beside each side's speed at that depth:
   its node count is exact for one binary, so the bench before the code change against the bench
   after it is the old defaults' cost against the new ones'.
   - Old defaults (2026-11-08, before the change): **3,684,206 nodes**, 4,730,673 nps.
-  - New defaults: to run after the code change.
+  - New defaults (2026-11-08, after the change): **2,636,930 nodes**, 4,265,640 nps. New over old:
+    **0.716 of the nodes**, 0.90 of the nps, so about **0.79 of the time** to depth 9. The nps fell
+    too: machine noise, or the nodes now pruned the cheap ones; the time is what the forge pays.
+  - The depth-6 fixed-search test, re-recorded with the change (PeSTO, six positions): 16,896 nodes
+    against 24,154, the same move in four of six, but the score moved by 72 and 98 centipawns in two.
+    A hint, not a measurement: equal Elo at depth 9 need not mean equal labels, and the forge trains
+    on the scores.
   - The lc0 network's would need a snapshot embedding it; a new `@untuned` snapshot replaces the
     older one, which lichess-bot's `config.yml` may name, so PeSTO's alone unless asked.
 - **Elo is a proxy:** the forge trains on depth-9 scores, not on the moves. Pruning can shift a
@@ -176,10 +182,8 @@ Directions to weigh, none chosen:
 2. ~~Question 1 discussed parameter by parameter.~~ Done.
 3. ~~The validation duels end (PeSTO and lc0, 10+0.1 and depth 9); their results go above.~~ Passed.
 4. ~~The temporary files undone.~~ Done.
-5. A plan, then the code: the new values in `SearchParameters::DEFAULT`, which becomes the one
-   source of the tune's starting values (`spsa::SPECS` keeps each parameter's range and `c_end`
-   alone), the ranges re-centred on the new values, and `aspiration_delta`'s floor of 5 lowered, the
-   last tune having ended at 7.
+5. ~~A plan, then the code~~ (new-search-defaults.md). Done: `DEFAULT` and `SPECS` held together by
+   their existing test rather than one source, the forge pinned to the old values.
 6. The new tune of the lc0 network (the developer, 2026-11-08): from the new defaults, double the
    budget, `length: 32768` in its config (about 15 hours). One tune a network: its finished tune's
    `gen-1/tune/` moved aside first, here and on the remote. `parameters.txt` beside the network
