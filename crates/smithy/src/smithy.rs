@@ -866,13 +866,15 @@ impl Shared {
                 WorkView::Pairs { played: self.pairs.iter().map(Vec::len).sum(), pairings: pairings.len(), wanted }
             }
             // A finished tune is idle, and still shown.
-            (Work::Tune { .. } | Work::Idle, _) => match &self.tune {
+            (work @ (Work::Tune { .. } | Work::Idle), _) => match &self.tune {
                 Some(tune) => WorkView::Tune {
                     player: tune.player.clone(),
                     done: tune.k_done,
                     pairs: tune.pairs,
                     reference_nps: self.reference_nps,
                     theta: tune.rows().into_iter().map(|(name, start, now)| ParameterView { name, start, now }).collect(),
+                    time: matches!(work, Work::Tune { .. })
+                        .then(|| pairs_eta(&self.pair_times, u64::from(tune.pairs.saturating_sub(tune.k_done)))),
                 },
                 None => WorkView::Idle,
             },
@@ -1356,6 +1358,8 @@ impl Shared {
                 let tune = self.tune.as_mut().expect("a tune is dealt");
                 append(&tune.games_path(), text)?;
                 tune.record(k, r, &machine)?;
+                // Its arrival, in memory alone: the tune's elapsed time, pace and ETA.
+                self.pair_times.push((unix_now(), true));
             }
             _ => {}
         }
@@ -2561,7 +2565,9 @@ enum WorkView {
     Pairs { played: usize, pairings: usize, wanted: u32 },
     /// `reference_nps`: the bench's nodes per second per thread on the smithy's machine, the speed
     /// every arena's clock is scaled to; none at a fixed depth, or before this smithy benched.
-    Tune { player: String, done: u32, pairs: u32, reference_nps: Option<f64>, theta: Vec<ParameterView> },
+    /// `time` from its pairs' arrivals since it began dealing (`pairs_eta`); none once it no longer
+    /// deals, `pair_times` then perhaps another phase's.
+    Tune { player: String, done: u32, pairs: u32, reference_nps: Option<f64>, theta: Vec<ParameterView>, time: Option<PlayTime> },
     /// A test as its pairs have it so far (`matches::judge`); its number, which its screen is.
     Test {
         number: u32,
@@ -4561,6 +4567,8 @@ fn run_tune(shared: &Arc<Mutex<Shared>>, tune: Tune, stop: &AtomicBool) -> Resul
         shared.epoch += 1;
         shared.tune = Some(tune);
         shared.work = Some(Work::Tune { network });
+        // Its times, as a pair phase's but kept in memory alone: a resume's pace is measured afresh.
+        shared.pair_times = vec![(unix_now(), false)];
     }
     // Its progress is its box's, drawn from its view (`WorkView::Tune`).
     let mut mirrored = Instant::now();
@@ -5657,6 +5665,7 @@ mod tests {
         let tune = shared.tune.as_ref().unwrap();
         assert!(tune.done());
         assert_eq!(std::fs::read_to_string(tune.games_path()).unwrap().matches("[Event ").count(), 8);
+        assert_eq!(shared.pair_times.iter().filter(|&&(_, pair)| pair).count(), 4, "each pair's arrival, for its ETA");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -5672,7 +5681,7 @@ mod tests {
         }
         let status = test_status(shared);
         let snapshot = status.snapshot(Instant::now(), false);
-        assert!(matches!(snapshot.work, WorkView::Tune { pairs: 4, .. }), "the tune, though idle");
+        assert!(matches!(snapshot.work, WorkView::Tune { pairs: 4, time: None, .. }), "the tune, though idle, with no time");
         assert_eq!(snapshot.finished.as_deref(), Some("4 pairs done"));
         std::fs::remove_dir_all(&dir).ok();
     }
