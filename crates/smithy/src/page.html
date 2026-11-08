@@ -242,7 +242,8 @@ function work(view, waiting, stop = "") {
       // an SPRT's gauge too, which end whenever the evidence is enough: a duel's starting at an even
       // score, an SPRT's at zero; a match's would only repeat its bar.
       const length = view.expected_games === null ? ""
-        : `<div>${whole(view.games)} of ${view.test === "duel" ? "about " : ""}${whole(view.expected_games)} games${times(view)}</div>`
+        : `<div>${whole(view.games)} of ${view.test === "duel" ? "about " : ""}${whole(view.expected_games)} games`
+          + ` (${percent(view.expected_games > 0 ? view.games / view.expected_games : 0)})${times(view)}</div>`
           + bar(view.games, view.expected_games);
       const evidence = view.test === "match" ? ""
         : gauge(view.gauge.value, view.gauge.lower, view.gauge.upper, view.gauge.left, view.gauge.right, view.test === "duel" ? 0.5 : 0,
@@ -264,7 +265,8 @@ function work(view, waiting, stop = "") {
     case "tune":
       // As a test's: the count and its time above the bar, the time only while it deals.
       return `<h2>Tune of ${escape(view.player)}</h2>`
-        + `<div>${whole(view.done)} of ${whole(view.pairs)} pairs${view.time ? times(view, true) : ""}</div>${bar(view.done, view.pairs)}`
+        + `<div>${whole(view.done)} of ${whole(view.pairs)} pairs (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
+        + `${view.time ? times(view, true) : ""}</div>${bar(view.done, view.pairs)}`
         + (view.reference_nps ? `<div class="muted">Bench: ${whole(Math.round(view.reference_nps))} nodes/s per thread on this machine, every arena's clock scaled to it</div>` : "")
         + table(["parameter", "start", "now"], view.theta.map((p) => [p.name, String(p.start), number(p.now, 1)]));
     default:
