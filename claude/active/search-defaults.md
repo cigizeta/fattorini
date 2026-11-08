@@ -118,6 +118,25 @@ So tuned parameters in the forge would likely give faster, noisier data, and wid
 cleaner data. The trade-off is label quality per unit of compute, which neither "tuned" nor
 "untuned" settles and Elo at depth 9 does not measure.
 
+**First evidence, the depth-9 validation duels (the developer, 2026-11-08).** Elo at depth 9 is
+the quality of moves, and so far as they go together of scores, at the forge's own search. Read
+beside each side's speed at that depth:
+
+| Depth-9 result, new against old | Nodes a position | For the forge |
+|---|---|---|
+| about even | fewer | clearly better: the same quality, faster; the forge takes the new defaults |
+| new loses | fewer | a real trade-off, noisier labels against more positions an hour: this question |
+| new wins | either | clearly better |
+
+- **The speed is still to measure:** a duel gives the score, not each side's nodes a position.
+  Either `bench` at depth 9 with each parameter set, or the same self-play run timed with each.
+  Without it, the middle row says what is lost but not what it buys.
+- **Elo is a proxy:** the forge trains on depth-9 scores, not on the moves. Pruning can shift a
+  score without changing the move chosen, so a depth-9 draw does not prove the labels unchanged; Elo
+  and score accuracy usually move together, so it is a fair first signal.
+- **Expected:** tighter pruning at a fixed depth usually costs some Elo, each prune a risk that buys
+  no depth back. The new defaults holding even at depth 9 would be a strong result for the forge.
+
 Directions to weigh, none chosen:
 
 - forge parameters of their own, chosen for data quality per compute, apart from clock parameters
@@ -143,4 +162,5 @@ Directions to weigh, none chosen:
    `gen-1/tune/` moved aside first, here and on the remote. `parameters.txt` beside the network
    keeps the 16,384-pair tune's values, `@tuned` playing them, until the new tune ends and replaces
    them; `parameters.tune-16k.txt` stays as their copy.
-7. Question 2 discussed, then a plan, if anything changes.
+7. Question 2: the depth-9 duels read beside a speed measurement at depth 9 (each parameter set's
+   nodes a position), then discussed, then a plan, if anything changes.
