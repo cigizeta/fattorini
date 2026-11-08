@@ -37,10 +37,11 @@ so that each generation changes the network alone.
 
 ## Open questions
 
-1. **The tune at depth 9.** The new defaults are even with the old at depth 9; the 16k tune went
-   further (reverse futility 96, aspiration window 7). A duel of `lc0-psq-threats-screlu-g1-r1@tuned`
-   against `@untuned` at depth 9 says whether the tune itself costs quality at the forge's search.
-   Minutes; first.
+1. **The tune at depth 9. Answered 2026-11-08: no quality lost.** The 16k tune went further than
+   the new defaults (reverse futility 96, aspiration window 7). `lc0-psq-threats-screlu-g1-r1@tuned`
+   against `@untuned`, the new defaults since the code change, at depth 9: drawn, curtailed at 385
+   pairs, the tune 403.0 to 367.0 (52.3%, about +16 Elo), `+234 -270 =266` from the defaults' side.
+   The tune's tighter pruning costs nothing at the forge's search, leaning if anything its way.
 2. **The labels.** With tuned self-play, each generation's labels depend on its tune, which is noisy
    (16k pairs). A tune that prunes more changes depth-9 scores; whether for better or worse is not
    known. To check before or alongside, how not yet designed.
@@ -65,5 +66,5 @@ so that each generation changes the network alone.
 
 ## Next
 
-1. Question 1's duel, at depth 9.
-2. The questions settled one by one, then an implementation plan.
+1. ~~Question 1's duel, at depth 9.~~ Answered: even, leaning to the tune.
+2. Questions 2 to 7 settled one by one, then an implementation plan.
