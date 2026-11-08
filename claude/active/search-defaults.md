@@ -68,7 +68,25 @@ gave the same values (question 1).
   aside to `parameters.tune-16k.txt` beside it (also kept as `gen-1/tune/parameters.txt`), the new
   values in its place. To restore.
 
-Duels, each at 10+0.1 and at depth 9: PeSTO and the lc0 network. Results: to be added.
+Duels, each at 10+0.1 and at depth 9: PeSTO and the lc0 network (the arena's command line, first the
+old defaults, then the new; `+W -L =D` the old defaults' side).
+
+| Player | Search | Games | Old - new | New's share | Old `+W -L =D` | Verdict |
+|---|---|---|---|---|---|---|
+| PeSTO | 10+0.1 | 694 | 318.5 - 375.5 | 54.1%, about +29 Elo | +166 -223 =305 | new stronger (2026-11-08) |
+| PeSTO | depth 9 | 738 | 372.0 - 366.0 | 49.6%, about -3 Elo | +224 -218 =296 | drawn, curtailed at 369 pairs (2026-11-08) |
+| lc0 | 10+0.1 | 148 | 62.5 - 85.5 | 57.8%, about +54 Elo | +32 -55 =61 | new stronger (2026-11-08) |
+| lc0 | depth 9 | 740 | 364.0 - 376.0 | 50.8%, about +6 Elo | +246 -258 =236 | drawn, curtailed at 370 pairs (2026-11-08) |
+
+PeSTO's on a clock passes more than its "no clear harm": values inspired by the lc0 network's tune,
+then argued independently of the evaluator, help a far weaker evaluator too. At depth 9, even: the
+tighter pruning costs PeSTO no measurable quality at the forge's search, question 2's first row if
+it also searches fewer nodes.
+
+**The validation passed (2026-11-08):** the new defaults are stronger on a clock for both evaluators
+(PeSTO +29, lc0 +54 Elo, the latter about 40% of its full tune's +130), and even at depth 9 for both.
+The same pattern twice: no quality lost at a fixed depth, a gain on a clock, as fewer nodes for the
+same depth would give; to confirm by the speed measurement (question 2).
 
 Then, if they pass: `SearchParameters::DEFAULT` and `spsa::SPECS` changed together, `DEFAULT` made the
 one source of the starting values, the ranges re-centred (`aspiration_delta`'s floor of 5 was near
