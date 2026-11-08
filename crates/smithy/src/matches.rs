@@ -178,6 +178,58 @@ pub struct Judged {
     pub verdict: Option<String>,
 }
 
+/// Games won, lost and drawn, from the champion's side, as the arena's command line counts them, its
+/// first player the champion (the developer, 2026-11-08): a pair's, or a test's summed. A pair's `r`
+/// alone cannot give them (a 0 is two draws or a win and a loss), so they are counted as a pair
+/// arrives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Wdl {
+    pub wins: u32,
+    pub losses: u32,
+    pub draws: u32,
+}
+
+impl Wdl {
+    /// A pair's, from White's score in each game: the challenger White in the first and Black in the
+    /// second, as its `r`, so the champion Black in the first and White in the second.
+    pub fn of_pair(first: f64, second: f64) -> Wdl {
+        let mut wdl = Wdl::default();
+        for champion in [1.0 - first, second] {
+            if champion > 0.75 {
+                wdl.wins += 1;
+            } else if champion < 0.25 {
+                wdl.losses += 1;
+            } else {
+                wdl.draws += 1;
+            }
+        }
+        wdl
+    }
+
+    pub fn add(self, other: Wdl) -> Wdl {
+        Wdl { wins: self.wins + other.wins, losses: self.losses + other.losses, draws: self.draws + other.draws }
+    }
+
+    /// As a pairs record's field: `W,L,D`.
+    pub fn field(&self) -> String {
+        format!("{},{},{}", self.wins, self.losses, self.draws)
+    }
+
+    pub fn parse(field: &str) -> Option<Wdl> {
+        let mut counts = field.split(',').map(|count| count.parse::<u32>().ok());
+        match (counts.next()??, counts.next()??, counts.next()??, counts.next()) {
+            (wins, losses, draws, None) => Some(Wdl { wins, losses, draws }),
+            _ => None,
+        }
+    }
+
+    /// The sum of the first `count` pairs, `None` if any of them is unknown (a record line older
+    /// than the field) or missing.
+    pub fn sum(pairs: &[Option<Wdl>], count: usize) -> Option<Wdl> {
+        pairs.get(..count)?.iter().try_fold(Wdl::default(), |sum, pair| pair.map(|pair| sum.add(pair)))
+    }
+}
+
 /// `kind` over `pairs`, each the challenger's `r` in -2..=2, in their order.
 pub fn judge(kind: Kind, pairs: &[i32]) -> Judged {
     match kind {
@@ -556,6 +608,27 @@ mod tests {
     /// The job's words: `head`'s, then the limit, one word though it holds a space.
     fn words(head: &str, limit: &str) -> Vec<String> {
         head.split_whitespace().map(str::to_string).chain([limit.to_string()]).collect()
+    }
+
+    #[test]
+    fn a_pair_s_wins_losses_and_draws_are_the_champion_s() {
+        // The challenger White and winning, then Black and drawing: the champion loses one, draws one.
+        assert_eq!(Wdl::of_pair(1.0, 0.5), Wdl { wins: 0, losses: 1, draws: 1 });
+        // White wins both: the champion loses the first and wins the second, an r of 0.
+        assert_eq!(Wdl::of_pair(1.0, 1.0), Wdl { wins: 1, losses: 1, draws: 0 });
+        assert_eq!(Wdl::of_pair(0.5, 0.5), Wdl { wins: 0, losses: 0, draws: 2 });
+        // The challenger loses both: the champion wins both.
+        assert_eq!(Wdl::of_pair(0.0, 1.0), Wdl { wins: 2, losses: 0, draws: 0 });
+        let wdl = Wdl { wins: 3, losses: 1, draws: 12 };
+        assert_eq!(Wdl::parse(&wdl.field()), Some(wdl));
+        for wrong in ["", "1,2", "1,2,3,4", "a,b,c", "1,,3"] {
+            assert_eq!(Wdl::parse(wrong), None, "{wrong:?}");
+        }
+        let pairs = [Some(Wdl { wins: 1, losses: 0, draws: 1 }), Some(Wdl { wins: 0, losses: 0, draws: 2 }), None];
+        assert_eq!(Wdl::sum(&pairs, 2), Some(Wdl { wins: 1, losses: 0, draws: 3 }), "the counted pairs alone");
+        assert_eq!(Wdl::sum(&pairs, 3), None, "one unknown");
+        assert_eq!(Wdl::sum(&pairs, 4), None, "one missing");
+        assert_eq!(Wdl::sum(&pairs, 0), Some(Wdl::default()));
     }
 
     #[test]

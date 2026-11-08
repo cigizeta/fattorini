@@ -754,6 +754,10 @@ struct Shared {
     self_play_started: Option<Instant>,
     /// Pair results received this phase, by pairing, in arrival order.
     pairs: Vec<Vec<i32>>,
+    /// Each of `pairs`' wins, losses and draws, aligned with it: read from the record
+    /// (`recorded_wdl`) and kept as each comes; `None` for a pair recorded before they were. A test's
+    /// card shows their sum.
+    pair_wdl: Vec<Vec<Option<matches::Wdl>>>,
     /// The record's times, UTC Unix seconds, in order: each start of dealing (`false`) and each pair's
     /// arrival (`true`), read from the record (`recorded_times`) and kept as each comes: the phase's
     /// elapsed time, rate and ETA (`play_time`).
@@ -860,7 +864,13 @@ impl Shared {
                 gate_view(*elo_d, self.pairs.first().map_or(&[][..], Vec::as_slice), &self.pair_times, self.depth())
             }
             (Work::Pairs { .. }, View::Test { number, spec }) => {
-                test_view(*number, spec, self.pairs.first().map_or(&[][..], Vec::as_slice), &self.pair_times)
+                test_view(
+                    *number,
+                    spec,
+                    self.pairs.first().map_or(&[][..], Vec::as_slice),
+                    self.pair_wdl.first().map_or(&[][..], Vec::as_slice),
+                    &self.pair_times,
+                )
             }
             (Work::Pairs { pairings, wanted, .. }, _) => {
                 WorkView::Pairs { played: self.pairs.iter().map(Vec::len).sum(), pairings: pairings.len(), wanted }
@@ -1338,14 +1348,19 @@ impl Shared {
                 // The challenger is White in the first game and Black in the second.
                 let score = (2.0 * games[0].result - 1.0) + (2.0 * (1.0 - games[1].result) - 1.0);
                 let r = score.round() as i32;
+                let wdl = matches::Wdl::of_pair(games[0].result, games[1].result);
                 append(&Dirs::games_of(&record), text)?;
-                // Its arrival last, the field older records lack.
+                // Its arrival, then its wins, losses and draws: the fields older records lack.
                 let arrived = unix_now();
-                append(&record, &format!("{pairing}\t{r}\t{}\t{}\t{}\t{arrived}\n", key.0, key.1, key.2))?;
+                append(&record, &format!("{pairing}\t{r}\t{}\t{}\t{}\t{arrived}\t{}\n", key.0, key.1, key.2, wdl.field()))?;
                 if self.pairs.len() <= pairing {
                     self.pairs.resize(pairing + 1, Vec::new());
                 }
+                if self.pair_wdl.len() <= pairing {
+                    self.pair_wdl.resize(pairing + 1, Vec::new());
+                }
                 self.pairs[pairing].push(r);
+                self.pair_wdl[pairing].push(Some(wdl));
                 self.pair_times.push((arrived, true));
             }
             (Work::Tune { .. }, None) => {
@@ -1850,7 +1865,10 @@ fn catalog() -> Catalog {
             // Its live block once more, rebuilt from its record, so an ended test keeps it.
             let path = matches::pairs_path(dir, record.number);
             let view = match (record.spec(), recorded_pairs(&path, 1)) {
-                (Ok(spec), Ok(mut pairs)) => Some(test_view(record.number, &spec, &pairs.remove(0), &recorded_times(&path))),
+                (Ok(spec), Ok(mut pairs)) => {
+                    let wdl = recorded_wdl(&path, 1).remove(0);
+                    Some(test_view(record.number, &spec, &pairs.remove(0), &wdl, &recorded_times(&path)))
+                }
                 _ => None,
             };
             KeptTest { record, view }
@@ -2580,6 +2598,9 @@ enum WorkView {
         limit: String,
         games: u64,
         challenger_points: f64,
+        /// The champion's wins, losses and draws over the same games (`matches::Wdl`); none when a
+        /// pair was recorded without them.
+        wdl: Option<matches::Wdl>,
         status: String,
         gauge: matches::Gauge,
         verdict: Option<String>,
@@ -3389,6 +3410,7 @@ impl Run<'_> {
             let mut shared = self.lock();
             shared.epoch += 1;
             shared.pairs = results.clone();
+            shared.pair_wdl = recorded_wdl(record, pairings.len());
             shared.pair_times = recorded_times(record);
             shared.work = Some(Work::Pairs { pairings, wanted, record: record.to_string() });
         }
@@ -3684,10 +3706,12 @@ fn gate_view(elo_d: f64, pairs: &[i32], times: &[(u64, bool)], depth: u32) -> Wo
     }
 }
 
-/// Test `number` as the page shows it: `spec`, judged over `pairs`, its time from `times`; its ETA
-/// toward its expected games, none without them (an SPRT).
-fn test_view(number: u32, spec: &matches::Spec, pairs: &[i32], times: &[(u64, bool)]) -> WorkView {
+/// Test `number` as the page shows it: `spec`, judged over `pairs`, its wins, losses and draws from
+/// `wdl` (aligned with `pairs`) over the same pairs the verdict counts, its time from `times`; its
+/// ETA toward its expected games, none without them (an SPRT).
+fn test_view(number: u32, spec: &matches::Spec, pairs: &[i32], wdl: &[Option<matches::Wdl>], times: &[(u64, bool)]) -> WorkView {
     let judged = matches::judge(spec.kind, pairs);
+    let wdl = matches::Wdl::sum(wdl, judged.pairs);
     let pairs_left = judged.expected_games.map_or(0, |expected| expected.saturating_sub(judged.games) / 2);
     let time = pairs_eta(times, pairs_left);
     WorkView::Test {
@@ -3703,10 +3727,27 @@ fn test_view(number: u32, spec: &matches::Spec, pairs: &[i32], times: &[(u64, bo
         limit: spec.limit.text(),
         games: judged.games,
         challenger_points: judged.challenger_points,
+        wdl,
         status: judged.status,
         gauge: judged.gauge,
         verdict: judged.verdict,
     }
+}
+
+/// Each pair's wins, losses and draws that `record` holds, by pairing, of `count` pairings, aligned
+/// with `recorded_pairs`: its seventh field, `None` for a line written before it was; none without
+/// the file.
+fn recorded_wdl(record: &str, count: usize) -> Vec<Vec<Option<matches::Wdl>>> {
+    let mut wdl = vec![Vec::new(); count];
+    if let Ok(text) = std::fs::read_to_string(record) {
+        for line in text.lines().filter(|line| !line.starts_with('#')) {
+            let fields: Vec<&str> = line.split('\t').collect();
+            if let Some(pairing) = fields.first().and_then(|pairing| pairing.parse::<usize>().ok()).filter(|&pairing| pairing < count) {
+                wdl[pairing].push(fields.get(6).and_then(|field| matches::Wdl::parse(field)));
+            }
+        }
+    }
+    wdl
 }
 
 /// The pair results `record` holds, by pairing, of `count` pairings; none without the file.
@@ -4494,6 +4535,7 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         shared.view = View::Test { number, spec: spec.clone() };
         shared.epoch += 1;
         shared.pairs = vec![pairs];
+        shared.pair_wdl = recorded_wdl(&record, 1);
         shared.pair_times = recorded_times(&record);
         shared.work = Some(Work::Pairs { pairings: vec![(challenger.name, champion.name)], wanted: spec.kind.max_pairs(), record: record.clone() });
     }
@@ -5105,6 +5147,33 @@ mod tests {
     }
 
     #[test]
+    fn a_test_s_wins_losses_and_draws_are_its_records_seventh_field_over_the_counted_pairs() {
+        use matches::Wdl;
+        let dir = scratch("recorded-wdl");
+        let record = format!("{dir}/pairs.tsv");
+        // An older line without the field, then two with it, a start between.
+        std::fs::write(
+            &record,
+            "0\t0\tc1\ts1\t0\t1700000000\n#start\t1700000005\n0\t2\tc1\ts1\t1\t1700000010\t2,0,0\n0\t1\tc1\ts1\t2\t1700000020\t1,0,1\n",
+        )
+        .unwrap();
+        let read = recorded_wdl(&record, 1);
+        assert_eq!(read, vec![vec![None, Some(Wdl { wins: 2, losses: 0, draws: 0 }), Some(Wdl { wins: 1, losses: 0, draws: 1 })]]);
+        assert_eq!(read[0].len(), recorded_pairs(&record, 1).unwrap()[0].len(), "aligned with the pairs");
+        assert!(recorded_wdl(&format!("{dir}/none.tsv"), 1)[0].is_empty());
+        let spec = matches::Spec::parse(&["match", "3", "aa@untuned", "bb@untuned", "depth 9"].map(str::to_string)).unwrap();
+        let wdl_of = |view: WorkView| match view {
+            WorkView::Test { wdl, .. } => wdl,
+            _ => panic!("a test's view"),
+        };
+        // The older line's pair unknown: no sum.
+        assert_eq!(wdl_of(test_view(1, &spec, &[0, 2, 1], &read[0], &[])), None);
+        // Its pairs all known: their sum.
+        assert_eq!(wdl_of(test_view(1, &spec, &[2, 1], &read[0][1..], &[])), Some(Wdl { wins: 3, losses: 0, draws: 1 }));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn the_grid_is_nine_hundredths_centred_and_clamped() {
         assert_eq!(grid(95, 1), (91..=99).collect::<Vec<_>>());
         assert_eq!(grid(97, 1), (91..=99).collect::<Vec<_>>(), "clamped at the top");
@@ -5537,9 +5606,10 @@ mod tests {
         );
         assert_eq!(word(&post(&shared, TASK_PATH, &task_body(&session, &pair))), "STOP", "every pairing complete");
         let line = std::fs::read_to_string(&record).unwrap();
-        let (identity, arrived) = line.trim_end().rsplit_once('\t').unwrap();
-        assert_eq!(identity, format!("1\t1\t{}\t{session}\t0", dealt.id), "a win and a draw: r = 1");
-        assert!(arrived.parse::<u64>().unwrap() > 0, "its arrival, last");
+        let fields: Vec<&str> = line.trim_end().split('\t').collect();
+        assert_eq!(fields[..5].join("\t"), format!("1\t1\t{}\t{session}\t0", dealt.id), "a win and a draw: r = 1");
+        assert!(fields[5].parse::<u64>().unwrap() > 0, "its arrival, sixth");
+        assert_eq!(fields[6..], ["0,1,1"], "the champion's wins, losses and draws, last: a loss and a draw");
         assert_eq!(recorded_times(&record).len(), 1);
         assert_eq!(std::fs::read_to_string(Dirs::games_of(&record)).unwrap(), pair);
         assert_eq!(word(&post(&shared, CHORE_PATH, session.as_bytes())), "WAIT");

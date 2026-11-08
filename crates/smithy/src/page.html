@@ -256,8 +256,12 @@ function work(view, waiting, stop = "") {
       return (stop ? `<div class="row">${title}${stop}</div>` : title) + `<div class="muted">${escape(view.limit)}</div>${mixed}`
         + progress
         // Both sides' points and shares, so neither reads as the score: one alone was ambiguous.
-        + table(["games", "champion", "challenger", "state"],
-          [[whole(view.games), side(view.games - view.challenger_points), side(view.challenger_points), view.status]])
+        // Wins, losses and draws from the champion's side, as the server counts them and the arena's
+        // command line says them (`matches::Wdl`): + the champion's wins, - the challenger's. Blank for
+        // a test with pairs recorded before they were counted.
+        + table(["games", "champion", "challenger", "+/-/=", "state"],
+          [[whole(view.games), side(view.games - view.challenger_points), side(view.challenger_points),
+            view.wdl ? `+${view.wdl.wins} -${view.wdl.losses} =${view.wdl.draws}` : "", view.status]])
         + (view.verdict ? `<div><b>${escape(view.verdict)}</b></div>` : "");
     }
     case "pairs":
