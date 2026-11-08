@@ -73,6 +73,9 @@ In this order:
 - **Atan support and lockstep training of several arms:** deprecated by the 2026-11-05 verdict
   (training-corrections.md), kept "for now". Old networks play from a build of the archive, not
   from the new binaries. To remove, after checking nothing still needs them.
+- **The Tests form's network select, with the lambda grid** (the developer, 2026-11-08): once a
+  generation trains the polyline's one arm alone, "winner (lpolyline)" chooses among one, so the
+  select goes when the grid goes, not before.
 
 ## Written, not yet seen working for real
 

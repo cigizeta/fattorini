@@ -799,7 +799,9 @@ function sideRow(label, side) {
       + step("network", ofGeneration.map((n) => {
         // The winner's lambda beside it, which its name leaves out.
         const what = n.winner ? `winner (l${lambdaText(n.lambda)})` : `lambda ${lambdaText(n.lambda)}`;
-        return option(n.name, `${what}${n.tuned ? ", tuned" : ""}`, n.name === network.name);
+        // Whether it has a tune is the parameters' select's alone, which offers "its tune" only then:
+        // said here too, it read as what this side plays.
+        return option(n.name, what, n.name === network.name);
       }).join(""));
   }
   const tunable = network.tuned;
