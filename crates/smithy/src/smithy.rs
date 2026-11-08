@@ -3912,14 +3912,24 @@ fn publish(path: &str) -> Result<String, String> {
 }
 
 
-/// Where generation `generation` of run `run` is read: this machine's copy while it has one, else the
-/// remote's, where a closed generation moves (`archive.rs`).
+/// Where generation `generation` of run `run` is read (`readable_of`): this machine's copy while it
+/// has one, else the remote's, where a closed generation moves (`archive.rs`).
 fn readable_dirs(run: &str, generation: u32) -> Dirs {
-    let local = Dirs { root: run_dir(run) };
-    if Path::new(&local.generation(generation)).is_dir() {
-        return local;
+    readable_of(Dirs { root: run_dir(run) }, Dirs { root: remote_run_dir(run) }, generation)
+}
+
+/// `local`'s generation while it has a folder, unless that folder trained nothing (no `lambda-*`)
+/// and `remote`'s did: then it is not the generation's copy but a tune's folder alone, fetched back
+/// to show the tune (`Tune::open`), and the generation itself is the remote's. A running generation,
+/// local and with no arm yet during its self-play, has none on the remote either, so stays local.
+fn readable_of(local: Dirs, remote: Dirs, generation: u32) -> Dirs {
+    if !Path::new(&local.generation(generation)).is_dir() {
+        return remote;
     }
-    Dirs { root: remote_run_dir(run) }
+    if generation_arms(&local, generation).is_empty() && !generation_arms(&remote, generation).is_empty() {
+        return remote;
+    }
+    local
 }
 
 fn copy(from: &str, to: &str) -> Result<(), String> {
@@ -5683,6 +5693,32 @@ mod tests {
         let snapshot = status.snapshot(Instant::now(), false);
         assert!(matches!(snapshot.work, WorkView::Tune { pairs: 4, time: None, .. }), "the tune, though idle, with no time");
         assert_eq!(snapshot.finished.as_deref(), Some("4 pairs done"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_readable_generation_is_not_a_tune_s_folder_alone() {
+        let dir = scratch("readable");
+        let (local, remote) = (format!("{dir}/local"), format!("{dir}/remote"));
+        let dirs = |root: &str| Dirs { root: root.to_string() };
+        let read = |generation| readable_of(dirs(&local), dirs(&remote), generation).root;
+        let make = |root: &str, generation: u32, inside: &str| {
+            std::fs::create_dir_all(format!("{}/{inside}", dirs(root).generation(generation))).unwrap();
+        };
+        // Generation 1: a tune's folder alone here, the generation trained on the remote.
+        make(&local, 1, "tune");
+        make(&remote, 1, "lambda-polyline");
+        // Generation 2: trained here, and on the remote too.
+        make(&local, 2, "lambda-polyline");
+        make(&remote, 2, "lambda-polyline");
+        // Generation 3: running here, in its self-play, nothing on the remote yet.
+        make(&local, 3, "test");
+        // Generation 4: on the remote alone.
+        make(&remote, 4, "lambda-polyline");
+        assert_eq!(read(1), remote, "a tune's folder alone does not hide the remote's generation");
+        assert_eq!(read(2), local, "a local copy that trained is read here");
+        assert_eq!(read(3), local, "a running generation, no arm anywhere yet, stays local");
+        assert_eq!(read(4), remote, "no local folder: the remote's");
         std::fs::remove_dir_all(&dir).ok();
     }
 
