@@ -29,6 +29,10 @@ In this order:
    candidate tag, and the first real draft, which is also `gh`'s first test. The release ships the
    stronger network, expected the tuned lc0 one (decided 2026-11-06).
 5. **CCRL testers:** tell them of the release.
+6. **A Chess Programming Wiki page** (the developer, 2026-11-08), once the release is public and,
+   ideally, CCRL lists it: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
+   it is trained on a limited compute budget; links to the repository, releases and ratings).
+   Claude drafts it from the README and `claude/` for the developer to edit; an account is needed.
 
 ## Before the release or CCRL
 
