@@ -95,7 +95,9 @@ syntax.
   runs one of them.
   **Nothing in this repository reads or writes `%LOCALAPPDATA%`** (the developer, 2026-11-06), nor
   anywhere outside the repository and Drive; a release is a plain `.exe` that writes nothing.
-  Google Drive is `G:` (`/g` in Git Bash).
+  Google Drive is `G:` (`/g` in Git Bash), and Fattorini's store on it is `G:/My Drive/fattorini`,
+  the same tree as `data/`. Folders there under the project's older names (as `temper-chess`) hold
+  stale runs: never look there.
 - Git Bash rewrites arguments that look like Unix paths when calling native
   Windows programs; prefix the command with `MSYS_NO_PATHCONV=1` when that
   bites. It did not help with `winget` (2026-10-07, an `--override "/features ..."`

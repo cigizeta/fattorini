@@ -12,15 +12,15 @@ read and checked with the tag, before the tools and the build. Design: binary-re
 code (`snapshot::describe`, `build_embedded`, the snapshot's rule).
 
 **Confirmed by the developer (2026-11-06, binary-release.md decisions 10 to 12):** the notices
-embedded behind `kalo-chess licenses`; a tag must be `v` followed by the workspace's version, so
+embedded behind `fattorini licenses`; a tag must be `v` followed by the workspace's version, so
 `id name` and the tag never disagree; the notes are not written by the arena but committed,
 `RELEASE-NOTES.md`, the strength table filled from two full matches before the tag.
 
-## Step 1: the notices, in the engine (`crates/kalo-chess`)
+## Step 1: the notices, in the engine (`crates/fattorini`)
 
-- `build.rs`: a fourth variable, `KALO_CHESS_NOTICES` (a path), embedded as the others, empty when
+- `build.rs`: a fourth variable, `FATTORINI_NOTICES` (a path), embedded as the others, empty when
   unset, `rerun-if-env-changed` and `rerun-if-changed`.
-- `main.rs`: `kalo-chess licenses` prints them, or "no notices embedded: a development build" when
+- `main.rs`: `fattorini licenses` prints them, or "no notices embedded: a development build" when
   empty. In the usage, beside `about`.
 - Test: a development build embeds no notices.
 
@@ -50,15 +50,15 @@ header, not the usage). In this order, each refusal saying why and exiting befor
    <tag>` failing (no release of that tag yet).
 4. **The notices:** `cargo about generate about.hbs -o target/release-build/notices.txt`.
 5. **The build:** `build_embedded` into `target/release-build`, the static runtime, the notices,
-   the description with the tag; copied to `target/release-build/kalo-chess-<tag>.exe`.
+   the description with the tag; copied to `target/release-build/fattorini-<tag>.exe`.
 6. **The checks on the `.exe`:** its bytes hold no `VCRUNTIME140.dll` (import names are ASCII in
    the file: no `dumpbin`, no Visual Studio shell); `about` prints the description; `bench` exits 0.
 7. **The notes:** `RELEASE-NOTES.md` at the repository's root, committed (the clean tree of step 2
    says so), read as it is; refused unless it names the version (`0.1.0` for `v0.1.0` and its
    candidates). Checked first, with the tag, so a stale file stops the release before the build.
    `--dry-run` checks only that the file exists.
-8. **The draft,** unless `--dry-run`: `gh release create <tag> target/release-build/kalo-chess-<tag>.exe
-   --draft --verify-tag --title "Kalo Chess <tag>" --notes-file RELEASE-NOTES.md`; prints `gh`'s URL.
+8. **The draft,** unless `--dry-run`: `gh release create <tag> target/release-build/fattorini-<tag>.exe
+   --draft --verify-tag --title "Fattorini <tag>" --notes-file RELEASE-NOTES.md`; prints `gh`'s URL.
 
 Tests: the tag rule (`v0.1.0` and `v0.1.0-rc.2` against `0.1.0` yes; `0.1.0`, `v0.1.1`,
 `v0.1.0-rc`, `v0.1.0-beta.1` no), the notes' version check (a text naming `0.1.0` passes, one
@@ -88,7 +88,7 @@ bin/arena release pesto@untuned --dry-run
 ```
 
 ```
-target/release-build/kalo-chess-v0.0.0-dry-run.exe licenses
+target/release-build/fattorini-v0.0.0-dry-run.exe licenses
 ```
 
 The dry run prints its checks passed, and the notes file reads right.
