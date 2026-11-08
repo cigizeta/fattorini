@@ -55,8 +55,9 @@ clock, and the parameters still moving at the end say a longer tune may find mor
 | `aspiration_delta` | 20 | 10 |
 | `good_quiet_threshold` | -128 | -140 |
 
-The other five unchanged. Following the tune where it moved clearly, rounded, short of its end where
-it was still falling.
+The other five unchanged. First chosen by following the tune where it moved clearly, rounded, short
+of its end where it was still falling; then argued one by one, independently of the evaluator, which
+gave the same values (question 1).
 
 **Validated before any code changes**, as `@tuned` (new) against `@untuned` (old), by a
 `parameters.txt` holding the new values. The validation duels in the test log are named `@tuned`.
@@ -73,19 +74,32 @@ Then, if they pass: `SearchParameters::DEFAULT` and `spsa::SPECS` changed togeth
 one source of the starting values, the ranges re-centred (`aspiration_delta`'s floor of 5 was near
 the tune's 7).
 
-## Question 1: reasoned defaults
+## Question 1: reasoned defaults (answered 2026-11-08)
 
-A default per mechanism, each argued from what it guards, its unit and what a wrong prune costs
-there, instead of one value for six. Sources:
+**The principle (the developer, 2026-11-08):** each default is argued from what its mechanism means
+in chess, independently of the evaluator. The units allow it: the margins are in pawns, converted
+to each evaluator's own pawn (`EvalMargins`). What suits one evaluator better is its own tune's to
+find (PeSTO's in `data/spsa/pesto/`, a network's beside it), not a default's. Hence the PeSTO duels
+check only that the new defaults do no clear harm: values inspired by the lc0 network's tune need
+not suit PeSTO, whose evaluation is far less accurate.
 
-- other engines' values, translated to this engine's definitions (a margin per ply or not, a gate
-  or a reduction step, material or evaluation);
-- the tune's end values, which say what helps on a clock;
-- the outside proposal's table, as a list of candidates only: its `null_move_margin` 15 and
-  `see_prune_margin` -35 rest on definitions this engine does not have.
+| Parameter | What it asks, in chess terms | Default | lc0's tune |
+|---|---|---|---|
+| `reverse_futility_margin` | how much the opponent can win back per ply without a tactic: a positional swing of about a pawn | 100 | 96 |
+| `futility_margin` | how much a quiet move can gain per ply: the same pawn, but skipping a quiet wrongly can lose the best move outright, while a wrong reverse-futility cut only misjudges a node's score, so the safer, wider side | 200 | 190 |
+| `razoring_margin` | how far below alpha a quiet move can still lift a node per ply, before trusting quiescence, which sees captures alone: a pawn, and half a pawn for that blindness | 150 | 141 |
+| `delta_margin` | what a capture can bring beyond its victim: the classic two pawns, a promotion threat included | 200 | 216 |
+| `see_prune_margin` | how much material a move may give up per ply for compensation the search could still find: a pawn and a half | 150 | 153 |
+| `see_margin` | how much a capture SEE calls losing may lose and still be right: half a pawn (Stockfish lets through 74) | 50 | 50 |
+| `null_move_margin` | the surplus over beta that buys one more ply of reduction: two pawns a ply | 200 | 204 |
+| `aspiration_delta` | how far a score moves from one depth to the next: a property of the evaluator, so no default is independent of it; a middle value, each player's tune doing the rest | 10 | 7 |
+| `history_pruning_multiplier` | in history bonuses, not evaluation: already independent; Stockfish's order | -35 | -38 |
+| `good_quiet_threshold` | in history points: already independent; duelled -128 against 0, the tune settled at -140 | -140 | -140 |
 
-Open: whether the defaults should aim at the clock (then the tune's values are their evidence) or
-at the forge (question 2), since they are also what the forge plays.
+The reasoning and the tune agree within a few units on seven of the ten; the reasoning gives the
+same values as the table agreed above, now each with its argument.
+
+Not answered here: whether the forge should play these defaults or tuned values (question 2).
 
 ## Question 2: what the forge searches with
 
