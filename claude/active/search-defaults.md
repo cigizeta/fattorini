@@ -45,6 +45,34 @@ The duel of `@tuned` against `@untuned` (test 3, 2026-11-08, clock 10+0.1): won 
 20 pairs, so the direction is sure and the size rough. The defaults leave much on the table on a
 clock, and the parameters still moving at the end say a longer tune may find more.
 
+## New defaults, agreed 2026-11-08, being validated
+
+| Parameter | Old | New |
+|---|---|---|
+| `reverse_futility_margin` | 200 | 100 |
+| `razoring_margin` | 200 | 150 |
+| `see_prune_margin` | 200 | 150 |
+| `aspiration_delta` | 20 | 10 |
+| `good_quiet_threshold` | -128 | -140 |
+
+The other five unchanged. Following the tune where it moved clearly, rounded, short of its end where
+it was still falling.
+
+**Validated before any code changes**, as `@tuned` (new) against `@untuned` (old), by a
+`parameters.txt` holding the new values. The validation duels in the test log are named `@tuned`.
+**Temporary, to undo afterwards:**
+
+- `data/spsa/pesto/parameters.txt` (local), written for this: PeSTO had no tune. To delete.
+- The lc0 network's `gen-1/lambda-polyline/parameters.txt` on the remote: its tune result moved
+  aside to `parameters.tune-16k.txt` beside it (also kept as `gen-1/tune/parameters.txt`), the new
+  values in its place. To restore.
+
+Duels, each at 10+0.1 and at depth 9: PeSTO and the lc0 network. Results: to be added.
+
+Then, if they pass: `SearchParameters::DEFAULT` and `spsa::SPECS` changed together, `DEFAULT` made the
+one source of the starting values, the ranges re-centred (`aspiration_delta`'s floor of 5 was near
+the tune's 7).
+
 ## Question 1: reasoned defaults
 
 A default per mechanism, each argued from what it guards, its unit and what a wrong prune costs
