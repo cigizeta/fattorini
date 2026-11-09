@@ -33,13 +33,15 @@ not shrink.
    Stockfish's 10 ms. The cost is negligible: about 0.8 s set aside at the start of a 40/15
    control, 40 ms under Fischer. To be revised only if the measurement (below) asks for it.
 3. **Range 0 to 5000.** 0 for a caller that keeps its own margin, as lichess-bot does.
-4. **The clock is reduced before the formula:** `T' = max(1, T - overhead * k)`. The formula, the
+4. **The clock is reduced before the formula:** `T' = max(0, T - overhead * k)`. Not floored at 1
+   (amended 2026-11-09, when a test caught it): a target of 0 already means depth 1 alone, which
+   has no deadline, while 1 ms let a fast depth 2 start. The formula, the
    `MAX_CLOCK_FRACTION` cap, the instability, the falling-score factor and the stop fraction `s`
    are unchanged; they read `T'`. A move therefore never plans to spend the reserve.
 5. **`k`, the moves the reserve covers:** `M + 2` under `movestogo` (Stockfish's `2 + mtg`), one
    overhead kept for each move left before the control plus two spare; `2` under Fischer, where the
    increment refills the clock and a stable move spends half of it.
-6. **`movetime` is reduced too:** `max(1, movetime - overhead)`. Unlike Stockfish, since the search
+6. **`movetime` is reduced too:** `max(0, movetime - overhead)`. Unlike Stockfish, since the search
    stops at exactly the target and always runs past it by the unwinding and the `bestmove` write.
 7. **The arena's in-process player uses the default**, so a timed match plays as the release does.
 8. **lichess-bot keeps its own `move_overhead`** for now; the engine's 20 ms adds to it. Lowering

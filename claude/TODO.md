@@ -22,7 +22,8 @@ In this order:
       (`tune-16k-old-defaults`, 16,384 pairs, which stopped before reverse futility, razoring and
       aspiration had settled).
    2. **Move Overhead** (move-overhead-implementation.md), so the Stockfish matches measure the time
-      management that ships.
+      management that ships: implemented 2026-11-09, to test. The duel ended first: the 32k tune
+      beat the hand-set defaults, 53.5% over 712 games (about +24 Elo), and ships.
    3. **A strength assessment against Stockfish,** for the README and the release (item 4's two
       Skill Level matches).
    4. **Lichess installation** with the winner (item 3), so the developer can start playing it.

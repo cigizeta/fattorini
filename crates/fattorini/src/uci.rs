@@ -10,7 +10,7 @@ use crate::perft::perft;
 use crate::search::{
     choose_best_move_multipv_with_progress, choose_best_move_with_parameters, choose_best_move_with_progress,
     select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
-    SearchParameters, MATE_SCORE, MAX_PLY,
+    SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
 };
 use crate::tablebase::SyzygyTablebase;
 use crate::tt::TranspositionTable;
@@ -72,6 +72,13 @@ const DEFAULT_MULTIPV: u32 = 1;
 /// `HASH_MB_MAX`/`THREADS_MAX`: `setoption` itself doesn't clamp to this range.
 const MULTIPV_MIN: u32 = 1;
 const MULTIPV_MAX: u32 = 500;
+
+/// Bounds of the `Move Overhead` option, in milliseconds (its default is `DEFAULT_MOVE_OVERHEAD_MS`):
+/// 0 for a caller that keeps a margin of its own, as lichess-bot does; 5000, Stockfish's own
+/// maximum, for a link slow enough to need it. Unlike the bounds above, `setoption` clamps to
+/// them: an overhead past them would only empty the clock.
+const MOVE_OVERHEAD_MS_MIN: u64 = 0;
+const MOVE_OVERHEAD_MS_MAX: u64 = 5000;
 /// A ponder search's outcome, shared between `Engine` and the search's thread: still pondering,
 /// `ponderhit` (the opponent played the expected move: the same search goes on under its clock and
 /// prints the `bestmove` that is played), or `stop` (another move: print the ponder search's
@@ -116,6 +123,9 @@ pub enum UciCommand {
     /// `setoption name Ponder value true|false`: whether `bestmove` offers a ponder move. Only `go
     /// ponder` makes Fattorini ponder; with no ponder move, a GUI has nothing to ponder on.
     SetOptionPonder(bool),
+    /// `setoption name Move Overhead value <ms>`: the time kept back from every move's clock
+    /// (`search::time_limit`). Its name is two tokens, as Stockfish's.
+    SetOptionMoveOverhead(u64),
     Position { fen: String, moves: Vec<String> },
     /// A plain `go`, or `go perft <depth>` when `perft_depth` is `Some`. The time-control
     /// fields mirror UCI's own tokens one-to-one (milliseconds, as the protocol sends them)
@@ -230,6 +240,10 @@ fn parse_setoption(tokens: &[&str]) -> UciCommand {
         },
         ["name", "Ponder", "value", "true"] => UciCommand::SetOptionPonder(true),
         ["name", "Ponder", "value", "false"] => UciCommand::SetOptionPonder(false),
+        ["name", "Move", "Overhead", "value", ms] => match ms.parse::<u64>() {
+            Ok(ms) => UciCommand::SetOptionMoveOverhead(ms),
+            Err(_) => UciCommand::Unknown,
+        },
         _ => UciCommand::Unknown,
     }
 }
@@ -520,6 +534,9 @@ pub struct Engine {
     multipv: u32,
     /// The `Ponder` option: whether `bestmove` offers a ponder move. False until a GUI sets it.
     ponder: bool,
+    /// The `Move Overhead` option, in milliseconds: `DEFAULT_MOVE_OVERHEAD_MS` until a GUI sets
+    /// it, kept across `ucinewgame` as `Hash` is.
+    move_overhead_ms: u64,
     /// The most recently started search's own background thread, if it (or an earlier one)
     /// hasn't been joined yet -- `None` once joined, or before any `go` has ever run. See
     /// `join_running_search`'s own doc comment for when and why this gets joined.
@@ -602,6 +619,7 @@ impl Engine {
             threads: DEFAULT_THREADS,
             multipv: DEFAULT_MULTIPV,
             ponder: false,
+            move_overhead_ms: DEFAULT_MOVE_OVERHEAD_MS,
             running_search: None,
             stdout_lock: Arc::new(Mutex::new(())),
             last_search_output: Arc::new(Mutex::new(Vec::new())),
@@ -693,6 +711,9 @@ impl Engine {
                         "option name MultiPV type spin default {DEFAULT_MULTIPV} min {MULTIPV_MIN} max {MULTIPV_MAX}"
                     ),
                     "option name Ponder type check default false".to_string(),
+                    format!(
+                        "option name Move Overhead type spin default {DEFAULT_MOVE_OVERHEAD_MS} min {MOVE_OVERHEAD_MS_MIN} max {MOVE_OVERHEAD_MS_MAX}"
+                    ),
                     "uciok".to_string(),
                 ]
             }
@@ -719,6 +740,10 @@ impl Engine {
             }
             UciCommand::SetOptionPonder(ponder) => {
                 self.ponder = ponder;
+                Vec::new()
+            }
+            UciCommand::SetOptionMoveOverhead(ms) => {
+                self.move_overhead_ms = ms.clamp(MOVE_OVERHEAD_MS_MIN, MOVE_OVERHEAD_MS_MAX);
                 Vec::new()
             }
             UciCommand::SetOptionSyzygyPath(dirs) => {
@@ -899,7 +924,8 @@ impl Engine {
         infinite: bool,
         ponder: bool,
     ) -> Vec<String> {
-        let limit = time_limit(&self.board, wtime, btime, winc, binc, movestogo, movetime, infinite);
+        let limit =
+            time_limit(&self.board, wtime, btime, winc, binc, movestogo, movetime, infinite, self.move_overhead_ms);
         // A game move with one legal move is capped (`single_move_limit`); `infinite` is not. A
         // ponder search is the game move's search, so it is capped too, from `ponderhit` on.
         let limit = if infinite { limit } else { single_move_limit(&self.board, limit) };
@@ -1656,6 +1682,7 @@ mod tests {
                 "option name SyzygyPath type string default <empty>".to_string(),
                 "option name MultiPV type spin default 1 min 1 max 500".to_string(),
                 "option name Ponder type check default false".to_string(),
+                "option name Move Overhead type spin default 20 min 0 max 5000".to_string(),
                 "uciok".to_string(),
             ]
         );
@@ -2262,6 +2289,26 @@ mod tests {
 
         engine.handle(UciCommand::SetOptionMultiPv(3));
         assert_eq!(engine.multipv, 3);
+    }
+
+    #[test]
+    fn parse_command_reads_the_move_overhead_option() {
+        assert_eq!(parse_command("setoption name Move Overhead value 100"), UciCommand::SetOptionMoveOverhead(100));
+        assert_eq!(parse_command("setoption name Move Overhead value banana"), UciCommand::Unknown);
+        assert_eq!(parse_command("setoption name Move Overhead"), UciCommand::Unknown);
+    }
+
+    #[test]
+    fn setoption_move_overhead_stores_the_value_within_its_bounds() {
+        let mut engine = Engine::new();
+        assert_eq!(engine.move_overhead_ms, DEFAULT_MOVE_OVERHEAD_MS);
+
+        engine.handle(UciCommand::SetOptionMoveOverhead(0));
+        assert_eq!(engine.move_overhead_ms, 0);
+        engine.handle(UciCommand::SetOptionMoveOverhead(9_999));
+        assert_eq!(engine.move_overhead_ms, MOVE_OVERHEAD_MS_MAX);
+        engine.handle(UciCommand::UciNewGame);
+        assert_eq!(engine.move_overhead_ms, MOVE_OVERHEAD_MS_MAX, "kept across ucinewgame");
     }
 
     #[test]

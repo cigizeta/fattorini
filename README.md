@@ -27,6 +27,7 @@ Requirements:
 | `MultiPV` | 1 | 1 to 500 | Lines to report. |
 | `Ponder` | false | | Think on the opponent's time. |
 | `SyzygyPath` | empty | | Syzygy tablebase folders. |
+| `Move Overhead` | 20 | 0 to 5000 | Milliseconds kept back from each move for lag. |
 
 ## How Fattorini learns
 

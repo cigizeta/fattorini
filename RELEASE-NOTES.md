@@ -22,6 +22,7 @@ Add `fattorini-v0.1.0.exe` to any UCI GUI (Cute Chess, Arena, BanksiaGUI, Nibble
 | `SyzygyPath` | empty | Syzygy tablebase directories, WDL and DTZ |
 | `MultiPV` | 1 | lines reported, 1 to 500 |
 | `Ponder` | false | thinking on the opponent's time |
+| `Move Overhead` | 20 | ms kept back from each move for lag, 0 to 5000 |
 
 `fattorini about` prints what the executable is: its version, network and build.
 

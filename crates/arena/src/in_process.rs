@@ -8,7 +8,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fattorini::nnue::Network;
-use fattorini::search::{choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, MAX_PLY};
+use fattorini::search::{
+    choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MAX_PLY,
+};
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
 use fattorini::uci::{format_move, split_score};
@@ -80,7 +82,8 @@ impl Player for InProcessPlayer {
     /// ply. This player's only obligation is to come back well before the ninth depth would have
     /// finished, which it does.
     ///
-    /// Under a clock it plans its time exactly as `go wtime btime winc binc` does (`time_limit`), and
+    /// Under a clock it plans its time exactly as `go wtime btime winc binc` does (`time_limit`), the
+    /// default `Move Overhead` kept back as a release keeps it, so a timed match plays as one does, and
     /// searches against its own stop flag, fresh each move: the search raises the flag it is given
     /// when its time manager declines the next depth, and raising the match's Ctrl+C flag would end
     /// the whole run after the first timed move. Ctrl+C is still seen by the game loop before every
@@ -100,6 +103,7 @@ impl Player for InProcessPlayer {
                     None,
                     None,
                     false,
+                    DEFAULT_MOVE_OVERHEAD_MS,
                 )
                 .map(|limit| limit.with_previous_score(self.last_score));
                 (MAX_PLY, limit, &own_stop)

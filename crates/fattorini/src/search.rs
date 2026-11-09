@@ -3183,6 +3183,17 @@ pub(crate) const TIME_PARAMETERS: TimeParameters = TimeParameters { alpha: 0.05,
 /// spend half the clock, the rest carrying over.
 const MAX_CLOCK_FRACTION: f64 = 0.5;
 
+/// The `Move Overhead` option's default, in milliseconds: the time a move is assumed to lose outside
+/// the search's own timing, kept back from every clock and `movetime` (`time_limit`). It covers the
+/// search noticing its deadline (every `CHECK_INTERVAL` nodes, about a millisecond with a network at
+/// the 841,150 nodes/s per thread benched 2026-11-09), unwinding and writing `bestmove`, the GUI's
+/// own handling, and a core briefly taken away when a tester plays several games on one machine.
+/// Stockfish's default is 10; 20 leaves room above it at no measurable cost (about 0.8 s set aside at
+/// the start of a 40/15 control, 40 ms under Fischer). A fixed amount, not a fraction of the clock,
+/// since lag does not shrink with the clock. It matters at default settings: rating-list testers set
+/// no option. lichess-bot keeps a margin of its own on top.
+pub const DEFAULT_MOVE_OVERHEAD_MS: u64 = 20;
+
 /// `movetime`'s fraction of the target past which no new depth starts: its own `s`, at the same
 /// value for the same reason.
 const FIXED_STOP_FRACTION: f64 = 0.5;
@@ -3375,6 +3386,16 @@ impl TimeManager {
 /// Otherwise the clock of `board.side_to_move()` applies, with its own increment. If that side's
 /// own time field is missing entirely, there's nothing to plan from, so this falls back to `None`
 /// too -- the same "no limit" behavior as a bare `go`.
+///
+/// `move_overhead_ms` (the `Move Overhead` option, `DEFAULT_MOVE_OVERHEAD_MS`) is kept back before
+/// anything plans with the time, so a move never plans to spend it. When it takes all the time, the
+/// target is 0: depth 1, which has no deadline, still runs and answers, and nothing deeper starts --
+/// what `movetime 0` has always meant. No floor of 1 ms, which would let a fast depth 2 start. From the clock,
+/// once per move it must still cover: `M + 2` times under `movestogo` (Stockfish's `2 + mtg`), one
+/// for each move left before the control and two spare; twice under Fischer, where the increment
+/// refills the clock and a stable move spends half of it. From `movetime` once, unlike Stockfish:
+/// the search stops at exactly its target, so without it every move would run past `movetime` by
+/// its unwinding and its `bestmove`.
 #[allow(clippy::too_many_arguments)]
 pub fn time_limit(
     board: &Board,
@@ -3385,12 +3406,13 @@ pub fn time_limit(
     movestogo: Option<u32>,
     movetime: Option<u64>,
     infinite: bool,
+    move_overhead_ms: u64,
 ) -> Option<TimeLimit> {
     if infinite {
         return None;
     }
     if let Some(movetime) = movetime {
-        return Some(TimeLimit::Fixed { target_ms: movetime });
+        return Some(TimeLimit::Fixed { target_ms: movetime.saturating_sub(move_overhead_ms) });
     }
 
     let (my_time, my_inc) = match board.side_to_move() {
@@ -3398,8 +3420,9 @@ pub fn time_limit(
         Color::Black => (btime, binc.unwrap_or(0)),
     };
     let my_time = my_time?;
+    let reserves = movestogo.map_or(2, |moves| u64::from(moves.max(1)) + 2);
     Some(TimeLimit::Clock {
-        time_ms: my_time,
+        time_ms: my_time.saturating_sub(move_overhead_ms.saturating_mul(reserves)),
         inc_ms: my_inc,
         moves_to_go: movestogo,
         single_move: false,
@@ -5561,7 +5584,7 @@ mod tests {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
         // No increment sent means an increment of 0, and no movestogo means Fischer.
-        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false);
+        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false, 0);
         assert_eq!(limit, Some(clock(60_000, 0, None, false)));
     }
 
@@ -5574,7 +5597,7 @@ mod tests {
     fn time_limit_selects_black_time_when_black_is_to_move() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false);
+        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false, 0);
         assert_eq!(limit, Some(clock(90_000, 100, None, false)));
     }
 
@@ -5582,7 +5605,7 @@ mod tests {
     fn time_limit_passes_movestogo_through_under_a_repeating_control() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false);
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 0);
         assert_eq!(limit, Some(clock(60_000, 0, Some(10), false)));
     }
 
@@ -5638,7 +5661,7 @@ mod tests {
     fn time_limit_movetime_takes_precedence_over_wtime_and_btime_and_is_used_as_given() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false);
+        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false, 0);
         assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 2_000 }));
     }
 
@@ -5649,14 +5672,14 @@ mod tests {
         // Even with a perfectly good wtime present, infinite wins -- meaning "no deadline, run
         // until stop or max_depth," genuinely honored now that go_search runs asynchronously
         // and polls a shared stop flag regardless of whether any deadline was ever set.
-        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true), None);
+        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true, 0), None);
     }
 
     #[test]
     fn time_limit_is_none_with_no_time_control_at_all() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, None, None, None, None, None, false), None);
+        assert_eq!(time_limit(&board, None, None, None, None, None, None, false, 0), None);
     }
 
     #[test]
@@ -5666,7 +5689,50 @@ mod tests {
         // bare `go`, rather than guessing from the wrong side's clock.
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false), None);
+        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false, 0), None);
+    }
+
+    #[test]
+    fn the_move_overhead_is_kept_back_twice_from_a_fischer_clock() {
+        let (board, _) =
+            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 20);
+        assert_eq!(limit, Some(clock(59_960, 1_000, None, false)), "the increment is left alone");
+    }
+
+    #[test]
+    fn the_move_overhead_is_kept_back_once_per_move_to_go_and_twice_more() {
+        let (board, _) =
+            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 20);
+        assert_eq!(limit, Some(clock(60_000 - 12 * 20, 0, Some(10), false)));
+        // `movestogo 0` is not valid UCI; read as 1, as `clock_target_ms` reads it.
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(0), None, false, 20);
+        assert_eq!(limit, Some(clock(60_000 - 3 * 20, 0, Some(0), false)));
+    }
+
+    #[test]
+    fn the_move_overhead_is_kept_back_from_movetime() {
+        let (board, _) =
+            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 20);
+        assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 1_980 }));
+        let limit = time_limit(&board, None, None, None, None, None, Some(10), false, 20);
+        assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 0 }), "depth 1 only, as movetime 0");
+    }
+
+    #[test]
+    fn a_clock_below_the_reserve_still_plays_a_legal_move() {
+        let (board, _) =
+            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let limit = time_limit(&board, Some(30), None, None, None, None, None, false, 20);
+        assert_eq!(limit, Some(clock(0, 0, None, false)));
+        let (reports, best_move) = choose_best_move(
+            &board, MAX_PLY as u32, limit, &[], &TranspositionTable::new(1), &SyzygyTablebase::new(), None, 0,
+            &AtomicBool::new(false),
+        );
+        assert!(best_move.is_some(), "depth 1 still answers when the reserve takes the whole clock");
+        assert_eq!(reports.last().map(|report| report.depth), Some(1), "and nothing deeper starts");
     }
 
     #[test]

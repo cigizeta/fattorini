@@ -1,16 +1,19 @@
 # Move Overhead -- implementation plan
 
-**Status:** planned 2026-11-09, not started. The design and its decisions are in move-overhead.md.
-**Do not start before the current SPSA run has finished** (the developer, 2026-11-09).
+**Status:** implemented 2026-11-09, after the SPSA run ended, awaiting the developer's tests. The
+design and its decisions are in move-overhead.md. Also done beyond the plan: README's and
+`RELEASE-NOTES.md`'s option tables list `Move Overhead`.
 
 ## 1. The reduction (`search.rs`)
 
 - A constant `pub const DEFAULT_MOVE_OVERHEAD_MS: u64 = 20;` beside `MAX_CLOCK_FRACTION`, its doc
   comment carrying the why of move-overhead.md's decision 2 (inline, no reference to `claude/`).
 - `time_limit` gains a last parameter `move_overhead_ms: u64`:
-  - `movetime`: `TimeLimit::Fixed { target_ms: movetime.saturating_sub(overhead).max(1) }`;
+  - `movetime`: `TimeLimit::Fixed { target_ms: movetime.saturating_sub(overhead) }`;
   - clock: `k = moves_to_go.map_or(2, |m| u64::from(m.max(1)) + 2)`, then
-    `time_ms: my_time.saturating_sub(overhead.saturating_mul(k)).max(1)`.
+    `time_ms: my_time.saturating_sub(overhead.saturating_mul(k))`.
+  - No floor of 1 ms (amended 2026-11-09): `go_movetime_still_returns_a_real_move_even_when_the_budget_is_tiny`
+    showed that 1 ms lets depth 2 start where `movetime 0` meant depth 1 alone.
   `TimeLimit`, `clock_target_ms`, `TimeManager` and `single_move_limit` are untouched: they receive
   the reduced clock.
 - Its doc comment states the reduction and why `movetime` is reduced too.
@@ -36,9 +39,9 @@
 `search.rs`:
 - Fischer: `wtime 60000`, overhead 20, gives `time_ms` 59960 (k = 2).
 - `movestogo 10`, overhead 20: `time_ms` = T - 240.
-- `movetime 2000`, overhead 20: target 1980; `movetime 10`, overhead 20: target 1.
-- A clock below the reserve (`wtime 30`, overhead 20, Fischer): `time_ms` 1, and the search still
-  returns a legal move.
+- `movetime 2000`, overhead 20: target 1980; `movetime 10`, overhead 20: target 0.
+- A clock below the reserve (`wtime 30`, overhead 20, Fischer): `time_ms` 0, and the search still
+  returns a legal move, from depth 1 alone.
 - Overhead 0 leaves every existing expectation as it was: the existing `time_limit` tests pass 0.
 
 `uci.rs`:
