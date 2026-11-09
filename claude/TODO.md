@@ -23,7 +23,9 @@ In this order:
       aspiration had settled).
    2. **Move Overhead** (move-overhead.md): done 2026-11-09. The duel ended first: the 32k tune
       beat the hand-set defaults, 53.5% over 712 games (about +24 Elo), and ships.
-   3. **A strength assessment against Stockfish,** for the README and the release (item 4's two
+   3. **A strength assessment against Stockfish** (scouting 2026-11-09: against Skill Level 10, a
+      full match at 10+0.1, Fattorini led 69.5 to 28.5 after 49 pairs, about 71%; next, short
+      matches at 12 and on to find the two adjacent levels, then the two full rows), for the README and the release (item 4's two
       Skill Level matches).
    4. **Lichess installation** with the winner (item 3), so the developer can start playing it.
 2. **Train and tune a PeSTO network:** a forge run on PeSTO's played corpus, its winner tuned.
