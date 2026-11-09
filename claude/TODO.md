@@ -173,6 +173,18 @@ changes).
 
 ## Data and tools
 
+- **The smithy's bench on an idle machine, as the arenas' is** (the developer, 2026-11-09): to
+  design, after the current tune (it changes how a tune's games are timed). The tune of
+  `lc0-psq-threats-screlu-g1-r1` showed it: the smithy benched its machine at 841,150 nodes/s per
+  thread, while the arena on that same machine benched 1.15M to 1.34M by the same method
+  (`loaded_bench`, half the threads at once). The arena holds a lock so its own workers wait; the
+  smithy benches when the tune job starts, whatever else the machine is doing. Every arena's clock
+  is scaled to the smithy's figure, so the tune played at about 6+0.06 on a quiet machine, not
+  10+0.1. To decide: how the smithy makes sure its machine is idle (no chore dealt and every arena
+  on it between chores, or the bench refused while anything runs), whether to take the best of a
+  few runs, and whether the page warns when the arena on the smithy's machine and the smithy differ
+  by more than the dead band.
+
 - **Lc0's Convert, if it runs again:** skip a slow tar only while another worker downloads at normal
   speed (a stall reads as slowness today), and stop retrying a tar skipped N times.
 - **The scatter, faster:** only Drive's download bounds it; a wired line or a local copy helps a
