@@ -16,7 +16,14 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
-1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`), SPSA from the smithy's page.
+1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`), SPSA from the smithy's page:
+   32,768 pairs, running 2026-11-09. When it ends, in this order (the developer, 2026-11-09):
+   1. **Two duels of the new tune:** against the default parameters, and against the previous tune
+      (`tune-16k-old-defaults`, 16,384 pairs, which stopped before reverse futility, razoring and
+      aspiration had settled).
+   2. **A strength assessment against Stockfish,** for the README and the release (item 4's two
+      Skill Level matches).
+   3. **Lichess installation** with the winner (item 3), so the developer can start playing it.
 2. **Train and tune a PeSTO network:** a forge run on PeSTO's played corpus, its winner tuned.
    PeSTO's play is filling the training set (about 47% on 2026-11-06), until `complete.txt`.
    Before the training machine trains on it: delete any local `data/pesto` and
