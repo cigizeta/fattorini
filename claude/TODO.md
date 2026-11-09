@@ -39,6 +39,9 @@ In this order:
 
 ## Before the release or CCRL
 
+- **Move Overhead** (move-overhead.md, move-overhead-implementation.md): approved and planned
+  2026-11-09, a `Move Overhead` option, default 30 ms. To implement once the current SPSA run
+  has finished, not before (the developer, 2026-11-09). It comes before the repeating-control check.
 - **A repeating-control check.** Lichess sends only Fischer, so the `movestogo` path has never
   played a real game, while CCRL plays 40/15 repeating. A few dozen games at `tc=40/60`, Fattorini
   against itself, on an idle machine: no time forfeits, a sensible clock at move 40, no move near
