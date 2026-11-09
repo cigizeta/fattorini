@@ -16,20 +16,32 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
-1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`), SPSA from the smithy's page:
-   32,768 pairs, running 2026-11-09. When it ends, in this order (the developer, 2026-11-09):
-   1. **Two duels of the new tune:** against the default parameters, and against the previous tune
-      (`tune-16k-old-defaults`, 16,384 pairs, which stopped before reverse futility, razoring and
-      aspiration had settled).
-   2. **Move Overhead** (move-overhead.md): done 2026-11-09. The duel ended first: the 32k tune
-      beat the hand-set defaults, 53.5% over 712 games (about +24 Elo), and ships.
-   3. **A strength assessment against Stockfish** (scouting 2026-11-09: against Skill Level 10, a
-      full match at 10+0.1, Fattorini won 300.5 to 99.5, +274 -73 =53, 75.1%, about +190 Elo,
-      `data/matches/stockfish-10-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261109-1747/`; scouting
-      at level 13, Stockfish won 51.0 to 39.0 after 90 games, Fattorini 43.3%; next, the two full
-      rows at 13 and 12, moving the bracket if either comes out the other way), for the README and the release (item 4's two
-      Skill Level matches).
-   4. **Lichess installation** with the winner (item 3), so the developer can start playing it.
+**Where things stand (2026-11-09).** Steps 1.1 and 1.2 are done; **resume at
+1.3, the two full Stockfish matches** (commands below), then 1.4.
+
+1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
+   10+0.1. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
+   64, futility 214, null move 185, delta 206, SEE prune 90, SEE 46, aspiration 8, history
+   pruning -35, good quiet -128); the previous 16k tune's is kept in `tune-16k-old-defaults/`. Then,
+   in this order (the developer, 2026-11-09):
+   1. **Duel of the new tune: done.** Against the defaults (`SearchParameters::DEFAULT`, which are
+      the previous 16k tune hand-rounded), test 4: won by the new tune, 53.5% over 712 games at
+      10+0.1, about +24 Elo. It ships. The duel against the previous tune itself is dropped: the
+      defaults already were it, near enough.
+   2. **Move Overhead: done** (move-overhead.md), default 20 ms; its measurement is under "Before
+      the release or CCRL".
+   3. **The strength assessment against Stockfish**, the release's two rows (binary-release.md,
+      decision 10: 400 games all played, 10+0.1, one thread, 64 MB, UHO book, Syzygy to 6 pieces).
+      So far: Skill Level 10, a full match, Fattorini 300.5 to 99.5 (+274 -73 =53, 75.1%),
+      `data/matches/stockfish-10-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261109-1747/`; Skill
+      Level 13 scouted, Stockfish ahead 51.0 to 39.0 after 90 games (Fattorini 43.3%). **Next: full
+      matches at 13 and 12** (`bin/arena match stockfish-13 lc0-psq-threats-screlu-g1-r1@tuned 400
+      --time 10+0.1 --hash 64 --full`, the same with `stockfish-12`), on an idle machine, the
+      Stockfish version noted for the table; the bracket moves up (14) if 13 is beaten, down (11)
+      if 12 is not. For the developer only, never the README: Stockfish 19's own skill formula
+      puts 12 and 13 at about 2910 and 2965, so about 2940 on the scale where amanda-0002 had
+      2795 (about level 10).
+   4. **Lichess installation** with the tuned network (item 3), so the developer can start playing it.
 2. **Train and tune a PeSTO network:** a forge run on PeSTO's played corpus, its winner tuned.
    PeSTO's play is filling the training set (about 47% on 2026-11-06), until `complete.txt`.
    Before the training machine trains on it: delete any local `data/pesto` and
@@ -38,9 +50,9 @@ In this order:
    `engine.name` pointed at it. The bot `fattorini-bot` plays the untuned snapshot until then.
    `temper-chess` to close.
 4. **The first release** (binary-release.md, binary-release-implementation.md): the code done and
-   its dry run passed 2026-11-06. Left: the two Skill Level matches, `RELEASE-NOTES.md` filled, a
-   candidate tag, and the first real draft, which is also `gh`'s first test. The release ships the
-   stronger network, expected the tuned lc0 one (decided 2026-11-06).
+   its dry run passed 2026-11-06. Left: the two Skill Level matches (item 1.3), `RELEASE-NOTES.md`
+   filled, a candidate tag, and the first real draft, which is also `gh`'s first test. The release
+   ships the stronger network, the tuned lc0 one unless PeSTO's beats it (decided 2026-11-06).
 5. **CCRL testers:** tell them of the release.
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08), once the release is public and,
    ideally, CCRL lists it: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
@@ -139,8 +151,11 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
 ## Speed (the developer, 2026-11-09)
 
 **The goal: nodes/s at least Stockfish's, one thread, on the same machine.** A shallower depth than
-Stockfish's is acceptable; a lower speed is not. The tune's bench gave 841,150 nodes/s per thread
-with `lc0-psq-threats-screlu-g1-r1`. Years of Stockfish's optimization are no argument: its
+Stockfish's is acceptable; a lower speed is not. With `lc0-psq-threats-screlu-g1-r1`, the arena
+benched about 1.15M nodes/s per thread on a quiet machine (the smithy's 841,150 was taken under
+load, see "Data and tools"). node-cost.md had amanda-0002, without threats, at 3.32M against
+Stockfish 19's 2.03M on the same machine: the threats, recomputed at every evaluation, cost about
+two thirds of the speed. Years of Stockfish's optimization are no argument: its
 techniques are public, and porting them is quick; what costs time is checking each one (exact
 against a from-scratch evaluation) and measuring it (a bench on an idle machine, a duel for search
 changes).
