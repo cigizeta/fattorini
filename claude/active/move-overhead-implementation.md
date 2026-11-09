@@ -5,7 +5,7 @@
 
 ## 1. The reduction (`search.rs`)
 
-- A constant `pub const DEFAULT_MOVE_OVERHEAD_MS: u64 = 30;` beside `MAX_CLOCK_FRACTION`, its doc
+- A constant `pub const DEFAULT_MOVE_OVERHEAD_MS: u64 = 20;` beside `MAX_CLOCK_FRACTION`, its doc
   comment carrying the why of move-overhead.md's decision 2 (inline, no reference to `claude/`).
 - `time_limit` gains a last parameter `move_overhead_ms: u64`:
   - `movetime`: `TimeLimit::Fixed { target_ms: movetime.saturating_sub(overhead).max(1) }`;
@@ -24,7 +24,7 @@
 - `Engine` gains `move_overhead_ms: u64`, set to the default in its constructor; `handle` clamps
   the value to the range and stores it. Kept across `ucinewgame`, like Hash.
 - The `uci` reply advertises
-  `option name Move Overhead type spin default 30 min 0 max 5000`, after Ponder.
+  `option name Move Overhead type spin default 20 min 0 max 5000`, after Ponder.
 - `go_search` passes `self.move_overhead_ms` to `time_limit`.
 
 ## 3. The arena (`crates/arena/src/in_process.rs`)
@@ -34,10 +34,10 @@
 ## 4. Tests
 
 `search.rs`:
-- Fischer: `wtime 60000`, overhead 30, gives `time_ms` 59940 (k = 2).
-- `movestogo 10`, overhead 30: `time_ms` = T - 360.
-- `movetime 2000`, overhead 30: target 1970; `movetime 10`, overhead 30: target 1.
-- A clock below the reserve (`wtime 50`, overhead 30, Fischer): `time_ms` 1, and the search still
+- Fischer: `wtime 60000`, overhead 20, gives `time_ms` 59960 (k = 2).
+- `movestogo 10`, overhead 20: `time_ms` = T - 240.
+- `movetime 2000`, overhead 20: target 1980; `movetime 10`, overhead 20: target 1.
+- A clock below the reserve (`wtime 30`, overhead 20, Fischer): `time_ms` 1, and the search still
   returns a legal move.
 - Overhead 0 leaves every existing expectation as it was: the existing `time_limit` tests pass 0.
 
