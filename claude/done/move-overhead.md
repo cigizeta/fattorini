@@ -1,8 +1,7 @@
 # Move Overhead
 
-**Status:** design approved by the developer 2026-11-09; implementation plan in
-move-overhead-implementation.md. To be implemented only once the current SPSA run has finished,
-so that a stop and restart of that run never meets a changed time management.
+**Status:** design approved by the developer 2026-11-09, implemented and tested the same day
+(move-overhead-implementation.md), after the SPSA run had finished.
 
 ## The problem
 

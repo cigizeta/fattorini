@@ -21,8 +21,7 @@ In this order:
    1. **Two duels of the new tune:** against the default parameters, and against the previous tune
       (`tune-16k-old-defaults`, 16,384 pairs, which stopped before reverse futility, razoring and
       aspiration had settled).
-   2. **Move Overhead** (move-overhead-implementation.md), so the Stockfish matches measure the time
-      management that ships: implemented 2026-11-09, to test. The duel ended first: the 32k tune
+   2. **Move Overhead** (move-overhead.md): done 2026-11-09. The duel ended first: the 32k tune
       beat the hand-set defaults, 53.5% over 712 games (about +24 Elo), and ships.
    3. **A strength assessment against Stockfish,** for the README and the release (item 4's two
       Skill Level matches).
@@ -49,10 +48,9 @@ In this order:
 
 ## Before the release or CCRL
 
-- **Move Overhead** (move-overhead.md, move-overhead-implementation.md): approved and planned
-  2026-11-09, a `Move Overhead` option, default 20 ms. To implement once the current SPSA run
-  has finished, not before, after the tune's duels and before the Stockfish assessment (Next,
-  item 1; the developer, 2026-11-09). It comes before the repeating-control check.
+- **Move Overhead's measurement** (move-overhead.md): the option is in, default 20 ms. On an idle
+  machine with a network, the gap from the deadline to `bestmove` over a few hundred `go movetime`
+  moves and near-empty clocks; the default changes only if the worst gap asks for more.
 - **A repeating-control check.** Lichess sends only Fischer, so the `movestogo` path has never
   played a real game, while CCRL plays 40/15 repeating. A few dozen games at `tc=40/60`, Fattorini
   against itself, on an idle machine: no time forfeits, a sensible clock at move 40, no move near

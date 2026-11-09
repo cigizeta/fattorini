@@ -1,6 +1,7 @@
 # Move Overhead -- implementation plan
 
-**Status:** implemented 2026-11-09, after the SPSA run ended, awaiting the developer's tests. The
+**Status:** implemented and tested 2026-11-09 (`cargo test -p fattorini`, `-p arena`), after the
+SPSA run ended. The measurement that may revise the default is a TODO.md item of its own. The
 design and its decisions are in move-overhead.md. Also done beyond the plan: README's and
 `RELEASE-NOTES.md`'s option tables list `Move Overhead`.
 
