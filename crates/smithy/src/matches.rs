@@ -346,7 +346,7 @@ fn judge_duel(pairs: &[i32]) -> Judged {
         games,
         challenger_points,
         status: format!(
-            "thresholds {:.1}% and {:.1}%, sigma {sigma:.3}",
+            "thresholds {:.1}% and {:.1}%",
             100.0 * (1.0 - threshold),
             100.0 * threshold
         ),
