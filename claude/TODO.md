@@ -133,10 +133,24 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
 3. `halfk_threats_pairwise_hidden` against step 2, only if step 2 wins or draws
    (halfk-threats-pairwise-hidden.md).
 
+## Speed (the developer, 2026-11-09)
+
+**The goal: nodes/s at least Stockfish's, one thread, on the same machine.** A shallower depth than
+Stockfish's is acceptable; a lower speed is not. The tune's bench gave 841,150 nodes/s per thread
+with `lc0-psq-threats-screlu-g1-r1`. Years of Stockfish's optimization are no argument: its
+techniques are public, and porting them is quick; what costs time is checking each one (exact
+against a from-scratch evaluation) and measuring it (a bench on an idle machine, a duel for search
+changes).
+
+1. **Measure:** `bin/fattorini bench` and Stockfish's `bench` on the same idle machine, then the
+   bench timing the threat step alone (threats-timing.md), so the share of each cost is known.
+2. **Make the threats incremental** (threats-timing.md, designed 2026-10-29): today the threat
+   features are recomputed from zero at every evaluation, while psq's are kept incrementally.
+3. **Then down the profile:** accumulator handling, move generation, make/unmake and legality, TT,
+   `quiescence_from`; each kept only if a bench shows it pays.
+
 ## Evaluation
 
-- **Make the threats incremental** (threats-timing.md, designed 2026-10-29): first a bench timing the
-  threat step alone, so the gain is known before the work.
 - **X-rays and pins in the threats:** a features experiment of its own, its inference cost timed.
 - **Width 512** (psq-threats-screlu-512.md): its state is there.
 - **Won endgames:** does a trained network still shuffle once well ahead? Play today's network into
@@ -154,8 +168,6 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
   judged with the hand-crafted evaluation; one duel each.
 - **A `[from][to]` history table** beside or instead of `[piece][to]`, decided by a match.
 - **Per-technique benchmarking:** a switch per technique and the bench positions with it on and off.
-- **Search speed, a few percent each:** move generation, make/unmake and legality, TT,
-  `quiescence_from`; re-profile on a network before acting.
 - **To measure, on an idle machine:** today's search against the old one with a network, nodes at
   depth 9 on the bench positions, and positions per game in the two runs' segments.
 
