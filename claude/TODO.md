@@ -21,9 +21,11 @@ In this order:
    1. **Two duels of the new tune:** against the default parameters, and against the previous tune
       (`tune-16k-old-defaults`, 16,384 pairs, which stopped before reverse futility, razoring and
       aspiration had settled).
-   2. **A strength assessment against Stockfish,** for the README and the release (item 4's two
+   2. **Move Overhead** (move-overhead-implementation.md), so the Stockfish matches measure the time
+      management that ships.
+   3. **A strength assessment against Stockfish,** for the README and the release (item 4's two
       Skill Level matches).
-   3. **Lichess installation** with the winner (item 3), so the developer can start playing it.
+   4. **Lichess installation** with the winner (item 3), so the developer can start playing it.
 2. **Train and tune a PeSTO network:** a forge run on PeSTO's played corpus, its winner tuned.
    PeSTO's play is filling the training set (about 47% on 2026-11-06), until `complete.txt`.
    Before the training machine trains on it: delete any local `data/pesto` and
@@ -48,7 +50,8 @@ In this order:
 
 - **Move Overhead** (move-overhead.md, move-overhead-implementation.md): approved and planned
   2026-11-09, a `Move Overhead` option, default 20 ms. To implement once the current SPSA run
-  has finished, not before (the developer, 2026-11-09). It comes before the repeating-control check.
+  has finished, not before, after the tune's duels and before the Stockfish assessment (Next,
+  item 1; the developer, 2026-11-09). It comes before the repeating-control check.
 - **A repeating-control check.** Lichess sends only Fischer, so the `movestogo` path has never
   played a real game, while CCRL plays 40/15 repeating. A few dozen games at `tc=40/60`, Fattorini
   against itself, on an idle machine: no time forfeits, a sensible clock at move 40, no move near
