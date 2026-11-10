@@ -90,7 +90,10 @@ beaten; **resume at 1.3, the match at Skill Level 14** (command below), then 1.4
   - Candidate fix, not decided: a fixed reserve subtracted from `T`, a smaller `alpha` under
     `movestogo`. Run the check through a GUI with no margin of its own.
 - **README at the release** (readme-for-humans.md): Strength from the release's two Skill Level
-  matches, the network named; Inside brought to the released architecture; the opening paragraph
+  matches, the network named; any CCRL Blitz estimate with its full methodology (the developer,
+  2026-11-10): the Stockfish 10 bench and S, the scaled control (1'+0.5"), the 10 games at once
+  and that the bench ran alone, the anchors with their CCRL ratings and builds, the book, hash,
+  tablebases, the games played and the error margin (ccrl-conditions.md); Inside brought to the released architecture; the opening paragraph
   up to date; "Download" linking to this repository's releases page.
 - **Credit Lc0's data only if an Lc0 network ships:** `about.hbs` and `RELEASE-NOTES.md` credit it
   whatever the network.

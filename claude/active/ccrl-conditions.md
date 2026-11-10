@@ -104,6 +104,10 @@ On the machine for these matches, idle, `stockfish_10_x64_popcnt.exe bench`, fiv
 
 S belongs to this machine: another machine is benched again.
 
+**Decided (the developer, 2026-11-10): 1'+0.5" is CCRL Blitz here.** The bench ran alone, while a
+match runs 10 games at once, so each core is somewhat slower under that load and the control a
+little shorter than CCRL's in real terms; accepted as a fair estimate, no loaded bench taken.
+
 ## Anchors for a rating estimate
 
 Three engines from CCRL Blitz (list of 2026-11-07, single CPU), all GPLv3, their official Windows
