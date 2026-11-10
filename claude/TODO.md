@@ -47,6 +47,12 @@ beaten; **resume at 1.3, the match at Skill Level 14** (command below). 1.4 is d
       2795 (about level 10).
    4. **Lichess installation** with the tuned network (item 3): done 2026-11-10.
 2. **Train and tune a PeSTO network:** a forge run on PeSTO's played corpus, its winner tuned.
+   **Already measured (2026-11-08, `data/tests/tests.tsv`, tests 1 and 2):** `pesto-psq-threats-screlu`
+   run 2's generation 1 (its gate passed, 91.25% against PeSTO), untuned, lost both duels to
+   `lc0-psq-threats-screlu-g1-r1`, untuned: 11.5 of 36 at depth 9 (32%), 5.5 of 24 at 10+0.1
+   (23%), about 130 to 200 Elo. Same architecture and pipeline, so the gap is the teacher's.
+   **To run again (the developer, 2026-11-10):** PeSTO's hand-crafted evaluation tuned first, then
+   the pipeline resumed from there, its corpus played by tuned PeSTO (tuned-self-play.md).
    PeSTO's play is filling the training set (about 47% on 2026-11-06), until `complete.txt`.
    Before the training machine trains on it: delete any local `data/pesto` and
    `data/buckets/pesto*` there, left from the old partial corpus.
