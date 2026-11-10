@@ -118,10 +118,45 @@ builds from GitHub in `data/anchors/` (gitignored) and named in `data/engines.ya
 | `velvet-3.0.0` | Velvet 3.0.0 | x86_64-avx2 | 3082 +/- 17 | 900 |
 | `weiss-1.3` | Weiss 1.3 | popcnt (no AVX2 build) | 3137 +/- 15 | 1217 |
 | `halogen-10` | Halogen 10 | x64-popcnt-avx2 | 3210 +/- 10 | 3007 |
+| `velvet-3.2.0` | Velvet 3.2.0 | x86_64-avx2 | 3303 +/- 16 | 983 |
+
+Velvet 3.2.0 added after Fattorini beat Weiss and Halogen; Igel 2.7.0 (3303 +/- 15, GPLv3, official
+Windows builds) is the alternative at the same rating.
 
 Chosen to span about 130 Elo before Fattorini's place on CCRL's scale is known; a short scout
 against each shows whether the set must move. No `pext` builds: they are very slow on AMD before
-Zen 3. The list was read only down to about 3071; no Stockfish older than 10 was found on it.
+Zen 3. Scouts go down from Weiss: if Fattorini also loses to Velvet, a weaker anchor is found
+below 3071, where the list has not been read yet (the developer, 2026-11-10). The list was read only down to about 3071; no Stockfish older than 10 was found on it.
+
+## Scouts
+
+| Date | Anchor | Control | Games | Fattorini | Score | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-10 | `weiss-1.3` (3137) | 1'+0.5", Hash 128 | 82, stopped once decided | `lc0-psq-threats-screlu-g1-r1@tuned` | 45.5 - 36.5 (+34 -25 =23), 55.5% | `data/matches/weiss-1.3-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-1018/` |
+
+| 2026-11-10 | `halogen-10` (3210) | 1'+0.5", Hash 128 | 78, stopped once decided | `lc0-psq-threats-screlu-g1-r1@tuned` | 46.0 - 32.0 (+35 -21 =22), 59.0% | `data/matches/halogen-10-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-1050/` |
+
+Weiss: about +38 Elo, so about 3175. Halogen: about +63 Elo, so about 3273. Each has a 95% interval
+of roughly +/- 65 Elo; together, about 3225 +/- 50. A match stopped once decided slightly flatters
+its winner. Fattorini beat both anchors, so the set moves up: an anchor near 3300 next, and a full
+match against one anchor to narrow the margin.
+
+Velvet 3.2.0, scouted the same day: Velvet clearly stronger (score not recorded yet).
+
+**Decided (the developer, 2026-11-10): three full matches of 400 games**, 1'+0.5", Hash 128,
+`--full`, against Weiss 1.3, Halogen 10 and Velvet 3.2.0, which bracket Fattorini. The estimate:
+each match's score turned into an Elo difference and added to the anchor's CCRL rating; the three
+combined weighted by the inverse of their variance, each variance counting both the match's
+margin and the anchor's own CCRL error.
+
+## Full matches
+
+| Date | Anchor | Games | Score for Fattorini | Elo vs anchor | Estimate | Record |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-10 | `weiss-1.3` (3137 +/- 15) | 400, 116 min | 255.5 - 144.5 (+213 -102 =85), 63.9% | +99 +/- 31 | 3236 +/- 34 | `data/matches/weiss-1.3-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-1148/` |
+| 2026-11-10 | `halogen-10` (3210 +/- 10) | 400, 115 min | 218.0 - 182.0 (+154 -118 =128), 54.5% | +31 +/- 28 | 3241 +/- 30 | `data/matches/halogen-10-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-1345/` |
+
+Margins are 95%; the estimate's adds the anchor's CCRL error to the match's.
 
 ## What it is for
 
