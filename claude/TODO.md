@@ -16,8 +16,8 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
-**Where things stand (2026-11-10).** Steps 1.1 and 1.2 are done; 1.3 has Skill Level 12 beaten;
-**resume at 1.3, the full match at Skill Level 13** (command below), then 1.4.
+**Where things stand (2026-11-10).** Steps 1.1 and 1.2 are done; 1.3 has Skill Levels 12 and 13
+beaten; **resume at 1.3, the match at Skill Level 14** (command below), then 1.4.
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
    10+0.1. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
@@ -36,10 +36,13 @@ In this order:
       `data/matches/stockfish-10-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261109-1747/`; Skill
       Level 12, a full match, Fattorini 226.5 to 173.5 (+183 -130 =87, 56.6%),
       `data/matches/stockfish-12-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-0859/`; Skill
-      Level 13 scouted, Stockfish ahead 51.0 to 39.0 after 90 games (Fattorini 43.3%). **Next: the
-      full match at 13** (`bin/arena match stockfish-13 lc0-psq-threats-screlu-g1-r1@tuned 400
-      --time 10+0.1 --hash 64 --full`), on an idle machine, the Stockfish version noted for the
-      table; the bracket moves up (14) if 13 is beaten. For the developer only, never the README: Stockfish 19's own skill formula
+      Level 13, a full match, Fattorini 205.5 to 194.5 (+154 -143 =103, 51.4%),
+      `data/matches/stockfish-13-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-0948/` (its
+      90-game scout had Fattorini at 43.3%, within the scout's noise). 13 beaten, so the bracket
+      moves up: **next, Skill Level 14** (`bin/arena match stockfish-14
+      lc0-psq-threats-screlu-g1-r1@tuned 400 --time 10+0.1 --hash 64 --full`), on an idle machine,
+      the Stockfish version noted for the table. The developer expects 14 to win clearly at 10+0.1
+      (2026-11-10). For the developer only, never the README: Stockfish 19's own skill formula
       puts 12 and 13 at about 2910 and 2965, so about 2940 on the scale where amanda-0002 had
       2795 (about level 10).
    4. **Lichess installation** with the tuned network (item 3), so the developer can start playing it.

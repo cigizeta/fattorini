@@ -90,6 +90,35 @@ Our side:
   CLAUDE.md defines it, plugged in, the average taken. Its node count must be 3,939,338; any other
   count means another build or version.
 
+## Measured (2026-11-10)
+
+On the machine for these matches, idle, `stockfish_10_x64_popcnt.exe bench`, five runs: 1,049,
+1,047, 1,044, 1,062 and 1,057 ms, every run 3,939,338 nodes. Mean 1,051.8 ms, about 3.75M nodes/s.
+
+    S = 1,051.8 / 2,054 = 0.512
+
+| CCRL | Scaled here | Rounded |
+| --- | --- | --- |
+| Blitz 2'+1" | 61.4 s + 0.512 s | 1'+0.5" |
+| 40/15 repeating | 40 moves in 7 min 41 s | 40/8 repeating, rounded up as testers do |
+
+S belongs to this machine: another machine is benched again.
+
+## Anchors for a rating estimate
+
+Three engines from CCRL Blitz (list of 2026-11-07, single CPU), all GPLv3, their official Windows
+builds from GitHub in `data/anchors/` (gitignored) and named in `data/engines.yaml`:
+
+| Arena name | Engine | Build | CCRL Blitz | Games |
+| --- | --- | --- | --- | --- |
+| `velvet-3.0.0` | Velvet 3.0.0 | x86_64-avx2 | 3082 +/- 17 | 900 |
+| `weiss-1.3` | Weiss 1.3 | popcnt (no AVX2 build) | 3137 +/- 15 | 1217 |
+| `halogen-10` | Halogen 10 | x64-popcnt-avx2 | 3210 +/- 10 | 3007 |
+
+Chosen to span about 130 Elo before Fattorini's place on CCRL's scale is known; a short scout
+against each shows whether the set must move. No `pext` builds: they are very slow on AMD before
+Zen 3. The list was read only down to about 3071; no Stockfish older than 10 was found on it.
+
 ## What it is for
 
 - **Not the Skill Level matches:** both sides share the machine, so they need no scaling.
