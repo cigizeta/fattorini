@@ -51,7 +51,10 @@ beaten; **resume at 1.3, the match at Skill Level 14** (command below). 1.4 is d
    Before the training machine trains on it: delete any local `data/pesto` and
    `data/buckets/pesto*` there, left from the old partial corpus.
 3. **Lichess, the tuned lc0 network: done 2026-11-10.** `fattorini-bot` plays the `@tuned`
-   snapshot of f1c7389; the untuned one on Drive can go. Left: `temper-chess` to close.
+   snapshot of f1c7389; the untuned one on Drive can go. Left: `temper-chess` to close. **The
+   mark to beat (the developer, 2026-11-10):** `rotor-bot`, retired, ended at 2395 in blitz (RD 51,
+   161 rated games, +101 -39 =21, last seen 2026-11-07), from Lichess's public profile data;
+   six weeks of mixed engines, the rating still rising when it retired.
 4. **The first release** (binary-release.md, binary-release-implementation.md): the code done and
    its dry run passed 2026-11-06. Left: the two Skill Level matches (item 1.3), `RELEASE-NOTES.md`
    filled, a candidate tag, and the first real draft, which is also `gh`'s first test. The release
