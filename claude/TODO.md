@@ -101,6 +101,9 @@ beaten; **resume at 1.3, the match at Skill Level 14** (command below). 1.4 is d
   and that the bench ran alone, the anchors with their CCRL ratings and builds, the book, hash,
   tablebases, the games played and the error margin (ccrl-conditions.md); Inside brought to the released architecture; the opening paragraph
   up to date; "Download" linking to this repository's releases page.
+- **Say what ships (the developer, 2026-11-10):** the README and `RELEASE-NOTES.md` name the
+  network, `lc0-psq-threats-screlu` generation 1: piece-square inputs with simplified threat
+  features, SCReLU, trained on Lc0's data. The likely main source of its strength, so said plainly.
 - **Credit Lc0's data only if an Lc0 network ships:** `about.hbs` and `RELEASE-NOTES.md` credit it
   whatever the network.
 - **CalVer, not SemVer** (the developer, 2026-11-08): the scheme to design first. Cargo needs a
