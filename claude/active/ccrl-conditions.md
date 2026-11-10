@@ -156,7 +156,15 @@ margin and the anchor's own CCRL error.
 | 2026-11-10 | `weiss-1.3` (3137 +/- 15) | 400, 116 min | 255.5 - 144.5 (+213 -102 =85), 63.9% | +99 +/- 31 | 3236 +/- 34 | `data/matches/weiss-1.3-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-1148/` |
 | 2026-11-10 | `halogen-10` (3210 +/- 10) | 400, 115 min | 218.0 - 182.0 (+154 -118 =128), 54.5% | +31 +/- 28 | 3241 +/- 30 | `data/matches/halogen-10-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-1345/` |
 
+| 2026-11-10 | `velvet-3.2.0` (3303 +/- 16) | 400, 121 min | 184.0 - 216.0 (+121 -153 =126), 46.0% | -28 +/- 28 | 3275 +/- 32 | `data/matches/velvet-3.2.0-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-1542/` |
+
 Margins are 95%; the estimate's adds the anchor's CCRL error to the match's.
+
+**The estimate: about 3250 +/- 18 on CCRL Blitz, one CPU** (`lc0-psq-threats-screlu-g1-r1@tuned`,
+2026-11-10): the three weighted by the inverse of their variance (3251). The three agree within
+40 Elo, inside their margins. The +/- 18 assumes the anchors' CCRL errors independent and leaves
+out what the conditions here may share (the UHO book, 10 games at once, the anchors' builds), so it
+is a floor on the real uncertainty.
 
 ## What it is for
 
