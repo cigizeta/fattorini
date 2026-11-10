@@ -1,4 +1,4 @@
-**Superseded, see ccrl-conditions.md** (2026-11-10): its benchmark figures had no source.
+**Superseded, see ccrl-conditions.md** (2026-11-10): its benchmark figures are right, and that document gives their source.
 
 To scale a CCRL Blitz match to your hardware, you calibrate your CPU against CCRL’s baseline machine using **Stockfish 10**'s internal benchmark.
 

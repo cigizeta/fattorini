@@ -1,12 +1,14 @@
 # CCRL's testing conditions, and playing them here
 
-Written 2026-11-10. Replaces gemini-ccrl-scaling.md, whose figures had no source; this document
-keeps only what CCRL's own pages state, and says where they are silent.
+Written 2026-11-10. Replaces gemini-ccrl-scaling.md, whose figures are right but came without
+their source; this document gives each fact with where it comes from.
 
 **Sources** (read 2026-11-10):
 
 - CCRL Blitz: https://computerchess.org.uk/ccrl/404/about.html
 - CCRL 40/15: https://computerchess.org.uk/ccrl/4040/about.html
+- The reference bench: TalkChess, "CCRL Blitz conditions", https://talkchess.com/viewtopic.php?t=79168
+  (January 2022)
 
 ## The conditions, as CCRL states them
 
@@ -31,9 +33,8 @@ cannot set it.
 
 ## What CCRL does not state
 
-- **The benchmark's figures:** which Stockfish 10 build (x64, popcnt, bmi2), its node count, the
-  reference time or nodes/s on the i7-4770K, and the formula. gemini-ccrl-scaling.md's 2,054 ms
-  (about 1.92M nodes/s) is unsourced and must not be used.
+- **The benchmark's figures and formula:** not on CCRL's pages; see "The reference bench" below
+  for where they are.
 - **Threads:** no rule, beyond the hash exception for 4-CPU engines.
 - **Adjudication** rules.
 - **Engine requirements:** no protocol, platform or licence requirement, and no submission
@@ -52,30 +53,42 @@ From `crates/fattorini/src/uci.rs`:
 - **Repeating control:** 40/15 is exactly the untested `movestogo` path (TODO, "A repeating-control
   check"). Blitz is Fischer, the path Lichess and the arena already play.
 
+## The reference bench
+
+From the TalkChess thread above:
+
+- **Gabor Szots, signing "CCRL testing group"**, 2022-01-19, gives Stockfish 10's `bench` on an
+  i7-4770K: total time 2,054 ms, 3,939,338 nodes, 1,917,886 nodes/s. In his words the machine is
+  "not mine, I've looked up an old post". Not stated: the build (x64, popcnt, bmi2), the compiler,
+  the bench's arguments (presumably none).
+- **Graham Banks**, same thread: "We no longer use the Crafty bench, only the Stockfish 10 one",
+  and for 40/15 he plays "40 moves in 16 minutes repeating (rounded up)": testers scale, then round
+  to a convenient control.
+- 3,939,338 is Stockfish 10's official bench signature (its release notes), so the figure is
+  plain Stockfish 10.
+
+It is a figure recalled by a CCRL tester, not one CCRL publishes, but it is the one its testers
+use. For comparison, the same thread has an i7-2600K at 3,010 ms (x64) and 2,903 ms (popcnt): the
+build moves the figure by a few percent, less than the rounding testers apply.
+
 ## Scaling a control to a machine here
 
-The method: time the Stockfish 10 bench on the i7-4770K and on our machine, and multiply the base
-time and the increment by
+Multiply the base time and the increment by
 
-    S = our bench time / reference bench time
+    S = our bench time / 2,054 ms
 
 so a faster machine plays a shorter clock. For 40/15 the base is scaled and the 40 moves are kept.
+Rounding, as testers do, is fine.
 
-**Blocked on the reference figure.** Until it is known, S cannot be computed. Ways to get it, in
-order:
-
-1. Ask on CCRL's forum for the build and the reference bench time or nodes/s.
-2. Failing that, a published i7-4770K figure for the same Stockfish 10 build, its source noted
-   here.
-
-Our side, meanwhile:
+Our side:
 
 - Stockfish 10, the official release (tag `sf_10`), unpacked in `data/stockfish-10/` (gitignored),
   never registered in `data/engines.yaml`: it is only benched.
-- The build CCRL used once known; `popcnt` until then (`bmi2` is very slow on AMD before Zen 3).
+- The `popcnt` build (`bmi2` is very slow on AMD before Zen 3, and the reference build is not
+  known; the builds differ by a few percent).
 - `bench` with no arguments (16 MB, 1 thread, depth 13), run 3 to 5 times on an idle machine as
-  CLAUDE.md defines it, plugged in. Its node count must be 3,939,338 (Stockfish 10's bench
-  signature, to confirm on the first run); any other count means another build or version.
+  CLAUDE.md defines it, plugged in, the average taken. Its node count must be 3,939,338; any other
+  count means another build or version.
 
 ## What it is for
 
