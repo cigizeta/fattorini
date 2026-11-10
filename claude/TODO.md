@@ -76,6 +76,11 @@ beaten; **resume at 1.3, the match at Skill Level 14** (command below). 1.4 is d
 
 ## Before the release or CCRL
 
+- **The tablebase score at the root** (the developer, 2026-11-10, to fix): in KQ vs KN with tables,
+  `fattorini-bot` reported +1.59. Search probes only after a zeroing move (`tablebase.rs`
+  `should_probe`), so with the capture beyond the horizon every leaf is the network's; the root's
+  DTZ ranking keeps play correct (`excluded_root_moves`) but never sets the reported score.
+  Designed, plan written: root-tablebase-score.md.
 - **An 8-thread check** (the developer, 2026-11-10): CCRL testers also run 4CPU and 8CPU entries.
   4 threads have played on Lichess without a crash; 8 never have. A few dozen games at Blitz,
   Fattorini at 8 threads against itself at 1, on a machine with at least 8 physical cores: no
