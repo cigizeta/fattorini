@@ -16,8 +16,11 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
-**Where things stand (2026-11-10).** Steps 1.1 and 1.2 are done; 1.3 has Skill Levels 12 and 13
-beaten; **resume at 1.3, the match at Skill Level 14** (command below). 1.4 is done.
+**Where things stand (2026-11-10, end of day).** Steps 1.1, 1.2 and 1.4 are done; 1.3 has Skill
+Levels 12 and 13 beaten; **resume at 1.3, the match at Skill Level 14** (command below). Also done
+today: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tablebase score
+(root-tablebase-score.md), waiting for a new Lichess snapshot to be seen. Next after 14: the
+8-thread check (below).
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
    10+0.1. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
