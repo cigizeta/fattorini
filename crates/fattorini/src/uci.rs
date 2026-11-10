@@ -9,10 +9,10 @@ use crate::nnue::Network;
 use crate::perft::perft;
 use crate::search::{
     choose_best_move_multipv_with_progress, choose_best_move_with_parameters, choose_best_move_with_progress,
-    select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
+    root_reported_score, select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
     SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
 };
-use crate::tablebase::SyzygyTablebase;
+use crate::tablebase::{SyzygyTablebase, TbResult};
 use crate::tt::TranspositionTable;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -466,13 +466,15 @@ pub fn split_score(score: i32) -> (Option<i32>, Option<i32>) {
 /// comment for why every other thread stays silent). `hashfull` is read from the shared table
 /// at that same call site (`TranspositionTable::hashfull`'s own doc comment), not computed here
 /// -- this function only ever formats data it's handed, never reaches back into search state.
-fn format_info_line(r: &IterationReport, hashfull: u32) -> String {
+/// `root` is the root's tablebase result, `None` outside the tables: the score shown goes through
+/// `root_reported_score`, the report's own score staying the search's.
+fn format_info_line(r: &IterationReport, root: Option<TbResult>, hashfull: u32) -> String {
     let pv = r.pv.iter().map(|&mv| format_move(mv)).collect::<Vec<_>>().join(" ");
     // nps: multiply by 1000 before dividing, not the other way around, so a sub-second
     // time_ms doesn't get truncated to 0 first; .max(1) guards the division itself against a
     // time_ms of 0 (an extremely fast depth-1 completion).
     let nps = r.nodes * 1000 / r.time_ms.max(1);
-    let score = format_score(r.score);
+    let score = format_score(root_reported_score(r.score, root));
     format!(
         "info depth {} seldepth {} score {score} nodes {} nps {} hashfull {hashfull} time {} pv {pv}",
         r.depth, r.seldepth, r.nodes, nps, r.time_ms
@@ -999,6 +1001,9 @@ impl Engine {
             let evaluator = evaluator.as_deref();
             let stop_signal = &*stop_signal;
             let ponder_state = ponder_state.as_deref();
+            // The root's tablebase result, once per search, for the scores shown
+            // (`root_reported_score`); `None` outside the tables.
+            let root_tablebase = tablebase.root_result(board, ancestors);
 
             // std::thread::scope guarantees every spawned handle is joined before it returns,
             // exactly the already-settled shape ("go spawns N worker threads, joins all of
@@ -1026,11 +1031,16 @@ impl Engine {
                                         board, target_depth, limit, ancestors, tt, tablebase, evaluator, None, stop_signal,
                                         multipv, ponder_state,
                                         move |report, extra_lines| {
-                                            let mut lines =
-                                                vec![format_multipv_info_line(report, 1, report.score, &report.pv, tt.hashfull())];
+                                            // Every rank shown is of the tables' best rank (the
+                                            // rest are excluded), so every one takes the root's
+                                            // result.
+                                            let shown = |score| root_reported_score(score, root_tablebase);
+                                            let mut lines = vec![format_multipv_info_line(
+                                                report, 1, shown(report.score), &report.pv, tt.hashfull(),
+                                            )];
                                             for (i, extra) in extra_lines.iter().enumerate() {
                                                 lines.push(format_multipv_info_line(
-                                                    report, i as u32 + 2, extra.score, &extra.pv, tt.hashfull(),
+                                                    report, i as u32 + 2, shown(extra.score), &extra.pv, tt.hashfull(),
                                                 ));
                                             }
                                             // Same push-before-print, explicit-flush reasoning as
@@ -1052,7 +1062,7 @@ impl Engine {
                                         board, target_depth, limit, ancestors, tt, tablebase, evaluator,
                                         Some(parameters), thread_idx, stop_signal, ponder_state,
                                         move |report| {
-                                            let line = format_info_line(report, tt.hashfull());
+                                            let line = format_info_line(report, root_tablebase, tt.hashfull());
                                             // Pushed before the print, not after -- see
                                             // last_search_output's own doc comment for what this is
                                             // for; a test reading it back shouldn't depend on the
@@ -1124,7 +1134,7 @@ impl Engine {
             // completes between the `ponderhit` and the `bestmove`. Not under MultiPV, an analysis
             // setting, where one rank out of several would mislead.
             let final_info_line = match reports.last() {
-                Some(report) if multipv <= 1 => Some(format_info_line(report, tt.hashfull())),
+                Some(report) if multipv <= 1 => Some(format_info_line(report, root_tablebase, tt.hashfull())),
                 _ => None,
             };
             let mut output = last_search_output.lock().unwrap();
@@ -1399,6 +1409,19 @@ mod tests {
         assert_eq!(format_score(-(MATE_SCORE - 1)), "mate -1");
         assert_eq!(format_score(-(MATE_SCORE - 2)), "mate -1");
         assert_eq!(format_score(-(MATE_SCORE - 3)), "mate -2");
+    }
+
+    #[test]
+    fn an_info_line_shows_the_roots_tablebase_result_in_the_tablebase_band_not_as_a_mate() {
+        // The KQ vs KN that showed +1.59: the line carries the tables' win, as `cp` in the band.
+        let report = IterationReport {
+            depth: 12, seldepth: 18, score: 159, nodes: 1000, pv: vec![Move::new(Square::D1, Square::D5, None)], time_ms: 10,
+        };
+        let shown = crate::search::tb_win_at(0);
+        assert!(format_info_line(&report, Some(TbResult::Win), 0).contains(&format!(" score cp {shown} ")));
+        assert!(format_info_line(&report, Some(TbResult::Draw), 0).contains(" score cp 0 "));
+        assert!(format_info_line(&report, None, 0).contains(" score cp 159 "));
+        assert_eq!(report.score, 159, "the report itself keeps the search's score");
     }
 
     #[test]

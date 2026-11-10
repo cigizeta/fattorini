@@ -474,6 +474,23 @@ mod tests {
     }
 
     #[test]
+    fn the_root_result_of_a_won_ending_reached_long_ago_is_a_win() {
+        // KQ vs KN, the knight's capture long past (clock 10): search probes nothing here, the
+        // root's result is what the reported score needs (`search::root_reported_score`).
+        let Some(tables) = local_tables() else { return };
+        let (won, _) = Board::from_fen("k7/8/8/8/8/7n/8/K2Q4 w - - 10 40").unwrap();
+        assert_eq!(tables.root_result(&won, &[]), Some(TbResult::Win));
+        let (lost, _) = Board::from_fen("k7/8/8/8/8/7n/8/K2Q4 b - - 10 40").unwrap();
+        assert_eq!(tables.root_result(&lost, &[]), Some(TbResult::Loss));
+        // KR vs KR, kings central, no check that skewers: a draw, reported as 0.
+        let (drawn, _) = Board::from_fen("8/r7/3k4/8/8/3K4/7R/8 w - - 10 40").unwrap();
+        assert_eq!(tables.root_result(&drawn, &[]), Some(TbResult::Draw));
+        // Castling rights: not ranked, the search's score stays.
+        let (castling, _) = Board::from_fen("4k3/8/8/8/8/8/8/R3K3 w Q - 0 1").unwrap();
+        assert_eq!(tables.root_result(&castling, &[]), None);
+    }
+
+    #[test]
     fn late_in_the_fifty_move_count_only_the_moves_that_still_win_in_time_are_kept() {
         // At clock 98, one ply is left before the fifty-move draw: only the mates in one still win.
         let Some(tables) = local_tables() else { return };

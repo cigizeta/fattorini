@@ -1,6 +1,7 @@
 # The tablebase score at the root
 
-**Status: design agreed, plan written (2026-11-10).** Nothing implemented.
+**Status: implemented 2026-11-10, every test passing.** Left: step 5, seen on Lichess. Step 1 already existed (`root_result`); step 3
+applied where `info` lines are formatted, not to the reports (see step 3).
 
 ## The problem
 
@@ -51,10 +52,14 @@ Play is correct; the score shown is not. Stockfish reports the root's tablebase 
    root is not ranked.
 2. **`fn root_reported_score(search_score: i32, root: Option<TbResult>) -> i32`** in `search.rs`:
    decisions 1 and 2. Pure, so the rule has one definition and its own tests.
-3. **The iterative loop** (`search.rs`, where `excluded` is computed): compute the root result
-   once, beside `excluded`, and pass every `IterationReport`'s score through
-   `root_reported_score` before it is reported, on every thread whose reports are used. The
-   search's own internal scores (aspiration windows, `previous_score`) stay the search's.
+3. **Where `info` is formatted** (`uci.rs`, `go_search`): the root result computed once per
+   search, before the threads start; `format_info_line` takes it and shows
+   `root_reported_score`, and every MultiPV rank goes through it too (every rank shown is of the
+   tables' best rank). **Not in the reports themselves (Claude, 2026-11-10):** `report.score` also
+   feeds `select_best_result`, which picks among the threads, and `last_score`, the next move's
+   clock target, so changing it there would change play, against decision 3. The arena's
+   in-process players (`in_process.rs`) read `report.score` directly and keep the search's score;
+   its UCI players see the new one.
 4. **Tests:**
    - `root_reported_score`: a win replacing an ordinary score, a draw replacing +80, a loss, a mate
      of the same sign kept, a tablebase-band score of the same sign kept, a decisive score of the

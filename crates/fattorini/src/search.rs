@@ -165,6 +165,26 @@ pub fn is_tb_loss(score: i32) -> bool {
     score <= -(TB_WIN_SCORE - MAX_PLY as i32) && score >= -TB_WIN_SCORE
 }
 
+/// The score to report for a search whose root the tables rank (`SyzygyTablebase::root_result`):
+/// search probes only after a zeroing move, so in an ending reached long ago its leaves are the
+/// network's, cautious late in a game, and a won KQ vs KN once showed +1.59. A win reports
+/// `tb_win_at(0)` and a loss `tb_loss_at(0)`, Stockfish's way, unless the search already found a
+/// decisive score of the same sign (a mate, or a capture into the tables), which says at least as
+/// much; a draw, cursed wins and blessed losses included, reports 0. `None`, a root the tables do
+/// not rank, leaves the score alone. Reporting only: the search, its move and its clock keep the
+/// search's own score.
+pub fn root_reported_score(search_score: i32, root: Option<TbResult>) -> i32 {
+    let decisive = search_score.abs() >= TB_WIN_SCORE - MAX_PLY as i32;
+    match root {
+        None => search_score,
+        Some(TbResult::Win) if decisive && search_score > 0 => search_score,
+        Some(TbResult::Win) => tb_win_at(0),
+        Some(TbResult::Loss) if decisive && search_score < 0 => search_score,
+        Some(TbResult::Loss) => tb_loss_at(0),
+        Some(TbResult::Draw) => 0,
+    }
+}
+
 /// `score`, relative to the root, made relative to the node at `ply` for the transposition table:
 /// a winning band (mate or tablebase) gets `ply` added, a losing band `ply` subtracted, anything
 /// else is unchanged. Stockfish's `value_to_tt`. The table outlives one search and a position recurs
@@ -5788,6 +5808,37 @@ mod tests {
         for decisive in [mate_in(5), -mate_in(5), tb_win_at(3), tb_loss_at(3)] {
             assert_eq!(falling_score_factor(Some(decisive), 0, 100), 1.0);
             assert_eq!(falling_score_factor(Some(0), decisive, 100), 1.0);
+        }
+    }
+
+    #[test]
+    fn a_root_the_tables_rank_reports_their_result_over_the_networks_score() {
+        // The KQ vs KN that showed +1.59: the win replaces an ordinary score, and its mirror.
+        assert_eq!(root_reported_score(159, Some(TbResult::Win)), tb_win_at(0));
+        assert_eq!(root_reported_score(-159, Some(TbResult::Win)), tb_win_at(0));
+        assert_eq!(root_reported_score(-159, Some(TbResult::Loss)), tb_loss_at(0));
+        // A draw, cursed wins and blessed losses included, is 0 whatever the search thought.
+        for score in [80, -80, 0, tb_win_at(2), -mate_in(9)] {
+            assert_eq!(root_reported_score(score, Some(TbResult::Draw)), 0, "{score}");
+        }
+    }
+
+    #[test]
+    fn a_decisive_search_score_agreeing_with_the_tables_is_kept_and_a_disagreeing_one_replaced() {
+        // A mate or a capture into the tables says at least as much as the root's result.
+        for kept in [mate_in(7), tb_win_at(4)] {
+            assert_eq!(root_reported_score(kept, Some(TbResult::Win)), kept, "{kept}");
+            assert_eq!(root_reported_score(-kept, Some(TbResult::Loss)), -kept, "{kept}");
+        }
+        // The wrong sign is the search's mistake, not news: the tables win.
+        assert_eq!(root_reported_score(-mate_in(7), Some(TbResult::Win)), tb_win_at(0));
+        assert_eq!(root_reported_score(tb_win_at(4), Some(TbResult::Loss)), tb_loss_at(0));
+    }
+
+    #[test]
+    fn outside_the_tables_the_search_score_is_reported_as_it_is() {
+        for score in [0, 159, -320, mate_in(3), -mate_in(3), tb_win_at(2), tb_loss_at(2)] {
+            assert_eq!(root_reported_score(score, None), score, "{score}");
         }
     }
 
