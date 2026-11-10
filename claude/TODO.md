@@ -17,7 +17,7 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 In this order:
 
 **Where things stand (2026-11-10).** Steps 1.1 and 1.2 are done; 1.3 has Skill Levels 12 and 13
-beaten; **resume at 1.3, the match at Skill Level 14** (command below), then 1.4.
+beaten; **resume at 1.3, the match at Skill Level 14** (command below). 1.4 is done.
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
    10+0.1. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
@@ -45,14 +45,13 @@ beaten; **resume at 1.3, the match at Skill Level 14** (command below), then 1.4
       (2026-11-10). For the developer only, never the README: Stockfish 19's own skill formula
       puts 12 and 13 at about 2910 and 2965, so about 2940 on the scale where amanda-0002 had
       2795 (about level 10).
-   4. **Lichess installation** with the tuned network (item 3), so the developer can start playing it.
+   4. **Lichess installation** with the tuned network (item 3): done 2026-11-10.
 2. **Train and tune a PeSTO network:** a forge run on PeSTO's played corpus, its winner tuned.
    PeSTO's play is filling the training set (about 47% on 2026-11-06), until `complete.txt`.
    Before the training machine trains on it: delete any local `data/pesto` and
    `data/buckets/pesto*` there, left from the old partial corpus.
-3. **Lichess, the tuned lc0 network:** a `@tuned` snapshot (`bin/arena snapshot`), lichess-bot's
-   `engine.name` pointed at it. The bot `fattorini-bot` plays the untuned snapshot until then.
-   `temper-chess` to close.
+3. **Lichess, the tuned lc0 network: done 2026-11-10.** `fattorini-bot` plays the `@tuned`
+   snapshot of f1c7389; the untuned one on Drive can go. Left: `temper-chess` to close.
 4. **The first release** (binary-release.md, binary-release-implementation.md): the code done and
    its dry run passed 2026-11-06. Left: the two Skill Level matches (item 1.3), `RELEASE-NOTES.md`
    filled, a candidate tag, and the first real draft, which is also `gh`'s first test. The release
