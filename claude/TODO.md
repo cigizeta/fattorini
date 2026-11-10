@@ -70,6 +70,10 @@ beaten; **resume at 1.3, the match at Skill Level 14** (command below). 1.4 is d
 
 ## Before the release or CCRL
 
+- **An 8-thread check** (the developer, 2026-11-10): CCRL testers also run 4CPU and 8CPU entries.
+  4 threads have played on Lichess without a crash; 8 never have. A few dozen games at Blitz,
+  Fattorini at 8 threads against itself at 1, on a machine with at least 8 physical cores: no
+  hang, no crash, no time loss, `stop` answered promptly.
 - **Move Overhead's measurement** (move-overhead.md): the option is in, default 20 ms. On an idle
   machine with a network, the gap from the deadline to `bestmove` over a few hundred `go movetime`
   moves and near-empty clocks; the default changes only if the worst gap asks for more.
