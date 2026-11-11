@@ -28,9 +28,11 @@ clock unused; the new `Split` time management (a soft time, a hard maximum, the 
 counted) is implemented with `Classic` kept behind the temporary `TimeManagement` UCI option, all
 tests and clippy passing. lichess-bot's `move_overhead` went from 2000 to 500 ms the same day.
 The duel binary is copied to `data/duel-bin/fattorini-tm.exe` and registered twice in
-`data/engines.yaml` (`fattorini-split`, `fattorini-classic`). **Next:** the two duels, each on one
-idle machine, `bin/arena duel fattorini-split fattorini-classic --time 10+0.1` (no regression), then
-`--time 180+2` (the verdict); record the results in the plan, then follow its "After the verdict".
+`data/engines.yaml` (`fattorini-split`, `fattorini-classic`). Split's first version lost at 10+0.1
+(S 0.4044 over 136 games, front-loading); redesigned the same day as v2
+(blitz-time-management-v2.md), whose 10+0.1 duel was drawn (S 0.5086 over 752 games, gate passed). **Next:** the 180+2
+duel on one idle machine, `bin/arena duel fattorini-split fattorini-classic --time 180+2`, up to
+about 12 to 15 hours, resumable; its verdict rule is in v2's decisions; record the results there.
 Also waiting: the CCRL forum account's activation.
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
@@ -227,6 +229,24 @@ changes).
   work). Then the fixes it points to: helper threads diversified (depth offsets, skipped
   iterations), shared counters and histories made per-thread, and a duel at a longer control,
   8 threads against 1, as the measure.
+- **An SPSA of time management, after the search's** (the developer, 2026-11-11): the time rules
+  depend on the search's curves (a depth's cost, how often the best move changes, the score's
+  swings), so they are tuned against the search that ships. Only after Split's verdict
+  (blitz-time-management-v2.md) and the smithy's bench on an idle machine (below), ideally after the
+  speed work too. Tuned: `s`, `r`, `k` and `FALLING_SCORE_SCALE_CP`; never the safety margins (the
+  reserve's `n` and floor, the overhead, the cap on one move), which a lag-free tune would drive to
+  zero. At 10+0.1, scaled by the bench as every tune: its increment is 1/100 of the base against
+  3+2's 1/90, so the clock goes through the same phases, and a few Elo needs 32k pairs or more. On
+  every available arena, each idle: each game is its own comparison, both sides on one machine.
+  Then a 180+2 duel of the tuned values against the untuned, for the depth 10+0.1 does not reach.
+  **Budgets** (the developer, 2026-11-11), fixed in games, not hours (as spsa.md, 2026-10-16):
+  - **The search's SPSA: 32k pairs**, as the last tune, which found +24 Elo with about 10
+    parameters; 64k only if the parameters' traces are still climbing at the end.
+  - **Time management's SPSA: also 32k pairs,** though only 4 parameters: their optimum is flat (20%
+    off costs perhaps 1 or 2 Elo), a weak signal needing many games for its direction. Values ending
+    near the start are an answer too: the hand-chosen ones were fine, and the 180+2 duel can go.
+  - About 12 hours each over every arena, as the last tune's 32k pairs took (the developer,
+    2026-11-11).
 - **`blend` as two weights tuned by SPSA**, when SPSA tunes search code.
 - **Singular extensions and capture history, retried with a network on both sides:** both were
   judged with the hand-crafted evaluation; one duel each.

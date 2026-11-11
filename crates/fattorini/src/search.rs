@@ -3261,10 +3261,11 @@ fn clock_target_ms(
 ///
 /// ```text
 /// H    = min(M, horizon), or horizon under Fischer
-/// L    = max(0, T + (H - 1) * I - o * (H + 2))     the time left for the next H moves
-/// base = L / min(divisor, H)
-/// hard = min(k * base, hard_fraction * T - o)
-/// soft = min(base * (1 + r * C) * F, hard)
+/// R    = max(n * I, floor) + o * (H + 2)          the reserve the clock settles near
+/// L    = max(0, T + (H - 1) * I - R)              the time left for the next H moves
+/// plan = L / H
+/// hard = min(k * plan, hard_fraction * T - o)
+/// soft = min(s * plan * (1 + r * C) * F, hard)
 /// ```
 ///
 /// with `T` the clock, `I` the increment, `M` the moves to go, `o` the move overhead, `C` the
@@ -3273,30 +3274,49 @@ fn clock_target_ms(
 /// tree is fixed for the move.
 ///
 /// Why: `Classic` planned `0.05 * T + 0.5 * I` and halved it again by starting no depth past half,
-/// so a Fischer clock settled where a move spent the increment, about a minute at 3+3. Two Lichess
-/// blitz games (2026-11-11) ended with a minute and with half the clock unused, one of them lost to
-/// a missed tactic. Counting the future increments, as Stockfish's
-/// `timeLeft = time + inc * (mtg - 1) - moveOverhead * (2 + mtg)` does, lets the clock settle at a
-/// few increments instead. Stockfish's own constants are heavily tuned; these are reasonable
-/// magnitudes, as every search parameter (decided 2026-10-12), judged by a duel against `Classic`.
+/// so a Fischer clock settled near 18 increments, about a minute at 3+3. Two Lichess blitz games
+/// (2026-11-11) ended with a minute and with half the clock unused, one of them lost to a missed
+/// tactic. Counting the future increments, as Stockfish's
+/// `timeLeft = time + inc * (mtg - 1) - moveOverhead * (2 + mtg)` does, spends them; the reserve `R`
+/// says where the clock settles instead, since where it settles depends on real spend against the
+/// plan, not on the plan alone.
+///
+/// A first version divided `L` by 25 instead of `H` and started depths until the full soft time: a
+/// depth costs about as much as all the shallower ones together, so it spent about three times
+/// Classic per move early and played on the increment alone from about move 25. It lost to
+/// `Classic` at 10+0.1, 55 to 81 over 136 games (2026-11-11). Stockfish's own constants are heavily
+/// tuned; these are reasonable magnitudes, as every search parameter (decided 2026-10-12).
 pub(crate) struct SplitTimeParameters {
-    /// 50: Stockfish's `mtg` under Fischer, the moves whose increments are counted as available.
+    /// 50: Stockfish's `mtg` under Fischer, the moves whose increments are counted as available, and
+    /// the divisor: the plan is an even share. Capped at the moves actually left under `movestogo`,
+    /// so the last moves before a refill share the clock among themselves.
     horizon: u32,
-    /// 25.0: a stable move plans about `T / 25 + 2 * I`, about 15 s at 4:00+3. Capped at the moves
-    /// actually left under `movestogo`, so the last moves before a refill share the clock among
-    /// themselves.
-    divisor: f64,
+    /// 5.0: the clock settles near five increments (the developer, 2026-11-11), about 10 s at 3+2.
+    reserve_increments: f64,
+    /// 300: the reserve's floor, so a control with no or a tiny increment keeps a margin.
+    reserve_floor_ms: f64,
+    /// 0.5: as `TimeParameters::s`, no depth starts past half the plan, since one started later
+    /// would run on to about twice the time spent so far. Real spend averages about 0.75 of the plan.
+    s: f64,
     /// 2.0: as `TimeParameters::r`, a best move changing at every depth triples the soft time.
     r: f64,
-    /// 5.0: the hard maximum over `base`, room for an unstable move with a falling score
-    /// (`3 * 1.7`); Stockfish's `maxScale` reaches 6.873.
+    /// 3.0: the hard maximum over the plan, room for an unstable move with a falling score
+    /// (`0.5 * 3 * 1.7`).
     k: f64,
-    /// 0.8: the most of the clock one move may take, Stockfish's `0.8097 * limits.time[us]` rounded.
+    /// 0.5: the most of the clock one move may take, `Classic`'s `MAX_CLOCK_FRACTION`; overspending,
+    /// not underspending, is the risk at short controls.
     hard_fraction: f64,
 }
 
-pub(crate) const SPLIT_TIME_PARAMETERS: SplitTimeParameters =
-    SplitTimeParameters { horizon: 50, divisor: 25.0, r: 2.0, k: 5.0, hard_fraction: 0.8 };
+pub(crate) const SPLIT_TIME_PARAMETERS: SplitTimeParameters = SplitTimeParameters {
+    horizon: 50,
+    reserve_increments: 5.0,
+    reserve_floor_ms: 300.0,
+    s: 0.5,
+    r: 2.0,
+    k: 3.0,
+    hard_fraction: 0.5,
+};
 
 /// The soft time and the hard maximum of one move under `TimeManagement::Split`, in milliseconds
 /// -- the one place the formula of `SplitTimeParameters` lives. A `movestogo 0` is read as 1.
@@ -3309,10 +3329,11 @@ fn split_times_ms(
     let overhead = overhead_ms as f64;
     let horizon = moves_to_go.map_or(p.horizon, |moves| moves.clamp(1, p.horizon));
     let horizon_f = f64::from(horizon);
-    let left = (time + (horizon_f - 1.0) * inc - overhead * (horizon_f + 2.0)).max(0.0);
-    let base = left / p.divisor.min(horizon_f);
-    let hard = (p.k * base).min((p.hard_fraction * time - overhead).max(0.0));
-    let soft = (base * (1.0 + p.r * instability) * falling).min(hard);
+    let reserve = (p.reserve_increments * inc).max(p.reserve_floor_ms) + overhead * (horizon_f + 2.0);
+    let left = (time + (horizon_f - 1.0) * inc - reserve).max(0.0);
+    let plan = left / horizon_f;
+    let hard = (p.k * plan).min((p.hard_fraction * time - overhead).max(0.0));
+    let soft = (p.s * plan * (1.0 + p.r * instability) * falling).min(hard);
     (soft.round() as u64, hard.round() as u64)
 }
 
@@ -6034,40 +6055,49 @@ mod tests {
     }
 
     #[test]
-    fn split_counts_fifty_moves_of_increments_for_a_stable_move() {
-        // 180+2: L = 180,000 + 49 * 2,000 = 278,000; base = L / 25; hard = 5 * base.
-        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.0), (11_120, 55_600));
-        // 4:00+3, the 5+3 game's middle game: L = 387,000.
-        assert_eq!(split(240_000, 3_000, None, 0, 0.0, 1.0), (15_480, 77_400));
-        // The overhead, once per move of the horizon and twice more: L = 278,000 - 20 * 52.
-        assert_eq!(split(180_000, 2_000, None, 20, 0.0, 1.0), (11_078, 55_392));
+    fn split_counts_fifty_moves_of_increments_less_the_reserve_for_a_stable_move() {
+        // 180+2: R = 5 * 2,000; L = 180,000 + 49 * 2,000 - 10,000 = 268,000; plan = L / 50 = 5,360;
+        // soft = 0.5 * plan; hard = 3 * plan.
+        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.0), (2_680, 16_080));
+        // 4:00+3, the 5+3 game's middle game: L = 240,000 + 147,000 - 15,000 = 372,000.
+        assert_eq!(split(240_000, 3_000, None, 0, 0.0, 1.0), (3_720, 22_320));
+        // The overhead, once per move of the horizon and twice more: L = 268,000 - 20 * 52.
+        assert_eq!(split(180_000, 2_000, None, 20, 0.0, 1.0), (2_670, 16_018));
+        // 10+0.1, the duel v1 lost: R = 500 + 1,040; L = 13,360; plan = 267.2.
+        assert_eq!(split(10_000, 100, None, 20, 0.0, 1.0), (134, 802));
+    }
+
+    #[test]
+    fn split_reserve_never_goes_below_its_floor() {
+        // 60+0: R = 300; L = 59,700; plan = 1,194.
+        assert_eq!(split(60_000, 0, None, 0, 0.0, 1.0), (597, 3_582));
     }
 
     #[test]
     fn split_instability_and_a_falling_score_raise_the_soft_time_up_to_the_hard_maximum() {
-        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.0), (33_360, 55_600), "C = 1 triples it");
-        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.7), (18_904, 55_600));
-        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.7), (55_600, 55_600), "capped by hard");
-        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 0.6), (6_672, 55_600), "a rising score: less");
+        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.0), (8_040, 16_080), "C = 1 triples it");
+        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.7), (4_556, 16_080));
+        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.7), (13_668, 16_080), "still under hard");
+        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 0.6), (1_608, 16_080), "a rising score: less");
     }
 
     #[test]
-    fn split_hard_maximum_is_four_fifths_of_a_low_clock() {
-        // 5 s left at +2: base = 103,000 / 25 = 4,120 would already pass 0.8 * 5,000.
-        assert_eq!(split(5_000, 2_000, None, 0, 0.0, 1.0), (4_000, 4_000));
-        assert_eq!(split(5_000, 2_000, None, 20, 1.0, 1.7), (3_980, 3_980), "minus the overhead");
+    fn split_hard_maximum_is_half_a_low_clock() {
+        // 5 s left at +2: L = 93,000, plan = 1,860; 3 * plan would pass 0.5 * 5,000.
+        assert_eq!(split(5_000, 2_000, None, 0, 0.0, 1.0), (930, 2_500));
+        assert_eq!(split(5_000, 2_000, None, 20, 1.0, 1.7), (2_480, 2_480), "minus the overhead");
         for (time, inc, c, f) in [(1_000, 0, 1.0, 1.7), (60_000, 500, 0.5, 1.2), (300_000, 3_000, 1.0, 1.7)] {
             let (soft, hard) = split(time, inc, None, 20, c, f);
-            assert!(soft <= hard && hard <= time * 4 / 5, "{time}+{inc}: {soft} {hard}");
+            assert!(soft <= hard && hard <= time / 2, "{time}+{inc}: {soft} {hard}");
         }
     }
 
     #[test]
     fn split_under_a_repeating_control_shares_the_clock_among_the_moves_left() {
-        // 40/15: base = 900,000 / 25, the divisor below the 40 moves to go.
-        assert_eq!(split(900_000, 0, Some(40), 0, 0.0, 1.0), (36_000, 180_000));
-        // The last move before the refill: all of L, then capped at 0.8 of the clock.
-        assert_eq!(split(900_000, 0, Some(1), 0, 0.0, 1.0), (720_000, 720_000));
+        // 40/15: R = 300; L = 899,700; plan = L / 40 = 22,492.5.
+        assert_eq!(split(900_000, 0, Some(40), 0, 0.0, 1.0), (11_246, 67_478));
+        // The last move before the refill: plan = all of L, hard capped at half the clock.
+        assert_eq!(split(900_000, 0, Some(1), 0, 0.0, 1.0), (449_850, 450_000));
         assert_eq!(split(900_000, 0, Some(0), 0, 0.0, 1.0), split(900_000, 0, Some(1), 0, 0.0, 1.0), "0 read as 1");
     }
 
@@ -6080,9 +6110,9 @@ mod tests {
     fn the_split_time_manager_starts_depths_until_the_soft_time_and_aborts_at_the_hard_maximum() {
         let started = Instant::now();
         let manager = TimeManager::new(Some(split_clock(180_000, 2_000, None, false, 0)), started, 100);
-        // Before any depth `C` is 1: soft 33,360 ms, hard 55,600 ms.
+        // Before any depth `C` is 1: soft 8,040 ms, hard 16,080 ms.
         assert!(manager.should_start_next());
-        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(55_600)));
+        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(16_080)));
 
         let empty = TimeManager::new(Some(split_clock(30, 0, None, false, 20)), started, 100);
         assert!(!empty.should_start_next(), "nothing past depth 1");

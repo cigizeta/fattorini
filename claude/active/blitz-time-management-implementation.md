@@ -4,6 +4,16 @@ Implements blitz-time-management.md (design settled 2026-11-11). Status: steps 1
 `data/duel-bin/fattorini-tm.exe` and registered as `fattorini-split` and `fattorini-classic` in
 `data/engines.yaml`. Next: the 10+0.1 duel, then the 180+2 duel; results go here.
 
+**10+0.1 duel (2026-11-11): Split regresses.** `Classic` stronger, resolved at 136 games, +26 -52 =58
+for Split, 55.0 - 81.0, S 0.4044 (about -67 Elo), the duel's 99.9% bound crossed
+(`data/matches/fattorini-split-vs-fattorini-classic/20261111-1625/`). The cause, seen in the PGN:
+Split front-loads. At 10+0.1, `base = L / 25` is about 555 ms against an even share near 280 ms,
+because `L` counts 49 future increments while the divisor is 25; Split spends 0.5 to 2 s a move in
+the opening and middlegame and from about move 25 plays on the increment alone (0.1 s), while
+Classic still spends 0.2 to 0.4 s. The 180+2 duel is not run: whatever it shows, the ship rule
+already fails. The design is to be revisited (the divisor against the horizon, `k`, the overhead
+counted `H + 2` times) before any second duel. Redesigned the same day: blitz-time-management-v2.md.
+
 ## The formula
 
 Under a clock (`TimeLimit::Clock`), with `T` the clock, `I` the increment, `M` the moves to go
