@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use temper_chess::pipeline::preprocessing_config::{self, ArmLambda};
+use fattorini::pipeline::preprocessing_config::{self, ArmLambda};
 
 use crate::cache::CacheRecord;
 use crate::game_labels::RoundProgress;
@@ -68,7 +68,7 @@ fn open_arm(
             ("architecture", format!("{:?}", config.architecture)),
             // What the output is trained to mean and the loss: a run started under the atan curve and
             // the matching loss records no such line, so it is refused rather than resumed.
-            ("curve", format!("{} bce", temper_chess::labels::LOGISTIC.describe())),
+            ("curve", format!("{} bce", fattorini::labels::LOGISTIC.describe())),
             // The dataset actually trained on.
             ("parent", source.to_string()),
             ("lambda", preprocessing_config::lambda_text(lambda)),
@@ -753,7 +753,7 @@ mod tests {
 
     #[test]
     fn replay_stages_is_the_first_rate_for_a_run_with_no_history() {
-        let stages = replay_stages("data/chess/networks/train-main-test-no-such-run/history.tsv", 512, 2, 8, 6);
+        let stages = replay_stages("data/networks/train-main-test-no-such-run/history.tsv", 512, 2, 8, 6);
         assert_eq!((stages.stage, stages.finished), (0, false));
     }
 
@@ -789,7 +789,7 @@ mod tests {
     use crate::pgn_train_stream::PgnTrainStream;
     use crate::train_stream::TrainStream;
     use crate::{net_config, nnue_network, transformer_network};
-    use temper_chess::pipeline::generation;
+    use fattorini::pipeline::generation;
 
     /// A flat test set over `records`, read in order and stopping short at its end.
     struct Flat(Vec<CacheRecord>);

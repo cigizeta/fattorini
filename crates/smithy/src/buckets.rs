@@ -38,16 +38,16 @@ use std::time::Instant;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use temper_chess::features::CanonicalPosition;
-use temper_chess::pipeline::data_root;
-use temper_chess::labels::Curve;
-use temper_chess::tablebase::SyzygyTablebase;
+use fattorini::features::CanonicalPosition;
+use fattorini::pipeline::data_root;
+use fattorini::labels::Curve;
+use fattorini::tablebase::SyzygyTablebase;
 
-use temper_chess::pipeline::preprocessing_config::ArmLambda;
+use fattorini::pipeline::preprocessing_config::ArmLambda;
 
 use super::cache::{self, CacheRecord, Progress};
 use super::polyline::Polyline;
-use super::game_labels::KEPT;
+use super::game_labels::{KEPT, TABLEBASE_LABELS};
 use super::pgn_stream::{splitmix64, PgnStream, StreamFile, StreamOptions};
 use super::train_stream::TrainStream;
 
@@ -226,15 +226,15 @@ pub(crate) fn committed_records(dir: &str) -> Result<u64, String> {
     Ok(State::read(dir)?.ok_or_else(|| format!("{dir} holds no buckets"))?.records())
 }
 
-/// Every record of bucket `bucket` of `dir`, as its labels at lambda 0 and 1 and its progress: what
-/// `polyline` measures, the positions skipped over.
-pub(crate) fn for_each_pair(dir: &str, bucket: usize, mut visit: impl FnMut(f32, f32, Progress)) {
+/// Every record of bucket `bucket` of `dir`, as its labels at lambda 0 and 1, its progress and its
+/// pieces besides the kings: what `polyline` measures.
+pub(crate) fn for_each_pair(dir: &str, bucket: usize, mut visit: impl FnMut(f32, f32, Progress, usize)) {
     let decompressed = decompressed(dir, bucket);
     let mut bytes = decompressed.as_slice();
     while !bytes.is_empty() {
-        cache::read_position(&mut bytes);
+        let pieces = cache::read_position(&mut bytes).pieces.len();
         let (at_zero, at_one, progress) = read_tail(&mut bytes);
-        visit(at_zero, at_one, progress);
+        visit(at_zero, at_one, progress, pieces);
     }
 }
 
@@ -272,7 +272,7 @@ pub(crate) fn prepare(
 /// (`Curve::describe`), and `progress`: every record carries its progress. Buckets labelled
 /// otherwise, a line recording no curve or no progress included, are scattered again.
 fn labels_kind(tablebase: &Option<Arc<SyzygyTablebase>>, curve: &Curve) -> String {
-    let kind = if tablebase.is_some() { "tablebase" } else { "plain" };
+    let kind = if tablebase.is_some() { TABLEBASE_LABELS } else { "plain" };
     format!("{kind} {} progress", curve.describe())
 }
 
@@ -404,7 +404,7 @@ fn prepare_in_batches(
         state.buckets = outputs.iter().map(|output| output.committed).collect();
         state.files.extend(batch.iter().map(|file| (file.path.clone(), file.positions)));
         state.write(dir)?;
-        say(format!("{dir}: batch {} of {} committed, {} records", index + 1, batches.len(), state.records()));
+        say(format!("{dir}: batch {} of {} committed, {} records", index + 1, batches.len(), progress::grouped(state.records())));
     }
     bar.finish();
     let bytes: u64 = state.buckets.iter().map(|committed| committed.bytes).sum();
@@ -569,7 +569,7 @@ impl Drop for BucketStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temper_chess::labels::{LC0_FILES, LOGISTIC};
+    use fattorini::labels::{LC0_FILES, LOGISTIC};
 
     /// Lc0's corpus as the tests' fixtures are written: through the frozen curve.
     const LC0_CURVE: Curve = Curve::Atan(LC0_FILES);
@@ -850,7 +850,7 @@ mod tests {
         assert_eq!(committed_records(&buckets), Ok(25));
         let mut read = 0;
         for bucket in 0..BUCKETS {
-            for_each_pair(&buckets, bucket, |_, _, progress| {
+            for_each_pair(&buckets, bucket, |_, _, progress, _| {
                 assert!(progress.i < progress.n);
                 read += 1;
             });

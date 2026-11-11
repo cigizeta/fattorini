@@ -2,8 +2,8 @@ use tch::{Device, Kind, Tensor};
 
 use super::cache::{label_matrix, CacheRecord};
 use super::feature_set::FeatureSet;
-use temper_chess::features::{halfk, psq, psq_threats, CanonicalPosition};
-use temper_chess::stack_buckets::{buckets_of_canonical, count_bucket, count_of_canonical, phase_bucket, phase_of_canonical};
+use fattorini::features::{halfk, psq, psq_threats, CanonicalPosition};
+use fattorini::stack_buckets::{buckets_of_canonical, count_bucket, count_of_canonical, phase_bucket, phase_of_canonical};
 
 /// A psq batch's bucket columns: our king, their king, material, phase, piece count
 /// (`DenseBatchPsq::buckets`, `stack_head::HeadShape::stages`).
@@ -93,7 +93,7 @@ pub struct DenseBatchPsq {
     /// `[rows, arms]`.
     pub label: Tensor,
     /// `Int64 [rows, 5]`: each row's buckets, our king, their king, material, phase, piece count
-    /// (`temper_chess::stack_buckets`). Carried by every psq batch, read only by a bucketed head.
+    /// (`fattorini::stack_buckets`). Carried by every psq batch, read only by a bucketed head.
     buckets: Tensor,
 }
 
@@ -164,7 +164,7 @@ impl DenseBatchPsq {
 /// thread (`upload`).
 pub enum HostBatch {
     /// The flat indices of the active rows (`psq_indices`), the labels, and three `psq_stack`
-    /// buckets a row (`temper_chess::stack_buckets`).
+    /// buckets a row (`fattorini::stack_buckets`).
     Psq { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
     /// As psq's, at psq_threats' width (`psq_threats_indices`).
     PsqThreats { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
@@ -326,11 +326,11 @@ pub fn to_dense_batch_on(records: &[CacheRecord], feature_set: FeatureSet, devic
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temper_chess::features::{pack_canonical_piece, CanonicalPosition};
-    use temper_chess::board::castling_rights::CastlingRights;
-    use temper_chess::board::color::Color;
-    use temper_chess::board::piece_type::PieceType;
-    use temper_chess::board::square::Square;
+    use fattorini::features::{pack_canonical_piece, CanonicalPosition};
+    use fattorini::board::castling_rights::CastlingRights;
+    use fattorini::board::color::Color;
+    use fattorini::board::piece_type::PieceType;
+    use fattorini::board::square::Square;
 
     fn sample_record(canonical_pieces: Vec<u16>, white_king: Square, black_king: Square, label: f32) -> CacheRecord {
         let canonical = CanonicalPosition {

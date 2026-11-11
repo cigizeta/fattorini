@@ -16,15 +16,15 @@ use std::time::{Duration, Instant};
 
 use pgn_reader::{RawComment, RawTag, Reader, SanPlus, Visitor};
 
-use temper_chess::board::color::Color;
-use temper_chess::board::Board;
-use temper_chess::movegen::legal::legal_moves;
-use temper_chess::search::MATE_SCORE;
-use temper_chess::tablebase::{SyzygyTablebase, TbResult};
-use temper_chess::uci::parse_move;
+use fattorini::board::color::Color;
+use fattorini::board::Board;
+use fattorini::movegen::legal::legal_moves;
+use fattorini::search::MATE_SCORE;
+use fattorini::tablebase::{SyzygyTablebase, TbResult};
+use fattorini::uci::parse_move;
 
-use temper_chess::features::{extract_canonical, CanonicalPosition};
-use temper_chess::labels::{compute_labels_direct, outcome_label, side_to_move_relative, Curve};
+use fattorini::features::{extract_canonical, CanonicalPosition};
+use fattorini::labels::{compute_labels_direct, outcome_label, side_to_move_relative, Curve};
 use pgn_replay::STARTING_POSITION_FEN;
 
 /// How often the training loop backs up `model.vs`/`optimizer.opt` mid-round: "a crash should lose
@@ -486,7 +486,7 @@ pub(crate) fn self_play_game_kept(collected: &CollectedSelfPlayGame, game_index:
             kept.push(ply < collected.moves.len());
         }
         if let Some(played) = collected.moves.get(ply) {
-            // The games were replayed by Temper itself, so every move is legal: a miss is a bug.
+            // The games were replayed by Fattorini itself, so every move is legal: a miss is a bug.
             let mv = pgn_replay::try_resolve_san(&board, &played.san).unwrap_or_else(|| {
                 panic!(
                     "game {game_index} ply {ply}: SAN {:?} names no single legal move at FEN {}",
@@ -500,12 +500,16 @@ pub(crate) fn self_play_game_kept(collected: &CollectedSelfPlayGame, game_index:
     (positions, kept)
 }
 
+/// How labels made by `self_play_game_tablebase` are recorded, in `buckets.tsv` and a frozen set's
+/// manifest. `tablebase-2`: plain `tablebase` took a long loss for a draw (`label_result`).
+pub(crate) const TABLEBASE_LABELS: &str = "tablebase-2";
+
 /// The most pieces the Syzygy sets `bin/syzygy.sh` downloads cover: a position with more is never
 /// probed, which keeps the replay below cheap.
 const TABLEBASE_PIECES: u32 = 6;
 
 /// One game's tablebase labels, one per training position as `self_play_game_labels`: the tables'
-/// result under the fifty-move rule (`root_result`, given every earlier position of the game), from
+/// result under the fifty-move rule (`label_result`, given every earlier position of the game), from
 /// the side to move, 1 a win, 0 a draw, -1 a loss; `None` where a position has more pieces than the
 /// tables cover, or they cannot answer (castling rights, a missing table). Within the tables the true
 /// value is known, so it replaces the label at every lambda, the search's score and the game's result
@@ -521,7 +525,7 @@ pub(crate) fn self_play_game_tablebase(
     for ply in 0..=collected.moves.len() {
         if ply >= collected.book {
             let label = (board.all_occupancy().count() <= TABLEBASE_PIECES)
-                .then(|| tablebase.root_result(&board, &ancestors))
+                .then(|| tablebase.label_result(&board, &ancestors))
                 .flatten()
                 .map(|result| match result {
                     TbResult::Win => 1.0,
@@ -629,7 +633,7 @@ impl RoundProgress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temper_chess::labels::{score, Curve, NETWORK};
+    use fattorini::labels::{score, Curve, NETWORK};
 
     #[test]
     fn round_progress_round_trips_every_field() {
@@ -834,7 +838,7 @@ mod tests {
     /// Skipped where `bin/syzygy.sh` has not run.
     #[test]
     fn positions_the_tables_know_are_labelled_by_them() {
-        let directories = temper_chess::pipeline::data_root::syzygy_directories();
+        let directories = fattorini::pipeline::data_root::syzygy_directories();
         let Ok(tablebase) = SyzygyTablebase::from_directories(&directories) else {
             println!("skipped: no Syzygy WDL and DTZ tables");
             return;
@@ -865,7 +869,7 @@ mod tests {
         assert!((labels[1] - score(-0.10) as f32).abs() < 1e-6, "Black's own -0.10, for Black");
         assert_eq!(labels[2], 0.0, "a draw labels the final position 0");
         // Read through a teacher's scale, the same comment says what its games made of it.
-        let teacher = temper_chess::labels::Scale::with_one_pawn(0.62, 128.0);
+        let teacher = fattorini::labels::Scale::with_one_pawn(0.62, 128.0);
         let calibrated = self_play_game_labels(&game, 0.0, 0, &Curve::Atan(teacher));
         assert!((calibrated[0] - teacher.score(0.20) as f32).abs() < 1e-6);
         assert!(calibrated[0] > labels[0], "a teacher whose pawn is worth more reads its +0.20 higher");

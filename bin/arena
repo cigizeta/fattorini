@@ -3,7 +3,7 @@
 # runs target/release/arena: self-play, the gate, matches and tournaments. Release-only, since
 # performance actually matters at self-play's scale. No libtorch dependency, so no environment
 # variables to set here (unlike bin/smithy), and it runs on every generating machine. `cd`s to
-# the repo root before running: the opening book, the Syzygy directories, data/chess/engines.yaml, and
+# the repo root before running: the opening book, the Syzygy directories, data/engines.yaml, and
 # every game's output paths are all relative to the repo root.
 set -euo pipefail
 
@@ -18,8 +18,8 @@ case "${1:-}" in
     *) control=0 ;;
 esac
 if [ "$control" = 0 ] || [ ! -f "$REPO_ROOT/target/release/arena.exe" ]; then
-    # temper-chess too: every timed match spawns target/release/temper-chess as a UCI engine, directly rather than
-    # through bin/temper-chess, so it must be as fresh as the arena itself.
-    cargo build --release --bin arena --bin temper-chess
+    # fattorini too: every timed match spawns target/release/fattorini as a UCI engine, directly rather than
+    # through bin/fattorini, so it must be as fresh as the arena itself.
+    cargo build --release --bin arena --bin fattorini
 fi
 exec "$REPO_ROOT/target/release/arena.exe" "$@"

@@ -3,7 +3,7 @@
 //! hand-write it), YAML is a generic, well-established format with a mature library already
 //! available.
 //!
-//! The network's sections of a forge config, `configs/chess/<name>.yaml` (`preprocessing_config::net_config_path`),
+//! The network's sections of a forge config, `configs/<name>.yaml` (`preprocessing_config::net_config_path`),
 //! one file holding the forge's own keys beside them (the smithy's `load_config`). One shared
 //! schema for every architecture this project trains (NNUE's three kinds and the transformer
 //! alike), not two
@@ -159,7 +159,7 @@ pub struct ValueHeadConfig {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ArchitectureKind {
     Psq,
-    /// Psq's rows plus each perspective's own threats (`temper_chess::features::psq_threats`), with
+    /// Psq's rows plus each perspective's own threats (`fattorini::features::psq_threats`), with
     /// psq's `embedding_dim` and `value_head`.
     PsqThreats,
     /// Psq's rows and transform, each perspective's clipped output split in two halves multiplied
@@ -172,14 +172,14 @@ pub enum ArchitectureKind {
     PsqThreatsPairwise,
     /// `PsqPairwise`'s products into a head of two hidden layers and the output, each layer one of
     /// several weight sets: the first by our king's square (64), the second by their king's (64), the
-    /// output by the material (78), `temper_chess::stack_buckets`. `value_head.hidden_dim` is the two hidden
+    /// output by the material (78), `fattorini::stack_buckets`. `value_head.hidden_dim` is the two hidden
     /// widths. Trained factorised, each set a shared part plus its own delta (`stack_head.rs`).
     PsqStack,
     /// `PsqThreatsPairwise`'s products into `PsqStack`'s head. Same data as psq_threats
     /// (`FeatureSet::PsqThreats`), whose batches carry the buckets too.
     PsqThreatsStack,
     /// `PsqThreatsPairwise` with its one output replaced by 78 weight sets, one per material value
-    /// (`temper_chess::stack_buckets::material_bucket`), no king buckets and no hidden layer
+    /// (`fattorini::stack_buckets::material_bucket`), no king buckets and no hidden layer
     /// (`value_head.hidden_dim` empty). Trained factorised, as `PsqStack`'s output stage
     /// (`stack_head::StackHead::material`). Same data as psq_threats.
     PsqThreatsPairwiseMaterial,
@@ -188,7 +188,7 @@ pub enum ArchitectureKind {
     /// `2 * embedding_dim` squares, with no hidden layer (`value_head.hidden_dim` empty). Same data
     /// as psq_threats.
     PsqThreatsScrelu,
-    /// `PsqThreatsScrelu` with psq's rows replaced by halfk's (`temper_chess::features::halfk`): Stockfish's
+    /// `PsqThreatsScrelu` with psq's rows replaced by halfk's (`fattorini::features::halfk`): Stockfish's
     /// HalfKAv2_hm, 32 king buckets, the threats mirrored with the king. Its piece rows trained
     /// factorised, each a bucket's own part plus a factor shared by every bucket, summed at export.
     /// Batches of its own (`FeatureSet::HalfKav2Hm`).
@@ -204,11 +204,11 @@ pub enum ArchitectureKind {
     /// layer; trained factorised. Same data as psq_threats.
     PsqThreatsScreluMaterial,
     /// `PsqThreatsScreluMaterial` with 25 weight sets by the game phase instead of the material
-    /// (knight and bishop 1, rook 2, queen 4, capped at 24, `temper_chess::stack_buckets::phase_bucket`):
+    /// (knight and bishop 1, rook 2, queen 4, capped at 24, `fattorini::stack_buckets::phase_bucket`):
     /// fewer buckets, each with more data. The phase is the fourth of the buckets the batches carry.
     PsqThreatsScreluPhase,
     /// `PsqThreatsScreluMaterial` with 8 weight sets by the piece count instead, Stockfish's key:
-    /// every piece, kings included, `(count - 1) / 4` (`temper_chess::stack_buckets::count_bucket`). The
+    /// every piece, kings included, `(count - 1) / 4` (`fattorini::stack_buckets::count_bucket`). The
     /// fewest buckets of the three. The count is the fifth of the buckets the batches carry.
     PsqThreatsScreluCount,
     /// `PsqThreatsScrelu` with two output sets, a middlegame and an endgame one, both read at every
@@ -326,7 +326,7 @@ pub fn load(path: &str) -> NetConfig {
 
 /// `load`'s checks as an error: a missing file, invalid YAML, a missing/mistyped field, an unknown
 /// kind, or `training.attention` disagreeing with `architecture.kind`. The smithy's server reads every
-/// config in `configs/chess/`, and one written for a newer binary must not bring it down.
+/// config in `configs/`, and one written for a newer binary must not bring it down.
 pub fn read(path: &str) -> Result<NetConfig, String> {
     macro_rules! ensure {
         ($condition:expr, $($message:tt)+) => {{
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn load_parses_the_committed_transformer_example() {
-        temper_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let config = load("examples/net_transformer.yaml");
 
         assert_eq!(config.architecture.embedding_dim(), 256);
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn load_parses_the_committed_psq_example() {
-        temper_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let config = load("examples/net_psq.yaml");
 
         assert_eq!(config.architecture.embedding_dim(), 256);
@@ -909,9 +909,9 @@ mod tests {
 
     #[test]
     fn every_committed_forge_config_s_network_loads() {
-        temper_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         for name in ["pesto-psq-threats-screlu", "lc0-psq-threats-screlu"] {
-            let config = load(&format!("configs/chess/{name}.yaml"));
+            let config = load(&format!("configs/{name}.yaml"));
             assert!(matches!(config.architecture.kind, ArchitectureKind::PsqThreatsScrelu), "{name}");
             assert!(config.training.patience_rounds.is_some(), "{name}");
         }

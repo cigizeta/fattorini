@@ -1,5 +1,5 @@
-# SAN-to-Temper-move resolution, shared by `arena` and `smithy`. Its own crate so that `shakmaty`'s SAN
-# parsing never links into the `temper-chess` engine.
+# Resolving SAN to Fattorini moves, shared by `arena` and `smithy`. Its own crate so that `shakmaty`'s SAN
+# parsing never links into the `fattorini` engine.
 [package]
 name = "pgn-replay"
 version.workspace = true
@@ -8,7 +8,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-temper-chess.workspace = true
+fattorini.workspace = true
 shakmaty.workspace = true
 
 [lints]

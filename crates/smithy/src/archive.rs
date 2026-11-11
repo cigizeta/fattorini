@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use temper_chess::pipeline::{players, remote};
+use fattorini::pipeline::{players, remote};
 
 /// Every file under `dir`, recursively, with its size: paths joined with `/`.
 pub(crate) fn files_under(dir: &str) -> Result<Vec<(String, u64)>, String> {

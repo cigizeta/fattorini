@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-use temper_chess::board::color::Color;
+use fattorini::board::color::Color;
 
 use super::random_book::RandomBook;
 use super::cpu_topology;
@@ -442,13 +442,13 @@ pub fn play<T: SequentialTest + Send>(
     };
     // What each side searches with, as a suffixed name already shows it: a gate's players read theirs
     // from the files beside their networks, and nothing else in the output says which one played.
-    let with_margin = |name: &str| -> String { registry.resolve(name).label(name) };
+    let label = |name: &str| -> String { registry.resolve(name).label(name) };
     say(
         run,
         format!(
             "{prefix}: {} (champion) vs {} (challenger), {}",
-            with_margin(run.champion_name),
-            with_margin(run.challenger_name),
+            label(run.champion_name),
+            label(run.challenger_name),
             test.describe()
         ),
     );
@@ -638,7 +638,7 @@ fn run_worker<T: SequentialTest>(
     worker: usize,
     run: &Run,
     registry: &EngineRegistry,
-    tablebase: &Arc<temper_chess::tablebase::SyzygyTablebase>,
+    tablebase: &Arc<fattorini::tablebase::SyzygyTablebase>,
     book: &RandomBook,
     shared: &Mutex<Shared<T>>,
     finish: &Arc<AtomicBool>,
@@ -743,7 +743,7 @@ fn run_worker<T: SequentialTest>(
 pub fn play_games(
     prefix: &str, worker: usize, recording: &Recording, control: Control, pair_index: u32, games_to_play: &[u32],
     starting_fen: &str, challenger: &mut dyn Player, champion: &mut dyn Player,
-    early_stop: Option<&temper_chess::tablebase::SyzygyTablebase>, finish: &Arc<AtomicBool>,
+    early_stop: Option<&fattorini::tablebase::SyzygyTablebase>, finish: &Arc<AtomicBool>,
     after_first: &mut dyn FnMut(&mut FinishedGame),
 ) -> Vec<FinishedGame> {
     let mut finished: Vec<FinishedGame> = Vec::with_capacity(2);
@@ -949,7 +949,7 @@ fn record_pair<T: SequentialTest>(
             state.resolved = Some(outcome);
             let status = state.test.status();
             let status = if status.is_empty() { String::new() } else { format!(", {status}") };
-            say(run, format!("{prefix}: resolved at {} games{status} -- {}", state.test.games(), run.labels.line(outcome)));
+            say(run, format!("{prefix}: resolved at {} games{status} -- {}", progress::grouped(state.test.games()), run.labels.line(outcome)));
             // Every game in progress sees this within a move and abandons. Those games are not part of
             // the verdict, so playing them out would be waste -- and recording them would be worse, see
             // above.

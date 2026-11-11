@@ -1,5 +1,5 @@
 # The licenses `cargo-about` accepts when it writes a binary release's notices (`about.hbs`): every
-# license in `temper-chess.exe`'s own dependency tree, all compatible with AGPLv3. A crate under any other
+# license in `fattorini.exe`'s own dependency tree, all compatible with AGPLv3. A crate under any other
 # license stops the generation, to be judged before it ships.
 accepted = [
     "GPL-3.0-or-later",
@@ -18,5 +18,5 @@ accepted = [
 targets = ["x86_64-pc-windows-msvc"]
 ignore-dev-dependencies = true
 ignore-build-dependencies = true
-# Temper itself (`publish = false`): its own license is `LICENSE`, not a third-party notice.
+# Fattorini itself (`publish = false`): its own license is `LICENSE`, not a third-party notice.
 private = { ignore = true }

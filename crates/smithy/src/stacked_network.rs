@@ -19,7 +19,7 @@ use super::batch::{DenseBatch, DenseBatchPsq};
 use super::feature_set::FeatureSet;
 use super::net_config::Architecture;
 use super::nnue_network::{pairwise_products, Network, FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND};
-use temper_chess::labels::S_PAWNS;
+use fattorini::labels::S_PAWNS;
 use super::stack_head::{hidden_output_input, kings_output_input, kings_stage_input, stacked_stage_forward, taper, their_own_frame, HeadShape, TAPER_PHASE_COLUMN};
 use super::value_head::Activation;
 
@@ -304,8 +304,8 @@ mod tests {
     use super::super::arm_slice;
     use super::super::batch::to_dense_batch;
     use super::super::cache::CacheRecord;
-    use temper_chess::board::Board;
-    use temper_chess::features::{extract_canonical, halfk};
+    use fattorini::board::Board;
+    use fattorini::features::extract_canonical;
 
     const FENS: [&str; 4] = [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -706,27 +706,34 @@ mod tests {
     #[test]
     fn every_halfk_arm_computes_what_its_own_unstacked_network_does_and_gets_its_own_gradient() {
         // halfk_threats_screlu's output alone, and halfk_threats_screlu_hidden's two hidden layers,
-        // trained end to end: the transform's gradient reaches every arm through them. The piece rows
-        // start at zero, so they are drawn here, for a gradient that depends on them. The hidden
-        // biases at 0.5 and their weights within 0.02, so that every unit stays inside its clip
-        // (16 inputs of at most 1 move it by at most 0.32): a random draw can leave every unit of a
-        // layer clipped on every position, and no gradient past it.
+        // trained end to end: the transform's gradient reaches every arm through them. Every weight
+        // is set by a formula, not drawn: drawn, an unlucky draw could leave every unit of a layer
+        // clipped on every position and no gradient past it, a failure by chance (seen 2026-11-06),
+        // and libtorch's generator is shared with the tests running beside this one, so a seed
+        // would not make it repeat. The values: small and of both signs, different per arm and per
+        // variable; the transform's and hidden layers' biases inside their clips (0.25 and 0.5), the
+        // hidden weights within 0.02 (16 inputs of at most 1 move a unit by at most 0.32), so every
+        // unit passes gradient.
         let feature_set = FeatureSet::HalfKav2Hm;
         for (pairwise, hidden) in [(false, &[][..]), (false, &[8, 4][..]), (true, &[8, 4][..])] {
             let networks: Vec<(nn::VarStore, Network)> = (0..3)
-                .map(|_| {
+                .map(|arm| {
                     let vs = nn::VarStore::new(Device::Cpu);
                     let network = Network::with_options(&vs.root(), feature_set, pairwise, !pairwise, HeadShape::Plain, 8, hidden);
                     tch::no_grad(|| {
-                        let variables = vs.variables();
-                        let mut pieces = variables["transform.weight"].narrow(1, 0, halfk::HALFK_ROWS as i64);
-                        let _ = pieces.uniform_(-0.05, 0.05);
-                        for (name, variable) in &variables {
-                            if name.starts_with("value_head.hidden") && name.ends_with(".bias") {
-                                let _ = variable.shallow_clone().fill_(0.5);
-                            } else if name.starts_with("value_head.hidden") {
-                                let _ = variable.shallow_clone().uniform_(-0.02, 0.02);
+                        let mut names: Vec<(String, Tensor)> = vs.variables().into_iter().collect();
+                        names.sort_by(|a, b| a.0.cmp(&b.0));
+                        for (index, (name, variable)) in names.iter().enumerate() {
+                            let hidden_layer = name.starts_with("value_head.hidden");
+                            if name.ends_with(".bias") && (hidden_layer || name.starts_with("transform")) {
+                                let _ = variable.shallow_clone().fill_(if hidden_layer { 0.5 } else { 0.25 });
+                                continue;
                             }
+                            let scale = if hidden_layer { 0.02 } else { 0.05 };
+                            let count = variable.numel() as i64;
+                            let phase = 1.0 + arm as f64 + 0.37 * index as f64;
+                            let values = (Tensor::arange(count, (Kind::Float, Device::Cpu)) * 0.731 + phase).sin() * scale;
+                            variable.shallow_clone().copy_(&values.view(variable.size().as_slice()));
                         }
                     });
                     (vs, network)

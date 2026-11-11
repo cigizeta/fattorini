@@ -1,11 +1,11 @@
-//! A tune, the smithy's job of a player, as its config's `tune:` says (`args_of`): a Temper player's ten search parameters by SPSA
-//! (`temper_chess::pipeline::spsa`), every pair played by the arenas. Pairs of games, colours
+//! A tune, the smithy's job of a player, as its config's `tune:` says (`args_of`): a Fattorini player's ten search parameters by SPSA
+//! (`fattorini::pipeline::spsa`), every pair played by the arenas. Pairs of games, colours
 //! reversed on one random book opening, between theta + c_k Delta and theta - c_k Delta, one `k` per
 //! pair; theta moves as each pair arrives, in the order they arrive, each with its own `k`, as
 //! fishtest's workers do. Every game ends early by the tablebase, win and draw rules: a tune's chores
 //! say so (`Chore::adjudicate`).
 //!
-//! The run's folder (`TemperPlayer::tune_dir`) holds:
+//! The run's folder (`FattoriniPlayer::tune_dir`) holds:
 //!
 //! - `spec.txt`: what the run is (player, pairs, `r_end`, seed, control, the ten specs), written at the
 //!   first start; a later start that disagrees is refused rather than resumed.
@@ -24,13 +24,13 @@
 use std::io::Write;
 use std::path::Path;
 
-use temper_chess::pipeline::players::TemperPlayer;
-use temper_chess::pipeline::remote;
+use fattorini::pipeline::players::FattoriniPlayer;
+use fattorini::pipeline::remote;
 
 use super::{archive, lease, scale, tree};
-use temper_chess::pipeline::protocol::{Entry, Limit, Player};
-use temper_chess::pipeline::spsa::{self, Schedule, Spec, Theta, MAX_CLOCK_FACTOR, MIN_CLOCK_FACTOR};
-use temper_chess::search::SearchParameters;
+use fattorini::pipeline::protocol::{Entry, Limit, Player};
+use fattorini::pipeline::spsa::{self, Schedule, Spec, Theta, MAX_CLOCK_FACTOR, MIN_CLOCK_FACTOR};
+use fattorini::search::SearchParameters;
 
 /// A tune's control when none is given: arena's short time control.
 pub(crate) const STC: &str = "10+0.1";
@@ -43,12 +43,15 @@ const MIN_PAIRS: u32 = 100;
 pub(crate) const K_TAG: &str = "K";
 
 /// What a tune is, in the words its config is read into: the player, the control, and a new tune's
-/// pairs, every tune starting from the default parameters.
+/// pairs and starting values.
 pub(crate) struct TuneArgs {
     pub(crate) player: String,
     pub(crate) control: String,
     /// `--pairs <n>`: a new tune's; none for a resume.
     pub(crate) pairs: Option<u32>,
+    /// A new tune's starting values: its teacher's tune (the smithy's `teacher_tune`), `None` for the
+    /// defaults. A resume keeps its `spec.txt`'s, whatever this says.
+    pub(crate) start: Option<SearchParameters>,
     /// A scaled run's network's `s`: its tune's pairs and control scaled as its run, for debugging
     /// the tune alone; none for every other player.
     pub(crate) scale: Option<u64>,
@@ -57,7 +60,7 @@ pub(crate) struct TuneArgs {
 impl TuneArgs {
     /// `<player> [--pairs <n>] [--depth <d> | --time <base+inc>]`.
     pub(crate) fn parse(args: &[String]) -> Result<TuneArgs, String> {
-        let usage = "a tune takes a Temper player, then --pairs <n> for a new tune, and optionally --depth <d> or --time <base+inc>";
+        let usage = "a tune takes a Fattorini player, then --pairs <n> for a new tune, and optionally --depth <d> or --time <base+inc>";
         let (player, mut rest) = args.split_first().ok_or(usage)?;
         if player.starts_with("--") || player.contains('@') {
             return Err(format!("{usage}; got {player:?}"));
@@ -95,12 +98,12 @@ impl TuneArgs {
                 return Err(format!("--time takes <base+inc> in seconds, got {control:?}"));
             }
         }
-        Ok(TuneArgs { player: player.clone(), control, pairs, scale: None })
+        Ok(TuneArgs { player: player.clone(), control, pairs, start: None, scale: None })
     }
 }
 
 /// What a tune is, for any player it tunes: a config's `tune:` section, a forge config's for its
-/// runs' generations, `configs/chess/pesto.yaml`'s for pesto (`pesto.rs`), as
+/// runs' generations, `configs/pesto.yaml`'s for pesto (`pesto.rs`), as
 ///
 /// ```yaml
 /// tune:
@@ -108,7 +111,7 @@ impl TuneArgs {
 ///   control: 10+0.1          # or: {depth: 9}; 10+0.1 when left out
 /// ```
 ///
-/// Every tune starts from the default parameters, whatever the player (the developer, 2026-10-23).
+/// A tune starts from its teacher's tune, or the defaults without one (`TuneArgs::start`).
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TuneConfig {
@@ -150,8 +153,8 @@ pub(crate) fn args_of(config: &TuneConfig, player: &str) -> Result<TuneArgs, Str
 }
 
 /// The player `name` names, from this machine's files.
-fn resolve(name: &str) -> Result<TemperPlayer, String> {
-    TemperPlayer::resolve(name)
+fn resolve(name: &str) -> Result<FattoriniPlayer, String> {
+    FattoriniPlayer::resolve(name)
 }
 
 /// The remote counterpart of `local`, a local path under `data/`.
@@ -232,9 +235,10 @@ impl Tune {
         if remote_ahead && Path::new(&format!("{moved}/spec.txt")).is_file() {
             tree::copy(&moved, &player.tune_dir, &|relative| relative != lease::FILE, true)?;
         }
-        // A resumed tune's pairs are its spec's, scaled already when its network is a scaled run's.
+        // A resumed tune's pairs and starts are its spec's, its pairs scaled already when its network
+        // is a scaled run's; a new tune's start from its teacher's tune, or the defaults.
         let (pairs, specs) = match args.pairs {
-            Some(pairs) => (scaled_pairs(pairs, args.scale), spsa::SPECS),
+            Some(pairs) => (scaled_pairs(pairs, args.scale), args.start.as_ref().map_or(spsa::SPECS, spsa::specs_from)),
             None => std::fs::read_to_string(&spec_path).ok().and_then(|text| run_in_spec(&text)).ok_or_else(|| {
                 format!("{spec_path} records no tune yet: a new tune needs its length, --pairs <n>")
             })?,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Temper smithy</title>
+<title>Fattorini smithy</title>
 <style>
   :root {
     --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4; --panel: #ffffff;
@@ -77,7 +77,7 @@
   .row h2 { margin: 0; }
   .run { padding: 6px 0; border-bottom: 1px solid var(--line); }
   .run:last-of-type { border-bottom: none; }
-  .tunes { padding-left: 24px; }
+  .tunes { padding-left: 24px; margin-top: 6px; display: grid; gap: 6px; }
   .newrun { margin-top: 12px; }
   section.current { border-color: var(--accent); }
   #viewBody section { border: none; padding: 8px 0 0; margin: 0; }
@@ -97,7 +97,7 @@
 <body>
 <main>
   <div id="home">
-    <h1>Temper smithy</h1>
+    <h1>Fattorini smithy</h1>
     <div class="sub" id="sub">waiting for the smithy</div>
     <section class="live hidden"></section>
     <div id="boxes"></div>
@@ -156,7 +156,7 @@ function duration(seconds) {
 }
 
 // A test's title: its kind and settings, then its two sides by role, the champion first as on the
-// form and the gauge, each a player whose name says the parameters it plays (`@t1`, `@default`).
+// form and the gauge, each a player whose name says the parameters it plays (`@tuned`, `@untuned`).
 function testTitle(view) {
   const settings = view.test === "match" ? ` of ${view.settings} pairs` : view.test === "sprt" ? ` [${view.settings.replace(",", ", ")}]` : "";
   return `${view.test}${settings}: champion ${view.champion} against challenger ${view.challenger}`;
@@ -181,16 +181,18 @@ function table(headers, rows, muted = []) {
 
 // A games-a-second rate as the text bars write it: games a second from one a second, seconds a game
 // below, so a slow test under a clock reads as a number rather than `0.0 games/s`.
-function rate(perSecond) {
-  return perSecond >= 1 ? `${number(perSecond, 1)} games/s` : `${number(1 / perSecond, 1)} s/game`;
+// `unit` the thing its line counts, `game` or `pair`, so a line never counts one and paces the other.
+function rate(perSecond, unit = "game") {
+  return perSecond >= 1 ? `${number(perSecond, 1)} ${unit}s/s` : `${number(1 / perSecond, 1)} s/${unit}`;
 }
 
 // A phase's time as its record gives it, after its count: `, 11m elapsed, 7.3 games/s, ETA about
 // 54m`; each part only once its record gives it.
-function times(view) {
+// `pairs` for a line counting pairs, as a tune's: its pace in pairs, two games each.
+function times(view, pairs = false) {
   const t = view.time;
   return (t.elapsed_seconds === null ? "" : `, elapsed ${duration(t.elapsed_seconds)}`)
-    + (t.games_per_second === null ? "" : `, ${rate(t.games_per_second)}`)
+    + (t.games_per_second === null ? "" : `, ${pairs ? rate(t.games_per_second / 2, "pair") : rate(t.games_per_second)}`)
     + (t.eta_seconds === null ? "" : `, ETA about ${duration(t.eta_seconds)}`);
 }
 
@@ -208,7 +210,7 @@ function work(view, waiting, stop = "") {
           + (pace === null ? "" : `, ${whole(Math.round(pace))} positions/s`)
           + (pace === null || left === 0 ? "" : `, ETA about ${duration(Math.round(left / pace))}`);
       const set = (name, got, wanted, timed) =>
-        `<div>${name}: ${whole(got)} of ${whole(wanted)} positions (${percent(wanted > 0 ? Math.min(1, got / wanted) : 0)})`
+        `<div>${name}: ${whole(got)} of ${whole(wanted)} positions (${percent(wanted > 0 ? got / wanted : 0)})`
         + `${timed ? time(Math.max(0, wanted - got)) : ""}</div>${bar(got, wanted)}`;
       const testing = view.test_got < view.test_wanted;
       return `<h2>Self-play with ${escape(view.teacher)}</h2>`
@@ -240,7 +242,8 @@ function work(view, waiting, stop = "") {
       // an SPRT's gauge too, which end whenever the evidence is enough: a duel's starting at an even
       // score, an SPRT's at zero; a match's would only repeat its bar.
       const length = view.expected_games === null ? ""
-        : `<div>${whole(view.games)} of ${view.test === "duel" ? "about " : ""}${whole(view.expected_games)} games${times(view)}</div>`
+        : `<div>${whole(view.games)} of ${view.test === "duel" ? "about " : ""}${whole(view.expected_games)} games`
+          + ` (${percent(view.expected_games > 0 ? view.games / view.expected_games : 0)})${times(view)}</div>`
           + bar(view.games, view.expected_games);
       const evidence = view.test === "match" ? ""
         : gauge(view.gauge.value, view.gauge.lower, view.gauge.upper, view.gauge.left, view.gauge.right, view.test === "duel" ? 0.5 : 0,
@@ -253,14 +256,21 @@ function work(view, waiting, stop = "") {
       return (stop ? `<div class="row">${title}${stop}</div>` : title) + `<div class="muted">${escape(view.limit)}</div>${mixed}`
         + progress
         // Both sides' points and shares, so neither reads as the score: one alone was ambiguous.
-        + table(["games", "champion", "challenger", "state"],
-          [[whole(view.games), side(view.games - view.challenger_points), side(view.challenger_points), view.status]])
+        // Wins, losses and draws from the champion's side, as the server counts them and the arena's
+        // command line says them (`matches::Wdl`): + the champion's wins, - the challenger's. Blank for
+        // a test with pairs recorded before they were counted.
+        + table(["games", "champion", "challenger", "+/-/=", "state"],
+          [[whole(view.games), side(view.games - view.challenger_points), side(view.challenger_points),
+            view.wdl ? `+${view.wdl.wins} -${view.wdl.losses} =${view.wdl.draws}` : "", view.status]])
         + (view.verdict ? `<div><b>${escape(view.verdict)}</b></div>` : "");
     }
     case "pairs":
       return `<h2>Pairs: ${whole(view.played)} played, ${view.pairings} pairings of ${view.wanted}</h2>`;
     case "tune":
-      return `<h2>Tune of ${escape(view.player)}: ${whole(view.done)} of ${whole(view.pairs)} pairs</h2>${bar(view.done, view.pairs)}`
+      // As a test's: the count and its time above the bar, the time only while it deals.
+      return `<h2>Tune of ${escape(view.player)}</h2>`
+        + `<div>${whole(view.done)} of ${whole(view.pairs)} pairs (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
+        + `${view.time ? times(view, true) : ""}</div>${bar(view.done, view.pairs)}`
         + (view.reference_nps ? `<div class="muted">Bench: ${whole(Math.round(view.reference_nps))} nodes/s per thread on this machine, every arena's clock scaled to it</div>` : "")
         + table(["parameter", "start", "now"], view.theta.map((p) => [p.name, String(p.start), number(p.now, 1)]));
     default:
@@ -370,8 +380,9 @@ function forge(view, live = false) {
 
 // The machines the smithy claims arenas on, then the arenas joined to the job, each in its own box.
 function arenas(list, machines) {
-  const claimed = `<section><h2>Machines</h2>` + table(["machine", "state", "held to send"],
-    machines.map((m) => [m.machine || m.target, m.state, m.outbox ? whole(m.outbox) : ""])) + `</section>`;
+  // An arena holds finished tasks only while it cannot reach this smithy, so the count is said only then.
+  const claimed = `<section><h2>Machines</h2>` + table(["machine", "state"],
+    machines.map((m) => [m.machine || m.target, m.outbox ? `${m.state}; holding ${whole(m.outbox)} finished to send` : m.state])) + `</section>`;
   if (list.length === 0) {
     const none = state.no_arena ? "no arena: this job waits for one, each held by another smithy or not answering (Machines above)" : "no arena";
     return claimed + `<section><h2>Arenas</h2><div class="muted">${none}</div></section>`;
@@ -414,18 +425,16 @@ const SOURCES = ["lc0", "pesto"];
 const TESTS = "tests";
 // The books' screen, and the config a book job is of (the smithy's `BOOKS_SCREEN`).
 const BOOKS = "books";
-// The install's screen: what each claimed machine has installed for lichess-bot, and Install.
-const INSTALL = "install";
 // The New test form's choices, kept across its redraws.
 const testForm = {
   kind: "duel", pairs: "500", elo0: "0", elo1: "5", challenger: "", champion: "pesto",
-  challengerParameters: "default", championParameters: "default", limit: "depth", depth: "9", clock: "10+0.1",
+  challengerParameters: "untuned", championParameters: "untuned", limit: "depth", depth: "9", clock: "10+0.1",
 };
 
 const option = (value, label, selected) => `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
 
 async function send(path, body) {
-  const response = await fetch(path, { method: "POST", headers: { "X-Temper-Token": token }, body });
+  const response = await fetch(path, { method: "POST", headers: { "X-Fattorini-Token": token }, body });
   return response.ok ? "" : (await response.text()).trim() || `refused (${response.status})`;
 }
 
@@ -548,7 +557,7 @@ function boxSections() {
   const forges = (source) => catalog.configs.filter((config) => config.source === source).map((config) => config.name).sort();
   const sections = SECTIONS.map(([source, title]) => [title, [source, ...forges(source)]]);
   const other = catalog.configs.filter((config) => !known.includes(config.source)).map((config) => config.name).sort();
-  return [...sections, ...(other.length > 0 ? [["Other", other]] : []), ["Books", [BOOKS]], ["Tests", [TESTS]], ["Install", [INSTALL]]];
+  return [...sections, ...(other.length > 0 ? [["Other", other]] : []), ["Books", [BOOKS]], ["Tests", [TESTS]]];
 }
 
 // Whether Lc0's Convert holds the source slot, beside the arena job.
@@ -561,17 +570,10 @@ function makingBook() {
   return Boolean(state && state.slot.kind === "book");
 }
 
-// The claimed machines whose arena is installing, by name.
-function installing() {
-  return state ? state.machines.filter((m) => m.machine && m.install === "running").map((m) => m.machine) : [];
-}
-
-// Whether a job of config `name` runs: the arena job, or lc0's conversion or a book job beside it,
-// or an install on some machine.
+// Whether a job of config `name` runs: the arena job, or lc0's conversion or a book job beside it.
 function isRunning(name) {
   if (!state) return false;
-  return (state.running && state.config === name) || (name === "lc0" && converting()) || (name === BOOKS && makingBook())
-    || (name === INSTALL && installing().length > 0);
+  return (state.running && state.config === name) || (name === "lc0" && converting()) || (name === BOOKS && makingBook());
 }
 
 function source(name) {
@@ -587,15 +589,6 @@ function boxLine(name) {
     if (makingBook()) return `<span class="tag">running</span> ${escape(state.slot.holder || "")}`;
     const count = catalog.books.length;
     return count === 0 ? `<span class="muted">no source yet</span>` : count === 1 ? "1 source" : `${count} sources`;
-  }
-  if (name === INSTALL) {
-    const busy = installing();
-    if (busy.length > 0) return `<span class="tag">running</span> installing on ${escape(busy.join(", "))}`;
-    // What a machine has installed is known only from its arena's answer to a poll, so only of an
-    // arena held.
-    if (claimedMachines().length === 0) return `<span class="muted">no machine claimed: what each has installed is unknown</span>`;
-    const count = state.machines.filter((m) => m.installed.length > 0).length;
-    return count === 0 ? `<span class="muted">nothing installed on a claimed machine</span>` : count === 1 ? "1 machine installed" : `${count} machines installed`;
   }
   if (isRunning(name)) {
     const where = state.phase ? `: generation ${state.generation}, ${phaseName(state.phase)}` : "";
@@ -661,8 +654,6 @@ function drawConfig() {
     bindTestForm(element);
   } else if (current === BOOKS) {
     element.innerHTML = booksScreen();
-  } else if (current === INSTALL) {
-    element.innerHTML = installScreen();
   } else if (current === "pesto") {
     element.innerHTML = corpusSection("pesto") + `<section><h2>Tune</h2>${tuneRow(catalog.pesto)}</section>`;
   } else if (current === "lc0") {
@@ -670,7 +661,7 @@ function drawConfig() {
   } else {
     const config = catalog.configs.find((c) => c.name === current);
     if (!config) {
-      element.innerHTML = `<section class="bad">no config ${escape(current)} in configs/chess/</section>`;
+      element.innerHTML = `<section class="bad">no config ${escape(current)} in configs/</section>`;
       return;
     }
     const runs = config.runs.map((run) => runBlock(config, run)).join("") || `<div class="muted">no run yet</div>`;
@@ -707,71 +698,11 @@ function drawConfig() {
     const weights = button.parentElement.querySelector("select");
     button.onclick = () => start(["--book", button.dataset.book, "--weights", weights.value], button);
   });
-  const install = document.getElementById("installButton");
-  if (install) {
-    install.onclick = async () => {
-      const value = (field) => element.querySelector(`[data-install="${field}"]`).value;
-      const machine = value("machine");
-      sayPending(install, `claiming ${machine}'s arena if this smithy does not hold it, then asking its install...`);
-      const error = await send("control/install", [machine, value("player"), value("book")].join("\n"));
-      const said = install.parentElement.querySelector(".said");
-      said.classList.toggle("bad", Boolean(error));
-      said.textContent = error || `asked of ${machine}: it builds temper-chess and installs, its last install above says how it went`;
-    };
-  }
 }
 
 // The machines whose arena this smithy holds, by name.
 function claimedMachines() {
   return state.machines.filter((m) => m.machine).map((m) => m.machine);
-}
-
-// Says `text` beside `button`, in progress rather than an error.
-function sayPending(button, text) {
-  const said = button.parentElement.querySelector(".said");
-  said.classList.remove("bad");
-  said.textContent = text;
-}
-
-// The install's screen: each claimed machine's install, drawn at each poll (`drawInstall`), then
-// Install on this machine: a machine, a player (every network a test may name, PeSTO first), and a
-// book (kept, none, or one written on the books' screen). The arena builds and installs on its own,
-// its workers playing on, and says how it went at the next polls.
-function installScreen() {
-  const machines = `<section id="installMachines"></section>`;
-  if (!token) return machines;
-  // Every listed machine: an arena this smithy does not hold is claimed for the install, refused
-  // while another smithy's job holds it.
-  const listed = state.machines.map((m) => m.target);
-  // PeSTO and each generation's winner alone; the catalog leaves scaled runs out already.
-  const players = catalog.networks.filter((n) => n.winner || n.name === PESTO_NAME).map((n) => option(n.name, n.name, n.name === PESTO_NAME)).join("");
-  const books = option("keep", "keep the installed book", true) + option("none", "no book", false)
-    + catalog.books.flatMap((source) => source.books.map((book) => option(book.path, `${source.name}: n${book.n} ${book.weights}`, false))).join("");
-  return machines + `<section><h2>Install</h2>`
-    + `<div class="row"><label>Machine</label><select data-install="machine">${listed.map((m) => option(m, m, false)).join("")}</select></div>`
-    + `<div class="row"><label>Player</label><select data-install="player">${players}</select></div>`
-    + `<div class="row"><label>Book</label><select data-install="book">${books}</select></div>`
-    + `<div class="row"><label></label><button id="installButton">Install</button><span class="said bad"></span></div></section>`;
-}
-
-// The player a new install offers first.
-const PESTO_NAME = "pesto";
-
-// Each claimed machine's install, on the install's screen: how its last install went, and its
-// `temper-chess.txt`'s network, book, commit and time. Drawn at each poll into its own place.
-function drawInstall() {
-  const section = document.getElementById("installMachines");
-  if (!section) return;
-  const held = state.machines.filter((m) => m.machine);
-  if (held.length === 0) {
-    redraw(section, `<h2>Installed</h2><div class="muted">no machine claimed</div>`);
-    return;
-  }
-  const field = (m, name) => (m.installed.find(([key]) => key === name) || [name, ""])[1];
-  const said = (m) => m.install === "-" ? "" : m.install;
-  redraw(section, `<h2>Installed</h2>` + table(["machine", "network", "book", "commit", "installed", "last install"],
-    held.map((m) => m.installed.length === 0 ? [m.machine, { html: `<span class="muted">nothing yet</span>` }, "", "", "", said(m)]
-      : [m.machine, field(m, "network"), field(m, "book"), field(m, "commit").slice(0, 12), field(m, "installed"), said(m)])));
 }
 
 // The books' screen: the job beside the arena job while a book job runs, then one section a source
@@ -780,7 +711,7 @@ function drawInstall() {
 function booksScreen() {
   const progress = `<section id="bookProgress" class="hidden"></section>`;
   if (catalog.books.length === 0) {
-    return progress + `<section class="muted">no source yet: a source is a folder of data/chess/books/ on the remote holding its PGN, `
+    return progress + `<section class="muted">no source yet: a source is a folder of data/books/ on the remote holding its PGN, `
       + `&lt;source&gt;.pgn or &lt;source&gt;.pgn.zst</section>`;
   }
   const sources = catalog.books.map((source) => {
@@ -789,7 +720,7 @@ function booksScreen() {
     const books = source.books.length === 0 ? `<span class="muted">none yet</span>`
       : source.books.map((book) => escape(`n${book.n} ${book.weights}`)).join(", ");
     const make = source.pgn === null
-      ? `<div class="muted">its PGN is no longer on the remote: its books install, but none can be made</div>`
+      ? `<div class="muted">its PGN is no longer on the remote: its books stay, but none can be made</div>`
       : token
       ? `<div class="row"><select>${option("points", "points", true)}${option("counts", "counts", false)}</select>`
         + `<button data-book="${escape(source.name)}"${state.slot.running ? " disabled" : ""}>Make book</button><span class="said bad"></span></div>`
@@ -872,13 +803,15 @@ function sideRow(label, side) {
       + step("network", ofGeneration.map((n) => {
         // The winner's lambda beside it, which its name leaves out.
         const what = n.winner ? `winner (l${lambdaText(n.lambda)})` : `lambda ${lambdaText(n.lambda)}`;
-        return option(n.name, `${what}${n.tuned ? ", tuned" : ""}`, n.name === network.name);
+        // Whether it has a tune is the parameters' select's alone, which offers "its tune" only then:
+        // said here too, it read as what this side plays.
+        return option(n.name, what, n.name === network.name);
       }).join(""));
   }
   const tunable = network.tuned;
-  if (!tunable) testForm[side + "Parameters"] = "default";
-  const parameters = option("default", "default parameters", testForm[side + "Parameters"] === "default")
-    + (tunable ? option("t1", "its tune", testForm[side + "Parameters"] === "t1") : "");
+  if (!tunable) testForm[side + "Parameters"] = "untuned";
+  const parameters = option("untuned", "untuned", testForm[side + "Parameters"] === "untuned")
+    + (tunable ? option("tuned", "its tune", testForm[side + "Parameters"] === "tuned") : "");
   return `<div class="row"><label>${label}</label>${steps}<select data-field="${side}Parameters">${parameters}</select></div>`;
 }
 
@@ -887,7 +820,7 @@ function testWords() {
   const f = testForm;
   const settings = f.kind === "match" ? f.pairs.trim() : f.kind === "sprt" ? `${f.elo0.trim()},${f.elo1.trim()}` : "-";
   const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${f.clock.trim()}`;
-  // Each side a player, its parameters after its `@`: `default` or `t1`.
+  // Each side a player, its parameters after its `@`: `tuned` or `untuned`.
   return ["--test", f.kind, settings, `${f.challenger}@${f.challengerParameters}`, `${f.champion}@${f.championParameters}`, limit];
 }
 
@@ -909,7 +842,9 @@ function testsScreen() {
     + `<select data-field="limit">${option("depth", "fixed depth", f.limit === "depth")}${option("clock", "clock", f.limit === "clock")}</select>`
     + (f.limit === "depth" ? `<input data-field="depth" size="4" value="${escape(f.depth)}">` : `<input data-field="clock" size="8" value="${escape(f.clock)}"> <span class="muted">base+increment, in seconds</span>`)
     + `</div>`;
-  const mixed = f.challengerParameters !== f.championParameters ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
+  // As `Spec::mixed`: two different players, one tuned; one player against itself measures its tune.
+  const mixed = f.challengerParameters !== f.championParameters && f.challenger !== f.champion
+    ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
   const form = token
     ? `<section><h2>New test</h2><form onsubmit="return false">`
       + `<div class="row"><label>Kind</label><select data-field="kind">${kinds}</select></div>${settings}`
@@ -1155,7 +1090,7 @@ function draw() {
   document.getElementById("home").classList.toggle("hidden", current !== null);
   document.getElementById("page").classList.toggle("hidden", current === null);
   if (!state) return;
-  const smithy = "Temper smithy";
+  const smithy = "Fattorini smithy";
   document.title = current ? `${current} - ${smithy}` : smithy;
   document.querySelector("h1").textContent = smithy;
   const stopping = (state.slot.running ? `; beside it, ${state.slot.holder || "a job"}` : "") + (state.stopping ? "; the smithy is stopping" : "");
@@ -1200,7 +1135,6 @@ function draw() {
   drawConfig();
   drawConvertProgress();
   drawBookProgress();
-  drawInstall();
   syncView();
 }
 
@@ -1290,7 +1224,7 @@ function liveLine(b) {
   const head = `${b.label ? b.label + ": " : ""}${b.counts}`;
   if (b.length === null) return `<div>${escape(b.rate ? `${head}, ${b.rate}` : head)}</div>`;
   const eta = clockSeconds(b.eta);
-  const text = `${head} (${b.percent}%), ${b.rate}${eta === null ? "" : `, ETA about ${duration(eta)}`}`;
+  const text = `${head} (${number(b.percent, 1)}%), ${b.rate}${eta === null ? "" : `, ETA about ${duration(eta)}`}`;
   return `<div>${escape(text)}</div>${bar(b.position, b.length)}`;
 }
 

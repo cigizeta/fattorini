@@ -1,18 +1,21 @@
 //! A best of n, played in colour-reversed pairs: the engine past n/2 wins, and n/2 each after n
 //! games is a drawn match, with no tie-break. n is always even, since results arrive in pairs. A lead
-//! the other side can no longer catch ends the match early, at the end of the pair that made it.
+//! the other side can no longer catch ends the match early, at the end of the pair that made it,
+//! unless the match is full: then all n games are played, so its score is always over n (the
+//! release's strength table compares scores over the same number of games).
 
 use super::runner::{Outcome, SequentialTest, Tally};
 
 pub struct BestOf {
     n: u32,
+    full: bool,
     tally: Tally,
 }
 
 impl BestOf {
-    pub fn new(n: u32) -> BestOf {
+    pub fn new(n: u32, full: bool) -> BestOf {
         assert!(n >= 2 && n.is_multiple_of(2), "a best of n needs an even n of at least 2, got {n}");
-        BestOf { n, tally: Tally::new() }
+        BestOf { n, full, tally: Tally::new() }
     }
 }
 
@@ -22,6 +25,9 @@ impl SequentialTest for BestOf {
     }
 
     fn outcome(&self) -> Option<Outcome> {
+        if self.full && self.tally.games() < self.n as u64 {
+            return None;
+        }
         let half = self.n as f64 / 2.0;
         let challenger = self.tally.score();
         let champion = self.tally.games() as f64 - challenger;
@@ -57,6 +63,12 @@ impl SequentialTest for BestOf {
 
     fn describe(&self) -> String {
         let half = self.n / 2;
+        if self.full {
+            return format!(
+                "best of {} games, all played, a win 1 point and a draw half: the side with more than {half} points wins the match, {half} - {half} draws it",
+                self.n
+            );
+        }
         format!(
             "best of {} games, a win 1 point and a draw half: the first side with more than {half} points wins the match, {half} - {half} after all {} games draws it",
             self.n, self.n
@@ -74,6 +86,9 @@ impl SequentialTest for BestOf {
     /// n games is the worst case only.
     fn pairs_left_estimate(&self) -> Option<u64> {
         let left = self.n as u64 - self.tally.games().min(self.n as u64);
+        if self.full {
+            return Some(left.div_ceil(2));
+        }
         let challenger = self.tally.score();
         let leader = challenger.max(self.tally.games() as f64 - challenger);
         let half = self.n as f64 / 2.0;
@@ -91,7 +106,7 @@ mod tests {
     use super::*;
 
     fn best_of(n: u32, scores: &[f64]) -> BestOf {
-        let mut match_ = BestOf::new(n);
+        let mut match_ = BestOf::new(n, false);
         for &score in scores {
             match_.add_game(score);
         }
@@ -112,13 +127,36 @@ mod tests {
 
     #[test]
     fn a_best_of_n_takes_at_most_n_over_2_pairs() {
-        assert_eq!(BestOf::new(400).most_pairs(), Some(200));
+        assert_eq!(BestOf::new(400, false).most_pairs(), Some(200));
+    }
+
+    /// The challenger out of reach after three games of four, yet a full match plays the fourth.
+    #[test]
+    fn a_full_match_plays_all_n_games() {
+        let mut match_ = BestOf::new(4, true);
+        for score in [1.0, 1.0, 1.0] {
+            match_.add_game(score);
+        }
+        assert_eq!(match_.outcome(), None);
+        assert_eq!(match_.pairs_left_estimate(), Some(1));
+        match_.add_game(0.0);
+        assert_eq!(match_.outcome(), Some(Outcome::ChallengerWins));
+        assert_eq!(match_.pairs_left_estimate(), Some(0));
+    }
+
+    #[test]
+    fn a_level_full_match_is_drawn() {
+        let mut match_ = BestOf::new(4, true);
+        for score in [1.0, 0.0, 0.5, 0.5] {
+            match_.add_game(score);
+        }
+        assert_eq!(match_.outcome(), Some(Outcome::Drawn));
     }
 
     /// The leader needs more than n/2 at half a point a game.
     #[test]
     fn the_pairs_left_assume_every_remaining_game_drawn() {
-        assert_eq!(BestOf::new(400).pairs_left_estimate(), Some(200), "level: all of them");
+        assert_eq!(BestOf::new(400, false).pairs_left_estimate(), Some(200), "level: all of them");
         // 36.0 - 32.0 after 68: 36 + k/2 > 200 first at k = 329 games, 165 pairs, within the 166 left.
         let mut scores = vec![1.0; 20];
         scores.extend(vec![0.0; 16]);
@@ -131,6 +169,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "even n")]
     fn an_odd_n_is_refused() {
-        BestOf::new(7);
+        BestOf::new(7, false);
     }
 }

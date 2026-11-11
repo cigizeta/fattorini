@@ -6,8 +6,8 @@
 //! (`San`/`SanPlus`), not hand-written: disambiguation, captures, castling, promotion, and
 //! check/mate suffixes are exactly the kind of chess-notation logic worth leaning on an
 //! existing library for, per the developer's own explicit call, rather than rederiving it here.
-//! `shakmaty` only ever replays UCI move strings Temper's own `format_move`/`parse_move` already
-//! produced and validated as legal against Temper's own `legal_moves` -- it is never asked to
+//! `shakmaty` only ever replays UCI move strings Fattorini's own `format_move`/`parse_move` already
+//! produced and validated as legal against Fattorini's own `legal_moves` -- it is never asked to
 //! judge legality itself, the same "lean on a crate for notation only, never for chess
 //! semantics" line the `pgn-replay` crate's own `try_resolve_san` already draws on the reading side.
 //!
@@ -235,10 +235,10 @@ mod tests {
     #[test]
     fn format_game_writes_a_termination_tag_right_after_result() {
         let headers = GameHeaders {
-            event: "temper-chess self-play".to_string(),
+            event: "fattorini self-play".to_string(),
             round: 0,
-            white: "temper-chess".to_string(),
-            black: "temper-chess".to_string(),
+            white: "fattorini".to_string(),
+            black: "fattorini".to_string(),
             starting_fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
         };
         let moves = [MoveAnnotation {

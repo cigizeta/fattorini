@@ -1,5 +1,5 @@
 //! `arena start|stop|status`: an arena, doing the smithy's chores (`smithy start`), over HTTP
-//! (`temper_chess::pipeline::protocol`). Started by hand, it idles on `ARENA_PORT` until a smithy claims it,
+//! (`fattorini::pipeline::protocol`). Started by hand, it idles on `ARENA_PORT` until a smithy claims it,
 //! then says hello to that smithy and plays the chores it is given, until stopped. It serves one
 //! smithy at a time: another's claim is turned away while the claim is polled, and a claim no smithy
 //! has polled for `RELEASE_AFTER` is released, the arena idle again. A chore is tasks alike but for
@@ -30,15 +30,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use temper_chess::nnue::Network;
+use fattorini::nnue::Network;
 use lan_http::{self as http, Listener, Reply, Request};
-use temper_chess::pipeline::protocol::{
-    self, parse_entries, task_body, Alive, Chore, Claim, Entry, Hello, HelloReply, InstallRequest, Limit, Player, TaskKind, ALIVE_PATH,
-    ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, INSTALL_PATH, LOOPBACK, PESTO, RELEASE_AFTER,
+use fattorini::pipeline::protocol::{
+    self, parse_entries, task_body, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, TaskKind, ALIVE_PATH,
+    ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, LOOPBACK, PESTO, RELEASE_AFTER,
     RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
 };
-use temper_chess::tablebase::SyzygyTablebase;
-use temper_chess::tt::TranspositionTable;
+use fattorini::tablebase::SyzygyTablebase;
+use fattorini::tt::TranspositionTable;
 
 use super::config::ControlSpec;
 use super::player::Control;
@@ -46,9 +46,9 @@ use super::in_process::InProcessPlayer;
 use super::random_book::RandomBook;
 use super::runner::{self, Recording};
 use super::self_play::{play_game_pgn, TT_SIZE_MB};
-use temper_chess::pipeline::spsa;
+use fattorini::pipeline::spsa;
 
-use super::{ctrlc_handler, data_root as arena_data_root, install, machine, pairing};
+use super::{ctrlc_handler, data_root as arena_data_root, machine, pairing};
 
 const PREFIX: &str = "arena";
 
@@ -122,7 +122,6 @@ fn start() {
         waiting_for: Mutex::new(HashSet::new()),
         speeds: Mutex::new(HashMap::new()),
         dealing: Mutex::new(Dealing::default()),
-        install: Mutex::new(None),
         stop,
     });
     let control_done = Arc::new(AtomicBool::new(false));
@@ -157,8 +156,7 @@ fn answer_control(arena: &Arena, request: &Request) -> Reply {
     }
 }
 
-/// The claim's answers, on `ARENA_PORT`: a smithy claiming the arena, polling it, releasing it, and
-/// asking it to install.
+/// The claim's answers, on `ARENA_PORT`: a smithy claiming the arena, polling it and releasing it.
 fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
     let body = String::from_utf8_lossy(&request.body).trim().to_string();
     match (request.method.as_str(), request.path.as_str()) {
@@ -180,12 +178,6 @@ fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
                 }
                 state.outbox.len()
             };
-            let install = match &*arena.install.lock().expect("the lock should not be poisoned") {
-                None => "-".to_string(),
-                Some(None) => "running".to_string(),
-                Some(Some(line)) => line.clone(),
-            };
-            let installed = install::installed();
             let dealing = arena.dealing();
             let alive = Alive {
                 session: dealing.joined.as_ref().map_or("-".to_string(), |(session, _, _)| session.clone()),
@@ -193,43 +185,8 @@ fn answer_claim(arena: &Arc<Arena>, request: &Request) -> Reply {
                 in_flight: dealing.in_flight,
                 sent: dealing.sent,
                 outbox,
-                install,
-                installed,
             };
             Reply::status("OK", alive.text().as_bytes())
-        }
-        ("POST", INSTALL_PATH) => {
-            let Ok(asked) = InstallRequest::parse(&body) else {
-                return Reply::error(400, "a malformed install request");
-            };
-            if arena.claimed().is_none_or(|claim| claim.boot != asked.boot) {
-                return Reply::status("UNCLAIMED", b"");
-            }
-            let Some((_, _, store)) = arena.dealing().joined.clone() else {
-                return Reply::status("UNJOINED", b"");
-            };
-            let job = match install::Install::of(&asked) {
-                Ok(job) => job,
-                Err(message) => return Reply::error(400, &message),
-            };
-            {
-                let mut state = arena.install.lock().expect("the lock should not be poisoned");
-                if matches!(*state, Some(None)) {
-                    return Reply::status("BUSY", b"");
-                }
-                *state = Some(None);
-            }
-            let arena = Arc::clone(arena);
-            std::thread::spawn(move || {
-                log::info!("install of {} asked by the smithy", job.name());
-                let line = match install::run(&job, &store, &arena.stop) {
-                    Ok(line) => format!("done: {line}"),
-                    Err(message) => format!("failed: {message}"),
-                };
-                log::info!("install: {line}");
-                *arena.install.lock().expect("the lock should not be poisoned") = Some(Some(line));
-            });
-            Reply::status("OK", b"")
         }
         ("POST", RELEASE_PATH) => {
             let released = {
@@ -369,9 +326,6 @@ struct Arena {
     /// This machine's loaded speed with each network a tune has named, by name (`loaded_bench`).
     speeds: Mutex<HashMap<String, f64>>,
     dealing: Mutex<Dealing>,
-    /// The install, one at a time: `None` before any, `Some(None)` while one runs, `Some(Some(line))`
-    /// once it has ended, saying how.
-    install: Mutex<Option<Option<String>>>,
     stop: Arc<AtomicBool>,
 }
 
@@ -742,7 +696,7 @@ impl Arena {
         let mut challenger_player = InProcessPlayer::new(challenger_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, challenger.parameters);
         let mut teacher_player = InProcessPlayer::new(teacher_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, teacher.parameters);
         let recording =
-            Recording { event_name: "temper-chess arena", round: 1, champion_name: &teacher.network, challenger_name: &challenger.network, pgn_path: "" };
+            Recording { event_name: "fattorini arena", round: 1, champion_name: &teacher.network, challenger_name: &challenger.network, pgn_path: "" };
         // A tune's games end early by the tablebase, win and draw rules; a round robin's and a gate's never.
         let early_stop = task.adjudicate.then_some(&*self.tablebase);
         let finished = runner::play_games(
@@ -924,12 +878,12 @@ pub(crate) fn wait_for(path: &str, timeout: Duration, poll: Duration, stop: &Ato
     }
 }
 
-/// The nodes per second of one search thread on this machine with `network`, loaded: `temper-chess bench` on
+/// The nodes per second of one search thread on this machine with `network`, loaded: `fattorini bench` on
 /// `threads` threads at once, as the smithy benches its own (its `loaded_bench`), the mean of
 /// the threads.
 fn loaded_bench(network: Option<&Network>, threads: usize) -> f64 {
     let runs: Vec<(u64, f64)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || temper_chess::bench::bench(network))).collect();
+        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || fattorini::bench::bench(network))).collect();
         handles.into_iter().map(|handle| handle.join().expect("a bench thread panicked")).collect()
     });
     runs.iter().map(|&(nodes, seconds)| nodes as f64 / seconds.max(1e-9)).sum::<f64>() / runs.len().max(1) as f64
@@ -1067,10 +1021,10 @@ mod tests {
 
     #[test]
     fn a_network_s_name_is_its_path_in_the_store() {
-        let name = "data/chess/networks/pesto-psq/run-1/gen-1/lambda-0.95/candidate.nnue";
-        assert_eq!(store_path("G:/My Drive/temper-games", name).unwrap(), format!("G:/My Drive/temper-games/{name}"));
+        let name = "data/networks/pesto-psq/run-1/gen-1/lambda-0.95/candidate.nnue";
+        assert_eq!(store_path("G:/My Drive/fattorini", name).unwrap(), format!("G:/My Drive/fattorini/{name}"));
         for wrong in ["0123abcd", "/etc/x", "data/../x.nnue"] {
-            assert!(store_path("G:/My Drive/temper-games", wrong).is_err(), "{wrong}");
+            assert!(store_path("G:/My Drive/fattorini", wrong).is_err(), "{wrong}");
         }
     }
 
@@ -1086,7 +1040,7 @@ mod tests {
         };
         assert!(check(&chore(Limit::Depth(9), None)).is_ok());
         assert!(check(&chore(Limit::Clock("10+0.1".to_string()), None)).is_err());
-        assert!(check(&chore(Limit::Depth(9), Some(temper_chess::search::SearchParameters::DEFAULT))).is_ok());
+        assert!(check(&chore(Limit::Depth(9), Some(fattorini::search::SearchParameters::DEFAULT))).is_ok());
     }
 
     fn matchup(first: &str, second: &str, count: u32) -> Entry {

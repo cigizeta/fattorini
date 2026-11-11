@@ -1,4 +1,4 @@
-//! `data/chess/tournaments/<id>/config.yaml`: a tournament specification. See the tournament design's
+//! `data/tournaments/<id>/config.yaml`: a tournament specification. See the tournament design's
 //! "Tournament: single-elimination knockout" and "Fitness selection" sections. And the `selection:`
 //! section of a network's `net.yaml`, the one thing `arena select` reads from it: the depth,
 //! the round robin's pairs, and the gate's rule. Plus the rule and control values themselves, which
@@ -53,8 +53,9 @@ impl SprtSpec {
 /// One of the three decision rules (`runner::SequentialTest`), with its one value where it has one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Rule {
-    /// First past n/2 wins, n/2 each is drawn. n is even: results arrive in pairs.
-    BestOf(u32),
+    /// First past n/2 wins, n/2 each is drawn. n is even: results arrive in pairs. `full` plays all
+    /// n games even once the leader cannot be caught, so the score is always over n.
+    BestOf { n: u32, full: bool },
     /// Whether the challenger (the second player) is at least `elo_d` stronger (`sprt.rs`).
     Sprt(SprtSpec),
     /// Which of the two is stronger (`duel.rs`).
@@ -62,12 +63,12 @@ pub enum Rule {
 }
 
 impl Rule {
-    /// A best of `n`, or why `n` is not one.
-    pub fn best_of(n: u32) -> Result<Rule, String> {
+    /// A best of `n`, all of it played when `full`, or why `n` is not one.
+    pub fn best_of(n: u32, full: bool) -> Result<Rule, String> {
         if n < 2 || !n.is_multiple_of(2) {
             return Err(format!("a best of n needs an even n of at least 2, since results arrive in pairs, got {n}"));
         }
-        Ok(Rule::BestOf(n))
+        Ok(Rule::BestOf { n, full })
     }
 
     /// An SPRT at `elo_d`, or why `elo_d` is not a margin.
@@ -81,7 +82,8 @@ impl Rule {
     /// same test.
     pub fn spec_text(&self) -> String {
         match self {
-            Rule::BestOf(n) => format!("best-of {n}"),
+            Rule::BestOf { n, full: false } => format!("best-of {n}"),
+            Rule::BestOf { n, full: true } => format!("best-of {n} full"),
             Rule::Sprt(spec) => format!("sprt elo_d {}", spec.elo_d),
             Rule::Duel => "duel".to_string(),
         }
@@ -145,18 +147,18 @@ pub struct TournamentConfig {
     pub match_spec: MatchSpec,
 }
 
-/// Where a tournament id's own directory lives -- `data/chess/tournaments/{id}/`, flat, holding
+/// Where a tournament id's own directory lives -- `data/tournaments/{id}/`, flat, holding
 /// `config.yaml` plus that tournament's own generated `games.pgn`/`results.db` -- the same
 /// "bare name in, real path out" convention `preprocessing_config::net_config_path` already
-/// established for `configs/chess/{name}.yaml`.
+/// established for `configs/{name}.yaml`.
 pub fn tournament_dir(id: &str) -> String {
-    format!("data/chess/tournaments/{id}")
+    format!("data/tournaments/{id}")
 }
 
-/// `data/chess/tournaments/{id}/config.yaml` -- the hand-written spec inside `tournament_dir(id)`,
+/// `data/tournaments/{id}/config.yaml` -- the hand-written spec inside `tournament_dir(id)`,
 /// colocated with that same directory's own generated `games.pgn`/`results.db` rather than
-/// living separately under `configs/chess/` -- see the tournament design's "PGN writer" section (the
-/// `data/chess/tournaments/<id>/` layout decision).
+/// living separately under `configs/` -- see the tournament design's "PGN writer" section (the
+/// `data/tournaments/<id>/` layout decision).
 pub fn config_path(id: &str) -> String {
     format!("{}/config.yaml", tournament_dir(id))
 }
@@ -217,14 +219,14 @@ mod tests {
     }
 
     fn write_fixture(name: &str, contents: &str) -> String {
-        let path = std::env::temp_dir().join(format!("temper-chess-evolve-config-test-{}-{name}.yaml", std::process::id()));
+        let path = std::env::temp_dir().join(format!("fattorini-evolve-config-test-{}-{name}.yaml", std::process::id()));
         std::fs::write(&path, contents).expect("failed to write the fixture file");
         path.to_str().unwrap().to_string()
     }
 
     #[test]
     fn the_committed_ladder_example_loads() {
-        temper_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let config = TournamentConfig::load("examples/tournament.yaml");
         assert_eq!(config.match_spec.best_of, 2);
     }
@@ -268,10 +270,11 @@ mod tests {
 
     #[test]
     fn a_rule_names_itself_by_its_value() {
-        assert_eq!(Rule::best_of(12).unwrap().spec_text(), "best-of 12");
+        assert_eq!(Rule::best_of(12, false).unwrap().spec_text(), "best-of 12");
+        assert_eq!(Rule::best_of(400, true).unwrap().spec_text(), "best-of 400 full");
         assert_eq!(Rule::sprt(35.0).unwrap().spec_text(), "sprt elo_d 35");
         assert_eq!(Rule::Duel.spec_text(), "duel");
-        assert!(Rule::best_of(7).is_err() && Rule::best_of(0).is_err());
+        assert!(Rule::best_of(7, false).is_err() && Rule::best_of(0, true).is_err());
     }
 
     #[test]

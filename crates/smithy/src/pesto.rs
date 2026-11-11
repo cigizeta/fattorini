@@ -1,5 +1,5 @@
-//! PeSTO's source, `configs/chess/pesto.yaml`: the PeSTO evaluation, the player `pesto`, whose self-play
-//! the smithy's Play job has the arenas play once into `data/chess/pesto/test` and `data/chess/pesto/train` on the
+//! PeSTO's source, `configs/pesto.yaml`: the PeSTO evaluation, the player `pesto`, whose self-play
+//! the smithy's Play job has the arenas play once into `data/pesto/test` and `data/pesto/train` on the
 //! remote, in day directories as Lc0's corpus is, for every `pesto-` config's generation 1; and its
 //! tune, as a forge config's `tune:`.
 //!
@@ -10,14 +10,14 @@
 
 use serde::Deserialize;
 
-use temper_chess::pipeline::{preprocessing_config, remote, segments};
+use fattorini::pipeline::{preprocessing_config, remote, segments};
 
 use super::tune::TuneConfig;
 
-pub(crate) const CONFIG_PATH: &str = "configs/chess/pesto.yaml";
+pub(crate) const CONFIG_PATH: &str = "configs/pesto.yaml";
 
 /// Written to the remote when the Play job has played the whole corpus.
-const COMPLETE_PATH: &str = "data/chess/pesto/complete.txt";
+const COMPLETE_PATH: &str = "data/pesto/complete.txt";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -60,29 +60,57 @@ pub(crate) fn train_dir() -> String {
     preprocessing_config::source_train_dir(preprocessing_config::PESTO_ROOT)
 }
 
-/// The positions of the finished segments under the remote counterpart of `dir`.
+/// The searched positions of the finished segments under the remote counterpart of `dir`: those
+/// with a search evaluation, as training and the freezer count them.
 pub(crate) fn remote_positions(dir: &str) -> Result<u64, String> {
     let names = segments::list_remote(dir).map_err(|error| error.to_string())?;
-    let mut positions = 0;
+    let mut metas = Vec::with_capacity(names.len());
     for name in names {
-        positions += segments::read_remote_meta(dir, &name)?.positions;
+        metas.push(segments::read_remote_meta(dir, &name)?);
     }
-    Ok(positions)
+    Ok(searched_of(&metas))
+}
+
+/// The searched positions of segments with these `.meta`s: every position read but each game's
+/// final one.
+fn searched_of(metas: &[segments::SegmentMeta]) -> u64 {
+    metas.iter().map(|meta| meta.positions - meta.games).sum()
 }
 
 /// The page's line for the corpus: complete, with what it holds, or what it is to hold.
 pub(crate) fn summary() -> String {
+    let positions = |test: u64, training: u64| {
+        format!("{} test and {} training positions", progress::grouped(test), progress::grouped(training))
+    };
     let wanted = match load() {
-        Ok(config) => format!("{} test and {} training positions", config.test_positions, config.training_positions),
+        Ok(config) => positions(config.test_positions, config.training_positions),
         Err(message) => return message,
     };
     if is_complete() {
         return match remote::cat(COMPLETE_PATH) {
-            Ok(text) => format!("complete: {}", text.trim().replace('\t', " ").replace('\n', ", ")),
+            Ok(text) => match complete_counts(&text) {
+                Some((test, training)) => format!("complete: {}", positions(test, training)),
+                None => format!("complete: {}", text.trim().replace('\t', " ").replace('\n', ", ")),
+            },
             Err(_) => format!("complete: {wanted}"),
         };
     }
     format!("not complete: Play plays {wanted}")
+}
+
+/// The test and training positions `write_complete` wrote, or `None` for a file it did not write.
+fn complete_counts(text: &str) -> Option<(u64, u64)> {
+    let mut counts = (None, None);
+    for line in text.lines() {
+        let (name, value) = line.split_once('\t')?;
+        let value = value.trim().parse::<u64>().ok()?;
+        match name {
+            "test_positions" => counts.0 = Some(value),
+            "training_positions" => counts.1 = Some(value),
+            _ => {}
+        }
+    }
+    Some((counts.0?, counts.1?))
 }
 
 #[cfg(test)]
@@ -91,14 +119,28 @@ mod tests {
 
     #[test]
     fn pesto_s_config_sizes_its_corpus_and_holds_its_tune() {
-        temper_chess::pipeline::repository_root::enter_for_tests();
+        fattorini::pipeline::repository_root::enter_for_tests();
         let config = load().unwrap();
         assert!(config.training_positions > 0 && config.test_positions > 0);
-        assert!(crate::tune::args_of(&config.tune, temper_chess::pipeline::protocol::PESTO).is_ok());
+        assert!(crate::tune::args_of(&config.tune, fattorini::pipeline::protocol::PESTO).is_ok());
     }
 
     #[test]
     fn its_games_go_under_data_pesto() {
-        assert_eq!((test_dir(), train_dir()), ("data/chess/pesto/test".to_string(), "data/chess/pesto/train".to_string()));
+        assert_eq!((test_dir(), train_dir()), ("data/pesto/test".to_string(), "data/pesto/train".to_string()));
+    }
+
+    #[test]
+    fn its_remote_counts_leave_out_each_game_s_final_position() {
+        let metas = [segments::SegmentMeta { positions: 300, games: 2 }, segments::SegmentMeta { positions: 50, games: 1 }];
+        assert_eq!(searched_of(&metas), 347);
+        assert_eq!(searched_of(&[]), 0);
+    }
+
+    #[test]
+    fn its_complete_file_reads_back_its_counts() {
+        assert_eq!(complete_counts("test_positions\t4194449\ntraining_positions\t1073741900\n"), Some((4194449, 1073741900)));
+        assert_eq!(complete_counts("test_positions\t5\n"), None, "no training count");
+        assert_eq!(complete_counts("garbage"), None);
     }
 }

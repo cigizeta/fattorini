@@ -1,10 +1,10 @@
-# Developing Temper
+# Developing Fattorini
 
-For what Temper is and how to run it, see [README.md](README.md).
+For what Fattorini is and how to run it, see [README.md](README.md).
 
-Temper is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
+Fattorini is developed on Windows only, from **Git Bash** (it comes with Git for Windows), never
 PowerShell or cmd. Development also requires **Google Drive for desktop**, with My Drive on `G:`:
-what the machines share, such as Lc0's converted games, lives in `G:/My Drive/temper-games`, and the scripts
+what the machines share, such as Lc0's converted games, lives in `G:/My Drive/fattorini`, and the scripts
 and binaries read and write it there.
 
 ## The workspace
@@ -12,11 +12,11 @@ and binaries read and write it there.
 The repository holds the engine, an arena that plays engines against each other, and a trainer for
 their networks. Three binaries, each with its own crate:
 
-- `temper-chess`, the engine.
+- `fattorini`, the engine.
 - `arena`, which plays games: matches, and, as one of the smithy's arenas, every game of a forge or
   a tune.
 - `smithy`, which makes the sources' corpora and trains networks (the smithy, dealing its jobs to
-  the arenas), inspects checkpoints and installs players. Training needs an NVIDIA GPU.
+  the arenas), and inspects checkpoints. Training needs an NVIDIA GPU.
 
 And one library, `pgn-replay`, which reads PGN moves for `arena` and `smithy`.
 
@@ -24,16 +24,16 @@ Run every binary through its script in `bin/`, which builds it when needed and r
 repository root:
 
 ```bash
-./bin/temper-chess
+./bin/fattorini
 ```
 
 ## One generation
 
-`configs/chess/` holds two kinds of config. A **source** makes one corpus, once, on Drive, for every forge
+`configs/` holds two kinds of config. A **source** makes one corpus, once, on Drive, for every forge
 named after it:
 
-- `lc0.yaml`: Lc0's training tars, converted by its Convert job (`data/chess/lc0/`), up to its cap.
-- `pesto.yaml`: the PeSTO evaluation's self-play at depth 9, played by its Play job (`data/chess/pesto/`), to
+- `lc0.yaml`: Lc0's training tars, converted by its Convert job (`data/lc0/`), up to its cap.
+- `pesto.yaml`: the PeSTO evaluation's self-play at depth 9, played by its Play job (`data/pesto/`), to
   its `training_positions`; it also holds `pesto`'s `tune:`.
 
 Each also sizes its frozen test set, `test_positions`. A **forge**, `<source>-<architecture>`
@@ -45,8 +45,8 @@ from the smithy's page, and every game is played by the arenas, `arena start`, o
 over HTTP on the local network.
 
 A config can be forged more than once: each time is a **run**, numbered from 1, in
-`data/chess/networks/<config>/run-<n>/` with its own copy of the config as it started, `config.yaml`, so
-editing `configs/chess/` changes only new runs. Every phase resumes from the run's files. Run n is
+`data/networks/<config>/run-<n>/` with its own copy of the config as it started, `config.yaml`, so
+editing `configs/` changes only new runs. Every phase resumes from the run's files. Run n is
 named `<config>-r<n>`, the first included (`pesto-psq-r1`, `pesto-psq-r2`). A network is named by
 its config, then each part marked by a letter, the run always and last:
 
@@ -56,8 +56,9 @@ its config, then each part marked by a letter, the run always and last:
 
 A generation has at most one winner, so the winner's name leaves its lambda out; the page shows it
 beside it. A player is a network with what it searches with,
-always written after an `@`: `@default`, the untuned defaults; `@t1`, its tune; or `@<cp>`, a margin
-per ply (`pesto-psq-g1-r1@t1`, `pesto@default`). Only a generation's winner is tuned.
+always written after an `@`: `@tuned`, its tune, or `@untuned`, the defaults
+(`pesto-psq-g1-r1@tuned`, `pesto@untuned`). Only a generation's winner is tuned; a new tune replaces
+the old one.
 
 **Generation 1** trains on its source's whole corpus, judged on the source's whole frozen test set,
 with no play phase, and refuses to start until the corpus is complete; the run records the sizes in
@@ -110,7 +111,7 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive
 winget install --id Rustlang.Rustup
 ```
 
-For full speed, exclude the repository, `%LOCALAPPDATA%\temper-games`, `%USERPROFILE%\.cargo` and
+For full speed, exclude the repository, `%USERPROFILE%\.cargo` and
 `%USERPROFILE%\.rustup` from Microsoft Defender, and set Windows' power mode to Best performance.
 
 A name for the machine, lowercase letters and digits, different on every machine:
@@ -122,13 +123,13 @@ echo 'name: <name>' > data/machine.yaml
 The external engines it may play, Stockfish first; then set each `path` in the copy:
 
 ```bash
-cp examples/engines.yaml data/chess/engines.yaml
+cp examples/engines.yaml data/engines.yaml
 ```
 
-The opening positions and the Syzygy tablebases (about 150 GB), into `%LOCALAPPDATA%\temper-games`:
+The opening positions and the Syzygy tablebases (about 150 GB), into the repository's `data/`:
 
 ```bash
-./bin/lichess-book.sh
+./bin/uho-book.sh
 ```
 
 ```bash
@@ -136,7 +137,7 @@ The opening positions and the Syzygy tablebases (about 150 GB), into `%LOCALAPPD
 ```
 
 Google Drive for desktop, in streaming mode with My Drive on `G:`, on every machine, the arenas'
-included: Drive is Temper's store, `G:/My Drive/temper-games`, the same tree as the local data root. A file
+included: Drive is Fattorini's store, `G:/My Drive/fattorini`, the same tree as the repository's `data/`. A file
 is made on the local disk and reaches Drive only whole, never written or appended there in place:
 
 - a run's networks (every candidate, every teacher) as soon as they are complete; the arenas read
@@ -148,10 +149,10 @@ is made on the local disk and reaches Drive only whole, never written or appende
 - a tune's files every 15 minutes, then the whole tune beside its network at its end;
 - the sources' corpora, segment by segment.
 
-Every reader (`arena duel`, `smithy install`, the page's View) looks on the local disk
+Every reader (`arena duel`, a snapshot, the page's View) looks on the local disk
 first, then on Drive. Folders may be made available offline in Drive's settings to read them faster.
 
-A Python environment named `.temper-games` with PyTorch, for `smithy`: on the GPU machine to train, and
+A Python environment named `.fattorini` with PyTorch, for `smithy`: on the GPU machine to train, and
 on any other machine that runs `smithy` or its tests:
 
 ```bash
@@ -159,18 +160,18 @@ winget install --id astral-sh.uv
 ```
 
 ```bash
-uv venv .temper-games --python 3.14
+uv venv .fattorini --python 3.14
 ```
 
 ```bash
-source .temper-games/Scripts/activate
+source .fattorini/Scripts/activate
 ```
 
 ```bash
 uv pip install "torch==2.11.0" numpy --torch-backend=auto
 ```
 
-On a machine without an NVIDIA GPU (to run `smithy`'s tests or `smithy install`), name the CPU
+On a machine without an NVIDIA GPU (to run `smithy`'s tests), name the CPU
 backend instead of `auto`:
 
 ```bash
@@ -200,7 +201,7 @@ the arenas. Written once, on Drive, so every machine reads the same copy.
 Its shape is `examples/machines.yaml`'s:
 
 ```bash
-cp examples/machines.yaml "/g/My Drive/temper-games/data/machines.yaml"
+cp examples/machines.yaml "/g/My Drive/fattorini/data/machines.yaml"
 ```
 
 Then the names in that copy edited. A local `data/machines.yaml` is no longer read; the older
@@ -228,8 +229,7 @@ machine shows the same, read-only.
 On every machine that should play, an arena, started by hand in its own terminal, left running: it
 idles until a smithy claims it, then plays for that smithy alone. A smithy claims arenas only while
 its job deals games (a forge's play, round robin and gate, a tune, a test, PeSTO's play) and
-releases them after 60 s dealing none, so another smithy's job plays meanwhile; Install claims the
-arena it installs on. When two smithies want one arena, a full job's claim takes it from a scaled
+releases them after 60 s dealing none, so another smithy's job plays meanwhile. When two smithies want one arena, a full job's claim takes it from a scaled
 job's, and between jobs of the same kind the smithy ranked higher in `machines.yaml` takes it; a
 job left with no arena says it waits, and the Machines table names each holder by its rank. A smithy polls its arenas every
 10 s: one unanswering for 30 s is late, for 60 s lost, its chore dealt again. An arena unpolled for
@@ -282,7 +282,7 @@ them down. Full runs train only where CUDA is: on a machine without it, the page
 scaled runs alone.
 
 An NNUE forge trains on its training set fully shuffled: its training first scatters the training set into
-`data/chess/buckets/` on the smithy's local disk: once per source for generation 1 (about 15 GB for Lc0's,
+`data/buckets/` on the smithy's local disk: once per source for generation 1 (about 15 GB for Lc0's,
 shared by every `lc0-` forge; PeSTO's likewise), and about 15 GB per self-play generation after. A disposable cache: deleting it costs only a new scatter. Each lambda keeps one checkpoint, its best
 so far (the others are deleted after every round).
 
@@ -297,41 +297,95 @@ own `config.yaml` (`scale: <s>`) and marked on the page wherever the run is name
 
 A scaled run is a run like any other, numbered with the full ones and saved to Drive as they are. On a
 source, it reads a 1/s share of the corpus, its first training files, scattered into buckets of
-their own (`data/chess/buckets/lc0-s1024`), and a fixed subset of the source's frozen test set: sources
-are never scaled. Its networks play in their run alone: never installed nor a side of a test, and tuned only
+their own (`data/buckets/lc0-s1024`), and a fixed subset of the source's frozen test set: sources
+are never scaled. Its networks play in their run alone: never snapshotted nor a side of a test, and tuned only
 by a tune scaled as their run, to debug the tune itself.
 
 ## Matches
 
 ```bash
-./bin/arena duel pesto@default pesto-psq-g1-r1@t1 --time 10+0.1
+./bin/arena duel pesto@untuned pesto-psq-g1-r1@tuned --time 10+0.1
 ```
 
-- `match <a> <b> <n>`: n games.
+- `match <a> <b> [<n>]`: a best of n games, 400 by default, stopped once decided; `--full` plays
+  all n, so the score is always over n.
 - `sprt <a> <b> <elo>`: whether b is at least that many Elo stronger.
-- `duel <a> <b>`: until one is shown stronger, or 1000 games.
+- `duel <a> <b>`: until one is shown stronger, or 800 games (400 pairs).
 
-Each needs `--depth <d>` or `--time <base+inc>`. A player is a Temper player, `pesto` or a forge run's
-network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@default`, `@t1` or
-`@<cp>`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
-`data/chess/engines.yaml`, with no suffix. Against an external engine, Temper plays over UCI what it has by
-itself, so its suffix must say it: a tuned network `@t1`, an untuned one or pesto `@default`.
+Each needs `--depth <d>` or `--time <base+inc>`. A player is a Fattorini player, `pesto` or a forge run's
+network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@tuned` or
+`@untuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
+`data/engines.yaml`, with no suffix. Against an external engine, the Fattorini player plays over
+UCI: the arena first builds it with its network and parameters embedded, as a snapshot, into
+`target/uci-players/`.
+
+## Snapshots
+
+A snapshot is a release build of `fattorini` with a player's network and parameters embedded:
+
+```bash
+./bin/arena snapshot pesto-psq-g1-r1@tuned
+```
+
+The player is `pesto` or a full run's generation winner, `@tuned` or `@untuned`. The snapshot is
+written straight to Drive, never locally:
+`/g/My Drive/fattorini/data/snapshots/fattorini-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`
+(UTC). A new snapshot replaces the older ones of the same player and suffix, so lichess-bot's
+`config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
+embeds. `fattorini about`, its UCI name and a first `info string` say exactly what it is: the
+player, the commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`). lichess-bot's
+`config.yml` names the snapshot it plays. A release on GitHub is built the same way.
+
+## Releases
+
+A release is a snapshot built at a tag: the C runtime static, the third-party notices embedded
+(`fattorini licenses`), uploaded to GitHub as a draft. Only the `.exe` is uploaded; the release's
+text is `RELEASE-NOTES.md`, passed as it is. Once, on the machine that releases: `cargo install
+cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), GitHub's `gh` installed, and `gh auth login`.
+
+1. The version in `Cargo.toml`'s `[workspace.package]`, CalVer `YYYY.M.N`: the year, the month
+   without a leading zero, N counting that month's releases from 0 (`2026.11.0`, then `2026.11.1`,
+   then `2026.12.0`). `arena release` refuses a version not of the current UTC month.
+2. The CCRL Blitz estimate, if the network or the search changed: a full match against each CCRL
+   anchor at CCRL Blitz scaled to the machine, 400 games each, all played, both sides with the
+   Syzygy tables:
+
+   ```bash
+   ./bin/arena match <anchor> <player>@tuned 400 --time 1+0.5 --hash 128 --full
+   ```
+
+   the control rescaled by Stockfish 10's `bench` on another machine (`claude/` holds the method).
+3. `RELEASE-NOTES.md`: the version, the network, the strength table.
+4. Commit, then tag and push the tag: `v<version>`, or a candidate `v<version>-rc.<n>` first.
+5. `./bin/arena release <player>@tuned --dry-run` once, then without `--dry-run`. Every check runs
+   before the upload: the version's month, HEAD at the tag, the tree clean, the tag matching the version, the notes
+   naming it, no release of the tag yet, the `.exe` free of `VCRUNTIME140.dll`, its `about` and
+   `bench`.
+6. Read the draft on GitHub, then publish it there. A candidate that proves broken: delete its draft
+   and tag the next candidate, never moving a tag anyone has seen.
 
 ## Tuning search parameters
 
 A tune of a network's search parameters by SPSA is the smithy's other job, its pairs played by the
 same arenas, started from the smithy's page: the winner of a generation that passed its gate in an
 ended forge run (`pesto-psq-g1-r1`), or `pesto`. The config's `tune:` says how long and at what
-control, the run's frozen copy for a network, `configs/chess/pesto.yaml` for `pesto`:
+control, the run's frozen copy for a network, `configs/pesto.yaml` for `pesto`:
 
 ```yaml
 tune:
-  length: default          # 16,384 pairs; or a number of pairs, at least 100
+  length: default          # 32,768 pairs; or a number of pairs, at least 100
   control: 10+0.1          # or {depth: d}
 ```
 
-Every tune starts from the default parameters, whatever the player, so a run's generations may be
-tuned in any order.
+A tune starts from its teacher's tune: generation g's from generation g - 1's winner's, a PeSTO
+run's generation 1 from PeSTO's; an Lc0 run's generation 1 and PeSTO itself from the default
+parameters. So a run's generations are tuned in order: a tune whose teacher has no finished tune is
+refused, saying which to run first.
+
+The forge uses the tunes too. A generation's self-play plays its teacher's tune, and PeSTO's Play
+plays PeSTO's: either is refused, saying so, while that tune is missing. Gates and round robins play
+the default parameters on both sides, so they judge the networks alone, except PeSTO, which plays
+its tune wherever it is a side.
 
 Under a clock the smithy benches its own machine at the start, and every arena scales its clock to
 its speed against that one. The result goes to the network's `parameters.txt`. A forge run's
@@ -358,22 +412,24 @@ netsh advfirewall firewall delete rule name="arena"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="temper-chess smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\temper-games\target\release\smithy.exe"
+netsh advfirewall firewall add rule name="fattorini smithy" dir=in action=allow protocol=TCP localport=47821 profile=private program="C:\dev\fattorini\target\release\smithy.exe"
 ```
 
 ```bash
-netsh advfirewall firewall add rule name="temper-chess arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\temper-games\target\release\arena.exe"
+netsh advfirewall firewall add rule name="fattorini arena" dir=in action=allow protocol=TCP localport=47823 profile=private program="C:\dev\fattorini\target\release\arena.exe"
 ```
 
-The first two remove Windows' own rules, if any were made. To check, each rule should show Profiles
+The first two remove Windows' own rules, if any were made. A machine set up under an older project
+name may still hold rules of that name, such as `kalo-chess smithy` and `kalo-chess arena`: delete
+those the same way. To check, each rule should show Profiles
 Private, TCP and its LocalPort, and `name="smithy"` and `name="arena"` should match no rule:
 
 ```bash
-netsh advfirewall firewall show rule name="temper-chess smithy" verbose
+netsh advfirewall firewall show rule name="fattorini smithy" verbose
 ```
 
 ```bash
-netsh advfirewall firewall show rule name="temper-chess arena" verbose
+netsh advfirewall firewall show rule name="fattorini arena" verbose
 ```
 
 ```bash
@@ -389,14 +445,3 @@ Before starting the smithy, the current profile should be the Private one:
 ```bash
 netsh advfirewall show currentprofile
 ```
-
-## Lichess
-
-To play PeSTO or a full run's generation winner through
-[lichess-bot](https://github.com/lichess-bot-devs/lichess-bot), use the page's Install screen: pick
-a machine with a running arena, the player and a book. A candidate or a scaled run's network is
-refused.
-
-The arena installs `temper-chess.exe` with that network, and its `parameters.txt` if it has one, in
-`%LOCALAPPDATA%\temper-games\bin`. The screen's Installed table shows the outcome; point lichess-bot's
-`config.yml` at the installed engine.

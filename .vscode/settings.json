@@ -2,7 +2,7 @@
   "files.insertFinalNewline": true,
   "files.trimFinalNewlines": true,
   "files.trimTrailingWhitespace": true,
-  "python.defaultInterpreterPath": "${workspaceFolder}/.temper-games/Scripts/python.exe",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.fattorini/Scripts/python.exe",
   "remote.autoForwardPorts": false,
   "remote.autoForwardPortsFallback": 0,
   "terminal.integrated.rightClickBehavior": "default",

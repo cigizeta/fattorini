@@ -1,10 +1,10 @@
 //! The memory guard every run passes before it starts a player: the transposition tables of all its
-//! players together must stay under half the RAM the machine has (`temper_chess::pipeline::system_memory`).
+//! players together must stay under half the RAM the machine has (`fattorini::pipeline::system_memory`).
 //! Strict on purpose: no allowance
 //! is made for anything else a player holds, and a machine whose RAM cannot be read refuses to run,
 //! since a run that swaps or is killed partway is worse than one that never starts.
 
-use temper_chess::pipeline::system_memory;
+use fattorini::pipeline::system_memory;
 
 /// Refuses `hash_mb` for `players` tables at once unless they fit under half the machine's RAM.
 pub fn check(hash_mb: usize, players: usize) -> Result<(), String> {

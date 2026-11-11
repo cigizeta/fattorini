@@ -13,15 +13,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use temper_chess::board::color::Color;
-use temper_chess::board::piece::Piece;
-use temper_chess::board::piece_type::PieceType;
-use temper_chess::board::Board;
-use temper_chess::movegen::attacks::is_in_check;
-use temper_chess::movegen::legal::legal_moves;
-use temper_chess::search::is_insufficient_material;
-use temper_chess::tablebase::{SyzygyTablebase, TbResult};
-use temper_chess::uci::{format_move, parse_move};
+use fattorini::board::color::Color;
+use fattorini::board::piece::Piece;
+use fattorini::board::piece_type::PieceType;
+use fattorini::board::Board;
+use fattorini::movegen::attacks::is_in_check;
+use fattorini::movegen::legal::legal_moves;
+use fattorini::search::is_insufficient_material;
+use fattorini::tablebase::{SyzygyTablebase, TbResult};
+use fattorini::uci::{format_move, parse_move};
 
 use super::clock::Clock;
 use super::pgn::{MoveAnnotation, Termination};

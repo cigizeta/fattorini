@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Downloads the Syzygy tables into the data root's chess/syzygy/ directory, regardless of where this
-# script is invoked from. The data root holds the third-party downloads development and deployment
-# share: %LOCALAPPDATA%\temper-games. The same rule is in
+# Downloads the Syzygy tables into the data root's syzygy/ directory, regardless of where this
+# script is invoked from. The data root is the repository's gitignored data/. The same rule is in
 # src/pipeline/data_root.rs, and the two must agree.
 #
 # Downloads both parts of Syzygy, 3 to 6 pieces: WDL (.rtbw), complete on its own, and DTZ (.rtbz),
@@ -13,12 +12,13 @@
 # .part names (wget wrote straight to the final name), and is moved back to .part and resumed. The
 # engine loads only .rtbw and .rtbz files, never a .part.
 #
-# Never run while a Temper process has the tables open: Temper reads them through memory maps, and a
+# Never run while a Fattorini process has the tables open: Fattorini reads them through memory maps, and a
 # table resumed under its final name would change under the map.
 set -euo pipefail
 
-DATA_ROOT="$(cygpath -u "$LOCALAPPDATA")/temper-games"
-SYZYGY="$DATA_ROOT/chess/syzygy"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATA_ROOT="$REPO_ROOT/data"
+SYZYGY="$DATA_ROOT/syzygy"
 
 BASE="https://tablebase.lichess.ovh/tables/standard"
 

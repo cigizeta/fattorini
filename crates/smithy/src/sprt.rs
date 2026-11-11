@@ -1,5 +1,5 @@
 //! The training server's gate test: a copy of the arena's SPRT (`arena/src/sprt.rs`), whose header
-//! explains the derivation; the two binaries share no code beyond `temper-chess`.
+//! explains the derivation; the two binaries share no code beyond `fattorini`.
 //! Fed a game pair at a time, as the LAN clients report them: a pair's `r`, its two games' summed
 //! `2 * score - 1` for the challenger, is `r + 2` half-points over two games.
 

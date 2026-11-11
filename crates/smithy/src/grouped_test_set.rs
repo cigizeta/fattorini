@@ -75,10 +75,10 @@ impl BatchSource for GroupedTestSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temper_chess::board::castling_rights::CastlingRights;
-    use temper_chess::board::color::Color;
-    use temper_chess::board::square::Square;
-    use temper_chess::features::CanonicalPosition;
+    use fattorini::board::castling_rights::CastlingRights;
+    use fattorini::board::color::Color;
+    use fattorini::board::square::Square;
+    use fattorini::features::CanonicalPosition;
 
     /// A flat source over `records`, read in order and stopping short at its end, as `CacheFile` is.
     struct Flat(Vec<CacheRecord>);

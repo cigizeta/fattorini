@@ -1,17 +1,19 @@
 //! A `Player` that searches in this process, with no subprocess and no protocol -- the side of a
-//! match that is Temper itself, evaluating either with the PeSTO evaluation or with a trained
+//! match that is Fattorini itself, evaluating either with the PeSTO evaluation or with a trained
 //! network. This is what makes an evaluation A/B possible at all: the gate needs both sides to run
 //! the identical search so that the evaluation function is the only thing that differs, and driving
-//! Temper over UCI would instead compare two whole engine builds.
+//! Fattorini over UCI would instead compare two whole engine builds.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use temper_chess::nnue::Network;
-use temper_chess::search::{choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, MAX_PLY};
-use temper_chess::tablebase::SyzygyTablebase;
-use temper_chess::tt::TranspositionTable;
-use temper_chess::uci::{format_move, split_score};
+use fattorini::nnue::Network;
+use fattorini::search::{
+    choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MAX_PLY,
+};
+use fattorini::tablebase::SyzygyTablebase;
+use fattorini::tt::TranspositionTable;
+use fattorini::uci::{format_move, split_score};
 
 use super::player::{Fault, MoveLimit, MoveOutcome, MoveRequest, Player, SearchReport};
 
@@ -27,7 +29,7 @@ pub struct InProcessPlayer {
     /// Shared, unlike the table: probing is stateless and the loaded tables are never mutated, so
     /// there is no reason for each of 32 players to hold its own copy of the six-piece set.
     tablebase: Arc<SyzygyTablebase>,
-    /// The search parameters it plays with: a suffix's (`@<cp>`, `@default`), or pesto's tuning;
+    /// The search parameters it plays with: a suffix's (`@tuned`, `@untuned`), or pesto's tuning;
     /// `None` searches with the network's own tuning, or
     /// the defaults (`search::choose_best_move_with_progress`).
     parameters: Option<SearchParameters>,
@@ -80,7 +82,8 @@ impl Player for InProcessPlayer {
     /// ply. This player's only obligation is to come back well before the ninth depth would have
     /// finished, which it does.
     ///
-    /// Under a clock it plans its time exactly as `go wtime btime winc binc` does (`time_limit`), and
+    /// Under a clock it plans its time exactly as `go wtime btime winc binc` does (`time_limit`), the
+    /// default `Move Overhead` kept back as a release keeps it, so a timed match plays as one does, and
     /// searches against its own stop flag, fresh each move: the search raises the flag it is given
     /// when its time manager declines the next depth, and raising the match's Ctrl+C flag would end
     /// the whole run after the first timed move. Ctrl+C is still seen by the game loop before every
@@ -100,6 +103,7 @@ impl Player for InProcessPlayer {
                     None,
                     None,
                     false,
+                    DEFAULT_MOVE_OVERHEAD_MS,
                 )
                 .map(|limit| limit.with_previous_score(self.last_score));
                 (MAX_PLY, limit, &own_stop)
@@ -146,7 +150,7 @@ impl Player for InProcessPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temper_chess::board::Board;
+    use fattorini::board::Board;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
@@ -158,7 +162,7 @@ mod tests {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let (board, _) = Board::from_fen(fen).unwrap();
         let mut player =
-            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters::with_margin(150)));
+            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters { razoring_margin: 150, ..SearchParameters::DEFAULT }));
         player.new_game().expect("an in-process player never faults");
         let ancestors = vec![board.hash()];
         let remaining = Duration::from_secs(2);
@@ -178,8 +182,8 @@ mod tests {
         let started = Instant::now();
         match player.choose_move(&request, &stop).expect("never faults") {
             MoveOutcome::Move(report) => {
-                let legal = temper_chess::movegen::legal::legal_moves(&board, board.side_to_move());
-                assert!(temper_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(), "{:?}", report.best_move_uci);
+                let legal = fattorini::movegen::legal::legal_moves(&board, board.side_to_move());
+                assert!(fattorini::uci::parse_move(&report.best_move_uci, &legal).is_some(), "{:?}", report.best_move_uci);
             }
             MoveOutcome::TimedOut => panic!("an in-process player never reports a timeout itself"),
             MoveOutcome::Interrupted => panic!("nothing asked it to stop"),
@@ -209,9 +213,9 @@ mod tests {
 
         match player.choose_move(&request, &stop).expect("never faults") {
             MoveOutcome::Move(report) => {
-                let legal = temper_chess::movegen::legal::legal_moves(&board, board.side_to_move());
+                let legal = fattorini::movegen::legal::legal_moves(&board, board.side_to_move());
                 assert!(
-                    temper_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(),
+                    fattorini::uci::parse_move(&report.best_move_uci, &legal).is_some(),
                     "{:?} should be legal in the starting position",
                     report.best_move_uci
                 );
@@ -245,9 +249,9 @@ mod tests {
 
         match player.choose_move(&request, &stop).expect("never faults") {
             MoveOutcome::Move(report) => {
-                let legal = temper_chess::movegen::legal::legal_moves(&board, board.side_to_move());
+                let legal = fattorini::movegen::legal::legal_moves(&board, board.side_to_move());
                 assert!(
-                    temper_chess::uci::parse_move(&report.best_move_uci, &legal).is_some(),
+                    fattorini::uci::parse_move(&report.best_move_uci, &legal).is_some(),
                     "{:?} should be legal in the starting position",
                     report.best_move_uci
                 );

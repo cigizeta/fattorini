@@ -86,9 +86,10 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "arena"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "ctrlc",
+ "fattorini",
  "lan-http",
  "log",
  "mimalloc",
@@ -100,7 +101,6 @@ dependencies = [
  "serde",
  "serde_yaml",
  "shakmaty",
- "temper-chess",
  "time",
  "windows-sys",
  "zstd 0.13.3",
@@ -443,6 +443,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
+name = "fattorini"
+version = "2026.11.0"
+dependencies = [
+ "num_enum",
+ "pgn-reader",
+ "serde",
+ "serde_yaml",
+ "shakmaty",
+ "shakmaty-syzygy",
+ "windows-sys",
+ "zstd 0.13.3",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -754,9 +768,9 @@ dependencies = [
 
 [[package]]
 name = "lan-http"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
- "temper-chess",
+ "fattorini",
  "tiny_http",
  "ureq",
 ]
@@ -1006,10 +1020,10 @@ dependencies = [
 
 [[package]]
 name = "pgn-replay"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
+ "fattorini",
  "shakmaty",
- "temper-chess",
 ]
 
 [[package]]
@@ -1083,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "progress"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "env_logger",
  "serde",
@@ -1367,9 +1381,10 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 
 [[package]]
 name = "smithy"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "ctrlc",
+ "fattorini",
  "flate2",
  "lan-http",
  "log",
@@ -1382,7 +1397,6 @@ dependencies = [
  "serde_yaml",
  "shakmaty",
  "tch",
- "temper-chess",
  "time",
  "zstd 0.13.3",
 ]
@@ -1459,20 +1473,6 @@ dependencies = [
  "thiserror 1.0.69",
  "torch-sys",
  "zip",
-]
-
-[[package]]
-name = "temper-chess"
-version = "0.1.0"
-dependencies = [
- "num_enum",
- "pgn-reader",
- "serde",
- "serde_yaml",
- "shakmaty",
- "shakmaty-syzygy",
- "windows-sys",
- "zstd 0.13.3",
 ]
 
 [[package]]

@@ -1,25 +1,25 @@
-//! SAN-to-Temper-move resolution, shared by `smithy` (`chunk`, and the dataset build) and
-//! `arena replay`. Lives here rather than in the `temper-chess` library crate: `shakmaty`/
-//! `pgn-reader` must never link into the shipped `temper-chess` engine binary (CLAUDE.md rule 1), and the
+//! Resolving SAN to Fattorini moves, shared by `smithy` (`chunk`, and the dataset build) and
+//! `arena replay`. Lives here rather than in the `fattorini` library crate: `shakmaty`/
+//! `pgn-reader` must never link into the shipped `fattorini` engine binary (CLAUDE.md rule 1), and the
 //! library crate is exactly what that binary links against. Its own crate, so both binaries depend
 //! on one source rather than two hand-copied implementations kept in sync by hand. `nnue_bench`
-//! `#[path]`-includes this file instead, since a dependency of `temper-chess` on it would be a cycle.
+//! `#[path]`-includes this file instead, since a dependency of `fattorini` on it would be a cycle.
 
 use shakmaty::san::San;
 use shakmaty::{CastlingSide as ShakmatyCastlingSide, Role, Square as ShakmatySquare};
 
-use temper_chess::board::castling_rights::CastlingSide;
-use temper_chess::board::chess_move::{Move, MoveKind};
-use temper_chess::board::piece_type::PieceType;
-use temper_chess::board::square::Square;
-use temper_chess::board::Board;
-use temper_chess::movegen::legal::legal_moves;
+use fattorini::board::castling_rights::CastlingSide;
+use fattorini::board::chess_move::{Move, MoveKind};
+use fattorini::board::piece_type::PieceType;
+use fattorini::board::square::Square;
+use fattorini::board::Board;
+use fattorini::movegen::legal::legal_moves;
 
 /// The standard starting position, where every sampled CCRL and TCEC game starts (`smithy
 /// sample` refuses a game with a `[FEN]` header).
 pub const STARTING_POSITION_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-/// `shakmaty`'s `Square` uses the identical LERF numbering (`A1 = 0 .. H8 = 63`) Temper's own
+/// `shakmaty`'s `Square` uses the identical LERF numbering (`A1 = 0 .. H8 = 63`) Fattorini's own
 /// `Square` does -- confirmed directly against both crates' docs, not assumed -- so this is a
 /// plain index round trip, never a real coordinate transform.
 fn to_square(square: ShakmatySquare) -> Square {
@@ -40,10 +40,10 @@ fn to_piece_type(role: Role) -> PieceType {
     }
 }
 
-/// Resolves one parsed SAN token into exactly one of Temper's own legal moves for `board`, using the
+/// Resolves one parsed SAN token into exactly one of Fattorini's own legal moves for `board`, using the
 /// SAN purely as notation data (piece kind, destination, disambiguation, promotion) -- never calling
 /// any of `shakmaty`'s own move-generation or legality logic, which is exactly the boundary the
-/// design settled on: a PGN crate may parse the *text*, but only Temper's own board and move
+/// design settled on: a PGN crate may parse the *text*, but only Fattorini's own board and move
 /// generator ever decide what is actually legal.
 ///
 /// `None` when the SAN names no legal move, more than one, or is a null move or a drop: the caller

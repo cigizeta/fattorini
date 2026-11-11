@@ -1,13 +1,17 @@
 //! `arena`: everything that plays games, and no libtorch. Its modes:
 //!
-//! - `arena match <champion> <challenger> <n>`, `sprt <champion> <challenger> <elo_d>`,
+//! - `arena match <champion> <challenger> [<n>]`, `sprt <champion> <challenger> <elo_d>`,
 //!   `duel <champion> <challenger>`: two players named on the command line, the champion first
 //!   (`match_player.rs`), under one of the three decision rules -- a best of
-//!   `n` (`best_of.rs`), the sequential probability ratio test (`sprt.rs`), or which of the two is
-//!   stronger (`duel.rs`) -- each with exactly one of `--depth <1-9>` or `--time <base+inc>`.
+//!   `n` (`best_of.rs`, `MATCH_GAMES` by default, all n played with `--full`), the sequential
+//!   probability ratio test (`sprt.rs`), or which of the two is stronger (`duel.rs`) -- each with
+//!   exactly one of `--depth <1-9>` or `--time <base+inc>`.
 //! - `arena start|stop|status`: an arena, playing the smithy's self-play, round-robin, gate and tune
-//!   chores (`chores.rs`), and installing the engine for lichess-bot when its smithy asks
-//!   (`install.rs`).
+//!   chores (`chores.rs`).
+//! - `arena snapshot <player>@<tuned|untuned>`: a build of the engine with that player embedded,
+//!   into Drive's `data/snapshots/` (`snapshot.rs`). Hidden: not in the usage.
+//! - `arena release <player>@<tuned|untuned> [--dry-run]`: a binary release at a tag, built here and
+//!   drafted on GitHub with `gh` (`release.rs`). Hidden: not in the usage.
 //! - `arena <tournament-id>`: fitness-selection phase 1 scope only, a single pairing -- round
 //!   1's first real (bye-free) match, per proper bracket seeding -- rather than a full bracket. The
 //!   bracket scheduler is not built yet.
@@ -17,7 +21,7 @@
 //! each other's clocks (`cpu_topology.rs`), and one pair per logical core at a fixed depth, where
 //! timing does not matter.
 //!
-//! `smithy` and this binary talk only through the files `temper_chess::pipeline` defines.
+//! `smithy` and this binary talk only through the files `fattorini::pipeline` defines.
 
 mod best_of;
 mod bracket;
@@ -31,7 +35,6 @@ mod duel;
 mod engines;
 mod game;
 mod in_process;
-mod install;
 mod machine;
 mod match_player;
 mod memory;
@@ -39,9 +42,11 @@ mod pairing;
 mod pgn;
 mod player;
 mod random_book;
+mod release;
 mod results_db;
 mod runner;
 mod self_play;
+mod snapshot;
 mod sprt;
 mod tablebase_label;
 mod uci_client;
@@ -61,7 +66,7 @@ use runner::{Labels, Placement, Resolution, Run};
 use sprt::Sprt;
 
 // Self-play's threads all allocate at once, and Windows' system allocator does not scale with them;
-// the measurement is beside `mimalloc` in Cargo.toml. The engine `temper-chess` keeps the system
+// the measurement is beside `mimalloc` in Cargo.toml. The engine `fattorini` keeps the system
 // allocator: a GUI game searches with one thread unless told otherwise.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -73,12 +78,14 @@ fn main() {
         print_usage_and_exit();
     };
     // A tournament id never starts with a dash, so `--help`, `-h`, or any stray flag here gets the
-    // usage rather than a panic about a missing `data/chess/tournaments/--help/config.yaml`.
+    // usage rather than a panic about a missing `data/tournaments/--help/config.yaml`.
     if first.starts_with('-') {
         print_usage_and_exit();
     }
     match first.as_str() {
         "start" | "stop" | "status" => chores::run(&first, &args.collect::<Vec<String>>()),
+        "snapshot" => snapshot::command(&args.collect::<Vec<String>>()),
+        "release" => release::command(&args.collect::<Vec<String>>()),
         "match" | "sprt" | "duel" => {
             let rest: Vec<String> = args.collect();
             let versus = parse_versus_args(&first, &rest).unwrap_or_else(|message| {
@@ -92,12 +99,13 @@ fn main() {
 }
 
 fn print_usage_and_exit() -> ! {
-    eprintln!("usage: arena match <champion> <challenger> <n>        (--depth <d> | --time <base+inc>) [--hash <MB>]");
+    eprintln!("usage: arena match <champion> <challenger> [<n>]      (--depth <d> | --time <base+inc>) [--hash <MB>] [--full]");
     eprintln!("       arena sprt  <champion> <challenger> <elo_d>    (--depth <d> | --time <base+inc>) [--hash <MB>]");
     eprintln!("       arena duel  <champion> <challenger>            (--depth <d> | --time <base+inc>) [--hash <MB>]");
     eprintln!("       arena start | stop | status");
     eprintln!("       arena <tournament-id>");
-    eprintln!("  match plays a best of n games, n even: the first side with more than n/2 points wins, n/2 each after all n is drawn");
+    eprintln!("  match plays a best of n games, n even, {MATCH_GAMES} by default: the first side with more than n/2 points");
+    eprintln!("        wins, n/2 each after all n is drawn; with --full all n are played even once the match is decided");
     eprintln!("  sprt  plays until the SPRT decides whether the challenger is at least elo_d stronger than the");
     eprintln!("        champion, at alpha = beta = 5%");
     eprintln!("  duel  plays pairs until one player's mean pair score passes 0.5 + 3.09 * sigma / sqrt(P), sigma");
@@ -113,13 +121,15 @@ fn print_usage_and_exit() -> ! {
     eprintln!("                    together must stay under half the machine's RAM");
     eprintln!("  games are played in colour-reversed pairs");
     eprintln!("  a player is stockfish-<level> (0 to 20), stockfish-elo-<rating> (1320 to 3190), an engine of");
-    eprintln!("  data/chess/engines.yaml, or a Temper player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
+    eprintln!("  data/engines.yaml, or a Fattorini player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
     eprintln!("  or <config>-g<g>-l<lambda>-r<n>, that lambda's candidate in generation g");
-    eprintln!("  a Temper player is always followed by what it searches with: @default, the untuned defaults; @t1,");
-    eprintln!("  its tune; or @<cp>, as pesto@150, a margin per ply (in-process, so only against another Temper");
-    eprintln!("  player); against an external engine it plays over UCI what it has by itself, @t1 if tuned, else @default");
+    eprintln!("  a Fattorini player is always followed by what it searches with: @tuned, its tune, or @untuned,");
+    eprintln!("  the defaults; against an external engine it plays over UCI, built first with both embedded");
     process::exit(1);
 }
+
+/// A match's games when the command line gives none: 200 pairs, half a duel's most (`duel::MAX_PAIRS`).
+const MATCH_GAMES: u32 = 400;
 
 /// What `match`, `sprt` and `duel` were asked for: two players, a rule, a control, a table size.
 struct Versus {
@@ -131,13 +141,13 @@ struct Versus {
 }
 
 /// The arguments after `match`, `sprt` or `duel`: two players, champion then challenger, the rule's own value (`n` for `match`,
-/// `elo_d` for `sprt`, nothing for `duel`), exactly one of `--depth <d>` or `--time <base+inc>`, and
-/// optionally `--hash <MB>`, in any order after the positional arguments.
+/// optional, `elo_d` for `sprt`, nothing for `duel`), exactly one of `--depth <d>` or `--time <base+inc>`, and
+/// optionally `--hash <MB>` and, for `match` alone, `--full`, in any order after the positional arguments.
 fn parse_versus_args(command: &str, args: &[String]) -> Result<Versus, String> {
     let usage = match command {
         "match" => {
-            "match takes a champion and a challenger, an even n, one of --depth <d> or --time <base+inc>, and optionally \
-             --hash <MB>"
+            "match takes a champion and a challenger, optionally an even n, one of --depth <d> or --time <base+inc>, and \
+             optionally --hash <MB> and --full"
         }
         "sprt" => {
             "sprt takes a champion and a challenger, elo_d, one of --depth <d> or --time <base+inc>, and optionally --hash \
@@ -145,21 +155,31 @@ fn parse_versus_args(command: &str, args: &[String]) -> Result<Versus, String> {
         }
         _ => "duel takes a champion and a challenger, one of --depth <d> or --time <base+inc>, and optionally --hash <MB>",
     };
-    let positional = if command == "duel" { 2 } else { 3 };
-    if args.len() < positional {
-        return Err(usage.to_string());
-    }
-    let (positional_args, flag_args) = args.split_at(positional);
-    let (champion, challenger, value) = match positional_args {
-        [champion, challenger, value] => (champion, challenger, Some(value)),
-        [champion, challenger] => (champion, challenger, None),
+    // The positional arguments are those before the first flag: a player's name never starts with `--`.
+    let first_flag = args.iter().position(|arg| arg.starts_with("--")).unwrap_or(args.len());
+    let (positional_args, flag_args) = args.split_at(first_flag);
+    let (champion, challenger, value) = match (command, positional_args) {
+        ("match" | "duel", [champion, challenger]) => (champion, challenger, None),
+        ("match" | "sprt", [champion, challenger, value]) => (champion, challenger, Some(value)),
         _ => return Err(usage.to_string()),
     };
-    let (control, hash_mb) = parse_flags(flag_args).map_err(|message| format!("{message}: {usage}"))?;
+    // `--full` takes no value, so it leaves the flags before they are read in pairs.
+    let fulls = flag_args.iter().filter(|arg| *arg == "--full").count();
+    if fulls > 0 && command != "match" {
+        return Err(format!("--full is for match alone: {usage}"));
+    }
+    if fulls > 1 {
+        return Err(format!("--full at most once: {usage}"));
+    }
+    let flag_args: Vec<String> = flag_args.iter().filter(|arg| *arg != "--full").cloned().collect();
+    let (control, hash_mb) = parse_flags(&flag_args).map_err(|message| format!("{message}: {usage}"))?;
     let rule = match (command, value) {
-        ("match", Some(value)) => {
-            let n: u32 = value.parse().map_err(|_| format!("match: n must be a positive integer, got {value:?}"))?;
-            Rule::best_of(n).map_err(|message| format!("match: {message}"))?
+        ("match", value) => {
+            let n: u32 = match value {
+                None => MATCH_GAMES,
+                Some(value) => value.parse().map_err(|_| format!("match: n must be a positive integer, got {value:?}"))?,
+            };
+            Rule::best_of(n, fulls == 1).map_err(|message| format!("match: {message}"))?
         }
         ("sprt", Some(value)) => {
             let elo_d: f64 = value.parse().map_err(|_| format!("sprt: elo_d must be a number of Elo, got {value:?}"))?;
@@ -188,9 +208,9 @@ fn parse_flags(flags: &[String]) -> Result<(ControlSpec, usize), String> {
                 let mb: usize = value
                     .parse()
                     .ok()
-                    .filter(|mb| (temper_chess::uci::HASH_MB_MIN..=temper_chess::uci::HASH_MB_MAX).contains(mb))
+                    .filter(|mb| (fattorini::uci::HASH_MB_MIN..=fattorini::uci::HASH_MB_MAX).contains(mb))
                     .ok_or_else(|| {
-                        format!("--hash is {} to {} MB, got {value:?}", temper_chess::uci::HASH_MB_MIN, temper_chess::uci::HASH_MB_MAX)
+                        format!("--hash is {} to {} MB, got {value:?}", fattorini::uci::HASH_MB_MIN, fattorini::uci::HASH_MB_MAX)
                     })?;
                 hash_mb.replace(mb).is_some()
             }
@@ -224,7 +244,7 @@ fn spec_line(rule: Rule, control: &ControlSpec) -> String {
 /// The console prefix and outcome lines of a run under `rule`, `challenger` against `champion`.
 fn versus_labels(rule: Rule, champion: &str, challenger: &str) -> Labels {
     match rule {
-        Rule::BestOf(_) => Labels {
+        Rule::BestOf { .. } => Labels {
             prefix: "match",
             challenger_wins: format!("{challenger} wins the match"),
             champion_wins: format!("{champion} wins the match"),
@@ -255,7 +275,7 @@ fn play_rule(
     stop_requested: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<Resolution> {
     match rule {
-        Rule::BestOf(n) => runner::play(run, BestOf::new(n), registry, db_connection, stop_requested),
+        Rule::BestOf { n, full } => runner::play(run, BestOf::new(n, full), registry, db_connection, stop_requested),
         Rule::Sprt(spec) => {
             runner::play(run, Sprt::new(spec.elo_d, sprt::ALPHA, sprt::BETA), registry, db_connection, stop_requested)
         }
@@ -265,8 +285,8 @@ fn play_rule(
 
 /// `arena match | sprt | duel`: one run between two players named on the command line
 /// (`match_player::resolve_player`), with no tournament config; an external engine comes from
-/// `data/chess/engines.yaml` (`match_player::Engines`), read once for the run. Recorded in
-/// a dated folder, `data/chess/matches/<champion>-vs-<challenger>/<YYYYMMDD-HHMM>/`, whose `spec.txt` names its rule and
+/// `data/engines.yaml` (`match_player::Engines`), read once for the run. Recorded in
+/// a dated folder, `data/matches/<champion>-vs-<challenger>/<YYYYMMDD-HHMM>/`, whose `spec.txt` names its rule and
 /// control and which gets a `result.txt` when the run ends. Rerunning the same command resumes the
 /// latest run if it has none, and otherwise starts a new one (`match_player::choose_match_dir`); a
 /// rerun with another rule, value or control is refused rather than resuming it.
@@ -311,6 +331,10 @@ fn play_versus_in(
             process::exit(1);
         });
         match_player::set_hash(&mut entry, versus.hash_mb);
+        if let Err(message) = match_player::build_uci_player(name, &entry) {
+            eprintln!("{message}");
+            process::exit(1);
+        }
         entries.insert(name.to_string(), entry);
     }
     std::fs::create_dir_all(dir).unwrap_or_else(|error| panic!("failed to create {dir}: {error}"));
@@ -415,13 +439,29 @@ mod tests {
 
     #[test]
     fn each_command_takes_the_champion_then_the_challenger_its_value_and_one_control() {
-        let versus = parsed("sprt", &["stockfish-elo-1500", "amanda-g1-r1@t1", "35", "--time", "3+2"]);
-        assert_eq!((versus.champion.as_str(), versus.challenger.as_str()), ("stockfish-elo-1500", "amanda-g1-r1@t1"));
+        let versus = parsed("sprt", &["stockfish-elo-1500", "amanda-g1-r1@tuned", "35", "--time", "3+2"]);
+        assert_eq!((versus.champion.as_str(), versus.challenger.as_str()), ("stockfish-elo-1500", "amanda-g1-r1@tuned"));
         assert_eq!(versus.rule, Rule::Sprt(config::SprtSpec { elo_d: 35.0 }));
         assert_eq!(versus.control.text, "3+2");
         assert_eq!(versus.hash_mb, 16, "the default");
-        assert_eq!(parsed("match", &["a", "b", "12", "--depth", "9"]).rule, Rule::BestOf(12));
+        assert_eq!(parsed("match", &["a", "b", "12", "--depth", "9"]).rule, Rule::BestOf { n: 12, full: false });
         assert_eq!(parsed("duel", &["a", "b", "--depth", "1"]).rule, Rule::Duel);
+    }
+
+    /// n defaults to `MATCH_GAMES`; `--full` anywhere among the flags plays all of them.
+    #[test]
+    fn a_match_takes_400_games_by_default_and_full_anywhere_among_the_flags() {
+        assert_eq!(parsed("match", &["a", "b", "--depth", "9"]).rule, Rule::BestOf { n: 400, full: false });
+        assert_eq!(parsed("match", &["a", "b", "12", "--depth", "9", "--full"]).rule, Rule::BestOf { n: 12, full: true });
+        assert_eq!(parsed("match", &["a", "b", "--full", "--time", "10+0.1", "--hash", "64"]).rule, Rule::BestOf { n: 400, full: true });
+        for (command, list) in [
+            ("match", &["a", "b", "--depth", "9", "--full", "--full"][..]),
+            ("match", &["a", "b", "--depth", "9", "--full", "yes"][..]),
+            ("sprt", &["a", "b", "35", "--depth", "9", "--full"][..]),
+            ("duel", &["a", "b", "--depth", "9", "--full"][..]),
+        ] {
+            assert!(parse_versus_args(command, &args(list)).is_err(), "{command} {list:?}");
+        }
     }
 
     #[test]
@@ -440,13 +480,12 @@ mod tests {
         }
     }
 
-    /// No default control, exactly one, with its value; no `--threads`; an even n; a positive elo_d;
+    /// No default control, exactly one, with its value; no `--threads`; an even n when given; a positive elo_d;
     /// `duel` takes no value.
     #[test]
     fn each_command_refuses_anything_else() {
         for (command, list) in [
             ("match", &["a", "b", "12"][..]),
-            ("match", &["a", "b", "--depth", "9"][..]),
             ("match", &["a", "b", "7", "--depth", "9"][..]),
             ("match", &["a", "b", "0", "--depth", "9"][..]),
             ("match", &["a", "b", "x", "--depth", "9"][..]),
@@ -468,6 +507,7 @@ mod tests {
     #[test]
     fn the_spec_line_names_the_rule_by_its_value_and_the_control() {
         assert_eq!(line_of("match", &["a", "b", "12", "--time", "3+2"]), "best-of 12 at 3+2");
+        assert_eq!(line_of("match", &["a", "b", "--time", "10+0.1", "--full"]), "best-of 400 full at 10+0.1");
         assert_eq!(line_of("sprt", &["a", "b", "35", "--time", "3+2"]), "sprt elo_d 35 at 3+2");
         assert_eq!(line_of("sprt", &["a", "b", "10", "--depth", "9"]), "sprt elo_d 10 at depth 9");
         assert_eq!(line_of("duel", &["a", "b", "--depth", "9"]), "duel at depth 9");

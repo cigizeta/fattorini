@@ -2,15 +2,15 @@
 //! libtorch. `start` runs the smithy, whose jobs, started from its page, train every network,
 //! generation by generation, or tune a player's search parameters, every game played by the arenas
 //! (`arena start`), make a source's corpus, Lc0's converted or PeSTO's played, or make an opening
-//! book; and ask an arena to install a player for lichess-bot. The two binaries talk only through the
-//! files and requests `temper_chess::pipeline` defines.
+//! book. The two binaries talk only through the
+//! files and requests `fattorini::pipeline` defines.
 
 // MSVC's linker reports the import library it creates for smithy's exported symbols (the one
 // `build.rs` forces in to keep `torch_cuda.dll` linked): a side product, nothing to act on.
 #![allow(linker_messages)]
 
 // The pipeline contract, shared with `arena`.
-use temper_chess::pipeline::{preprocessing_config, remote};
+use fattorini::pipeline::{preprocessing_config, remote};
 
 mod cache;
 mod game_labels;
@@ -93,22 +93,16 @@ const USAGE: &str = "usage: smithy start | stop | status\n       \
      (the smithy, on any machine, in the foreground, on 127.0.0.1\n        \
      and the LAN, every game played by the arenas it claims on the machines that file lists, each\n        \
      started by hand (arena start); its jobs are started and stopped from its page opened on this machine,\n        \
-     http://127.0.0.1:47821/: a forge, the training run of a configs/chess/ config, full where CUDA is or\n        \
+     http://127.0.0.1:47821/: a forge, the training run of a configs/ config, full where CUDA is or\n        \
      scaled anywhere on the CPU, a tune of a player's search\n        \
      parameters, a test, or PeSTO's Play, one at a time; beside them Lc0's Convert, which converts Lc0's\n        \
-     training tars into data/chess/lc0 up to configs/chess/lc0.yaml's cap, or a book job, which makes an opening\n        \
-     book of a PGN in data/chess/books/ on Drive; and an install of a player and a book for lichess-bot, on\n        \
-     any machine whose arena it claims. stop and status reach it from another terminal on the same\n        \
-     machine)";
+     training tars into data/lc0 up to configs/lc0.yaml's cap, or a book job, which makes an opening\n        \
+     book of a PGN in data/books/ on Drive. stop and status reach it from another terminal on\n        \
+     the same machine)";
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_usage_offers_no_install_command() {
-        assert!(!USAGE.contains("smithy install"), "an install is asked from the page");
-    }
 
     #[test]
     fn the_usage_offers_no_dev_smithy() {

@@ -3,10 +3,10 @@
 
 use std::io::{Read, Write};
 
-use temper_chess::board::castling_rights::CastlingRights;
-use temper_chess::board::color::Color;
-use temper_chess::board::square::Square;
-use temper_chess::features::CanonicalPosition;
+use fattorini::board::castling_rights::CastlingRights;
+use fattorini::board::color::Color;
+use fattorini::board::square::Square;
+use fattorini::features::CanonicalPosition;
 
 /// The maximum number of non-king pieces one canonical position's `pieces` list can ever have: a
 /// legal position starts with exactly 32 pieces total (16 per side, including 2 kings, which are
@@ -128,7 +128,7 @@ fn write_pieces(writer: &mut impl Write, pieces: &[u16]) {
 }
 
 /// Packs `rights` (via its public `kingside`/`queenside` accessors, since its internal byte is
-/// private to `temper_chess::board`) into bits 0-3, White-kingside/White-queenside/Black-kingside/
+/// private to `fattorini::board`) into bits 0-3, White-kingside/White-queenside/Black-kingside/
 /// Black-queenside, then folds in `en_passant_file` as bit 4 (present flag) plus bits 5-7 (the file
 /// itself, only meaningful when bit 4 is set).
 fn encode_castling_and_en_passant(rights: CastlingRights, en_passant_file: Option<u8>) -> u8 {

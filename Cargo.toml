@@ -3,14 +3,14 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "2026.11.0"
 edition = "2024"
 rust-version = "1.99.1"
 license = "AGPL-3.0-only"
 
 # Dead code is never tolerated: every build fails on it, the `bin/` wrappers' included. Not every
 # warning: a new toolchain's lint would then break the build. A `pub` item of a library is never
-# reported, so `temper_chess::pipeline` holds only the contract both tools use.
+# reported, so `fattorini::pipeline` holds only the contract both tools use.
 [workspace.lints.rust]
 dead_code = "deny"
 unused = "deny"
@@ -18,7 +18,7 @@ non_shorthand_field_patterns = "deny"
 
 # The versions every crate shares. Why each crate needs a dependency is said where it uses it.
 [workspace.dependencies]
-temper-chess = { path = "crates/temper-chess" }
+fattorini = { path = "crates/fattorini" }
 pgn-replay = { path = "crates/pgn-replay" }
 progress = { path = "crates/progress" }
 lan-http = { path = "crates/lan-http" }

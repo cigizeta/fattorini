@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use rusqlite::Connection;
 
-use temper_chess::board::color::Color;
-use temper_chess::nnue::Network;
-use temper_chess::tablebase::SyzygyTablebase;
+use fattorini::board::color::Color;
+use fattorini::nnue::Network;
+use fattorini::tablebase::SyzygyTablebase;
 
 use super::random_book;
 use super::data_root;

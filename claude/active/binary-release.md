@@ -1,96 +1,91 @@
-# The first binary release
+# Binary releases
 
-Status: plan (the developer, 2026-10-25); not started. Decisions 1 to 4 agreed in discussion; the
-steps to approve.
+**Status:** design, to discuss (the developer, 2026-11-06). Rewritten the same day: replaces the
+2026-10-25 plan (a `bin/release` script, networks zipped beside the `.exe`, `EvalFile`), which
+predated snapshots.md, and a GitHub Actions design discussed and rejected the same day ("Why do
+not we make it simple? ... No GitHub Actions. I compile myself."). Kept from 2026-10-25: the order,
+the static C runtime, the notices, debugging while private.
 
-**When (the developer, 2026-10-25):** once the network experiments settle (the SCReLU variants
-under way: phase, count, taper), which decides the embedded network. Then `0.1.0` is debugged
-through as many draft releases as it takes, tagged and released here while the repository is
-private, and it becomes public with the whole repository.
+## Decisions
 
-**The order (the developer, 2026-10-27):** the width 512 experiment (psq-threats-screlu-512.md)
-decides the best network, nothing wider tried; that network is then SPSA-tuned; only then is
-`0.1.0` released, and the workspace's version bumped to `0.2.0` for development.
+1. **A release is a snapshot built at a tag** (the developer, 2026-11-06): the same build
+   (snapshots.md: network and tuned parameters embedded, no `EvalFile`, `about`, `id name`), the
+   description saying the tag where a snapshot says the commit:
+   `Fattorini v0.2.0 lc0-psq-threats-screlu-g1-r1@tuned 2026-11-20 10:00 UTC`.
+2. **Built locally, uploaded by the arena** (the developer, 2026-11-06): `bin/arena release
+   <player>@<tuned|untuned>`, hidden like `snapshot`, the snapshot's rule (PeSTO or a full run's
+   passed winner). No GitHub Actions, nothing of the network committed.
+3. **Only at a clean tag:** HEAD exactly at a tag (`git describe --exact-match --tags`), the working
+   tree unmodified, the tag already on GitHub (`gh release create --verify-tag` refuses otherwise,
+   instead of creating the tag from the default branch).
+4. **A draft:** `gh release create <tag> --draft --verify-tag`, the developer's own `gh` login; the
+   developer reads it and publishes it on GitHub.
+5. **Portable:** `x86-64-v3` (`.cargo/config.toml`'s, which `main` checks) and the C runtime linked
+   statically (`crt-static`), so no Visual C++ Redistributable. Its own target directory,
+   `target/release-build`; `RUSTFLAGS` replaces the config's, so it says both. The imports checked
+   for no `VCRUNTIME140.dll`, and `bench` run once, before any upload.
+6. **Kept from 2026-10-25:** released only once the network experiments settle and the chosen
+   network is tuned; debugged as drafts while the repository is private, published with it; the
+   dependency notices (`cargo-about`, `about.toml` and `about.hbs`, tried 2026-10-27) with the ODbL
+   notice for the training data.
+7. **Dropped:** several networks zipped for `EvalFile` (there is none: another network is another
+   release); GitHub Actions and a committed manifest.
 
-## Decisions (the developer, 2026-10-25)
+8. **Release candidates** (the developer, 2026-11-06): `v0.1.0-rc.1`, `-rc.2`, ... each a draft,
+   a broken one's draft deleted; `v0.1.0` tagged on the candidate that worked. A tag seen by anyone
+   is never moved nor reused.
+9. **Only the `.exe` is uploaded** (the developer, 2026-11-06), not the network. The notes and any
+   accompanying text need a design of their own (below).
 
-1. **One `rotor.exe`, its official network embedded,** not a separate `.nnue` beside it. Already
-   supported: `build.rs` embeds the file `ROTOR_EVALFILE` names, `uci.rs` starts with it and
-   advertises `EvalFile` as `<embedded>`, and a `rotor.nnue` beside the `.exe` still wins over it.
-2. **It runs on any machine, not only a development one:** the release build links the C runtime
-   statically (`crt-static`), so it needs no Visual C++ Redistributable. Only the release build:
-   development builds, `smithy install` and `bin/arena` keep the dynamic runtime, `smithy`'s
-   libtorch needing it. Its own target directory, `target/dist`, so its flags never force a rebuild
-   of `target/release`.
-3. **Several networks may be published, each with its tuning,** not only the embedded one. A
-   network's tuning is the `parameters.txt` in its own directory (`nnue.rs`), so each is published as
-   a zip of its own folder: `<name>/<name>.nnue`, and `<name>/parameters.txt` when tuned. A user
-   unzips it anywhere and points `EvalFile` at the `.nnue`. Networks can be added to a release later,
-   without a new `.exe`.
-4. **Debugged while private:** this repository is the new one meant to go public (TODO, "Going
-   public"), created and still private; its release is made and debugged here as a draft, and the
-   repository made public only once the release is right.
+10. **Superseded (the developer, 2026-11-11):** Stockfish's Skill Level is a poor anchor, a
+    handicapped search rather than an engine of a known strength, and appears nowhere in the
+    release. The release claims the CCRL Blitz estimate from the three anchors of
+    ccrl-conditions.md, with its method, which the CCRL submission needs anyway. The decision as
+    it was:
 
-## What a release holds
+    **Strength: no Elo, two rows against Stockfish's Skill Level** (the developer, 2026-11-06):
+    the highest Skill Level the release beats and the lowest that beats it, adjacent if possible,
+    bracketing its strength with nothing claimed on a rating scale. Each row names the Stockfish
+    version and the conditions, since a Skill Level's strength depends on both:
 
-- `rotor.exe`: x86-64-v3, the C runtime static, the official network and its tuning embedded.
-- `NOTICES.md` (name to confirm): the dependency notices `cargo-about` generates, then the ODbL
-  notice for the training data (TODO, "The embedded network's data").
-- One zip per published network, the embedded one included: the network itself is part of the
-  corresponding source AGPLv3 asks for, `data/` being gitignored.
-- The release notes: the version, the embedded network by name, every published network with how it
-  was trained and how it scored in its duels, the CPU requirement, the license, and where the source
-  is (the tag).
+    | Opponent | Time control | Threads / Hash | Book | Games | W-L-D | Score |
+    |---|---|---|---|---|---|---|
+    | Stockfish *version*, Skill Level *n* | | | | | | |
+    | Stockfish *version*, Skill Level *n + 1* | | | | | | |
 
-## The one code change: the tuning embedded with the network
+    Measured again for each release against the same Stockfish version while it can be, so
+    releases compare. Each row a full match, `bin/arena match stockfish-<level> <player>@tuned
+    --full ...`: 400 games, all played (the developer, 2026-11-06), at 10+0.1, one thread, 64 MB,
+    the UHO book, as the duels, both sides with Syzygy tables up to 6 pieces (the arena gives them
+    `SyzygyPath` and refuses to start without the tables). "Beats" is the match's own verdict, a score above 50%; exactly 50%
+    is not expected (the developer).
 
-Today only the `.nnue` is embedded, so the `.exe` plays its network with the default search
-parameters even when the network's folder holds a `parameters.txt`. `build.rs` also copies the
-`parameters.txt` beside `ROTOR_EVALFILE` when it exists (an empty file otherwise, as for the
-network), and `uci.rs` gives the embedded network that tuning, parsed as `nnue.rs` parses the file.
-The `info string` at startup then says "search parameters from parameters.txt" for it as for a file.
-Tests: an embedded tuning round-trips, and an absent one is untuned.
+11. **The version checked** (the developer, 2026-11-06): `arena release` refuses when the tag,
+    less its `v`, differs from `Cargo.toml`'s version (in `id name` as `Fattorini 0.1.0`), so the
+    two never disagree; a candidate's tag `v0.1.0-rc.1` passes against `0.1.0`, so candidates need
+    no version change of their own. **The version is CalVer since 2026-11-11** (calver.md):
+    `2026.11.0`, tags `v2026.11.0` and `v2026.11.0-rc.1`, the month checked against the current one.
 
-Optional, to decide: the embedded network's name recorded at build time (from `ROTOR_EVALFILE`'s
-folder name), so the startup `info string` says which network `<embedded>` is.
+12. **The notes, a committed file** (the developer, 2026-11-06): `RELEASE-NOTES.md` at the
+    repository's root, edited before each release (the version, the network, the strength table
+    filled), committed, then tagged; `gh release create <tag> --draft --verify-tag --notes-file
+    RELEASE-NOTES.md`, the file passed as it is, no placeholders. The arena refuses when the file
+    does not name the tag's version, so a release never carries the previous notes. The two
+    matches are played before the tag, on a snapshot of the commit before the notes' commit: the
+    notes name no commit, so nothing says otherwise.
 
-## The build script, `bin/release`
+## Proposed
 
-One Bash script, run from Git Bash, the flags written once:
-
-1. Refuses a dirty working tree, and takes the network's folder as its argument.
-2. `ROTOR_EVALFILE=<the .nnue> RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+crt-static"
-   cargo build --release --bin rotor --target-dir target/dist`. `RUSTFLAGS` replaces the config's
-   flags, so it repeats `target-cpu`.
-3. Checks the `.exe`'s imports (`dumpbin /dependents`): no `VCRUNTIME140.dll`, nothing but Windows
-   DLLs; stops otherwise.
-4. Runs `target/dist/release/rotor.exe bench` once, so a broken build never leaves the script.
-5. Generates the notices with `cargo-about` (`about.toml`, the accepted licenses, and `about.hbs`,
-   the template, which carries the ODbL notice itself; both written and tried 2026-10-27, the engine's
-   tree alone listed, Rotor itself left out by `publish = false`), and
-   zips the network folders asked for.
-6. Leaves everything in `target/dist/release-<version>/`, ready to upload by hand.
-
-The upload stays by hand on GitHub's page (or `gh release create --draft` later): Claude has no Git
-or network write access, and a release is outward-facing.
-
-## Steps
-
-1. The tuning embedded (above), with its tests.
-2. `about.toml` and `bin/release`; `cargo-about` installed (DEV.md says how).
-3. A dry run in this repository's `target/dist`, nothing uploaded: the imports checked, the bench
-   run, the notices read through.
-4. The tag `0.1.0` (the workspace's version, already in `id name`) and a release here, a draft
-   first, with the assets; downloaded back and tried as a user would: in a
-   GUI, `EvalFile` pointed at a published zip's network.
-5. If possible, `rotor.exe` run once on a clean machine (a virtual machine or a tester's), the only
-   real check of the static runtime beyond the imports.
-6. **The history, done (the developer, 2026-10-27):** squashed once more, so the passages the
-   2026-10-25 sweep reworded are gone from it. If commits since then ever need the same, squash
-   again before going public, the tag and draft made again on it.
-7. Public: the repository made public, the draft published.
+- **The notices embedded:** the dependencies' MIT and Apache notices must accompany a distributed
+  binary, and the ODbL asks an attribution: generated by `cargo-about`, embedded by `build.rs`,
+  printed by `fattorini licenses`. One file still.
+- **The notes:** what it is (the description), requirements (Windows, x86-64-v3, writes nothing),
+  use (any UCI GUI; `Hash`, `Threads`, Syzygy; no network option), strength (only if measured),
+  license (AGPLv3, the source at the tag, `fattorini licenses`). Kept in `RELEASE-NOTES.md`
+  (decision 12).
+- **Shared code:** `snapshot::describe` takes the commit or the tag; `build_embedded` takes the
+  target directory and extra flags.
 
 ## Open
 
-- Which networks are published beside the embedded one.
-- The notices file's name and format, once `cargo-about`'s output is seen.
+Nothing left (2026-11-06).

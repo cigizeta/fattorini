@@ -74,6 +74,13 @@ pub fn eta_text(observed: u64, remaining: u64, elapsed: Duration) -> String {
     duration_text(Duration::from_secs_f64(remaining as f64 * seconds / observed as f64))
 }
 
+/// A positive `value` to one decimal, its whole part `grouped`.
+fn one_decimal(value: f64) -> String {
+    let text = format!("{value:.1}");
+    let (whole, tenths) = text.split_once('.').expect("one decimal always prints a point");
+    format!("{}.{tenths}", grouped(whole))
+}
+
 /// This run's average rate: `observed` units in `elapsed`. A count under one a second is given as
 /// seconds per unit, as tqdm does, so a slow bar (an SPSA's pairs, seconds apart) reads as a number
 /// rather than `0.0/s`; its noun singular, the plural's final `s` dropped.
@@ -84,8 +91,8 @@ pub fn rate_text(observed: u64, elapsed: Duration, unit: Unit) -> String {
     }
     let per_second = observed as f64 / seconds;
     match unit {
-        Unit::Count(noun) if per_second >= 1.0 => format!("{per_second:.1} {noun}/s"),
-        Unit::Count(noun) => format!("{:.1} s/{}", 1.0 / per_second, noun.strip_suffix('s').unwrap_or(noun)),
+        Unit::Count(noun) if per_second >= 1.0 => format!("{} {noun}/s", one_decimal(per_second)),
+        Unit::Count(noun) => format!("{} s/{}", one_decimal(1.0 / per_second), noun.strip_suffix('s').unwrap_or(noun)),
         Unit::Bytes => format!("{}/s", bytes_text(per_second as u64)),
     }
 }
@@ -142,7 +149,8 @@ pub struct LiveBar {
     pub position: u64,
     /// Always some since every bar has a length; kept optional for the page, which reads it so.
     pub length: Option<u64>,
-    pub percent: Option<u64>,
+    /// To one decimal (`percent_done`).
+    pub percent: Option<f64>,
     pub eta: Option<String>,
     pub rate: String,
 }
@@ -199,8 +207,9 @@ pub fn notice(text: String) -> Notice {
     Notice(shared)
 }
 
-/// `n` with its thousands grouped by commas, `1,199,290,155`, as the page shows every other count.
-fn grouped(n: u64) -> String {
+/// `n`, any whole number, with its thousands grouped by commas, `1,199,290,155`, as the page shows
+/// every other count. For what people read: never for a file, UCI, or anything else parsed.
+pub fn grouped(n: impl std::fmt::Display) -> String {
     let digits = n.to_string();
     let mut text = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {
@@ -210,6 +219,13 @@ fn grouped(n: u64) -> String {
         text.push(digit);
     }
     text
+}
+
+/// `position` of `length` in percent, to one decimal, rounded down so that only a finished bar reads
+/// 100.0; a bar of no length is done.
+fn percent_done(position: u64, length: u64) -> f64 {
+    let tenths = (1000 * u128::from(position.min(length))).checked_div(u128::from(length)).unwrap_or(1000);
+    tenths as f64 / 10.0
 }
 
 /// A bar as `live` lists it.
@@ -226,7 +242,7 @@ fn snapshot(bar: &Shared) -> LiveBar {
         counts,
         position,
         length: Some(length),
-        percent: Some((100 * position.min(length)).checked_div(length).unwrap_or(100)),
+        percent: Some(percent_done(position, length)),
         eta: Some(eta_text(observed, length.saturating_sub(position), elapsed)),
         rate: rate_text(observed, elapsed, bar.unit),
     }
@@ -313,6 +329,23 @@ mod tests {
         assert_eq!(grouped(999), "999");
         assert_eq!(grouped(1000), "1,000");
         assert_eq!(grouped(1_199_290_155), "1,199,290,155");
+        assert_eq!(grouped(1_024_usize), "1,024");
+    }
+
+    #[test]
+    fn a_rate_groups_its_thousands() {
+        assert_eq!(rate_text(1_234_500, Duration::from_secs(10), Unit::Count("positions")), "123,450.0 positions/s");
+        assert_eq!(rate_text(1, Duration::from_secs(1500), Unit::Count("games")), "1,500.0 s/game");
+    }
+
+    #[test]
+    fn the_percentage_has_one_decimal_and_reads_100_only_when_done() {
+        assert_eq!(percent_done(1, 3), 33.3);
+        assert_eq!(percent_done(9_999, 10_000), 99.9);
+        assert_eq!(percent_done(10_000, 10_000), 100.0);
+        assert_eq!(percent_done(130, 100), 100.0);
+        assert_eq!(percent_done(0, 0), 100.0);
+        assert_eq!(percent_done(u64::MAX - 1, u64::MAX), 99.9);
     }
 
     #[test]
@@ -320,7 +353,7 @@ mod tests {
         let train = resumed(30, 100, Unit::Count("steps"), "live train");
         train.set_position(80);
         let shown = listed("live train").expect("listed");
-        assert_eq!((shown.counts.as_str(), shown.position, shown.length, shown.percent), ("80/100 steps", 80, Some(100), Some(80)));
+        assert_eq!((shown.counts.as_str(), shown.position, shown.length, shown.percent), ("80/100 steps", 80, Some(100), Some(80.0)));
         assert!(shown.eta.is_some());
         train.finish();
         assert_eq!(listed("live train"), None, "finished, left out");

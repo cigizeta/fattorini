@@ -4,18 +4,13 @@
 
 use std::process;
 
-use temper_chess::nnue::QuantizedPsqNetwork;
-use temper_chess::pipeline::{generation, preprocessing_config};
+use fattorini::nnue::QuantizedPsqNetwork;
+use fattorini::pipeline::{generation, preprocessing_config};
 
 use crate::feature_set::FeatureSet;
 use crate::net_config::{ArchitectureKind, NetConfig};
 use crate::stack_head::HeadShape;
 use crate::{checkpoint_store, export, history, nnue_network, stages};
-
-/// A network's tuned search parameters, beside its engine file (`nnue::parameters_file_beside`): a
-/// candidate's in its lambda's directory, a champion's in its generation's. It replaced the single
-/// margin of `margin.txt`, retired when the pawn scale moved to label space.
-pub(crate) const PARAMETERS_FILE: &str = "parameters.txt";
 
 /// Exports one lambda's candidate to `gen-<g>/lambda-<l>/candidate.nnue`, with `candidate.txt`
 /// beside it naming the checkpoint. Called by `export_best` when the lambda's run stops, so the
@@ -256,7 +251,7 @@ mod tests {
         let generation = std::env::temp_dir().join(format!("smithy-candidates-{}-candidate-record", std::process::id()));
         let generation = generation.to_str().unwrap();
         std::fs::remove_dir_all(generation).ok();
-        let dir = generation::lambda_dir(generation, temper_chess::pipeline::preprocessing_config::ArmLambda::Constant(0.7));
+        let dir = generation::lambda_dir(generation, fattorini::pipeline::preprocessing_config::ArmLambda::Constant(0.7));
         assert!(read_candidate_step(&dir).is_err(), "no candidate.txt at all");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(candidate_record_path(&dir), "lambda\t0.70\nstep\t15872\ntest_loss\t0.04\ncheckpoint\tx/step_000015872.vs\n").unwrap();

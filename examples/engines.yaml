@@ -1,4 +1,4 @@
-# The engine registry, an example. Copy it to data/chess/engines.yaml, which is gitignored and per machine,
+# The engine registry, an example. Copy it to data/engines.yaml, which is gitignored and per machine,
 # and set each path to the executable on this machine. Paths use forward slashes in double quotes:
 # in a double-quoted YAML string a backslash starts an escape.
 #

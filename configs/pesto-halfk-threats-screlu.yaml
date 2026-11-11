@@ -1,0 +1,42 @@
+# The PeSTO route, halfk_threats_screlu (2026-11-02, the identity line): Stockfish's HalfKAv2_hm with
+# psq_threats' threats and SCReLU, its 32 king buckets trained factorised, as lc0-halfk-threats-screlu.
+# Generation 1 trains on PeSTO's corpus (pesto.yaml), gated against PeSTO; from generation 2 on, each
+# generation plays its training set with the previous winner, trains 9 lambdas to convergence, picks
+# one by round robin and gates it against its teacher. Trained after lc0-halfk-threats-screlu.
+
+# The forge. Generation 1's grid: 0.91 to 0.99, the game result carrying the label, PeSTO's score a
+# small correction; later generations centre on the previous winner.
+grid_center: 0.95
+# From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
+# gate ends the run. Generation 1's are pesto.yaml's.
+training_positions: 1073741824
+# From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is pesto.yaml's.
+test_positions: 4194304
+round_robin_pairs: 400
+gate_elo_d: 35
+
+# The tune of each generation that passed its gate, started by hand, at 10+0.1: the default
+# length, 32,768 pairs, from its teacher's tune (generation 1's from PeSTO's); the next
+# generation's self-play plays it.
+tune:
+  length: default
+  control: 10+0.1
+
+# The network: (26624 -> 256) x 2 -> 1, each lane squared after the clip; in training 27328 rows,
+# halfk's and the factor's.
+labels: pesto
+
+architecture:
+  kind: halfk_threats_screlu
+  embedding_dim: 256
+  value_head:
+    hidden_dim: []
+
+# Rates 3e-3 to 3e-5, patience 6 rounds of 4096 steps of 4096 positions.
+training:
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6

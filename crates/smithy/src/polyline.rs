@@ -20,6 +20,8 @@
 //! a weak, over-confident teacher (PeSTO) rises toward the result, an accurate one cautious late
 //! (Lc0) falls to 0. A position's lambda is the polyline through the ten, linear between bucket
 //! centres (0.05, 0.15, ..., 0.95), flat beyond the end centres: never outside [0, 1], continuous.
+//! Lc0's late zeros are sound: toward a game's end s grows as reliable as z (simpler positions, the
+//! tables), so s already carries what z would add, with less noise.
 //!
 //! **Measured from the scattered buckets,** which hold s, z and each position's progress: every
 //! position of the training set, read locally, the corpus read once, by the scatter, and no sample.
@@ -76,16 +78,19 @@ impl Moments {
         self.sz += other.sz;
     }
 
-    /// lambda*, unclamped; `None` with fewer than two pairs, or when s or the blend does not vary.
-    fn lambda(&self) -> Option<f64> {
+    /// Var(s), Var(z) and Cov(s, z); `None` with fewer than two pairs.
+    fn spreads(&self) -> Option<(f64, f64, f64)> {
         if self.n < 2 {
             return None;
         }
         let n = self.n as f64;
         let (mean_s, mean_z) = (self.s / n, self.z / n);
-        let var_s = self.ss / n - mean_s * mean_s;
-        let var_z = self.zz / n - mean_z * mean_z;
-        let cov = self.sz / n - mean_s * mean_z;
+        Some((self.ss / n - mean_s * mean_s, self.zz / n - mean_z * mean_z, self.sz / n - mean_s * mean_z))
+    }
+
+    /// lambda*, unclamped; `None` with fewer than two pairs, or when s or the blend does not vary.
+    fn lambda(&self) -> Option<f64> {
+        let (var_s, var_z, cov) = self.spreads()?;
         let total = var_s + var_z - 2.0 * cov;
         (var_s > 0.0 && total > 0.0).then(|| (var_s - cov) / total)
     }
@@ -172,7 +177,7 @@ pub(crate) fn measure(dir: &str, threads: usize, stop: &AtomicBool, bar: &progre
                         break;
                     }
                     let mut read = 0;
-                    buckets::for_each_pair(dir, index, |s, z, position| {
+                    buckets::for_each_pair(dir, index, |s, z, position, _| {
                         read += 1;
                         if !is_certainty(s, z) {
                             sums[bucket(usize::from(position.i), usize::from(position.n))].add(f64::from(s), f64::from(z));
@@ -201,11 +206,11 @@ pub(crate) fn measure(dir: &str, threads: usize, stop: &AtomicBool, bar: &progre
 pub(crate) fn ensure(path: &str, dir: &str, threads: usize, stop: &AtomicBool, say: &dyn Fn(String)) -> Result<Option<Polyline>, String> {
     if let Ok(text) = fs::read_to_string(path) {
         let (polyline, positions) = Polyline::parse(&text).ok_or_else(|| format!("{path}: not a polyline; delete it to measure again"))?;
-        say(format!("lambda by progress from {path}, measured on {positions} positions: {}", show(&polyline)));
+        say(format!("lambda by progress from {path}, measured on {} positions: {}", progress::grouped(positions), show(&polyline)));
         return Ok(Some(polyline));
     }
     let records = buckets::committed_records(dir)?;
-    say(format!("measuring lambda by progress on the {records} positions of {dir}"));
+    say(format!("measuring lambda by progress on the {} positions of {dir}", progress::grouped(records)));
     let bar = progress::resumed(0, records, progress::Unit::Count("positions"), "measuring lambda by progress");
     let measured = measure(dir, threads, stop, &bar);
     bar.finish();
@@ -222,7 +227,7 @@ pub(crate) fn ensure(path: &str, dir: &str, threads: usize, stop: &AtomicBool, s
     let tmp = format!("{path}.partial");
     fs::write(&tmp, polyline.text(positions)).map_err(|error| format!("failed to write {tmp}: {error}"))?;
     fs::rename(&tmp, path).map_err(|error| format!("failed to rename {tmp}: {error}"))?;
-    say(format!("lambda by progress, measured on {positions} positions: {}", show(&polyline)));
+    say(format!("lambda by progress, measured on {} positions: {}", progress::grouped(positions), show(&polyline)));
     Ok(Some(polyline))
 }
 
@@ -253,6 +258,18 @@ mod tests {
             }
         }
         assert!((moments.lambda().unwrap() - 0.2).abs() < 1e-12);
+    }
+
+    /// A squeezed s, `s = c v`: lambda* negative though s has an error, which the clamp turns into 0.
+    #[test]
+    fn a_squeezed_score_gives_a_negative_lambda() {
+        let mut moments = Moments::default();
+        for v in [-0.6, -0.2, 0.2, 0.6] {
+            for noise in [-0.3, 0.3] {
+                moments.add(0.8 * v, v + noise);
+            }
+        }
+        assert!(moments.lambda().unwrap() < 0.0);
     }
 
     #[test]

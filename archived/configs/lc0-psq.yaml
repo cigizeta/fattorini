@@ -1,7 +1,7 @@
 # psq on Lc0's games (labels-lc0.md, lc0-data.md): data/lc0, test91's tars from 2026-01-01,
 # converted by smithy lc0, each score Lc0's best_q after an 800-visit search. No teacher and only
 # generation 1: it starts from random weights, and its gate is against the hand-crafted evaluation,
-# as every generation 1's. self-psq is the same shape on Temper's self-play, so the two rank the
+# as every generation 1's. self-psq is the same shape on Fattorini's self-play, so the two rank the
 # shapes twice.
 labels: lc0
 

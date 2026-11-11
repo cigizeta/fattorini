@@ -1,25 +1,25 @@
-//! `data/chess/engines.yaml`: the engine registry, each external engine named once with the path to its
+//! `data/engines.yaml`: the engine registry, each external engine named once with the path to its
 //! executable and the UCI options to set on it, as cutechess keeps its `engines.json`. The players
 //! of `match`, `sprt`, `duel` take every external engine from it (`match_player::Engines`), and a
 //! tournament `config.yaml`'s `participants` resolve against it. Lives under `data/`, not
-//! `configs/chess/`: a binary path is the machine's own business, so each developer writes the file by
+//! `configs/`: a binary path is the machine's own business, so each developer writes the file by
 //! hand from the committed `examples/engines.yaml`.
 
 use std::collections::HashMap;
 
-use temper_chess::nnue::Tuning;
-use temper_chess::search::SearchParameters;
+use fattorini::nnue::Tuning;
+use fattorini::search::SearchParameters;
 use serde::Deserialize;
 
 /// The registry's one place, per machine and gitignored.
-pub const ENGINE_REGISTRY_PATH: &str = "data/chess/engines.yaml";
+pub const ENGINE_REGISTRY_PATH: &str = "data/engines.yaml";
 
 /// What kind of player a registry entry names. `Uci` is the default, so every `engines.yaml`
 /// written before this field existed keeps working unchanged.
 ///
 /// `Builtin` and `Network` both become an `InProcessPlayer` and differ only in the evaluation they
 /// carry. They exist because the gate compares two evaluations inside one search, which driving
-/// Temper over UCI could not do: that would compare two whole engine builds instead, and would put a
+/// Fattorini over UCI could not do: that would compare two whole engine builds instead, and would put a
 /// subprocess boundary in the way of the one thing being measured.
 #[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -44,15 +44,15 @@ pub struct EngineEntry {
     pub net: Option<String>,
     #[serde(default)]
     pub options: HashMap<String, serde_yaml::Value>,
-    /// An in-process player's search parameters from a player name's suffix, `@default`, `@t1` or
-    /// `@<cp>` (`SearchParameters::with_margin`); `None` plays the player's own tuning (`tuning`), as
-    /// a player built from paths does (the gate's). Never set on a UCI entry: a subprocess cannot be
-    /// given any.
+    /// A Fattorini player's search parameters from its name's suffix, `@untuned` or `@tuned`: an
+    /// in-process player searches with them, a UCI one has them embedded in its build
+    /// (`match_player::build_uci_player`). `None` plays the player's own tuning (`tuning`), as a
+    /// player built from paths does (the gate's); always `None` for an external engine.
     #[serde(skip)]
     pub parameters: Option<SearchParameters>,
 }
 
-pub use temper_chess::pipeline::players::pesto_parameters;
+pub use fattorini::pipeline::players::pesto_parameters;
 
 impl EngineEntry {
     /// The binary to spawn. Panics if absent, which `validate` has already ruled out at load time --
@@ -61,7 +61,7 @@ impl EngineEntry {
         self
             .path
             .as_deref()
-            .expect("a uci engine entry always has a path, enforced when data/chess/engines.yaml is loaded")
+            .expect("a uci engine entry always has a path, enforced when data/engines.yaml is loaded")
     }
 
     /// The `.nnue` file for `kind: network`, likewise already checked present at load time.
@@ -69,7 +69,7 @@ impl EngineEntry {
         self
             .net
             .as_deref()
-            .expect("a network engine entry always has a net, enforced when data/chess/engines.yaml is loaded")
+            .expect("a network engine entry always has a net, enforced when data/engines.yaml is loaded")
     }
 
     /// The table size in MB: the `Hash` option, which a UCI player is sent and an in-process player
@@ -84,30 +84,30 @@ impl EngineEntry {
     /// player, whose search is its own business.
     pub fn own_tuning(&self) -> Result<Tuning, String> {
         match (self.kind, &self.net) {
-            (EngineKind::Network, Some(net)) => temper_chess::nnue::read_tuning_beside(net),
+            (EngineKind::Network, Some(net)) => fattorini::nnue::read_tuning_beside(net),
             (EngineKind::Builtin, _) => Ok(pesto_parameters()?.map_or(Tuning::Untuned, Tuning::Parameters)),
             _ => Ok(Tuning::Untuned),
         }
     }
 
     /// `name` with what this player searches with, for the run's header line: a suffixed name as it
-    /// is, else `@default` for an untuned player, ` (parameters.txt)` for a tuned one; a UCI player's
+    /// is, else `@untuned` for an untuned player, ` (parameters.txt)` for a tuned one; a UCI player's
     /// name as it is. A malformed file shows as untuned here, and the player's own start reports it.
     pub fn label(&self, name: &str) -> String {
         if name.contains('@') || self.kind == EngineKind::Uci {
             return name.to_string();
         }
         match self.own_tuning().unwrap_or(Tuning::Untuned) {
-            Tuning::Untuned => format!("{name}@default"),
+            Tuning::Untuned => format!("{name}@untuned"),
             Tuning::Parameters(_) => format!("{name} (parameters.txt)"),
         }
     }
 }
 
-/// Every player's table size unless `--hash` says otherwise: `bin/temper-chess`'s own UCI default, 16 MB,
+/// Every player's table size unless `--hash` says otherwise: `bin/fattorini`'s own UCI default, 16 MB,
 /// also the self-play size. A depth-9 search visits some 20k-70k nodes, about 1 MB of entries, so
 /// 16 MB leaves ample room for what carries over between moves.
-pub const DEFAULT_HASH_MB: usize = temper_chess::uci::DEFAULT_HASH_MB;
+pub const DEFAULT_HASH_MB: usize = fattorini::uci::DEFAULT_HASH_MB;
 
 #[derive(Debug, Deserialize)]
 struct EngineRegistryFile {
@@ -129,7 +129,7 @@ impl EngineRegistry {
         EngineRegistry { entries: file.engines }
     }
 
-    /// A registry built in memory rather than read from `data/chess/engines.yaml`, validated the same way.
+    /// A registry built in memory rather than read from `data/engines.yaml`, validated the same way.
     /// For the gate, whose two players are derived from a network's generation directory rather than
     /// registered by hand.
     pub fn from_entries(entries: HashMap<String, EngineEntry>, origin: &str) -> EngineRegistry {
@@ -141,7 +141,7 @@ impl EngineRegistry {
 
     /// Resolves a bare engine name (as it appears in a tournament `config.yaml`'s
     /// `participants` list) to its registry entry. Panics on an unregistered name -- a
-    /// tournament referencing an engine `data/chess/engines.yaml` doesn't know about is a config
+    /// tournament referencing an engine `data/engines.yaml` doesn't know about is a config
     /// error, not something to run around (CLAUDE.md rule 4: assertions, not eyeballing).
     pub fn resolve(&self, name: &str) -> &EngineEntry {
         self
@@ -195,7 +195,7 @@ pub fn format_option_value(value: &serde_yaml::Value) -> String {
         serde_yaml::Value::Bool(value) => value.to_string(),
         serde_yaml::Value::Number(value) => value.to_string(),
         serde_yaml::Value::String(value) => value.clone(),
-        other => panic!("unsupported engine option value in data/chess/engines.yaml: {other:?}"),
+        other => panic!("unsupported engine option value in data/engines.yaml: {other:?}"),
     }
 }
 
@@ -230,10 +230,10 @@ mod tests {
 
     #[test]
     fn a_network_entry_carries_the_nnue_file() {
-        let entries = parse("engines:\n  amanda-e5:\n    kind: network\n    net: data/chess/networks/a.nnue\n");
+        let entries = parse("engines:\n  amanda-e5:\n    kind: network\n    net: data/networks/a.nnue\n");
         let entry = &entries["amanda-e5"];
         assert_eq!(entry.kind, EngineKind::Network);
-        assert_eq!(entry.network_path(), "data/chess/networks/a.nnue");
+        assert_eq!(entry.network_path(), "data/networks/a.nnue");
         validate("amanda-e5", entry, "test");
     }
 

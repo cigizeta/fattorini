@@ -3,7 +3,7 @@
 //! log, the latest `KEPT` tests each with its games.
 //!
 //! **The duel** is arena's rule (`arena/src/duel.rs`), copied as `sprt.rs` copies arena's SPRT, the two
-//! binaries sharing no code beyond `temper-chess`: per pair, S the mean pair score (the challenger's points
+//! binaries sharing no code beyond `fattorini`: per pair, S the mean pair score (the challenger's points
 //! in a pair, halved), an engine past `0.5 + C * sigma_hat / sqrt(P)` wins, `sigma_hat` the pair
 //! scores' deviation with a 0-2 and a 2-0 pair added; at `DUEL_MAX_PAIRS` with neither past it the
 //! duel is drawn, and it is drawn at once when neither could pass its bound at any later check,
@@ -12,12 +12,12 @@
 
 use serde::Serialize;
 
-use temper_chess::pipeline::protocol::Limit;
+use fattorini::pipeline::protocol::Limit;
 
 use super::sprt::{Sprt, Verdict};
 
 /// Where the tests are kept, locally: `tests.tsv`, and each test's pairs and games.
-pub const TESTS_DIR: &str = "data/chess/tests";
+pub const TESTS_DIR: &str = "data/tests";
 
 /// The tests kept, with their games: the oldest goes as a new one starts past it.
 pub const KEPT: usize = 20;
@@ -85,7 +85,7 @@ impl Kind {
 
 /// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`), and
 /// whether it plays its tune (`parameters.txt`) or the defaults. Written as a player, the network
-/// with what it searches with: `<network>@t1` or `<network>@default`.
+/// with what it searches with: `<network>@tuned` or `<network>@untuned`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Side {
     pub player: String,
@@ -93,21 +93,21 @@ pub struct Side {
 }
 
 impl Side {
-    /// As a player's name: `<network>@t1` or `<network>@default`.
+    /// As a player's name: `<network>@tuned` or `<network>@untuned`.
     pub fn text(&self) -> String {
-        format!("{}@{}", self.player, if self.tuned { "t1" } else { "default" })
+        format!("{}@{}", self.player, if self.tuned { "tuned" } else { "untuned" })
     }
 
-    /// `text` read back. A test plays a side's tune or the defaults, never a margin.
+    /// `text` read back.
     pub fn parse(text: &str) -> Result<Side, String> {
-        let wrong = || format!("a side is <network>@default or <network>@t1, not {text:?}");
+        let wrong = || format!("a side is <network>@tuned or <network>@untuned, not {text:?}");
         let (player, suffix) = text.split_once('@').ok_or_else(wrong)?;
         if player.is_empty() {
             return Err(wrong());
         }
         let tuned = match suffix {
-            "t1" => true,
-            "default" => false,
+            "tuned" => true,
+            "untuned" => false,
             _ => return Err(wrong()),
         };
         Ok(Side { player: player.to_string(), tuned })
@@ -129,7 +129,7 @@ impl Spec {
     pub fn parse(words: &[String]) -> Result<Spec, String> {
         let [kind, settings, challenger, champion, limit] = words else {
             return Err(
-                "a test is --test <duel|match|sprt> <settings> <challenger>@<default|t1> <champion>@<default|t1> <limit>".to_string()
+                "a test is --test <duel|match|sprt> <settings> <challenger>@<tuned|untuned> <champion>@<tuned|untuned> <limit>".to_string()
             );
         };
         Ok(Spec {
@@ -140,9 +140,11 @@ impl Spec {
         })
     }
 
-    /// Whether one side plays its tune and the other the defaults: allowed, and always said.
+    /// Whether two different players meet, one with its tune and the other with the defaults: allowed,
+    /// and always said, since the result then weighs the tune as much as the networks. One player
+    /// against itself, tuned against untuned, is not mixed: it is how a tune is measured.
     pub fn mixed(&self) -> bool {
-        self.challenger.tuned != self.champion.tuned
+        self.challenger.tuned != self.champion.tuned && self.challenger.player != self.champion.player
     }
     pub fn name(&self) -> String {
         format!("{} of {} against {}", self.kind.name(), self.champion.text(), self.challenger.text())
@@ -174,6 +176,58 @@ pub struct Judged {
     pub expected_games: Option<u64>,
     /// `None` while undecided.
     pub verdict: Option<String>,
+}
+
+/// Games won, lost and drawn, from the champion's side, as the arena's command line counts them, its
+/// first player the champion (the developer, 2026-11-08): a pair's, or a test's summed. A pair's `r`
+/// alone cannot give them (a 0 is two draws or a win and a loss), so they are counted as a pair
+/// arrives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Wdl {
+    pub wins: u32,
+    pub losses: u32,
+    pub draws: u32,
+}
+
+impl Wdl {
+    /// A pair's, from White's score in each game: the challenger White in the first and Black in the
+    /// second, as its `r`, so the champion Black in the first and White in the second.
+    pub fn of_pair(first: f64, second: f64) -> Wdl {
+        let mut wdl = Wdl::default();
+        for champion in [1.0 - first, second] {
+            if champion > 0.75 {
+                wdl.wins += 1;
+            } else if champion < 0.25 {
+                wdl.losses += 1;
+            } else {
+                wdl.draws += 1;
+            }
+        }
+        wdl
+    }
+
+    pub fn add(self, other: Wdl) -> Wdl {
+        Wdl { wins: self.wins + other.wins, losses: self.losses + other.losses, draws: self.draws + other.draws }
+    }
+
+    /// As a pairs record's field: `W,L,D`.
+    pub fn field(&self) -> String {
+        format!("{},{},{}", self.wins, self.losses, self.draws)
+    }
+
+    pub fn parse(field: &str) -> Option<Wdl> {
+        let mut counts = field.split(',').map(|count| count.parse::<u32>().ok());
+        match (counts.next()??, counts.next()??, counts.next()??, counts.next()) {
+            (wins, losses, draws, None) => Some(Wdl { wins, losses, draws }),
+            _ => None,
+        }
+    }
+
+    /// The sum of the first `count` pairs, `None` if any of them is unknown (a record line older
+    /// than the field) or missing.
+    pub fn sum(pairs: &[Option<Wdl>], count: usize) -> Option<Wdl> {
+        pairs.get(..count)?.iter().try_fold(Wdl::default(), |sum, pair| pair.map(|pair| sum.add(pair)))
+    }
 }
 
 /// `kind` over `pairs`, each the challenger's `r` in -2..=2, in their order.
@@ -272,7 +326,7 @@ fn judge_duel(pairs: &[i32]) -> Judged {
         } else if side.count >= DUEL_MAX_PAIRS {
             Some("drawn at the cap".to_string())
         } else if !side.can_still_win() && !side.other_side().can_still_win() {
-            Some(format!("drawn, curtailed: neither can pass its bound by {DUEL_MAX_PAIRS} pairs"))
+            Some(format!("drawn, curtailed: neither can pass its bound by {} pairs", progress::grouped(DUEL_MAX_PAIRS)))
         } else {
             None
         };
@@ -286,13 +340,13 @@ fn judge_duel(pairs: &[i32]) -> Judged {
     let sigma = side.sigma();
     let threshold = if side.count == 0 { 1.0 } else { duel_threshold(side.count, sigma).min(1.0) };
     // Said from the challenger's side, as its gauge reads: the question a test asks is the challenger's.
+    // The challenger's score is left out: the table's challenger column already shows it.
     Judged {
         pairs: counted,
         games,
         challenger_points,
         status: format!(
-            "challenger {:.1}%, thresholds {:.1}% and {:.1}%, sigma {sigma:.3}",
-            100.0 * score,
+            "thresholds {:.1}% and {:.1}%",
             100.0 * (1.0 - threshold),
             100.0 * threshold
         ),
@@ -342,7 +396,8 @@ fn judge_match(total: u32, pairs: &[i32]) -> Judged {
         pairs: counted,
         games,
         challenger_points,
-        status: format!("{counted} of {total} pairs, challenger {:.1}%, {estimate}", 100.0 * score),
+        // The challenger's score is left out: the table's challenger column already shows it.
+        status: format!("{} of {} pairs, {estimate}", progress::grouped(counted), progress::grouped(total)),
         // Not a gauge but progress: the page draws it as a bar of pairs.
         gauge: Gauge { value: counted as f64, lower: 0.0, upper: f64::from(total), left: "", right: "" },
         expected_games: Some(2 * u64::from(total)),
@@ -361,19 +416,18 @@ fn judge_sprt(elo0: f64, elo1: f64, pairs: &[i32]) -> Judged {
         }
     }
     let (lower, upper) = sprt.bounds();
-    // The challenger's share, as a duel's and a match's.
-    let score = if sprt.games() == 0 { 0.0 } else { sprt.score() / sprt.games() as f64 };
     let verdict = match sprt.verdict() {
         Verdict::Promote => Some(format!("H1: the challenger is stronger by {elo1} Elo or more")),
         Verdict::Fail => Some(format!("H0: the challenger is not stronger by more than {elo0} Elo")),
-        Verdict::Continue if counted as u32 >= SPRT_MAX_PAIRS => Some(format!("inconclusive after {SPRT_MAX_PAIRS} pairs")),
+        Verdict::Continue if counted as u32 >= SPRT_MAX_PAIRS => Some(format!("inconclusive after {} pairs", progress::grouped(SPRT_MAX_PAIRS))),
         Verdict::Continue => None,
     };
     Judged {
         pairs: counted,
         games: sprt.games(),
         challenger_points: sprt.score(),
-        status: format!("challenger {:.1}%, llr {:+.2} [{lower:+.2}, {upper:+.2}]", 100.0 * score, sprt.llr()),
+        // The challenger's score is left out: the table's challenger column already shows it.
+        status: format!("llr {:+.2} [{lower:+.2}, {upper:+.2}]", sprt.llr()),
         gauge: Gauge { value: sprt.llr(), lower, upper, left: "fail", right: "pass" },
         expected_games: None,
         verdict,
@@ -388,7 +442,7 @@ pub struct Record {
     pub ended: String,
     pub kind: String,
     pub settings: String,
-    /// Each side as a player, `<network>@t1` or `<network>@default` (`Side::text`).
+    /// Each side as a player, `<network>@tuned` or `<network>@untuned` (`Side::text`).
     pub challenger: String,
     pub champion: String,
     pub limit: String,
@@ -557,31 +611,52 @@ mod tests {
     }
 
     #[test]
+    fn a_pair_s_wins_losses_and_draws_are_the_champion_s() {
+        // The challenger White and winning, then Black and drawing: the champion loses one, draws one.
+        assert_eq!(Wdl::of_pair(1.0, 0.5), Wdl { wins: 0, losses: 1, draws: 1 });
+        // White wins both: the champion loses the first and wins the second, an r of 0.
+        assert_eq!(Wdl::of_pair(1.0, 1.0), Wdl { wins: 1, losses: 1, draws: 0 });
+        assert_eq!(Wdl::of_pair(0.5, 0.5), Wdl { wins: 0, losses: 0, draws: 2 });
+        // The challenger loses both: the champion wins both.
+        assert_eq!(Wdl::of_pair(0.0, 1.0), Wdl { wins: 2, losses: 0, draws: 0 });
+        let wdl = Wdl { wins: 3, losses: 1, draws: 12 };
+        assert_eq!(Wdl::parse(&wdl.field()), Some(wdl));
+        for wrong in ["", "1,2", "1,2,3,4", "a,b,c", "1,,3"] {
+            assert_eq!(Wdl::parse(wrong), None, "{wrong:?}");
+        }
+        let pairs = [Some(Wdl { wins: 1, losses: 0, draws: 1 }), Some(Wdl { wins: 0, losses: 0, draws: 2 }), None];
+        assert_eq!(Wdl::sum(&pairs, 2), Some(Wdl { wins: 1, losses: 0, draws: 3 }), "the counted pairs alone");
+        assert_eq!(Wdl::sum(&pairs, 3), None, "one unknown");
+        assert_eq!(Wdl::sum(&pairs, 4), None, "one missing");
+        assert_eq!(Wdl::sum(&pairs, 0), Some(Wdl::default()));
+    }
+
+    #[test]
     fn a_test_s_words_read_back() {
-        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@t1 pesto@default", "clock 10+0.1")).unwrap();
+        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@tuned pesto@untuned", "clock 10+0.1")).unwrap();
         assert_eq!(spec.kind, Kind::Sprt { elo0: 0.0, elo1: 5.0 });
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
         assert_eq!(spec.challenger, Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true });
-        assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@t1".to_string(), "pesto@default".to_string()));
+        assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@tuned".to_string(), "pesto@untuned".to_string()));
         assert!(spec.mixed());
-        assert_eq!(Spec::parse(&words("match 500 aa@default bb@default", "depth 9")).unwrap().kind, Kind::Match { pairs: 500 });
+        assert!(!Spec::parse(&words("duel - aa@tuned aa@untuned", "clock 10+0.1")).unwrap().mixed(), "a tune measured against its own defaults");
+        assert_eq!(Spec::parse(&words("match 500 aa@untuned bb@untuned", "depth 9")).unwrap().kind, Kind::Match { pairs: 500 });
         for wrong in [
-            "match 0 aa@default bb@default",
-            "sprt 5,0 aa@default bb@default",
-            "trio - aa@default bb@default",
+            "match 0 aa@untuned bb@untuned",
+            "sprt 5,0 aa@untuned bb@untuned",
+            "trio - aa@untuned bb@untuned",
             // The old words, a side's parameters apart from it.
-            "duel - aa default bb default",
-            "duel - aa bb@default",
-            "duel - aa@tuned bb@default",
-            "duel - aa@150 bb@default",
-            "duel - aa@t2 bb@default",
-            "duel - @t1 bb@default",
+            "duel - aa untuned bb untuned",
+            "duel - aa bb@untuned",
+            "duel - aa@150 bb@untuned",
+            "duel - aa@t2 bb@untuned",
+            "duel - @tuned bb@untuned",
             // The search switches, removed 2026-11-02.
-            "duel - aa@default+blend bb@default",
+            "duel - aa@untuned+blend bb@untuned",
         ] {
             assert!(Spec::parse(&words(wrong, "depth 9")).is_err(), "{wrong}");
         }
-        assert!(Spec::parse(&words("duel - aa@default bb@default", "nodes 9")).is_err());
+        assert!(Spec::parse(&words("duel - aa@untuned bb@untuned", "nodes 9")).is_err());
     }
 
     /// arena's duel's own cases: six pairs 2-0 the earliest win, an even duel (every pair 1-1)
@@ -638,8 +713,8 @@ mod tests {
             ended: "e".to_string(),
             kind: "duel".to_string(),
             settings: "-".to_string(),
-            challenger: "aa@default".to_string(),
-            champion: "bb@t1".to_string(),
+            challenger: "aa@untuned".to_string(),
+            champion: "bb@tuned".to_string(),
             limit: "depth 9".to_string(),
             games: 10,
             challenger_points: 7.5,
@@ -650,7 +725,7 @@ mod tests {
 
     #[test]
     fn the_log_keeps_the_latest_tests_with_their_games() {
-        let dir = std::env::temp_dir().join(format!("temper-chess-smithy-matches-{}", std::process::id())).display().to_string();
+        let dir = std::env::temp_dir().join(format!("fattorini-smithy-matches-{}", std::process::id())).display().to_string();
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         for number in 1..=4 {
@@ -673,7 +748,7 @@ mod tests {
         let stopped = Record { verdict: "stopped: no games yet".to_string(), ..record(4) };
         put(&dir, &stopped).unwrap();
         assert!(read_log(&dir)[0].stopped());
-        assert_eq!(read_log(&dir)[0].spec().unwrap(), Spec::parse(&words("duel - aa@default bb@t1", "depth 9")).unwrap());
+        assert_eq!(read_log(&dir)[0].spec().unwrap(), Spec::parse(&words("duel - aa@untuned bb@tuned", "depth 9")).unwrap());
         put(&dir, &record(4)).unwrap();
         assert_eq!(read_log(&dir), [record(4)]);
         std::fs::remove_dir_all(&dir).ok();

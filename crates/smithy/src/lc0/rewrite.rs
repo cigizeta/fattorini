@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use temper_chess::labels::{Curve, LC0, LC0_FILES};
+use fattorini::labels::{Curve, LC0, LC0_FILES};
 
 use super::{fail, remote, COMPRESSION_LEVEL, LC0_ROOT};
 use crate::pgn_train_stream;
@@ -26,11 +26,11 @@ use crate::pgn_train_stream;
 pub(crate) const REWRITE_COMMAND: &str = "lc0-rewrite";
 
 /// Written to the remote when every segment is in Lc0's curve.
-const CURVE_PATH: &str = "data/chess/lc0/curve.txt";
+const CURVE_PATH: &str = "data/lc0/curve.txt";
 const CURVE_TEXT: &str = "lc0 a 0.90 b 1.5637541897\n";
 
 /// The segments rewritten so far, one remote path a line; deleted once `CURVE_PATH` is written.
-const DONE_PATH: &str = "data/chess/lc0/rewrite-done.txt";
+const DONE_PATH: &str = "data/lc0/rewrite-done.txt";
 
 const REWRITTEN_SUFFIX: &str = ".rewritten";
 
@@ -243,9 +243,9 @@ mod tests {
 
     #[test]
     fn a_segment_is_known_by_its_path_from_the_corpus_root_on() {
-        let key = "data/chess/lc0/train/20260101/a-00.pgn.zst";
-        assert_eq!(segment_key("X:/Drive/temper-chess/data/chess/lc0/train/20260101/a-00.pgn.zst"), key);
-        assert_eq!(segment_key("/y/elsewhere/temper-chess/data/chess/lc0/train/20260101/a-00.pgn.zst"), key);
+        let key = "data/lc0/train/20260101/a-00.pgn.zst";
+        assert_eq!(segment_key("X:/Drive/fattorini/data/lc0/train/20260101/a-00.pgn.zst"), key);
+        assert_eq!(segment_key("/y/elsewhere/fattorini/data/lc0/train/20260101/a-00.pgn.zst"), key);
         assert_eq!(segment_key(key), key);
     }
 
@@ -261,13 +261,13 @@ mod tests {
     /// renamed, never decoded again; every other segment is rewritten once and recorded once.
     #[test]
     fn segments_rewritten_in_parallel_resume_without_converting_twice() {
-        let dir = std::env::temp_dir().join(format!("temper-chess-rewrite-parallel-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("fattorini-rewrite-parallel-{}", std::process::id()));
         fs::remove_dir_all(&dir).ok();
         fs::create_dir_all(&dir).unwrap();
         let dir = dir.to_string_lossy().replace('\\', "/");
         let text = |index: usize| format!("1. e4 {{0.{index:02} e7e5}} e5 {{-1.50 g1f3}} 1-0\n\n");
-        let paths: Vec<String> = (0..9).map(|index| format!("{dir}/data/chess/lc0/train/s-{index}.pgn.zst")).collect();
-        fs::create_dir_all(format!("{dir}/data/chess/lc0/train")).unwrap();
+        let paths: Vec<String> = (0..9).map(|index| format!("{dir}/data/lc0/train/s-{index}.pgn.zst")).collect();
+        fs::create_dir_all(format!("{dir}/data/lc0/train")).unwrap();
         for (index, path) in paths.iter().enumerate() {
             write_zst(path, &text(index));
         }

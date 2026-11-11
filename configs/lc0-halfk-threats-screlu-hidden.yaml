@@ -1,0 +1,40 @@
+# The Lc0 route, halfk_threats_screlu_hidden (2026-11-02, the halfk line's second step):
+# lc0-halfk-threats-screlu with its one output replaced by two hidden layers, 16 then 32, each clipped
+# to [0, 1], no skip, trained end to end from scratch. Generation 1 trains on Lc0's labels, direct
+# blend, nine lambdas; its winner is duelled against lc0-halfk-threats-screlu's. Differs from
+# lc0-halfk-threats-screlu by its kind and its hidden widths alone.
+
+# The forge. Generation 1's grid: 0.01 to 0.09.
+grid_center: 0.05
+# From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
+# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+training_positions: 1073741824
+# From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
+test_positions: 4194304
+round_robin_pairs: 400
+gate_elo_d: 35
+
+# The tune of each generation that passed its gate, started by hand, at 10+0.1: the default
+# length, 32,768 pairs, from its teacher's tune (generation 1's from the defaults); the next
+# generation's self-play plays it.
+tune:
+  length: default
+  control: 10+0.1
+
+# The network: (26624 -> 256) x 2, each lane squared after the clip, -> 16 -> 32 -> 1; in training
+# 27328 rows, halfk's and the factor's.
+labels: lc0
+
+architecture:
+  kind: halfk_threats_screlu_hidden
+  embedding_dim: 256
+  value_head:
+    hidden_dim: [16, 32]
+
+training:
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  learning_rate: [3.0e-3, 1.0e-3, 3.0e-4, 1.0e-4, 3.0e-5]
+  warmup_rounds: 1
+  patience_rounds: 6
