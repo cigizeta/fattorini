@@ -1,22 +1,53 @@
 # Fattorini
 
 Fattorini is a UCI chess engine written in Rust. Its evaluation networks are trained on a limited compute
-budget.
+budget. A release is one `.exe` for Windows, its network embedded: about 3250 on CCRL Blitz's
+scale, by Fattorini's own estimate (below).
 
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
 Fattorini's account on Lichess is [fattorini-bot](https://lichess.org/@/fattorini-bot).
 
+## Strength
+
+An estimate, until CCRL rates Fattorini: **about 3250 on CCRL Blitz, one CPU**, for the network of
+the first release, from three full matches against engines on CCRL Blitz (list of 2026-11-07, single
+CPU), their official Windows builds.
+
+| Anchor | CCRL Blitz | Games | Wins - Losses - Draws | Score | Elo vs anchor | Estimate |
+|---|---|---|---|---|---|---|
+| Weiss 1.3 (popcnt) | 3137 ± 15 | 400 | 213 - 102 - 85 | 63.9% | +99 ± 31 | 3236 ± 34 |
+| Halogen 10 (x64-popcnt-avx2) | 3210 ± 10 | 400 | 154 - 118 - 128 | 54.5% | +31 ± 28 | 3241 ± 30 |
+| Velvet 3.2.0 (x86_64-avx2) | 3303 ± 16 | 400 | 121 - 153 - 126 | 46.0% | -28 ± 28 | 3275 ± 32 |
+
+How it was measured:
+
+- **Time control:** CCRL Blitz is 2'+1" on an Intel i7-4770K, and its testers scale it to their
+  machine by Stockfish 10's `bench`, 2,054 ms on that reference. Here it took 1,052 ms (the official
+  `sf_10` popcnt build, five runs on an idle machine, the bench run alone), so the clock was halved
+  to 1'+0.5".
+- **Conditions:** 128 MB hash and one thread each, pondering off, 6-piece Syzygy tablebases for
+  both sides, openings from the UHO book in colour-reversed pairs, every game played to its end,
+  10 games at once.
+- **The estimate:** each match's score turned into an Elo difference and added to the anchor's
+  rating; the three combined weighted by the inverse of their variance, 3251 ± 18. Margins are 95%
+  and count each anchor's own CCRL error. The three agree within 40 Elo; the combined margin
+  leaves out what the matches share (the machine, the book, the load), so the real uncertainty is
+  larger.
+
 ## Running Fattorini
 
-There is no release yet, so there is no `fattorini.exe` to download. Until the first one, Fattorini
-has to be built from source, as [DEV.md](DEV.md) describes, and then added to any UCI GUI.
+Download the latest `.exe` from this repository's Releases and add it to any UCI GUI, such as
+Cute Chess, Arena or BanksiaGUI. The network is inside the `.exe`: there is nothing else to
+install or set.
 
 Requirements:
 
 - Windows, 64-bit.
-- An x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell (2013) or later, AMD Zen 3 or later. AMD Zen 1
-  and Zen 2 run it, but slowly. There is no build for older CPUs; on one, Fattorini says so and exits.
+- A CPU of the x86-64-v3 level, which Fattorini is compiled for (`-C target-cpu=x86-64-v3`: AVX,
+  AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE): Intel Haswell (2013) or later, AMD Excavator (2015) or
+  later. AMD CPUs before Zen 3 run it slowly, since they execute BMI2's PEXT, which move generation
+  relies on, in microcode. There is no build for older CPUs; on one, Fattorini says so and exits.
 
 ### UCI options
 
@@ -82,15 +113,21 @@ from the first shape toward the second, with no schedule to design.
 - **Search:** alpha-beta with iterative deepening, aspiration windows, a transposition table, null
   move pruning, late move reductions, futility pruning, razoring, SEE pruning, killer and history
   heuristics, singular extensions and quiescence search. Several threads share one table.
-- **Evaluation:** an NNUE, updated incrementally, in integer arithmetic with AVX2. A release ships
-  the strongest of the architectures on trial (see [DEV.md](DEV.md)). The first networks of the new
-  training have 780 inputs (pieces on squares, castling rights, the en passant file) seen from both
-  sides, 256 neurons per side, straight to the output.
+- **Evaluation:** an NNUE in integer arithmetic with AVX2, embedded in the `.exe`. The first
+  release's network, `lc0-psq-threats-screlu` generation 1, has 4,876 inputs per side: 780
+  piece-square ones (pieces on squares, castling rights, the en passant file) and 4,096 simplified
+  threats, one for each square pair where a piece of the side attacks an opponent's (no pins, no
+  x-rays). Both sides' inputs feed 256 neurons each, squared after clipping (SCReLU), straight to
+  the output. It was trained on Leela Chess Zero's data (below), the likely main source of its
+  strength. The piece-square part is updated incrementally; the threats are recomputed at each
+  evaluation.
+- **Search parameters:** the pruning and reduction margins tuned by SPSA with the network they ship
+  with.
 - **Endgames:** Syzygy tablebases, both WDL and DTZ.
 
 ## Acknowledgments
 
-Some of Fattorini's networks are trained with the self-play games of [Leela Chess Zero](https://lczero.org),
+Some of Fattorini's networks, the first release's among them, are trained with the self-play games of [Leela Chess Zero](https://lczero.org),
 from its test91 run's training data (storage.lczero.org), made available under the
 [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/), its contents
 under the [Database Contents License (DbCL) 1.0](https://opendatacommons.org/licenses/dbcl/1-0/).

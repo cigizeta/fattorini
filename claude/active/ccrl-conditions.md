@@ -168,7 +168,8 @@ is a floor on the real uncertainty.
 
 ## What it is for
 
-- **Not the Skill Level matches:** both sides share the machine, so they need no scaling.
+- **The release's only strength claim** (the developer, 2026-11-11): the README, `RELEASE-NOTES.md`
+  and the CCRL submission give this estimate with its method; Stockfish's Skill Levels are dropped.
 - **The repeating-control check** (TODO): 40/15 scaled to the machine, Fattorini against itself,
   with Hash 256 and no options otherwise, as a tester would set.
 - **An estimate of Fattorini's CCRL rating** before testers play it, against engines on the list,

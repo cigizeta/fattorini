@@ -16,12 +16,10 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
-**Where things stand (2026-11-10, end of day).** Steps 1.1, 1.2 and 1.4 are done; 1.3 has Skill
-Levels 12 and 13 beaten; **resume at 1.3, the match at Skill Level 14** (command below). Also done
-today: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tablebase score
+**Where things stand (2026-11-11).** Item 1 is done, 1.3 dropped; CalVer is in (calver.md), its
+tests to run; next, the first release (item 4). Done on 2026-11-10: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tablebase score
 (root-tablebase-score.md), its snapshot on Lichess since 2026-11-11, waiting to be seen in a
-tablebase ending. Next after 14: the
-8-thread check (below).
+tablebase ending.
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
    10+0.1. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
@@ -34,7 +32,9 @@ tablebase ending. Next after 14: the
       defaults already were it, near enough.
    2. **Move Overhead: done** (move-overhead.md), default 20 ms; its measurement is under "Before
       the release or CCRL".
-   3. **The strength assessment against Stockfish**, the release's two rows (binary-release.md,
+   3. **Dropped (the developer, 2026-11-11):** Stockfish's Skill Level is a handicap, not an
+      anchor; the release claims the CCRL Blitz estimate from the three anchors (ccrl-conditions.md).
+      The matches played, for the record. **The strength assessment against Stockfish**, the release's two rows (binary-release.md,
       decision 10: 400 games all played, 10+0.1, one thread, 64 MB, UHO book, Syzygy to 6 pieces).
       So far: Skill Level 10, a full match, Fattorini 300.5 to 99.5 (+274 -73 =53, 75.1%),
       `data/matches/stockfish-10-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261109-1747/`; Skill
@@ -66,8 +66,8 @@ tablebase ending. Next after 14: the
    161 rated games, +101 -39 =21, last seen 2026-11-07), from Lichess's public profile data;
    six weeks of mixed engines, the rating still rising when it retired.
 4. **The first release** (binary-release.md, binary-release-implementation.md): the code done and
-   its dry run passed 2026-11-06. Left: the two Skill Level matches (item 1.3), `RELEASE-NOTES.md`
-   filled, a candidate tag, and the first real draft, which is also `gh`'s first test. The release
+   its dry run passed 2026-11-06. `RELEASE-NOTES.md` filled 2026-11-11 (the network, the strength
+   table from the three anchors). The README and the checks done 2026-11-11. Left: a candidate tag, and the first real draft, which is also `gh`'s first test. The release
    ships the tuned lc0 network, without waiting for PeSTO's (the developer, 2026-11-11: PeSTO has
    no chance against Lc0).
 5. **CCRL testers:** tell them of the release.
@@ -86,20 +86,9 @@ tablebase ending. Next after 14: the
   `should_probe`), so with the capture beyond the horizon every leaf is the network's; the root's
   DTZ ranking keeps play correct (`excluded_root_moves`) but never sets the reported score.
   Designed, plan written: root-tablebase-score.md.
-- **An 8-thread check** (the developer, 2026-11-10): CCRL testers also run 4CPU and 8CPU entries.
-  4 threads have played on Lichess without a crash; 8 never have. A few dozen games at Blitz,
-  Fattorini at 8 threads against itself at 1, on a machine with at least 8 physical cores: no
-  hang, no crash, no time loss, `stop` answered promptly.
-- **Move Overhead's measurement** (move-overhead.md): the option is in, default 20 ms. On an idle
-  machine with a network, the gap from the deadline to `bestmove` over a few hundred `go movetime`
-  moves and near-empty clocks; the default changes only if the worst gap asks for more.
-- **A repeating-control check.** Lichess sends only Fischer, so the `movestogo` path has never
-  played a real game, while CCRL plays 40/15 repeating. A few dozen games at `tc=40/60`, Fattorini
-  against itself, on an idle machine: no time forfeits, a sensible clock at move 40, no move near
-  the control spending close to the 0.5 cap. Fattorini subtracts no move overhead; if forfeits
-  appear, a margin built into the time management, safe at default settings: testers are assumed
-  to set no option (the developer, 2026-11-07).
-- **Clock safety at default settings, after that check:** no margin for lag is subtracted, on the
+- **The 8-thread, repeating-control and Move Overhead checks: passed 2026-11-11**
+  (release-checks.md), cutechess-cli smoke tests on the dry run's `.exe`, no failure of any kind.
+- **Clock safety at default settings, not blocking the release** (the checks saw no forfeit): no margin for lag is subtracted, on the
   assumption that the GUI hands over a reduced clock, which is lichess-bot's setting, not a tester's.
   - `MAX_CLOCK_FRACTION` is relative: at 20 ms left it allows 10 ms, while lag does not shrink.
   - `(alpha + 1/M) * T` always exceeds an even share of the time left. Rough estimate: moves using
@@ -111,8 +100,8 @@ tablebase ending. Next after 14: the
     and what it costs.
   - Candidate fix, not decided: a fixed reserve subtracted from `T`, a smaller `alpha` under
     `movestogo`. Run the check through a GUI with no margin of its own.
-- **README at the release** (readme-for-humans.md): Strength from the release's two Skill Level
-  matches, the network named; any CCRL Blitz estimate with its full methodology (the developer,
+- **README at the release** (readme-for-humans.md): Strength, the network named: the CCRL Blitz
+  estimate alone, no Stockfish (the developer, 2026-11-11), with its full methodology (the developer,
   2026-11-10): the Stockfish 10 bench and S, the scaled control (1'+0.5"), the 10 games at once
   and that the bench ran alone, the anchors with their CCRL ratings and builds, the book, hash,
   tablebases, the games played and the error margin (ccrl-conditions.md); Inside brought to the released architecture; the opening paragraph

@@ -47,7 +47,7 @@ fn refuse_an_older_cpu() {
     }
     if !missing.is_empty() {
         eprintln!(
-            "fattorini needs an x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell or later, AMD Zen or later; this one lacks {}",
+            "fattorini needs an x86-64-v3 CPU (BMI2, AVX2, FMA): Intel Haswell or later, AMD Excavator or later; this one lacks {}",
             missing.join(", ")
         );
         std::process::exit(1);

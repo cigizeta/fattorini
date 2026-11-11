@@ -37,7 +37,13 @@ the static C runtime, the notices, debugging while private.
 9. **Only the `.exe` is uploaded** (the developer, 2026-11-06), not the network. The notes and any
    accompanying text need a design of their own (below).
 
-10. **Strength: no Elo, two rows against Stockfish's Skill Level** (the developer, 2026-11-06):
+10. **Superseded (the developer, 2026-11-11):** Stockfish's Skill Level is a poor anchor, a
+    handicapped search rather than an engine of a known strength, and appears nowhere in the
+    release. The release claims the CCRL Blitz estimate from the three anchors of
+    ccrl-conditions.md, with its method, which the CCRL submission needs anyway. The decision as
+    it was:
+
+    **Strength: no Elo, two rows against Stockfish's Skill Level** (the developer, 2026-11-06):
     the highest Skill Level the release beats and the lowest that beats it, adjacent if possible,
     bracketing its strength with nothing claimed on a rating scale. Each row names the Stockfish
     version and the conditions, since a Skill Level's strength depends on both:

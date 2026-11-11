@@ -346,13 +346,15 @@ cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), 
 1. The version in `Cargo.toml`'s `[workspace.package]`, CalVer `YYYY.M.N`: the year, the month
    without a leading zero, N counting that month's releases from 0 (`2026.11.0`, then `2026.11.1`,
    then `2026.12.0`). `arena release` refuses a version not of the current UTC month.
-2. The two strength matches, 400 games each, all played, both sides with the Syzygy tables:
+2. The CCRL Blitz estimate, if the network or the search changed: a full match against each CCRL
+   anchor at CCRL Blitz scaled to the machine, 400 games each, all played, both sides with the
+   Syzygy tables:
 
    ```bash
-   ./bin/arena match stockfish-<level> <player>@tuned --time 10+0.1 --hash 64 --full
+   ./bin/arena match <anchor> <player>@tuned 400 --time 1+0.5 --hash 128 --full
    ```
 
-   the highest Skill Level the release beats and the lowest that beats it.
+   the control rescaled by Stockfish 10's `bench` on another machine (`claude/` holds the method).
 3. `RELEASE-NOTES.md`: the version, the network, the strength table.
 4. Commit, then tag and push the tag: `v<version>`, or a candidate `v<version>-rc.<n>` first.
 5. `./bin/arena release <player>@tuned --dry-run` once, then without `--dry-run`. Every check runs
