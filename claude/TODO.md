@@ -65,7 +65,10 @@ tablebase ending.
    snapshot of 97071e5 since 2026-11-11 (the root's tablebase score in); the untuned one on Drive can go. Left: `temper-chess` to close. **The
    mark to beat (the developer, 2026-11-10):** `rotor-bot`, retired, ended at 2395 in blitz (RD 51,
    161 rated games, +101 -39 =21, last seen 2026-11-07), from Lichess's public profile data;
-   six weeks of mixed engines, the rating still rising when it retired.
+   six weeks of mixed engines, the rating still rising when it retired. **Probably beaten, not yet
+   settled:** `fattorini-bot` at 2612.8 in blitz on 2026-11-11 (RD 109, just past provisional; +18
+   over the last 12 games), better than 99.9% of Lichess's blitz players (Lichess's own figure),
+   its day including a draw against a 2819. Compare again once its RD is near Rotor's 51.
 4. **The first release: done 2026-11-11.** Fattorini 2026.11.0, `lc0-psq-threats-screlu-g1-r1@tuned`,
    published on GitHub with `fattorini-v2026.11.0.exe`. Candidate `v2026.11.0-rc.1` checked
    (`about`) and its draft deleted, then `v2026.11.0` tagged on the same squashed commit of `main`;
