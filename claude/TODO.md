@@ -72,7 +72,11 @@ tablebase ending.
    `gh`'s first real use worked. PeSTO's network not waited for (the developer, 2026-11-11: PeSTO
    has no chance against Lc0). For the next release, DEV.md's steps: the version of that month,
    the CCRL anchors' matches again if the network or the search changed.
-5. **CCRL testers:** tell them of the release.
+5. **CCRL testers:** tell them of the release, in a topic of its own in the CCRL Discussion Board's
+   CCRL Public forum (linked from CCRL's pages). Registered 2026-11-11, under the developer's real
+   name as the board prefers; waiting for the administrators' activation, then the first two posts
+   are approved before they appear. To read before posting: the pinned "How to get your engine
+   tested for CCRL".
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08), once the release is public and,
    ideally, CCRL lists it: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
    it is trained on a limited compute budget; links to the repository, releases and ratings).
