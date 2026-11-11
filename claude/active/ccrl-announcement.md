@@ -60,7 +60,8 @@ the name already in the README's copyright line. The code is declared AI assiste
 
     Calogero Zarba
 
-## Open
+## Decided
 
-- **The default hash:** 16 MB today; the guide finds 256 MB helpful, not necessary. A one-line
-  change for the next release, if the developer wants it.
+- **The default hash stays 16 MB** (the developer, 2026-11-11): the pinned guide's 256 MB is only
+  "helpful (but not necessary)", and testers set `Hash` themselves, CCRL's conditions fixing it for
+  every engine.
