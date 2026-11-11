@@ -25,6 +25,8 @@ under the [[Free Software Foundation#AGPL|GNU AGPL v3]]. Fattorini is a [[UCI]] 
 budget. Its first release, 2026.11.0, was published on GitHub on November 11, 2026, as a single
 executable with the network embedded <ref>[https://github.com/cigizeta/fattorini/releases/tag/v2026.11.0 Release Fattorini 2026.11.0]</ref>.
 Fattorini plays on [[Lichess]] as ''fattorini-bot''.
+The engine is named after Antonio Fattorini, an Italian immigrant to Yorkshire who opened his own
+shop in Harrogate in 1831; in 1883 his family's business made the first chess clock <ref>[https://en.wikipedia.org/wiki/Fattorini_%26_Sons Fattorini & Sons from Wikipedia]</ref>.
 
 =Features=
 ==Evaluation==
