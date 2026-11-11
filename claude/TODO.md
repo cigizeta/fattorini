@@ -246,7 +246,12 @@ changes).
   across two machines.
 - **The smithy as a window** (smithy-window.md): an idea, not urgent.
 - **An analysis tool, for Mentes, a separate project:** label any PGN with a player's search.
-- **Book lines judged by search, not game results:** to discuss.
+- **Book lines judged by search, not game results:** to discuss. Fattorini's own book, designed
+  here rather than a ready-made one such as Cerebellum (the developer, 2026-11-11), for Lichess
+  alone: CCRL testers use their own books, and the arena's matches keep the UHO book. Seen on Lichess:
+  the human OTB book (LumbrasGigaBase 2400+) sometimes leaves the bot worse out of the opening;
+  meanwhile lichess-bot's `min_weight` raised to 10 and `max_depth` lowered to 12, from the next
+  session, to see whether that alone helps.
 
 ## After chess settles
 
