@@ -1,6 +1,6 @@
 # Blitz time management: implementation plan
 
-Implements blitz-time-management.md (design settled 2026-11-11). Status: plan, not started.
+Implements blitz-time-management.md (design settled 2026-11-11). Status: steps 1 to 8 done (2026-11-11), `cargo test` passing; the duel next.
 
 ## The formula
 

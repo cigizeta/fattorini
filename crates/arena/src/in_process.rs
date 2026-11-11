@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use fattorini::nnue::Network;
 use fattorini::search::{
-    choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MAX_PLY,
+    choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, TimeManagement,
+    DEFAULT_MOVE_OVERHEAD_MS, MAX_PLY,
 };
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
@@ -104,6 +105,7 @@ impl Player for InProcessPlayer {
                     None,
                     false,
                     DEFAULT_MOVE_OVERHEAD_MS,
+                    TimeManagement::Split,
                 )
                 .map(|limit| limit.with_previous_score(self.last_score));
                 (MAX_PLY, limit, &own_stop)

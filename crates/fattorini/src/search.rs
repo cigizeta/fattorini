@@ -3126,16 +3126,38 @@ pub enum TimeLimit {
     /// each refill. `single_move`: the position has one legal move, so the target is capped at
     /// `SINGLE_MOVE_CAP_MS` (`single_move_limit`). `previous_score`: the final score of this
     /// engine's previous search in the game, from its own side, for the falling-score factor
-    /// (`falling_score_factor`); `None` on its first move.
-    Clock { time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, single_move: bool, previous_score: Option<i32> },
+    /// (`falling_score_factor`); `None` on its first move. `management`: which time management
+    /// plans it. `overhead_ms`: the `Move Overhead`; under `Classic` it is already subtracted from
+    /// `time_ms` (`time_limit`), under `Split` the formula subtracts it (`split_times_ms`).
+    Clock {
+        time_ms: u64,
+        inc_ms: u64,
+        moves_to_go: Option<u32>,
+        single_move: bool,
+        previous_score: Option<i32>,
+        management: TimeManagement,
+        overhead_ms: u64,
+    },
+}
+
+/// Which time management plans a clock move. Temporary: both exist only so one binary can duel the
+/// two (the `TimeManagement` UCI option); the loser is removed with this enum once the duel decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeManagement {
+    /// One target that is both the plan and the hard deadline, no new depth past half of it
+    /// (`clock_target_ms`, `TimeParameters`).
+    Classic,
+    /// A soft time checked between depths and a hard maximum that aborts a depth, the future
+    /// increments counted (`split_times_ms`, `SplitTimeParameters`).
+    Split,
 }
 
 impl TimeLimit {
     /// This limit with `previous_score` as the previous move's score, if it is a clock.
     pub fn with_previous_score(self, previous_score: Option<i32>) -> TimeLimit {
         match self {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, .. } => {
-                TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, previous_score }
+            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, management, overhead_ms, .. } => {
+                TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms }
             }
             fixed => fixed,
         }
@@ -3161,8 +3183,8 @@ pub fn single_move_limit(board: &Board, limit: Option<TimeLimit>) -> Option<Time
         return limit;
     }
     Some(match limit {
-        Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, .. }) => {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move: true, previous_score }
+        Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, management, overhead_ms, .. }) => {
+            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move: true, previous_score, management, overhead_ms }
         }
         Some(TimeLimit::Fixed { target_ms }) => TimeLimit::Fixed { target_ms: target_ms.min(SINGLE_MOVE_CAP_MS) },
         None => TimeLimit::Fixed { target_ms: SINGLE_MOVE_CAP_MS },
@@ -3232,6 +3254,66 @@ fn clock_target_ms(
     };
     let target = ((p.alpha + per_move) * time + p.beta * inc) * (1.0 + p.r * instability) * falling;
     target.min(MAX_CLOCK_FRACTION * time).round() as u64
+}
+
+/// The parameters of `TimeManagement::Split`, Stockfish's structure (`timeman.cpp` and
+/// `search.cpp`, fetched 2026-11-11) with our own round constants:
+///
+/// ```text
+/// H    = min(M, horizon), or horizon under Fischer
+/// L    = max(0, T + (H - 1) * I - o * (H + 2))     the time left for the next H moves
+/// base = L / min(divisor, H)
+/// hard = min(k * base, hard_fraction * T - o)
+/// soft = min(base * (1 + r * C) * F, hard)
+/// ```
+///
+/// with `T` the clock, `I` the increment, `M` the moves to go, `o` the move overhead, `C` the
+/// instability and `F` the falling-score factor. A new depth starts while `soft` has not elapsed;
+/// only `hard` aborts a running one, and it depends on neither `C` nor `F`, so the deadline inside the
+/// tree is fixed for the move.
+///
+/// Why: `Classic` planned `0.05 * T + 0.5 * I` and halved it again by starting no depth past half,
+/// so a Fischer clock settled where a move spent the increment, about a minute at 3+3. Two Lichess
+/// blitz games (2026-11-11) ended with a minute and with half the clock unused, one of them lost to
+/// a missed tactic. Counting the future increments, as Stockfish's
+/// `timeLeft = time + inc * (mtg - 1) - moveOverhead * (2 + mtg)` does, lets the clock settle at a
+/// few increments instead. Stockfish's own constants are heavily tuned; these are reasonable
+/// magnitudes, as every search parameter (decided 2026-10-12), judged by a duel against `Classic`.
+pub(crate) struct SplitTimeParameters {
+    /// 50: Stockfish's `mtg` under Fischer, the moves whose increments are counted as available.
+    horizon: u32,
+    /// 25.0: a stable move plans about `T / 25 + 2 * I`, about 15 s at 4:00+3. Capped at the moves
+    /// actually left under `movestogo`, so the last moves before a refill share the clock among
+    /// themselves.
+    divisor: f64,
+    /// 2.0: as `TimeParameters::r`, a best move changing at every depth triples the soft time.
+    r: f64,
+    /// 5.0: the hard maximum over `base`, room for an unstable move with a falling score
+    /// (`3 * 1.7`); Stockfish's `maxScale` reaches 6.873.
+    k: f64,
+    /// 0.8: the most of the clock one move may take, Stockfish's `0.8097 * limits.time[us]` rounded.
+    hard_fraction: f64,
+}
+
+pub(crate) const SPLIT_TIME_PARAMETERS: SplitTimeParameters =
+    SplitTimeParameters { horizon: 50, divisor: 25.0, r: 2.0, k: 5.0, hard_fraction: 0.8 };
+
+/// The soft time and the hard maximum of one move under `TimeManagement::Split`, in milliseconds
+/// -- the one place the formula of `SplitTimeParameters` lives. A `movestogo 0` is read as 1.
+fn split_times_ms(
+    time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, instability: f64, falling: f64,
+    p: &SplitTimeParameters,
+) -> (u64, u64) {
+    let time = time_ms as f64;
+    let inc = inc_ms as f64;
+    let overhead = overhead_ms as f64;
+    let horizon = moves_to_go.map_or(p.horizon, |moves| moves.clamp(1, p.horizon));
+    let horizon_f = f64::from(horizon);
+    let left = (time + (horizon_f - 1.0) * inc - overhead * (horizon_f + 2.0)).max(0.0);
+    let base = left / p.divisor.min(horizon_f);
+    let hard = (p.k * base).min((p.hard_fraction * time - overhead).max(0.0));
+    let soft = (base * (1.0 + p.r * instability) * falling).min(hard);
+    (soft.round() as u64, hard.round() as u64)
 }
 
 /// The score drop, in `piece_value`'s centipawns, that moves the falling-score factor by 1: a drop
@@ -3360,10 +3442,11 @@ impl TimeManager {
         }
     }
 
-    /// `None` when there is no time limit at all.
+    /// `None` when there is no time limit at all. Under `Split`, the hard maximum.
     fn target(&self) -> Option<Duration> {
         match self.limit? {
             TimeLimit::Fixed { target_ms } => Some(Duration::from_millis(target_ms)),
+            TimeLimit::Clock { management: TimeManagement::Split, .. } => self.split_times().map(|(_, hard)| hard),
             TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, .. } => {
                 let target =
                     clock_target_ms(time_ms, inc_ms, moves_to_go, self.instability, self.falling, &TIME_PARAMETERS);
@@ -3374,8 +3457,28 @@ impl TimeManager {
         }
     }
 
-    /// Whether a new depth may start: the elapsed time is still under `s * target`.
+    /// The soft time and the hard maximum under `TimeManagement::Split`, the single-move cap
+    /// lowering both; `None` for any other limit.
+    fn split_times(&self) -> Option<(Duration, Duration)> {
+        let Some(TimeLimit::Clock {
+            time_ms, inc_ms, moves_to_go, single_move, management: TimeManagement::Split, overhead_ms, ..
+        }) = self.limit
+        else {
+            return None;
+        };
+        let (soft, hard) = split_times_ms(
+            time_ms, inc_ms, moves_to_go, overhead_ms, self.instability, self.falling, &SPLIT_TIME_PARAMETERS,
+        );
+        let cap = |ms: u64| if single_move { ms.min(SINGLE_MOVE_CAP_MS) } else { ms };
+        Some((Duration::from_millis(cap(soft)), Duration::from_millis(cap(hard))))
+    }
+
+    /// Whether a new depth may start: under `Split`, the elapsed time is still under the soft time;
+    /// otherwise under `s * target`.
     fn should_start_next(&self) -> bool {
+        if let Some((soft, _)) = self.split_times() {
+            return self.started.elapsed() < soft;
+        }
         let Some(target) = self.target() else {
             return true;
         };
@@ -3386,7 +3489,7 @@ impl TimeManager {
         self.started.elapsed() < target.mul_f64(stop_fraction)
     }
 
-    /// The instant the depth about to start must abort at.
+    /// The instant the depth about to start must abort at: under `Split`, the hard maximum.
     fn deadline(&self) -> Option<Instant> {
         self.target().map(|target| self.started + target)
     }
@@ -3415,7 +3518,8 @@ impl TimeManager {
 /// for each move left before the control and two spare; twice under Fischer, where the increment
 /// refills the clock and a stable move spends half of it. From `movetime` once, unlike Stockfish:
 /// the search stops at exactly its target, so without it every move would run past `movetime` by
-/// its unwinding and its `bestmove`.
+/// its unwinding and its `bestmove`. All of this is `TimeManagement::Classic`'s; under `Split` the
+/// clock is passed as given with the overhead beside it, and `split_times_ms` keeps it back.
 #[allow(clippy::too_many_arguments)]
 pub fn time_limit(
     board: &Board,
@@ -3427,6 +3531,7 @@ pub fn time_limit(
     movetime: Option<u64>,
     infinite: bool,
     move_overhead_ms: u64,
+    management: TimeManagement,
 ) -> Option<TimeLimit> {
     if infinite {
         return None;
@@ -3440,13 +3545,22 @@ pub fn time_limit(
         Color::Black => (btime, binc.unwrap_or(0)),
     };
     let my_time = my_time?;
-    let reserves = movestogo.map_or(2, |moves| u64::from(moves.max(1)) + 2);
+    // `Split` keeps the overhead back itself, once per move of its horizon (`split_times_ms`).
+    let time_ms = match management {
+        TimeManagement::Classic => {
+            let reserves = movestogo.map_or(2, |moves| u64::from(moves.max(1)) + 2);
+            my_time.saturating_sub(move_overhead_ms.saturating_mul(reserves))
+        }
+        TimeManagement::Split => my_time,
+    };
     Some(TimeLimit::Clock {
-        time_ms: my_time.saturating_sub(move_overhead_ms.saturating_mul(reserves)),
+        time_ms,
         inc_ms: my_inc,
         moves_to_go: movestogo,
         single_move: false,
         previous_score: None,
+        management,
+        overhead_ms: move_overhead_ms,
     })
 }
 
@@ -5604,20 +5718,48 @@ mod tests {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
         // No increment sent means an increment of 0, and no movestogo means Fischer.
-        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false, 0);
+        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false, 0, TimeManagement::Classic);
         assert_eq!(limit, Some(clock(60_000, 0, None, false)));
     }
 
-    /// A clock limit with no previous score.
+    /// A `Classic` clock limit with no previous score and no overhead.
     fn clock(time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, single_move: bool) -> TimeLimit {
-        TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, previous_score: None }
+        clock_with_overhead(time_ms, inc_ms, moves_to_go, single_move, 0)
+    }
+
+    /// A `Classic` clock limit with no previous score, `overhead_ms` already kept back from `time_ms`.
+    fn clock_with_overhead(
+        time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, single_move: bool, overhead_ms: u64,
+    ) -> TimeLimit {
+        TimeLimit::Clock {
+            time_ms,
+            inc_ms,
+            moves_to_go,
+            single_move,
+            previous_score: None,
+            management: TimeManagement::Classic,
+            overhead_ms,
+        }
+    }
+
+    /// A `Split` clock limit with no previous score.
+    fn split_clock(time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, single_move: bool, overhead_ms: u64) -> TimeLimit {
+        TimeLimit::Clock {
+            time_ms,
+            inc_ms,
+            moves_to_go,
+            single_move,
+            previous_score: None,
+            management: TimeManagement::Split,
+            overhead_ms,
+        }
     }
 
     #[test]
     fn time_limit_selects_black_time_when_black_is_to_move() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false, 0);
+        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false, 0, TimeManagement::Classic);
         assert_eq!(limit, Some(clock(90_000, 100, None, false)));
     }
 
@@ -5625,7 +5767,7 @@ mod tests {
     fn time_limit_passes_movestogo_through_under_a_repeating_control() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 0);
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 0, TimeManagement::Classic);
         assert_eq!(limit, Some(clock(60_000, 0, Some(10), false)));
     }
 
@@ -5681,7 +5823,7 @@ mod tests {
     fn time_limit_movetime_takes_precedence_over_wtime_and_btime_and_is_used_as_given() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false, 0);
+        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false, 0, TimeManagement::Classic);
         assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 2_000 }));
     }
 
@@ -5692,14 +5834,14 @@ mod tests {
         // Even with a perfectly good wtime present, infinite wins -- meaning "no deadline, run
         // until stop or max_depth," genuinely honored now that go_search runs asynchronously
         // and polls a shared stop flag regardless of whether any deadline was ever set.
-        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true, 0), None);
+        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true, 0, TimeManagement::Classic), None);
     }
 
     #[test]
     fn time_limit_is_none_with_no_time_control_at_all() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, None, None, None, None, None, false, 0), None);
+        assert_eq!(time_limit(&board, None, None, None, None, None, None, false, 0, TimeManagement::Classic), None);
     }
 
     #[test]
@@ -5709,35 +5851,35 @@ mod tests {
         // bare `go`, rather than guessing from the wrong side's clock.
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false, 0), None);
+        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false, 0, TimeManagement::Classic), None);
     }
 
     #[test]
     fn the_move_overhead_is_kept_back_twice_from_a_fischer_clock() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 20);
-        assert_eq!(limit, Some(clock(59_960, 1_000, None, false)), "the increment is left alone");
+        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 20, TimeManagement::Classic);
+        assert_eq!(limit, Some(clock_with_overhead(59_960, 1_000, None, false, 20)), "the increment is left alone");
     }
 
     #[test]
     fn the_move_overhead_is_kept_back_once_per_move_to_go_and_twice_more() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 20);
-        assert_eq!(limit, Some(clock(60_000 - 12 * 20, 0, Some(10), false)));
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 20, TimeManagement::Classic);
+        assert_eq!(limit, Some(clock_with_overhead(60_000 - 12 * 20, 0, Some(10), false, 20)));
         // `movestogo 0` is not valid UCI; read as 1, as `clock_target_ms` reads it.
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(0), None, false, 20);
-        assert_eq!(limit, Some(clock(60_000 - 3 * 20, 0, Some(0), false)));
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(0), None, false, 20, TimeManagement::Classic);
+        assert_eq!(limit, Some(clock_with_overhead(60_000 - 3 * 20, 0, Some(0), false, 20)));
     }
 
     #[test]
     fn the_move_overhead_is_kept_back_from_movetime() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 20);
+        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 20, TimeManagement::Classic);
         assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 1_980 }));
-        let limit = time_limit(&board, None, None, None, None, None, Some(10), false, 20);
+        let limit = time_limit(&board, None, None, None, None, None, Some(10), false, 20, TimeManagement::Classic);
         assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 0 }), "depth 1 only, as movetime 0");
     }
 
@@ -5745,10 +5887,10 @@ mod tests {
     fn a_clock_below_the_reserve_still_plays_a_legal_move() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(30), None, None, None, None, None, false, 20);
-        assert_eq!(limit, Some(clock(0, 0, None, false)));
+        let limit = time_limit(&board, Some(30), None, None, None, None, None, false, 20, TimeManagement::Classic);
+        assert_eq!(limit, Some(clock_with_overhead(0, 0, None, false, 20)));
         let (reports, best_move) = choose_best_move(
-            &board, MAX_PLY as u32, limit, &[], &TranspositionTable::new(1), &SyzygyTablebase::new(), None, 0,
+            &board, MAX_PLY, limit, &[], &TranspositionTable::new(1), &SyzygyTablebase::new(), None, 0,
             &AtomicBool::new(false),
         );
         assert!(best_move.is_some(), "depth 1 still answers when the reserve takes the whole clock");
@@ -5876,6 +6018,92 @@ mod tests {
             observed.push(time_manager.instability);
         }
         assert_eq!(observed, vec![1.0, 0.5, 0.75, 0.375, 0.1875]);
+    }
+
+    /// `split_times_ms` with the shipped parameters.
+    fn split(time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, c: f64, f: f64) -> (u64, u64) {
+        split_times_ms(time_ms, inc_ms, moves_to_go, overhead_ms, c, f, &SPLIT_TIME_PARAMETERS)
+    }
+
+    #[test]
+    fn split_time_limit_passes_the_clock_as_given_with_the_overhead_beside_it() {
+        let (board, _) =
+            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 20, TimeManagement::Split);
+        assert_eq!(limit, Some(split_clock(60_000, 1_000, None, false, 20)));
+    }
+
+    #[test]
+    fn split_counts_fifty_moves_of_increments_for_a_stable_move() {
+        // 180+2: L = 180,000 + 49 * 2,000 = 278,000; base = L / 25; hard = 5 * base.
+        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.0), (11_120, 55_600));
+        // 4:00+3, the 5+3 game's middle game: L = 387,000.
+        assert_eq!(split(240_000, 3_000, None, 0, 0.0, 1.0), (15_480, 77_400));
+        // The overhead, once per move of the horizon and twice more: L = 278,000 - 20 * 52.
+        assert_eq!(split(180_000, 2_000, None, 20, 0.0, 1.0), (11_078, 55_392));
+    }
+
+    #[test]
+    fn split_instability_and_a_falling_score_raise_the_soft_time_up_to_the_hard_maximum() {
+        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.0), (33_360, 55_600), "C = 1 triples it");
+        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.7), (18_904, 55_600));
+        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.7), (55_600, 55_600), "capped by hard");
+        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 0.6), (6_672, 55_600), "a rising score: less");
+    }
+
+    #[test]
+    fn split_hard_maximum_is_four_fifths_of_a_low_clock() {
+        // 5 s left at +2: base = 103,000 / 25 = 4,120 would already pass 0.8 * 5,000.
+        assert_eq!(split(5_000, 2_000, None, 0, 0.0, 1.0), (4_000, 4_000));
+        assert_eq!(split(5_000, 2_000, None, 20, 1.0, 1.7), (3_980, 3_980), "minus the overhead");
+        for (time, inc, c, f) in [(1_000, 0, 1.0, 1.7), (60_000, 500, 0.5, 1.2), (300_000, 3_000, 1.0, 1.7)] {
+            let (soft, hard) = split(time, inc, None, 20, c, f);
+            assert!(soft <= hard && hard <= time * 4 / 5, "{time}+{inc}: {soft} {hard}");
+        }
+    }
+
+    #[test]
+    fn split_under_a_repeating_control_shares_the_clock_among_the_moves_left() {
+        // 40/15: base = 900,000 / 25, the divisor below the 40 moves to go.
+        assert_eq!(split(900_000, 0, Some(40), 0, 0.0, 1.0), (36_000, 180_000));
+        // The last move before the refill: all of L, then capped at 0.8 of the clock.
+        assert_eq!(split(900_000, 0, Some(1), 0, 0.0, 1.0), (720_000, 720_000));
+        assert_eq!(split(900_000, 0, Some(0), 0, 0.0, 1.0), split(900_000, 0, Some(1), 0, 0.0, 1.0), "0 read as 1");
+    }
+
+    #[test]
+    fn split_with_the_clock_below_the_reserve_plans_nothing() {
+        assert_eq!(split(30, 0, None, 20, 1.0, 1.0), (0, 0));
+    }
+
+    #[test]
+    fn the_split_time_manager_starts_depths_until_the_soft_time_and_aborts_at_the_hard_maximum() {
+        let started = Instant::now();
+        let manager = TimeManager::new(Some(split_clock(180_000, 2_000, None, false, 0)), started, 100);
+        // Before any depth `C` is 1: soft 33,360 ms, hard 55,600 ms.
+        assert!(manager.should_start_next());
+        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(55_600)));
+
+        let empty = TimeManager::new(Some(split_clock(30, 0, None, false, 20)), started, 100);
+        assert!(!empty.should_start_next(), "nothing past depth 1");
+
+        let forced = TimeManager::new(Some(split_clock(600_000, 0, None, true, 0)), started, 100);
+        assert_eq!(forced.split_times(), Some((Duration::from_millis(500), Duration::from_millis(500))));
+        assert_eq!(forced.deadline(), Some(started + Duration::from_millis(SINGLE_MOVE_CAP_MS)));
+    }
+
+    #[test]
+    fn the_split_deadline_ignores_instability_and_the_falling_score() {
+        let a = Move::new(Square::E2, Square::E4, None);
+        let b = Move::new(Square::D2, Square::D4, None);
+        let started = Instant::now();
+        let limit = split_clock(180_000, 2_000, None, false, 0).with_previous_score(Some(0));
+        let mut manager = TimeManager::new(Some(limit), started, 100);
+        let deadline = manager.deadline();
+        for (best_move, score) in [(a, 0), (b, -150), (a, 200)] {
+            manager.record_iteration(best_move, score);
+            assert_eq!(manager.deadline(), deadline);
+        }
     }
 
     #[test]

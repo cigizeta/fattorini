@@ -10,7 +10,7 @@ use crate::perft::perft;
 use crate::search::{
     choose_best_move_multipv_with_progress, choose_best_move_with_parameters, choose_best_move_with_progress,
     root_reported_score, select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
-    SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
+    SearchParameters, TimeManagement, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
 };
 use crate::tablebase::{SyzygyTablebase, TbResult};
 use crate::tt::TranspositionTable;
@@ -126,6 +126,10 @@ pub enum UciCommand {
     /// `setoption name Move Overhead value <ms>`: the time kept back from every move's clock
     /// (`search::time_limit`). Its name is two tokens, as Stockfish's.
     SetOptionMoveOverhead(u64),
+    /// `setoption name TimeManagement value Split|Classic`: which time management plans a clock
+    /// move (`search::TimeManagement`). Temporary, for the duel of the two in one binary; removed
+    /// with the loser.
+    SetOptionTimeManagement(TimeManagement),
     Position { fen: String, moves: Vec<String> },
     /// A plain `go`, or `go perft <depth>` when `perft_depth` is `Some`. The time-control
     /// fields mirror UCI's own tokens one-to-one (milliseconds, as the protocol sends them)
@@ -244,6 +248,8 @@ fn parse_setoption(tokens: &[&str]) -> UciCommand {
             Ok(ms) => UciCommand::SetOptionMoveOverhead(ms),
             Err(_) => UciCommand::Unknown,
         },
+        ["name", "TimeManagement", "value", "Split"] => UciCommand::SetOptionTimeManagement(TimeManagement::Split),
+        ["name", "TimeManagement", "value", "Classic"] => UciCommand::SetOptionTimeManagement(TimeManagement::Classic),
         _ => UciCommand::Unknown,
     }
 }
@@ -539,6 +545,8 @@ pub struct Engine {
     /// The `Move Overhead` option, in milliseconds: `DEFAULT_MOVE_OVERHEAD_MS` until a GUI sets
     /// it, kept across `ucinewgame` as `Hash` is.
     move_overhead_ms: u64,
+    /// The `TimeManagement` option: `Split` until a GUI sets it, kept across `ucinewgame`.
+    time_management: TimeManagement,
     /// The most recently started search's own background thread, if it (or an earlier one)
     /// hasn't been joined yet -- `None` once joined, or before any `go` has ever run. See
     /// `join_running_search`'s own doc comment for when and why this gets joined.
@@ -622,6 +630,7 @@ impl Engine {
             multipv: DEFAULT_MULTIPV,
             ponder: false,
             move_overhead_ms: DEFAULT_MOVE_OVERHEAD_MS,
+            time_management: TimeManagement::Split,
             running_search: None,
             stdout_lock: Arc::new(Mutex::new(())),
             last_search_output: Arc::new(Mutex::new(Vec::new())),
@@ -716,6 +725,7 @@ impl Engine {
                     format!(
                         "option name Move Overhead type spin default {DEFAULT_MOVE_OVERHEAD_MS} min {MOVE_OVERHEAD_MS_MIN} max {MOVE_OVERHEAD_MS_MAX}"
                     ),
+                    "option name TimeManagement type combo default Split var Split var Classic".to_string(),
                     "uciok".to_string(),
                 ]
             }
@@ -746,6 +756,10 @@ impl Engine {
             }
             UciCommand::SetOptionMoveOverhead(ms) => {
                 self.move_overhead_ms = ms.clamp(MOVE_OVERHEAD_MS_MIN, MOVE_OVERHEAD_MS_MAX);
+                Vec::new()
+            }
+            UciCommand::SetOptionTimeManagement(management) => {
+                self.time_management = management;
                 Vec::new()
             }
             UciCommand::SetOptionSyzygyPath(dirs) => {
@@ -926,8 +940,18 @@ impl Engine {
         infinite: bool,
         ponder: bool,
     ) -> Vec<String> {
-        let limit =
-            time_limit(&self.board, wtime, btime, winc, binc, movestogo, movetime, infinite, self.move_overhead_ms);
+        let limit = time_limit(
+            &self.board,
+            wtime,
+            btime,
+            winc,
+            binc,
+            movestogo,
+            movetime,
+            infinite,
+            self.move_overhead_ms,
+            self.time_management,
+        );
         // A game move with one legal move is capped (`single_move_limit`); `infinite` is not. A
         // ponder search is the game move's search, so it is capped too, from `ponderhit` on.
         let limit = if infinite { limit } else { single_move_limit(&self.board, limit) };
@@ -1706,6 +1730,7 @@ mod tests {
                 "option name MultiPV type spin default 1 min 1 max 500".to_string(),
                 "option name Ponder type check default false".to_string(),
                 "option name Move Overhead type spin default 20 min 0 max 5000".to_string(),
+                "option name TimeManagement type combo default Split var Split var Classic".to_string(),
                 "uciok".to_string(),
             ]
         );
@@ -2332,6 +2357,28 @@ mod tests {
         assert_eq!(engine.move_overhead_ms, MOVE_OVERHEAD_MS_MAX);
         engine.handle(UciCommand::UciNewGame);
         assert_eq!(engine.move_overhead_ms, MOVE_OVERHEAD_MS_MAX, "kept across ucinewgame");
+    }
+
+    #[test]
+    fn parse_command_reads_the_time_management_option() {
+        assert_eq!(
+            parse_command("setoption name TimeManagement value Classic"),
+            UciCommand::SetOptionTimeManagement(TimeManagement::Classic)
+        );
+        assert_eq!(
+            parse_command("setoption name TimeManagement value Split"),
+            UciCommand::SetOptionTimeManagement(TimeManagement::Split)
+        );
+        assert_eq!(parse_command("setoption name TimeManagement value Other"), UciCommand::Unknown);
+    }
+
+    #[test]
+    fn setoption_time_management_is_split_by_default_and_kept_across_ucinewgame() {
+        let mut engine = Engine::new();
+        assert_eq!(engine.time_management, TimeManagement::Split);
+        engine.handle(UciCommand::SetOptionTimeManagement(TimeManagement::Classic));
+        engine.handle(UciCommand::UciNewGame);
+        assert_eq!(engine.time_management, TimeManagement::Classic);
     }
 
     #[test]
