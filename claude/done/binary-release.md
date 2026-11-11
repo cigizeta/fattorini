@@ -1,6 +1,7 @@
 # Binary releases
 
-**Status:** design, to discuss (the developer, 2026-11-06). Rewritten the same day: replaces the
+**Status:** done 2026-11-11: Fattorini 2026.11.0 released by this design (decision 10 superseded,
+see there). Earlier: design, to discuss (the developer, 2026-11-06). Rewritten the same day: replaces the
 2026-10-25 plan (a `bin/release` script, networks zipped beside the `.exe`, `EvalFile`), which
 predated snapshots.md, and a GitHub Actions design discussed and rejected the same day ("Why do
 not we make it simple? ... No GitHub Actions. I compile myself."). Kept from 2026-10-25: the order,

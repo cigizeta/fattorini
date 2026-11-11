@@ -16,8 +16,9 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
-**Where things stand (2026-11-11).** Item 1 is done, 1.3 dropped; CalVer is in (calver.md), its
-tests to run; next, the first release (item 4). Done on 2026-11-10: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tablebase score
+**Where things stand (2026-11-11).** **Fattorini 2026.11.0 is released** (item 4), published on
+GitHub on 2026-11-11. Next: the CCRL testers (item 5), then the wiki page (item 6). Done on
+2026-11-10: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tablebase score
 (root-tablebase-score.md), its snapshot on Lichess since 2026-11-11, waiting to be seen in a
 tablebase ending.
 
@@ -65,11 +66,12 @@ tablebase ending.
    mark to beat (the developer, 2026-11-10):** `rotor-bot`, retired, ended at 2395 in blitz (RD 51,
    161 rated games, +101 -39 =21, last seen 2026-11-07), from Lichess's public profile data;
    six weeks of mixed engines, the rating still rising when it retired.
-4. **The first release** (binary-release.md, binary-release-implementation.md): the code done and
-   its dry run passed 2026-11-06. `RELEASE-NOTES.md` filled 2026-11-11 (the network, the strength
-   table from the three anchors). The README and the checks done 2026-11-11. Left: a candidate tag, and the first real draft, which is also `gh`'s first test. The release
-   ships the tuned lc0 network, without waiting for PeSTO's (the developer, 2026-11-11: PeSTO has
-   no chance against Lc0).
+4. **The first release: done 2026-11-11.** Fattorini 2026.11.0, `lc0-psq-threats-screlu-g1-r1@tuned`,
+   published on GitHub with `fattorini-v2026.11.0.exe`. Candidate `v2026.11.0-rc.1` checked
+   (`about`) and its draft deleted, then `v2026.11.0` tagged on the same squashed commit of `main`;
+   `gh`'s first real use worked. PeSTO's network not waited for (the developer, 2026-11-11: PeSTO
+   has no chance against Lc0). For the next release, DEV.md's steps: the version of that month,
+   the CCRL anchors' matches again if the network or the search changed.
 5. **CCRL testers:** tell them of the release.
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08), once the release is public and,
    ideally, CCRL lists it: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how

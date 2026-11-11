@@ -1,6 +1,6 @@
 # Binary releases: implementation
 
-**Status:** steps 1 to 4 applied 2026-11-06 (the developer: "we can implement the code to
+**Status:** done 2026-11-11, the first release (2026.11.0) made with it. Steps 1 to 4 applied 2026-11-06 (the developer: "we can implement the code to
 release"); the dry run passed the same day (notices for 41 crates, no `VCRUNTIME140.dll`, `about`
 and `bench` right, `licenses` printing them), after two fixes: `cargo-about` installed with
 `--features cli`, and `build_embedded` passing absolute paths, since cargo runs `build.rs` from the
