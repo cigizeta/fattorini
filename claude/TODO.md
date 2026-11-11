@@ -204,6 +204,14 @@ changes).
 
 ## Search
 
+- **Optimize Lazy SMP** (the developer, 2026-11-11): in the release check, 8 threads did not crush 1
+  (20 games at 10+0.1, too few to measure, release-checks.md). First measure, on an idle machine
+  with enough physical cores: nodes/s at `Threads=1` against `8` (near 8 times is ideal; much less
+  points to shared tables contended or hyperthreads), and time to a fixed depth on a few positions
+  (about 2 to 3 times faster at 8 is typical; less means the helpers repeat the main thread's
+  work). Then the fixes it points to: helper threads diversified (depth offsets, skipped
+  iterations), shared counters and histories made per-thread, and a duel at a longer control,
+  8 threads against 1, as the measure.
 - **`blend` as two weights tuned by SPSA**, when SPSA tunes search code.
 - **Singular extensions and capture history, retried with a network on both sides:** both were
   judged with the hand-crafted evaluation; one duel each.
