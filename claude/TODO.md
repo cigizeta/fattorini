@@ -22,6 +22,17 @@ GitHub on 2026-11-11. Next: the CCRL testers (item 5), then the wiki page (item 
 (root-tablebase-score.md), its snapshot on Lichess since 2026-11-11, waiting to be seen in a
 tablebase ending.
 
+**In progress (2026-11-11): blitz time management** (blitz-time-management.md, its plan
+blitz-time-management-implementation.md). Two Lichess blitz games ended with a minute and half the
+clock unused; the new `Split` time management (a soft time, a hard maximum, the future increments
+counted) is implemented with `Classic` kept behind the temporary `TimeManagement` UCI option, all
+tests and clippy passing. lichess-bot's `move_overhead` went from 2000 to 500 ms the same day.
+The duel binary is copied to `data/duel-bin/fattorini-tm.exe` and registered twice in
+`data/engines.yaml` (`fattorini-split`, `fattorini-classic`). **Next:** the two duels, each on one
+idle machine, `bin/arena duel fattorini-split fattorini-classic --time 10+0.1` (no regression), then
+`--time 180+2` (the verdict); record the results in the plan, then follow its "After the verdict".
+Also waiting: the CCRL forum account's activation.
+
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
    10+0.1. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
    64, futility 214, null move 185, delta 206, SEE prune 90, SEE 46, aspiration 8, history

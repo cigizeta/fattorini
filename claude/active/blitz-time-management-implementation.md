@@ -1,6 +1,8 @@
 # Blitz time management: implementation plan
 
-Implements blitz-time-management.md (design settled 2026-11-11). Status: steps 1 to 8 done (2026-11-11), `cargo test` passing; the duel next.
+Implements blitz-time-management.md (design settled 2026-11-11). Status: steps 1 to 8 done (2026-11-11), `cargo test` and clippy passing. The binary is copied to
+`data/duel-bin/fattorini-tm.exe` and registered as `fattorini-split` and `fattorini-classic` in
+`data/engines.yaml`. Next: the 10+0.1 duel, then the 180+2 duel; results go here.
 
 ## The formula
 
