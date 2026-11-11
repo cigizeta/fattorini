@@ -1,4 +1,4 @@
-# Fattorini 0.1.0
+# Fattorini 2026.11.0
 
 Fattorini is a UCI chess engine written in Rust, with a neural network evaluation (NNUE) trained
 on a limited compute budget. This release plays with the network `NETWORK@tuned`, embedded in the
@@ -13,7 +13,7 @@ executable: there is no network file to set.
 
 ## Use
 
-Add `fattorini-v0.1.0.exe` to any UCI GUI (Cute Chess, Arena, BanksiaGUI, Nibbler, ...). Options:
+Add `fattorini-v2026.11.0.exe` to any UCI GUI (Cute Chess, Arena, BanksiaGUI, Nibbler, ...). Options:
 
 | Option | Default | |
 |---|---|---|
@@ -41,7 +41,7 @@ colour-reversed pairs from the UHO book, at 10+0.1, one thread and 64 MB each, b
 ## License
 
 Fattorini is free software under the GNU Affero General Public License, version 3 only. The source
-of this release is the repository at its tag, `v0.1.0`. `fattorini licenses` prints the notices of
+of this release is the repository at its tag, `v2026.11.0`. `fattorini licenses` prints the notices of
 the third-party code built into the executable.
 
 The network was trained on positions from the self-play games of

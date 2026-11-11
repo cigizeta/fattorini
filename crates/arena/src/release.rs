@@ -7,7 +7,12 @@
 //! third-party notices are embedded, `fattorini licenses` printing them. Only the `.exe` is
 //! uploaded; the release's text is `RELEASE-NOTES.md`, committed before the tag and passed as it is.
 //!
-//! Every check comes before the upload, each refusal saying why: the player; HEAD exactly at a tag,
+//! The version is CalVer, `YYYY.M.N`: the year, the month without a leading zero (Cargo refuses
+//! one), and N counting that month's releases from 0. It must be the current UTC month's, dry run
+//! included, so a release prepared in one month and published in the next cannot carry the old one.
+//!
+//! Every check comes before the upload, each refusal saying why: the player; the version's month;
+//! HEAD exactly at a tag,
 //! the tree unmodified, the tag `v<version>` or a candidate `v<version>-rc.<n>` of the workspace's
 //! version (so `id name` and the tag never disagree), the notes naming that version (so a release
 //! never carries the previous one's); `cargo about` and `gh` there, no release of the tag yet; then
@@ -60,7 +65,9 @@ fn release(name: &str, dry_run: bool) -> Result<(), String> {
     snapshot::may_snapshot(player)?;
     let entry = match_player::resolve_player(name, false, &Engines::load()?)?;
 
-    // 2. The tag and the notes.
+    // 2. The version's month, then the tag and the notes.
+    let now = time::OffsetDateTime::now_utc();
+    check_month(VERSION, now.year(), u8::from(now.month()))?;
     let notes = std::fs::read_to_string(NOTES).map_err(|error| format!("{NOTES}: {error}"))?;
     let tag = if dry_run {
         DRY_RUN_TAG.to_string()
@@ -154,6 +161,19 @@ fn output(program: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Whether `version` is CalVer `YYYY.M.N` of the given year and month: `2026.11.0` in November 2026,
+/// never `2026.10.3` nor `2026.011.0`.
+fn check_month(version: &str, year: i32, month: u8) -> Result<(), String> {
+    let prefix = format!("{year}.{month}.");
+    let release = version.strip_prefix(&prefix);
+    if release.is_some_and(|n| !n.is_empty() && n.bytes().all(|byte| byte.is_ascii_digit())) {
+        return Ok(());
+    }
+    Err(format!(
+        "the workspace's version is {version}, not this month's {prefix}<n>: set Cargo.toml's [workspace.package] version, N counting this month's releases from 0"
+    ))
+}
+
 /// Whether `tag` is `v<version>` or a release candidate `v<version>-rc.<n>`: candidates share the
 /// version they lead to, so they need no version change of their own.
 fn check_tag(tag: &str, version: &str) -> Result<(), String> {
@@ -165,8 +185,8 @@ fn check_tag(tag: &str, version: &str) -> Result<(), String> {
     Err(format!("the tag {tag} is neither {release} nor {release}-rc.<n>: the workspace's version is {version}"))
 }
 
-/// Whether `text` names `version` as a whole: `0.1.0` in `v0.1.0` or `0.1.0.` at a sentence's end,
-/// never inside `10.1.0` or `0.1.01`.
+/// Whether `text` names `version` as a whole: `2026.11.0` in `v2026.11.0` or `2026.11.0.` at a
+/// sentence's end, never inside `12026.11.0` or `2026.11.01`.
 fn names_version(text: &str, version: &str) -> bool {
     let bytes = text.as_bytes();
     text.match_indices(version).any(|(at, _)| {
@@ -192,24 +212,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_tag_is_the_version_or_one_of_its_candidates() {
-        for tag in ["v0.1.0", "v0.1.0-rc.1", "v0.1.0-rc.12"] {
-            assert!(check_tag(tag, "0.1.0").is_ok(), "{tag}");
+    fn the_version_is_the_current_months() {
+        for version in ["2026.11.0", "2026.11.1", "2026.11.12"] {
+            assert!(check_month(version, 2026, 11).is_ok(), "{version}");
         }
-        for tag in ["0.1.0", "v0.1.1", "v0.1.0-rc", "v0.1.0-rc.", "v0.1.0-rc.x", "v0.1.0-beta.1", "v0.1.00"] {
-            assert!(check_tag(tag, "0.1.0").is_err(), "{tag}");
+        assert!(check_month("2026.1.0", 2026, 1).is_ok());
+        for version in ["2026.10.3", "2025.11.0", "2026.12.0", "2026.011.0", "2026.11", "2026.11.", "2026.11.x", "2026.110.0", "0.1.0"] {
+            assert!(check_month(version, 2026, 11).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn a_tag_is_the_version_or_one_of_its_candidates() {
+        for tag in ["v2026.11.0", "v2026.11.0-rc.1", "v2026.11.0-rc.12"] {
+            assert!(check_tag(tag, "2026.11.0").is_ok(), "{tag}");
+        }
+        for tag in ["2026.11.0", "v2026.11.1", "v2026.11.0-rc", "v2026.11.0-rc.", "v2026.11.0-rc.x", "v2026.11.0-beta.1", "v2026.11.00"] {
+            assert!(check_tag(tag, "2026.11.0").is_err(), "{tag}");
         }
     }
 
     #[test]
     fn the_notes_must_name_the_version_whole() {
-        assert!(names_version("# Fattorini 0.1.0\n", "0.1.0"));
-        assert!(names_version("its tag, `v0.1.0`.", "0.1.0"));
-        assert!(names_version("released as 0.1.0.", "0.1.0"));
-        assert!(!names_version("# Fattorini 0.0.9\n", "0.1.0"));
-        assert!(!names_version("version 0.1.01", "0.1.0"));
-        assert!(!names_version("version 10.1.0", "0.1.0"));
-        assert!(!names_version("version 0.1.0.1", "0.1.0"));
+        assert!(names_version("# Fattorini 2026.11.0\n", "2026.11.0"));
+        assert!(names_version("its tag, `v2026.11.0`.", "2026.11.0"));
+        assert!(names_version("released as 2026.11.0.", "2026.11.0"));
+        assert!(!names_version("# Fattorini 2026.10.0\n", "2026.11.0"));
+        assert!(!names_version("version 2026.11.01", "2026.11.0"));
+        assert!(!names_version("version 12026.11.0", "2026.11.0"));
+        assert!(!names_version("version 2026.11.0.1", "2026.11.0"));
     }
 
     #[test]

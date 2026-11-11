@@ -57,7 +57,8 @@ the static C runtime, the notices, debugging while private.
 11. **The version checked** (the developer, 2026-11-06): `arena release` refuses when the tag,
     less its `v`, differs from `Cargo.toml`'s version (in `id name` as `Fattorini 0.1.0`), so the
     two never disagree; a candidate's tag `v0.1.0-rc.1` passes against `0.1.0`, so candidates need
-    no version change of their own.
+    no version change of their own. **The version is CalVer since 2026-11-11** (calver.md):
+    `2026.11.0`, tags `v2026.11.0` and `v2026.11.0-rc.1`, the month checked against the current one.
 
 12. **The notes, a committed file** (the developer, 2026-11-06): `RELEASE-NOTES.md` at the
     repository's root, edited before each release (the version, the network, the strength table

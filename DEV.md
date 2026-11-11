@@ -343,7 +343,9 @@ A release is a snapshot built at a tag: the C runtime static, the third-party no
 text is `RELEASE-NOTES.md`, passed as it is. Once, on the machine that releases: `cargo install
 cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), GitHub's `gh` installed, and `gh auth login`.
 
-1. The version in `Cargo.toml`'s `[workspace.package]`, if this release changes it.
+1. The version in `Cargo.toml`'s `[workspace.package]`, CalVer `YYYY.M.N`: the year, the month
+   without a leading zero, N counting that month's releases from 0 (`2026.11.0`, then `2026.11.1`,
+   then `2026.12.0`). `arena release` refuses a version not of the current UTC month.
 2. The two strength matches, 400 games each, all played, both sides with the Syzygy tables:
 
    ```bash
@@ -354,7 +356,7 @@ cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), 
 3. `RELEASE-NOTES.md`: the version, the network, the strength table.
 4. Commit, then tag and push the tag: `v<version>`, or a candidate `v<version>-rc.<n>` first.
 5. `./bin/arena release <player>@tuned --dry-run` once, then without `--dry-run`. Every check runs
-   before the upload: HEAD at the tag, the tree clean, the tag matching the version, the notes
+   before the upload: the version's month, HEAD at the tag, the tree clean, the tag matching the version, the notes
    naming it, no release of the tag yet, the `.exe` free of `VCRUNTIME140.dll`, its `about` and
    `bench`.
 6. Read the draft on GitHub, then publish it there. A candidate that proves broken: delete its draft

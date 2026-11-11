@@ -216,7 +216,7 @@ mod tests {
         let description = describe("pesto@untuned", "0123456789abcdef (modified)", "2026-11-06 15:32 UTC");
         assert_eq!(description, "pesto@untuned 0123456-dirty 2026-11-06 15:32 UTC");
         assert_eq!(describe("pesto@tuned", "0123456789abcdef", "2026-11-06 15:32 UTC"), "pesto@tuned 0123456 2026-11-06 15:32 UTC");
-        assert_eq!(describe_release("pesto@tuned", "v0.1.0-rc.2", "2026-11-06 15:32 UTC"), "pesto@tuned v0.1.0-rc.2 2026-11-06 15:32 UTC");
+        assert_eq!(describe_release("pesto@tuned", "v2026.11.0-rc.2", "2026-11-06 15:32 UTC"), "pesto@tuned v2026.11.0-rc.2 2026-11-06 15:32 UTC");
     }
 
     #[test]

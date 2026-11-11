@@ -68,7 +68,8 @@ tablebase ending. Next after 14: the
 4. **The first release** (binary-release.md, binary-release-implementation.md): the code done and
    its dry run passed 2026-11-06. Left: the two Skill Level matches (item 1.3), `RELEASE-NOTES.md`
    filled, a candidate tag, and the first real draft, which is also `gh`'s first test. The release
-   ships the stronger network, the tuned lc0 one unless PeSTO's beats it (decided 2026-11-06).
+   ships the tuned lc0 network, without waiting for PeSTO's (the developer, 2026-11-11: PeSTO has
+   no chance against Lc0).
 5. **CCRL testers:** tell them of the release.
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08), once the release is public and,
    ideally, CCRL lists it: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
@@ -121,11 +122,8 @@ tablebase ending. Next after 14: the
   features, SCReLU, trained on Lc0's data. The likely main source of its strength, so said plainly.
 - **Credit Lc0's data only if an Lc0 network ships:** `about.hbs` and `RELEASE-NOTES.md` credit it
   whatever the network.
-- **CalVer, not SemVer** (the developer, 2026-11-08): the scheme to design first. Cargo needs a
-  three-part version, so a CalVer such as `2026.11.0` fits it. Touches the workspace's version, the
-  `id name`, `arena release`'s tag rule (`v{version}` and `-rc.{n}`) and its tests,
-  binary-release.md decision 11, and `RELEASE-NOTES.md`. readme-for-humans.md already weighed a
-  `YYYY-MM` name.
+- **CalVer, not SemVer:** implemented 2026-11-11 (calver.md), `2026.11.0`, the month enforced by
+  `arena release`. Left: its tests run, then calver.md to `done/`.
 
 ## Code to clean up
 

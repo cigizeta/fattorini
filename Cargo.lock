@@ -86,7 +86,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "arena"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "ctrlc",
  "fattorini",
@@ -444,7 +444,7 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fattorini"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "num_enum",
  "pgn-reader",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "lan-http"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "fattorini",
  "tiny_http",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "pgn-replay"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "fattorini",
  "shakmaty",
@@ -1097,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "progress"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "env_logger",
  "serde",
@@ -1381,7 +1381,7 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 
 [[package]]
 name = "smithy"
-version = "0.1.0"
+version = "2026.11.0"
 dependencies = [
  "ctrlc",
  "fattorini",
