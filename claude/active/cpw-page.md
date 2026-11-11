@@ -83,6 +83,10 @@ stages of the game, as the inverse-noise weighting of the two.
 
 ## Before posting
 
+- **The title:** `Fattorini`, as engine pages carry the bare name (no "Chess Engine" suffix) and
+  person pages a full name, so no clash is expected (2026-11-11). Search the wiki for an existing
+  `Fattorini` first; if there is one, a parenthesized qualifier such as `Fattorini (engine)`, as
+  the wiki does for clashes, rather than a suffix.
 - Check each `[[...]]` link against the wiki's existing pages, and drop or rename any that do not
   exist there (SCReLU, the AGPL anchor, the Rust category may not).
 - Compare with a few recent engine pages for the wiki's current layout, then follow theirs.
