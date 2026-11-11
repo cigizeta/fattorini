@@ -19,7 +19,8 @@ In this order:
 **Where things stand (2026-11-10, end of day).** Steps 1.1, 1.2 and 1.4 are done; 1.3 has Skill
 Levels 12 and 13 beaten; **resume at 1.3, the match at Skill Level 14** (command below). Also done
 today: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tablebase score
-(root-tablebase-score.md), waiting for a new Lichess snapshot to be seen. Next after 14: the
+(root-tablebase-score.md), its snapshot on Lichess since 2026-11-11, waiting to be seen in a
+tablebase ending. Next after 14: the
 8-thread check (below).
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
@@ -60,7 +61,7 @@ today: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tabl
    Before the training machine trains on it: delete any local `data/pesto` and
    `data/buckets/pesto*` there, left from the old partial corpus.
 3. **Lichess, the tuned lc0 network: done 2026-11-10.** `fattorini-bot` plays the `@tuned`
-   snapshot of f1c7389; the untuned one on Drive can go. Left: `temper-chess` to close. **The
+   snapshot of 97071e5 since 2026-11-11 (the root's tablebase score in); the untuned one on Drive can go. Left: `temper-chess` to close. **The
    mark to beat (the developer, 2026-11-10):** `rotor-bot`, retired, ended at 2395 in blitz (RD 51,
    161 rated games, +101 -39 =21, last seen 2026-11-07), from Lichess's public profile data;
    six weeks of mixed engines, the rating still rising when it retired.
