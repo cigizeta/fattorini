@@ -75,8 +75,7 @@ tablebase ending.
 5. **CCRL testers:** tell them of the release, in a topic of its own in the CCRL Discussion Board's
    CCRL Public forum (linked from CCRL's pages). Registered 2026-11-11, under the developer's real
    name as the board prefers; waiting for the administrators' activation, then the first two posts
-   are approved before they appear. To read before posting: the pinned "How to get your engine
-   tested for CCRL".
+   are approved before they appear. The post drafted, ready to paste: ccrl-announcement.md.
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08), once the release is public and,
    ideally, CCRL lists it: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
    it is trained on a limited compute budget; links to the repository, releases and ratings).
