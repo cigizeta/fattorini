@@ -283,8 +283,13 @@ function work(view, waiting, stop = "") {
           // columns alike, so every decimal point lines up: a search tune's 150 as 150.0, a time
           // tune's 0.0594 as 0.05940 and its 3 as 3.00000.
           const decimals = 1 + Math.max(0, ...view.theta.map((p) => (String(p.start).split(".")[1] || "").length));
-          // Moved: the change from the start, in percent of it, signed; blank for a start of 0.
-          const moved = (p) => p.start === 0 ? "" : `${p.now >= p.start ? "+" : "−"}${number(Math.abs(100 * (p.now - p.start) / p.start), 1)}%`;
+          // Moved: (now - start) / |start|, in percent, so its sign is the direction the value went
+          // even for a negative start (-140 to -150 is -7.1%); blank for a start of 0.
+          const moved = (p) => {
+            if (p.start === 0) return "";
+            const change = 100 * (p.now - p.start) / Math.abs(p.start);
+            return `${change >= 0 ? "+" : "−"}${number(Math.abs(change), 1)}%`;
+          };
           return view.theta.map((p) => [p.name, p.description, number(p.start, decimals), number(p.now, decimals), moved(p)]);
         })()).replace("<table>", `<table class="tune">`);
     default:
