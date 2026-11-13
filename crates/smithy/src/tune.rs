@@ -449,9 +449,10 @@ impl Tune {
         &self.parameters_path
     }
 
-    /// Each parameter's name, start and theta now.
-    pub(crate) fn rows(&self) -> Vec<(&'static str, f64, f64)> {
-        self.kind.names().iter().zip(self.specs.iter()).zip(self.theta.iter()).map(|((&name, spec), &now)| (name, spec.start, now)).collect()
+    /// Each parameter's name, what it does, its start and theta now.
+    pub(crate) fn rows(&self) -> Vec<(&'static str, &'static str, f64, f64)> {
+        let kind = self.kind;
+        (0..self.specs.len()).map(|i| (kind.names()[i], kind.descriptions()[i], self.specs[i].start, self.theta[i])).collect()
     }
 
     /// Whether `tag`, a game's `TimeControl`, is the tune's clock scaled within the clamps a client

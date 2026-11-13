@@ -80,6 +80,14 @@ impl TuneKind {
         }
     }
 
+    /// What each of its parameters does, in plain words, in `names`' order.
+    pub fn descriptions(self) -> &'static [&'static str] {
+        match self {
+            TuneKind::Search => &SearchParameters::DESCRIPTIONS,
+            TuneKind::Time => &TimeParameters::DESCRIPTIONS,
+        }
+    }
+
     /// Its parameters' starts, ranges and perturbations.
     pub fn specs(self) -> &'static [Spec] {
         match self {

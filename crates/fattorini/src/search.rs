@@ -376,6 +376,20 @@ impl SearchParameters {
         "good_quiet_threshold",
     ];
 
+    /// What each field does, in plain words, in `NAMES`' order: shown beside a tune's values.
+    pub const DESCRIPTIONS: [&'static str; 10] = [
+        "how far below beta a shallow node must be to drop into quiescence",
+        "how far above beta a shallow node must be to return at once",
+        "how far below alpha a quiet move must be to be skipped, per ply",
+        "how far above beta a node must be to try a null move",
+        "how far below alpha a capture must be to be skipped in quiescence",
+        "how much material a quiet move may lose and still be searched, per ply",
+        "how much material a capture may lose and still be searched in quiescence",
+        "the starting half-width of the aspiration window",
+        "how bad a quiet move's history must be to be skipped, per ply squared",
+        "the history below which a quiet move counts as bad",
+    ];
+
     /// The fields as an array, in `NAMES`' order.
     pub fn values(&self) -> [i32; 10] {
         [
@@ -3360,6 +3374,32 @@ impl TimeParameters {
         "eval_min",
         "changes_a",
         "changes_b",
+    ];
+
+    /// What each field does, in plain words, in `NAMES`' order: shown beside a tune's values.
+    pub const DESCRIPTIONS: [&'static str; 22] = [
+        "share of the clock a move aims for, late in the game",
+        "how much less a move aims for at the start of the game",
+        "how fast the aim grows toward the late-game share, per move",
+        "share of the clock a move may never pass",
+        "the most a move may take, in aimed-for times",
+        "the shortest a move may be cut to, in aimed-for times",
+        "the longest a move may be stretched to, in aimed-for times",
+        "think longer when the best move took few of the nodes: how much",
+        "think longer when the best move took few of the nodes: how steeply",
+        "the least a clear best move cuts the think to",
+        "think longer when the score falls: at an unchanged score",
+        "think longer when the score falls: per centipawn",
+        "the least a rising score cuts the think to",
+        "the most a falling score stretches the think to",
+        "think shorter as the best move stays the same: at first",
+        "think shorter as the best move stays the same: per depth",
+        "the least a stable best move cuts the think to",
+        "think shorter as the score stays steady: at first",
+        "think shorter as the score stays steady: per depth",
+        "the least a steady score cuts the think to",
+        "think longer when the best move keeps changing: at no change",
+        "think longer when the best move keeps changing: per change",
     ];
 
     /// The fields as an array, in `NAMES`' order.

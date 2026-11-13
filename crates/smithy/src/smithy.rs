@@ -1012,7 +1012,7 @@ impl Shared {
                     done: tune.k_done,
                     pairs: tune.pairs,
                     reference_nps: self.reference_nps,
-                    theta: tune.rows().into_iter().map(|(name, start, now)| ParameterView { name, start, now }).collect(),
+                    theta: tune.rows().into_iter().map(|(name, description, start, now)| ParameterView { name, description, start, now }).collect(),
                     time: matches!(work, Work::Tune { .. })
                         .then(|| pairs_eta(&self.pair_times, u64::from(tune.pairs.saturating_sub(tune.k_done)))),
                 },
@@ -3010,6 +3010,7 @@ struct StandingView {
 #[derive(Clone, Serialize)]
 struct ParameterView {
     name: &'static str,
+    description: &'static str,
     start: f64,
     now: f64,
 }
