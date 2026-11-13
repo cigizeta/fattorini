@@ -13,6 +13,7 @@
 use serde::Serialize;
 
 use fattorini::pipeline::protocol::Limit;
+use fattorini::search::TimeManagement;
 
 use super::sprt::{Sprt, Verdict};
 
@@ -83,34 +84,47 @@ impl Kind {
     }
 }
 
-/// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`), and
-/// whether it plays its tune (`parameters.txt`) or the defaults. Written as a player, the network
-/// with what it searches with: `<network>@tuned` or `<network>@untuned`.
+/// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`),
+/// whether it plays its tune (`parameters.txt`) or the defaults, and which time management plans its
+/// clock. Written as a player, the network with what it searches with: `<network>@tuned` or
+/// `<network>@untuned`, then `@classic` or `@reckless` when its management is not `Split`, so a
+/// line written before reads back unchanged (smithy-time-management-tests.md).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Side {
     pub player: String,
     pub tuned: bool,
+    pub time_management: TimeManagement,
 }
 
 impl Side {
-    /// As a player's name: `<network>@tuned` or `<network>@untuned`.
+    /// As a player's name: `<network>@tuned` or `<network>@untuned`, then `@<management>` unless `Split`.
     pub fn text(&self) -> String {
-        format!("{}@{}", self.player, if self.tuned { "tuned" } else { "untuned" })
+        let player = format!("{}@{}", self.player, if self.tuned { "tuned" } else { "untuned" });
+        match self.time_management {
+            TimeManagement::Split => player,
+            management => format!("{player}@{}", management.name().to_lowercase()),
+        }
     }
 
     /// `text` read back.
     pub fn parse(text: &str) -> Result<Side, String> {
-        let wrong = || format!("a side is <network>@tuned or <network>@untuned, not {text:?}");
+        let wrong = || {
+            format!("a side is <network>@<tuned|untuned>, optionally @<classic|split|reckless> after, not {text:?}")
+        };
         let (player, suffix) = text.split_once('@').ok_or_else(wrong)?;
         if player.is_empty() {
             return Err(wrong());
         }
-        let tuned = match suffix {
+        let (tuning, time_management) = match suffix.split_once('@') {
+            None => (suffix, TimeManagement::Split),
+            Some((tuning, management)) => (tuning, TimeManagement::parse(management).ok_or_else(wrong)?),
+        };
+        let tuned = match tuning {
             "tuned" => true,
             "untuned" => false,
             _ => return Err(wrong()),
         };
-        Ok(Side { player: player.to_string(), tuned })
+        Ok(Side { player: player.to_string(), tuned, time_management })
     }
 }
 
@@ -632,11 +646,29 @@ mod tests {
     }
 
     #[test]
+    fn a_side_names_its_time_management_only_when_not_split() {
+        let reckless = Side::parse("aa@tuned@reckless").unwrap();
+        assert_eq!(reckless, Side { player: "aa".to_string(), tuned: true, time_management: TimeManagement::Reckless });
+        assert_eq!(reckless.text(), "aa@tuned@reckless");
+        assert_eq!(Side::parse("aa@untuned@Classic").unwrap().text(), "aa@untuned@classic", "read in any case");
+        assert_eq!(Side::parse("aa@tuned@split").unwrap().text(), "aa@tuned", "Split is never written");
+        assert_eq!(Side::parse("aa@tuned").unwrap().time_management, TimeManagement::Split, "as every line before");
+        for wrong in ["aa@tuned@slow", "aa@tuned@", "aa@reckless", "aa@reckless@tuned"] {
+            assert!(Side::parse(wrong).is_err(), "{wrong:?}");
+        }
+        let spec = Spec::parse(&words("duel - aa@tuned@reckless aa@tuned@classic", "clock 180+2")).unwrap();
+        assert!(!spec.mixed(), "one network, both tuned: the managements alone differ");
+    }
+
+    #[test]
     fn a_test_s_words_read_back() {
         let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@tuned pesto@untuned", "clock 10+0.1")).unwrap();
         assert_eq!(spec.kind, Kind::Sprt { elo0: 0.0, elo1: 5.0 });
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
-        assert_eq!(spec.challenger, Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true });
+        assert_eq!(
+            spec.challenger,
+            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true, time_management: TimeManagement::Split }
+        );
         assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@tuned".to_string(), "pesto@untuned".to_string()));
         assert!(spec.mixed());
         assert!(!Spec::parse(&words("duel - aa@tuned aa@untuned", "clock 10+0.1")).unwrap().mixed(), "a tune measured against its own defaults");

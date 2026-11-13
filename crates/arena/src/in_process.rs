@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use fattorini::nnue::Network;
 use fattorini::search::{
-    choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, TimeManagement,
-    DEFAULT_MOVE_OVERHEAD_MS, MAX_PLY,
+    choose_best_move_with_progress, default_move_overhead_ms, single_move_limit, time_limit, SearchParameters,
+    TimeManagement, MAX_PLY,
 };
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
@@ -38,13 +38,17 @@ pub struct InProcessPlayer {
     /// factor (`TimeLimit::with_previous_score`), as the engine keeps between `go`s. Cleared by
     /// `new_game`.
     last_score: Option<i32>,
+    /// Which time management plans its clock, at that management's own default `Move Overhead`
+    /// (`default_move_overhead_ms`), as a release with no option set: `Split` but where a smithy
+    /// test names another (smithy-time-management-tests.md's protocol field, `Player::time_management`).
+    time_management: TimeManagement,
 }
 
 impl InProcessPlayer {
     /// `hash_mb` is the table's size, the same number a UCI player is given as `Hash`.
     pub fn new(
         evaluator: Option<Arc<Network>>, tablebase: Arc<SyzygyTablebase>, hash_mb: usize,
-        parameters: Option<SearchParameters>,
+        parameters: Option<SearchParameters>, time_management: TimeManagement,
     ) -> InProcessPlayer {
         InProcessPlayer {
             evaluator,
@@ -52,6 +56,7 @@ impl InProcessPlayer {
             tablebase,
             parameters,
             last_score: None,
+            time_management,
         }
     }
 }
@@ -83,8 +88,9 @@ impl Player for InProcessPlayer {
     /// ply. This player's only obligation is to come back well before the ninth depth would have
     /// finished, which it does.
     ///
-    /// Under a clock it plans its time exactly as `go wtime btime winc binc` does (`time_limit`), the
-    /// default `Move Overhead` kept back as a release keeps it, so a timed match plays as one does, and
+    /// Under a clock it plans its time exactly as `go wtime btime winc binc` does (`time_limit`), with
+    /// its time management and that management's default `Move Overhead`, as a release keeps it, and the
+    /// game's full-move number, so a timed match plays as one does, and
     /// searches against its own stop flag, fresh each move: the search raises the flag it is given
     /// when its time manager declines the next depth, and raising the match's Ctrl+C flag would end
     /// the whole run after the first timed move. Ctrl+C is still seen by the game loop before every
@@ -104,10 +110,10 @@ impl Player for InProcessPlayer {
                     moves_to_go,
                     None,
                     false,
-                    DEFAULT_MOVE_OVERHEAD_MS,
-                    TimeManagement::Split,
+                    default_move_overhead_ms(self.time_management),
+                    self.time_management,
                 )
-                .map(|limit| limit.with_previous_score(self.last_score));
+                .map(|limit| limit.with_previous_score(self.last_score).with_fullmove(request.fullmove));
                 (MAX_PLY, limit, &own_stop)
             }
         };
@@ -164,7 +170,7 @@ mod tests {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let (board, _) = Board::from_fen(fen).unwrap();
         let mut player =
-            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters { razoring_margin: 150, ..SearchParameters::DEFAULT }));
+            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters { razoring_margin: 150, ..SearchParameters::DEFAULT }), TimeManagement::Split);
         player.new_game().expect("an in-process player never faults");
         let ancestors = vec![board.hash()];
         let remaining = Duration::from_secs(2);
@@ -179,6 +185,7 @@ mod tests {
                 increment: Duration::from_millis(100),
                 moves_to_go: None,
             },
+            fullmove: 1,
         };
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -195,13 +202,42 @@ mod tests {
         assert!(!stop.load(Ordering::Relaxed), "the match's stop flag was raised");
     }
 
+    /// Under `Reckless` it answers in time too, at move 30 of a game, with its own 100 ms overhead
+    /// kept back: the management and the full-move number reach the search.
+    #[test]
+    fn a_reckless_player_answers_in_time() {
+        let fen = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 30";
+        let (board, _) = Board::from_fen(fen).unwrap();
+        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None, TimeManagement::Reckless);
+        player.new_game().expect("an in-process player never faults");
+        let ancestors = vec![board.hash()];
+        let remaining = Duration::from_secs(2);
+        let request = MoveRequest {
+            starting_fen: fen,
+            moves_uci: &[],
+            board: &board,
+            ancestors: &ancestors,
+            limit: MoveLimit::Fischer {
+                white_remaining: remaining,
+                black_remaining: remaining,
+                increment: Duration::from_millis(100),
+                moves_to_go: None,
+            },
+            fullmove: 30,
+        };
+        let started = Instant::now();
+        let outcome = player.choose_move(&request, &Arc::new(AtomicBool::new(false))).expect("never faults");
+        assert!(matches!(outcome, MoveOutcome::Move(_)));
+        assert!(started.elapsed() < remaining, "took {:?} of a {remaining:?} clock", started.elapsed());
+    }
+
     /// The whole reason this player exists, checked at its narrowest: asked for a move at a fixed
     /// depth it returns a legal one, with a score and the depth it actually reached. Depth 4, so the
     /// test stays fast -- the property under test is that the wiring holds, not how well it plays.
     #[test]
     fn choosing_a_move_at_a_fixed_depth_reports_a_legal_move_with_its_score() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None);
+        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None, TimeManagement::Split);
         player.new_game().expect("an in-process player never faults");
 
         let ancestors = vec![board.hash()];
@@ -211,6 +247,7 @@ mod tests {
             board: &board,
             ancestors: &ancestors,
             limit: MoveLimit::FixedDepth(4),
+            fullmove: 1,
         };
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -239,7 +276,7 @@ mod tests {
     #[test]
     fn a_player_whose_stop_signal_is_already_set_still_answers_with_the_move_depth_one_found() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None);
+        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None, TimeManagement::Split);
         let ancestors = vec![board.hash()];
         let request = MoveRequest {
             starting_fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -247,6 +284,7 @@ mod tests {
             board: &board,
             ancestors: &ancestors,
             limit: MoveLimit::FixedDepth(9),
+            fullmove: 1,
         };
         let stop = Arc::new(AtomicBool::new(true));
 

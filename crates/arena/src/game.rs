@@ -275,6 +275,7 @@ pub fn play_one_game(
             // threefold check above, which the search's history must not hold (`MoveRequest`).
             ancestors: &ancestor_hashes[..ancestor_hashes.len() - 1],
             limit,
+            fullmove: fullmove_number,
         };
 
         let think_started = Instant::now();

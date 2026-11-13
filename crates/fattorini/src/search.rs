@@ -3175,6 +3175,24 @@ pub enum TimeManagement {
     Reckless,
 }
 
+impl TimeManagement {
+    /// The name the `TimeManagement` UCI option and the smithy's chores give it.
+    pub fn name(self) -> &'static str {
+        match self {
+            TimeManagement::Classic => "Classic",
+            TimeManagement::Split => "Split",
+            TimeManagement::Reckless => "Reckless",
+        }
+    }
+
+    /// `name` read back, in any case: `reckless` is `Reckless`.
+    pub fn parse(text: &str) -> Option<TimeManagement> {
+        [TimeManagement::Classic, TimeManagement::Split, TimeManagement::Reckless]
+            .into_iter()
+            .find(|management| management.name().eq_ignore_ascii_case(text))
+    }
+}
+
 impl TimeLimit {
     /// This limit with `previous_score` as the previous move's score, if it is a clock.
     pub fn with_previous_score(self, previous_score: Option<i32>) -> TimeLimit {

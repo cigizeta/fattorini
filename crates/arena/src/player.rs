@@ -101,6 +101,9 @@ pub struct MoveRequest<'a> {
     /// nonzero fifty-move counter.
     pub ancestors: &'a [u64],
     pub limit: MoveLimit,
+    /// The game's full-move number at `board`, which an in-process player's time management may
+    /// read (`TimeLimit::with_fullmove`); a UCI player reads it from the FEN and moves instead.
+    pub fullmove: u32,
 }
 
 /// This ply's own limit, as opposed to `Control`'s match-wide one: under a clock the searching side

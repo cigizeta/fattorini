@@ -30,7 +30,7 @@ use fattorini::pipeline::remote;
 use super::{archive, lease, scale, tree};
 use fattorini::pipeline::protocol::{Entry, Limit, Player};
 use fattorini::pipeline::spsa::{self, Schedule, Spec, Theta, MAX_CLOCK_FACTOR, MIN_CLOCK_FACTOR};
-use fattorini::search::SearchParameters;
+use fattorini::search::{SearchParameters, TimeManagement};
 
 /// A tune's control when none is given: arena's short time control.
 pub(crate) const STC: &str = "10+0.1";
@@ -340,6 +340,7 @@ impl Tune {
         let side = |sign: i32| Player {
             network: network.to_string(),
             parameters: Some(spsa::point(&self.theta, &self.schedule, &self.specs, k, &delta, sign)),
+            time_management: TimeManagement::Split,
         };
         Entry { players: vec![side(1), side(-1)], count: 1, tags: vec![(K_TAG.to_string(), k.to_string())] }
     }

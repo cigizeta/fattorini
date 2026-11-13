@@ -59,16 +59,35 @@ spend too fast with 40 moves to go and leave the clock unused with 2.
   smithy's bench on an idle machine (TODO.md), or the tune plays at the wrong control.
 - **Never tuned:** the move overhead and the cap on one move, the safety margins a lag-free tune
   would drive to zero.
+- **At STC, verified at 180+2** (the developer, 2026-11-12): a 180+2 tune would take about 10 days
+  for 32k pairs, so the tune plays 10+0.1, whose increment is 1/100 of the base against 3+2's 1/90.
+  The risk: `r` and the falling-score scale tuned to shallow search. The check, the tuned values
+  against the untuned at 180+2 (FIDE's blitz control, Lichess's most common), runs as a smithy test,
+  spread over every arena, as a non-regression test rather than a proof of gain. Skipped if the tune
+  ends near its starting values.
 - **Proposed, not decided:** `a'` and `c'` hand-picked near an even share, kept conservative,
   checked by a smoke test and a short duel at a repeating control rather than tuned.
+
+## The baseline first (the developer, 2026-11-12)
+
+The first version is the table above and nothing more: the two bases, and the two factors that
+already exist in `TimeManager` (search.rs), reused as they are:
+
+- **Instability `C`**, for best-move stability: a moving average of best-move changes after each
+  completed depth, `C = 0.5 * C + 0.5 * changed`, starting at 1.0, multiplying `soft` by
+  `1 + r * C` (`r = 2`).
+- **Falling score `F`**, for the score trend: `1 + (previous - current) / 200 cp`, scaled to the
+  evaluator's pawn, clamped to `[0.6, 1.7]`, 1 on decisive scores.
+
+Their constants (`r`, the 0.5 decay, the 200 cp scale, the clamps) become tunable. **Node fraction
+is left out of the baseline,** added later as a step of its own, measured against it.
 
 ## Open questions
 
 One at a time, in this order:
 
 1. The `movestogo` coefficients hand-picked and checked, not tuned (proposed above).
-2. **Node fraction in the first version?** It needs nodes counted per root move; whether the root
-   loop does so today is not yet checked. Recommended: yes, if counting is cheap; otherwise first
-   stability and score trend alone, node fraction a step of its own.
-3. The factors' exact forms and starting values, after reading Stockfish's and Reckless's sources.
-4. The verdict: which duels, at which controls, against whatever ships after v2's verdict.
+2. The base's starting values (`a`, `b`, `c`, `d`, the cap), after reading Stockfish's and
+   Reckless's sources.
+3. The verdict: which duels, at which controls, against whatever ships after v2's verdict.
+4. Later, node fraction: whether the root loop already counts nodes per root move.

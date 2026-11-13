@@ -2,8 +2,31 @@
 
 Status: **design settled** with the developer 2026-11-13. Steps 1 to 9 done the same day
 (search.rs, uci.rs): `cargo test -p fattorini --release` and `cargo clippy --workspace
---all-targets` clean. Next: step 10, the smoke test at a repeating control, waiting on the arena's support for one
-(arena-repeating-controls.md). Two departures from
+--all-targets` clean. Step 10 done 2026-11-13 at 40/20 against Classic
+(`data/matches/fattorini-reckless-vs-fattorini-classic-ref/20261113-0833/`), once the arena could
+play repeating controls (arena-repeating-controls.md), stopped by hand at 23 pairs with a
+`result.txt` of its own so the pairing's next run starts a new folder: no forfeit in 48 games; the clock refilled
+after each 40th move; Reckless spends about the whole period (about 19 of 20 s over its first 40
+moves, longer thinks of 2.5 s on hard moves, 0.1 to 0.2 s in the period's last moves), as its
+cyclic bounds (1.0 and 5.0 shares) make it; Classic likewise. 
+
+**Step 11, the 10+0.1 duel against Classic: won by Reckless, 2026-11-13.** +15 -3 =14 for
+Reckless, 22.0 - 10.0, S 0.6875, resolved at 32 games in 2 minutes
+(`data/matches/fattorini-reckless-vs-fattorini-classic-ref/20261113-0841/`). Classic, not Split,
+as the opponent: Split's 180+2 duel is suspended undecided (blitz-time-management-v2.md). No
+forfeit; every decisive game a checkmate. About +136 Elo taken at face value, an upper estimate: a
+duel stopped at its first crossing overstates the gap. In a game read, Reckless spends more in the
+middlegame (0.8 to 0.9 s a move around move 10 against Classic's 0.4 to 0.7 s) and on hard
+endgame moves (1.0 to 1.4 s), while Classic stays at 0.1 to 0.3 s for most of the game: its
+"no depth past half the target" keeps a large reserve unspent.
+
+**Next: a 180+2 duel of untuned Reckless against Classic (the developer, 2026-11-13),** before the
+tune, at the control that matters for Lichess; if Reckless wins it, it can ship untuned and the
+tune becomes an improvement measured later. The tune needs groundwork first anyway: the arena's
+in-process engine plays `Split` hard-coded, and Reckless's constants are not yet tunable
+parameters. Checked beside the score, from the duel's `games.pgn` move times: the clock each side
+has left at moves 20, 40 and 60. The Lichess pain (the developer, 2026-11-13) is unused time: a
+Reckless that ends games with seconds left rather than a minute fixes it. Two departures from
 the Steps as planned: the arena's in-process engine is left alone, since it plays `Split`
 hard-coded and never reads `fullmove`; and the `uci` reply advertises the selected management's
 own default overhead (20 under the default `Split`), not 100, so it never states a default the

@@ -10,6 +10,12 @@ games, S 0.5086 (about +6 Elo, within noise), curtailed at 376 pairs since neith
 bound by 400 (`data/matches/fattorini-split-vs-fattorini-classic/20261111-1640/`). v1's -67 Elo is
 gone: no regression at the short control. Next: the 180+2 duel, the verdict.
 
+**180+2 duel: suspended 2026-11-13 at 162 pairs** (the developer), unresolved: +85 -82 =157 for
+Split, S 0.5046 [0.4460, 0.5540], a dead heat after a dip to 0.481 near pair 130. Suspended to free
+the machine for reckless-time-management.md; resumed at convenience by rerunning the same
+`bin/arena duel fattorini-split fattorini-classic --time 180+2` on the same machine, with
+`data/duel-bin/fattorini-tm.exe` left as it is. No verdict yet.
+
 ## Why v1 lost
 
 Two causes, compounding:

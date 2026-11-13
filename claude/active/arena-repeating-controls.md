@@ -2,8 +2,10 @@
 
 Status: **design settled** with the developer 2026-11-13; steps 1 to 9 done the same day
 (`cargo test -p arena -p smithy --release` and `cargo clippy --workspace --all-targets` clean).
-Next: step 10, the Reckless smoke test. Kept for now: the names `Control::Fischer` and `MoveLimit::Fischer`,
-which now cover repeating clocks too (13 uses in 6 files); a rename to `Clock` is a follow-up.
+Step 10, the Reckless smoke test at 40/20, done the same day: no forfeit, the clocks refilled
+(reckless-time-management.md). The duel's start-up line prints the control as Rust's debug form
+(`Fischer(TimeControl { ... })`), cosmetic, for the rename in TODO.md. Kept for now: the names `Control::Fischer` and `MoveLimit::Fischer`,
+which now cover repeating clocks too (13 uses in 6 files); a rename to `Clock` is in TODO.md's "Code to clean up".
 
 ## Why
 

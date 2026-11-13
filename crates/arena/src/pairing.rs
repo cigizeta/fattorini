@@ -18,6 +18,7 @@ use rusqlite::Connection;
 
 use fattorini::board::color::Color;
 use fattorini::nnue::Network;
+use fattorini::search::TimeManagement;
 use fattorini::tablebase::SyzygyTablebase;
 
 use super::random_book;
@@ -338,7 +339,7 @@ pub fn start_player(
                 None => super::engines::pesto_parameters()
                     .unwrap_or_else(|error| panic!("failed to read pesto's tuning for engine {name:?}: {error}")),
             };
-            Ok(Box::new(InProcessPlayer::new(None, Arc::clone(tablebase), entry.hash_mb(), parameters)))
+            Ok(Box::new(InProcessPlayer::new(None, Arc::clone(tablebase), entry.hash_mb(), parameters, TimeManagement::Split)))
         }
         EngineKind::Network => {
             let network_path = entry.network_path();
@@ -349,6 +350,7 @@ pub fn start_player(
                 Arc::clone(tablebase),
                 entry.hash_mb(),
                 entry.parameters,
+                TimeManagement::Split,
             )))
         }
     }
