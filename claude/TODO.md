@@ -102,7 +102,8 @@ Also waiting: the CCRL forum account's activation.
    are approved before they appear. The post drafted, ready to paste: ccrl-announcement.md.
    **Announced on TalkChess 2026-11-13** meanwhile, in "New engine releases 2026 H2", asking the
    CCRL testers to include it; to watch for replies and test results.
-6. **A Chess Programming Wiki page** (the developer, 2026-11-08): drafted 2026-11-11 in
+6. **A Chess Programming Wiki page** (the developer, 2026-11-08), **next after the TalkChess post
+   (the developer, 2026-11-13):** facts, politely, no claims. Drafted 2026-11-11 in
    cpw-page.md, not waiting for CCRL (the developer, 2026-11-11), claiming no rating ever; a wiki
    account next. As planned: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
    it is trained on a limited compute budget; links to the repository, releases and ratings).
