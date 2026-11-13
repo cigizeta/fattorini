@@ -270,10 +270,11 @@ function work(view, waiting, stop = "") {
     case "pairs":
       return `<h2>Pairs: ${whole(view.played)} played, ${view.pairings} pairings of ${view.wanted}</h2>`;
     case "tune":
-      // As a test's: the count and its time above the bar, the time only while it deals.
+      // As a test's: the count and its time above the bar, the time only while it deals; in games,
+      // two a pair (the developer, 2026-11-13).
       return `<h2>Tune of ${escape(view.player)}</h2>`
-        + `<div>${whole(view.done)} of ${whole(view.pairs)} pairs (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
-        + `${view.time ? times(view, true) : ""}</div>${bar(view.done, view.pairs)}`
+        + `<div>${whole(2 * view.done)} of ${whole(2 * view.pairs)} games (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
+        + `${view.time ? times(view) : ""}</div>${bar(view.done, view.pairs)}`
         + (view.reference_nps ? `<div class="muted">Bench: ${whole(Math.round(view.reference_nps))} nodes/s per thread on this machine, every arena's clock scaled to it</div>` : "")
         + table(["parameter", "start", "now"], view.theta.map((p) => [p.name, String(p.start), nowText(p)]));
     default:
@@ -528,7 +529,7 @@ function nowText(p) {
 
 function tuneText(tune) {
   if (!tune) return "not tuned";
-  return tune[0] >= tune[1] ? `tuned, ${whole(tune[1])} pairs` : `tune at ${whole(tune[0])} of ${whole(tune[1])} pairs`;
+  return tune[0] >= tune[1] ? `tuned, ${whole(2 * tune[1])} games` : `tune at ${whole(2 * tune[0])} of ${whole(2 * tune[1])} games`;
 }
 
 const tuneDone = (tune) => tune && tune[0] >= tune[1];
