@@ -1,6 +1,9 @@
 # The time management's SPSA: implementation plan
 
-Status: **implemented 2026-11-13, waiting for `cargo test` and clippy.** For
+Status: **implemented and verified 2026-11-13:** tests and clippy clean; the renames done by hand;
+the snapshot `...-search-tuned-20261113-1730.exe` benches 565,412 nodes, as before, and lichess-bot
+plays it. Next: every arena on the commit, then `--time-tune lc0-psq-threats-screlu-g1-r1` from the
+page. For
 time-management-spsa.md's agreed design and tuning-suffixes.md.
 
 **As built, where it differs from the steps below:**
