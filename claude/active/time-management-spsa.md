@@ -1,7 +1,7 @@
 # The time management's SPSA
 
-Status: **design, 2026-11-13**, proposed by Claude, waiting for the developer's agreement on the
-points marked **To confirm**. No implementation plan yet.
+Status: **design agreed, 2026-11-13** (22 parameters, a set per network in its own file, the
+draft table). Next: the implementation plan, time-management-spsa-implementation.md.
 
 ## Why
 
@@ -31,9 +31,9 @@ on its own, not a fix.
 ### 1. What is tuned: 22 parameters
 
 The 19 SPSA-born constants of `TimeParameters` (TODO.md said 18; `nodes_a`, now Fattorini's
-2.66, makes 19 counted with its group), and Fattorini's three hand-picked ones. **To confirm:**
-the three are guesses from one 180+2 profile, which is what a tune is for, and unlike the overhead
-a lag-free tune has no reason to push them to an extreme. Without them, 19.
+2.66, makes 19 counted with its group), and Fattorini's three hand-picked ones. **Decided (the
+developer, 2026-11-13): 22.** The three are guesses from one 180+2 profile, which is what a tune
+is for, and unlike the overhead a lag-free tune has no reason to push them to an extreme.
 
 ### 2. The values at run time
 
@@ -41,20 +41,28 @@ a lag-free tune has no reason to push them to an extreme. Without them, 19.
 `TIME_PARAMETERS` stays as the default, and the time manager reads the set it is given. At the
 defaults the engine is unchanged (`time_bounds_by_hand` and the multiplier tests hold).
 
-- **The engine (uci.rs):** no UCI option. A release plays the compiled defaults.
+- **The engine (uci.rs):** no UCI option. A build plays the time set embedded with its network
+  (section 3), or the compiled defaults.
 - **The arena:** `InProcessPlayer` takes an optional `TimeParameters` beside its
   `SearchParameters`.
 - **The chore's player text (protocol.rs):** the search's `name=value` list may carry the time
   parameters too, as `tm.<name>=<value>`, real numbers. Absent, the defaults, so every chore of
   before reads the same. A tune's chore always writes all 22 in full, as it writes the search's.
 
-### 3. Where the result lives: one set, in the code
+### 3. Where the result lives: per network
 
-The search's parameters are per network, in its `parameters.txt`, since they are measured in that
-network's evaluation units. The time parameters depend on the search, not on the network (scores
-already enter them scaled by `pawn_percent`). **To confirm:** one global set; after the verdict,
-the tuned values are written into `TIME_PARAMETERS` by hand, rounded to four digits, as the first
-search tune's values went into `SearchParameters::DEFAULT`. No file, nothing per network.
+**Decided (the developer, 2026-11-13): one time parameter set per network,** as the search's
+`parameters.txt`. The time parameters depend on the evaluation: directly through the score trend
+and the score stability (scaled to its pawn by `pawn_percent`, which fixes the scale, not how much
+its scores swing between depths), and indirectly through the tree it shapes, which the node
+fraction, best-move stability and best-move changes count. `TIME_PARAMETERS` stays the default
+for a network with no tuned set, and for every network until its time tune.
+
+Consequences: a snapshot and a release embed the network's time set beside its search set; the
+arena's players read it; a network's tune becomes two, the search's and then the time's, each
+about 12 hours at 32k pairs. **The file (the developer, 2026-11-13): its own,
+`time-parameters.txt`, beside `parameters.txt`,** so neither tune rewrites the other's result.
+`@tuned` reads both, each absent meaning its defaults; `@untuned` neither.
 
 ### 4. The SPSA, generalized
 
@@ -70,7 +78,7 @@ A tune tunes one set. During the time tune the search plays the network's tune, 
 set's name and as many values as the set has. The page's tune screen lists the parameters by
 name, as now. A kind of tune, `search` or `time`, chosen when it starts; `search` the default.
 
-### 5. Ranges and perturbations (draft, to check)
+### 5. Ranges and perturbations (accepted by the developer, 2026-11-13; revisited after the first tune's traces)
 
 `c_end` about a tenth of the value's scale, as the search's margins have an eighth; a slope near
 zero gets a perturbation of its own size rather than of its value's. Ranges wide enough that no
