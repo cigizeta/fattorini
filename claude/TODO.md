@@ -233,16 +233,17 @@ changes).
   depend on the search's curves (a depth's cost, how often the best move changes, the score's
   swings), so they are tuned against the search that ships. Only after Split's verdict
   (blitz-time-management-v2.md) and the smithy's bench on an idle machine (below), ideally after the
-  speed work too. Tuned: `s`, `r`, `k` and `FALLING_SCORE_SCALE_CP`; never the safety margins (the
-  reserve's `n` and floor, the overhead, the cap on one move), which a lag-free tune would drive to
-  zero. At 10+0.1, scaled by the bench as every tune: its increment is 1/100 of the base against
+  speed work too. **Tuned (the developer, 2026-11-13): the 18 SPSA-born constants of
+  reckless-time-management.md,** from Reckless's values; never its hand-picked ones, the overhead
+  and margin among them, which a lag-free tune would drive to zero. At 10+0.1, scaled by the bench as every tune: its increment is 1/100 of the base against
   3+2's 1/90, so the clock goes through the same phases, and a few Elo needs 32k pairs or more. On
   every available arena, each idle: each game is its own comparison, both sides on one machine.
   Then a 180+2 duel of the tuned values against the untuned, for the depth 10+0.1 does not reach.
   **Budgets** (the developer, 2026-11-11), fixed in games, not hours (as spsa.md, 2026-10-16):
   - **The search's SPSA: 32k pairs**, as the last tune, which found +24 Elo with about 10
     parameters; 64k only if the parameters' traces are still climbing at the end.
-  - **Time management's SPSA: also 32k pairs,** though only 4 parameters: their optimum is flat (20%
+  - **Time management's SPSA: also 32k pairs,** kept for its 18 parameters (the developer,
+    2026-11-13), noisier values accepted. Sized when it had only 4: their optimum is flat (20%
     off costs perhaps 1 or 2 Elo), a weak signal needing many games for its direction. Values ending
     near the start are an answer too: the hand-chosen ones were fine, and the 180+2 duel can go.
   - About 12 hours each over every arena, as the last tune's 32k pairs took (the developer,

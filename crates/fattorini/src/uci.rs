@@ -1,4 +1,5 @@
 use crate::board::chess_move::Move;
+use crate::board::color::Color;
 use crate::board::file::File;
 use crate::board::piece_type::PieceType;
 use crate::board::rank::Rank;
@@ -10,7 +11,7 @@ use crate::perft::perft;
 use crate::search::{
     choose_best_move_multipv_with_progress, choose_best_move_with_parameters, choose_best_move_with_progress,
     root_reported_score, select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
-    SearchParameters, TimeManagement, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
+    default_move_overhead_ms, SearchParameters, TimeManagement, MATE_SCORE, MAX_PLY,
 };
 use crate::tablebase::{SyzygyTablebase, TbResult};
 use crate::tt::TranspositionTable;
@@ -73,7 +74,7 @@ const DEFAULT_MULTIPV: u32 = 1;
 const MULTIPV_MIN: u32 = 1;
 const MULTIPV_MAX: u32 = 500;
 
-/// Bounds of the `Move Overhead` option, in milliseconds (its default is `DEFAULT_MOVE_OVERHEAD_MS`):
+/// Bounds of the `Move Overhead` option, in milliseconds (its default is `default_move_overhead_ms`):
 /// 0 for a caller that keeps a margin of its own, as lichess-bot does; 5000, Stockfish's own
 /// maximum, for a link slow enough to need it. Unlike the bounds above, `setoption` clamps to
 /// them: an overhead past them would only empty the clock.
@@ -126,9 +127,9 @@ pub enum UciCommand {
     /// `setoption name Move Overhead value <ms>`: the time kept back from every move's clock
     /// (`search::time_limit`). Its name is two tokens, as Stockfish's.
     SetOptionMoveOverhead(u64),
-    /// `setoption name TimeManagement value Split|Classic`: which time management plans a clock
-    /// move (`search::TimeManagement`). Temporary, for the duel of the two in one binary; removed
-    /// with the loser.
+    /// `setoption name TimeManagement value Split|Classic|Reckless`: which time management plans a
+    /// clock move (`search::TimeManagement`). Temporary, for the duels in one binary; removed with
+    /// the losers.
     SetOptionTimeManagement(TimeManagement),
     Position { fen: String, moves: Vec<String> },
     /// A plain `go`, or `go perft <depth>` when `perft_depth` is `Some`. The time-control
@@ -250,6 +251,7 @@ fn parse_setoption(tokens: &[&str]) -> UciCommand {
         },
         ["name", "TimeManagement", "value", "Split"] => UciCommand::SetOptionTimeManagement(TimeManagement::Split),
         ["name", "TimeManagement", "value", "Classic"] => UciCommand::SetOptionTimeManagement(TimeManagement::Classic),
+        ["name", "TimeManagement", "value", "Reckless"] => UciCommand::SetOptionTimeManagement(TimeManagement::Reckless),
         _ => UciCommand::Unknown,
     }
 }
@@ -542,9 +544,14 @@ pub struct Engine {
     multipv: u32,
     /// The `Ponder` option: whether `bestmove` offers a ponder move. False until a GUI sets it.
     ponder: bool,
-    /// The `Move Overhead` option, in milliseconds: `DEFAULT_MOVE_OVERHEAD_MS` until a GUI sets
-    /// it, kept across `ucinewgame` as `Hash` is.
-    move_overhead_ms: u64,
+    /// The `Move Overhead` option, in milliseconds: `None` until a GUI sets it, then resolved to
+    /// the time management's own default (`default_move_overhead_ms`: Reckless's 100, the others'
+    /// 20), so a duel that sets no option plays each management at its own. Kept across
+    /// `ucinewgame` as `Hash` is.
+    move_overhead_ms: Option<u64>,
+    /// The game's full-move number at `board` (FEN field 6, one more per Black move played since),
+    /// which `TimeManagement::Reckless`'s soft bound grows with (`TimeLimit::with_fullmove`).
+    fullmove: u32,
     /// The `TimeManagement` option: `Split` until a GUI sets it, kept across `ucinewgame`.
     time_management: TimeManagement,
     /// The most recently started search's own background thread, if it (or an earlier one)
@@ -629,7 +636,8 @@ impl Engine {
             threads: DEFAULT_THREADS,
             multipv: DEFAULT_MULTIPV,
             ponder: false,
-            move_overhead_ms: DEFAULT_MOVE_OVERHEAD_MS,
+            move_overhead_ms: None,
+            fullmove: 1,
             time_management: TimeManagement::Split,
             running_search: None,
             stdout_lock: Arc::new(Mutex::new(())),
@@ -723,9 +731,10 @@ impl Engine {
                     ),
                     "option name Ponder type check default false".to_string(),
                     format!(
-                        "option name Move Overhead type spin default {DEFAULT_MOVE_OVERHEAD_MS} min {MOVE_OVERHEAD_MS_MIN} max {MOVE_OVERHEAD_MS_MAX}"
+                        "option name Move Overhead type spin default {} min {MOVE_OVERHEAD_MS_MIN} max {MOVE_OVERHEAD_MS_MAX}",
+                        default_move_overhead_ms(self.time_management)
                     ),
-                    "option name TimeManagement type combo default Split var Split var Classic".to_string(),
+                    "option name TimeManagement type combo default Split var Split var Classic var Reckless".to_string(),
                     "uciok".to_string(),
                 ]
             }
@@ -755,7 +764,7 @@ impl Engine {
                 Vec::new()
             }
             UciCommand::SetOptionMoveOverhead(ms) => {
-                self.move_overhead_ms = ms.clamp(MOVE_OVERHEAD_MS_MIN, MOVE_OVERHEAD_MS_MAX);
+                self.move_overhead_ms = Some(ms.clamp(MOVE_OVERHEAD_MS_MIN, MOVE_OVERHEAD_MS_MAX));
                 Vec::new()
             }
             UciCommand::SetOptionTimeManagement(management) => {
@@ -780,6 +789,7 @@ impl Engine {
                 let (board, _) = Board::from_fen(STARTPOS_FEN).unwrap();
                 self.board = board;
                 self.ancestors = Vec::new();
+                self.fullmove = 1;
                 // A new game means every remembered position is from an unrelated game and
                 // must not be trusted -- but the table's own size is a separate setting
                 // (`setoption name Hash`) that a fresh game has no reason to disturb, so this
@@ -842,12 +852,13 @@ impl Engine {
     /// robustness rule ("ignore and continue") applied to a multi-step command: whatever
     /// state was reached before the bad step is what's kept, no attempt to guess past it.
     fn set_position(&mut self, fen: &str, moves: &[String]) {
-        let board = match Board::from_fen(fen) {
-            Ok((board, _)) => board,
+        let (board, fullmove) = match Board::from_fen(fen) {
+            Ok(parsed) => parsed,
             Err(_) => return,
         };
         self.board = board;
         self.ancestors = Vec::new();
+        self.fullmove = fullmove;
 
         for text in moves {
             let color = self.board.side_to_move();
@@ -863,6 +874,9 @@ impl Engine {
             // comment for why `ancestors` never includes the current position).
             self.ancestors.push(self.board.hash());
             self.board.make_move(mv);
+            if color == Color::Black {
+                self.fullmove += 1;
+            }
         }
     }
 
@@ -949,9 +963,10 @@ impl Engine {
             movestogo,
             movetime,
             infinite,
-            self.move_overhead_ms,
+            self.move_overhead_ms.unwrap_or_else(|| default_move_overhead_ms(self.time_management)),
             self.time_management,
-        );
+        )
+        .map(|limit| limit.with_fullmove(self.fullmove));
         // A game move with one legal move is capped (`single_move_limit`); `infinite` is not. A
         // ponder search is the game move's search, so it is capped too, from `ponderhit` on.
         let limit = if infinite { limit } else { single_move_limit(&self.board, limit) };
@@ -1730,7 +1745,7 @@ mod tests {
                 "option name MultiPV type spin default 1 min 1 max 500".to_string(),
                 "option name Ponder type check default false".to_string(),
                 "option name Move Overhead type spin default 20 min 0 max 5000".to_string(),
-                "option name TimeManagement type combo default Split var Split var Classic".to_string(),
+                "option name TimeManagement type combo default Split var Split var Classic var Reckless".to_string(),
                 "uciok".to_string(),
             ]
         );
@@ -2349,14 +2364,35 @@ mod tests {
     #[test]
     fn setoption_move_overhead_stores_the_value_within_its_bounds() {
         let mut engine = Engine::new();
-        assert_eq!(engine.move_overhead_ms, DEFAULT_MOVE_OVERHEAD_MS);
+        assert_eq!(engine.move_overhead_ms, None, "the management's own default until set");
 
         engine.handle(UciCommand::SetOptionMoveOverhead(0));
-        assert_eq!(engine.move_overhead_ms, 0);
+        assert_eq!(engine.move_overhead_ms, Some(0));
         engine.handle(UciCommand::SetOptionMoveOverhead(9_999));
-        assert_eq!(engine.move_overhead_ms, MOVE_OVERHEAD_MS_MAX);
+        assert_eq!(engine.move_overhead_ms, Some(MOVE_OVERHEAD_MS_MAX));
         engine.handle(UciCommand::UciNewGame);
-        assert_eq!(engine.move_overhead_ms, MOVE_OVERHEAD_MS_MAX, "kept across ucinewgame");
+        assert_eq!(engine.move_overhead_ms, Some(MOVE_OVERHEAD_MS_MAX), "kept across ucinewgame");
+    }
+
+    #[test]
+    fn each_time_management_has_its_own_default_move_overhead() {
+        assert_eq!(default_move_overhead_ms(TimeManagement::Classic), crate::search::DEFAULT_MOVE_OVERHEAD_MS);
+        assert_eq!(default_move_overhead_ms(TimeManagement::Split), crate::search::DEFAULT_MOVE_OVERHEAD_MS);
+        assert_eq!(default_move_overhead_ms(TimeManagement::Reckless), crate::search::RECKLESS_MOVE_OVERHEAD_MS);
+    }
+
+    #[test]
+    fn set_position_counts_the_full_move_number() {
+        let mut engine = Engine::new();
+        assert_eq!(engine.fullmove, 1);
+        engine.handle(parse_command("position startpos moves e2e4"));
+        assert_eq!(engine.fullmove, 1, "after White's move, still move 1");
+        engine.handle(parse_command("position startpos moves e2e4 e7e5"));
+        assert_eq!(engine.fullmove, 2, "after Black's");
+        engine.handle(parse_command("position fen 4k3/8/8/8/8/8/8/4K3 b - - 0 40 moves e8d8 e1d1"));
+        assert_eq!(engine.fullmove, 41, "from the FEN's field 6");
+        engine.handle(UciCommand::UciNewGame);
+        assert_eq!(engine.fullmove, 1);
     }
 
     #[test]
@@ -2368,6 +2404,10 @@ mod tests {
         assert_eq!(
             parse_command("setoption name TimeManagement value Split"),
             UciCommand::SetOptionTimeManagement(TimeManagement::Split)
+        );
+        assert_eq!(
+            parse_command("setoption name TimeManagement value Reckless"),
+            UciCommand::SetOptionTimeManagement(TimeManagement::Reckless)
         );
         assert_eq!(parse_command("setoption name TimeManagement value Other"), UciCommand::Unknown);
     }

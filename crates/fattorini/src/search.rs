@@ -1393,6 +1393,8 @@ struct Search<'a> {
     /// move at any deeper ply is a different move in a different position, and coincidentally
     /// sharing a from/to pair with an excluded root move means nothing there.
     excluded_root_moves: Vec<Move>,
+    /// What the root counts for `TimeManagement::Reckless` (`RootStats`): written at `ply == 0` only.
+    root_stats: RootStats,
     /// The picker's move scores, index for index with `moves`: a node's entries sit at the same
     /// indices as its moves, and a child only writes past them. Grown as needed, never shrunk.
     scores: Vec<i32>,
@@ -1540,7 +1542,7 @@ fn new_search<'a>(
         parameters: SearchParameters::DEFAULT,
         eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
         stop_signal,
-        excluded_root_moves: Vec::new(),
+        excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
         scores: Vec::new(),
         quiets: Vec::new(),
         // Fresh, as `new_search`'s other defaults; `search_root_pondering` hands in the one the
@@ -2412,6 +2414,8 @@ impl<'a> Search<'a> {
                     );
 
                     if !futility_pruned && !late_move_pruned && !history_pruned && !see_pruned {
+                        // For `RootStats`: the nodes this root move's subtree takes.
+                        let nodes_before = self.nodes;
                         let undo = scratch.make_move(mv);
                         // The child's slot loads while the accumulators update below.
                         self.tt.prefetch(scratch.hash());
@@ -2550,6 +2554,13 @@ impl<'a> Search<'a> {
                                 }
                             }
                         };
+                        // `TimeManagement::Reckless`'s root counters, before `alpha` rises: a move other
+                        // than the first searched beating `alpha` is a new leader. Not once stopped,
+                        // when `child_score` means nothing.
+                        if ply == 0 && !self.stopped {
+                            let new_leader = best_move.is_some() && child_score > alpha;
+                            self.root_stats.record(mv, self.nodes - nodes_before, new_leader);
+                        }
                         // Strictly-greater, not `.max()`: identical resulting `best_score` either
                         // way (a tie never changed it under `.max()` either), but this gives an
                         // explicit moment -- "best_score just actually improved" -- to hook the
@@ -3128,7 +3139,10 @@ pub enum TimeLimit {
     /// engine's previous search in the game, from its own side, for the falling-score factor
     /// (`falling_score_factor`); `None` on its first move. `management`: which time management
     /// plans it. `overhead_ms`: the `Move Overhead`; under `Classic` it is already subtracted from
-    /// `time_ms` (`time_limit`), under `Split` the formula subtracts it (`split_times_ms`).
+    /// `time_ms` (`time_limit`), under `Split` and `Reckless` the formula subtracts it
+    /// (`split_times_ms`, `reckless_bounds_ms`). `fullmove`: the game's full-move number (FEN field
+    /// 6), which grows `Reckless`'s soft fraction of the clock (`TimeLimit::with_fullmove`); 1 until
+    /// set, and read by no other management.
     Clock {
         time_ms: u64,
         inc_ms: u64,
@@ -3137,11 +3151,16 @@ pub enum TimeLimit {
         previous_score: Option<i32>,
         management: TimeManagement,
         overhead_ms: u64,
+        fullmove: u32,
     },
+    /// `go movetime` under `TimeManagement::Reckless`, Reckless's way: no move overhead kept back, a
+    /// new depth starts while less than `ms` has elapsed, and the running one aborts at
+    /// `ms - RECKLESS_EXTRA_MARGIN_MS`.
+    Movetime { ms: u64 },
 }
 
-/// Which time management plans a clock move. Temporary: both exist only so one binary can duel the
-/// two (the `TimeManagement` UCI option); the loser is removed with this enum once the duel decides.
+/// Which time management plans a clock move. Temporary: all three exist only so one binary can duel
+/// them (the `TimeManagement` UCI option); the losers are removed with this enum once the duels decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeManagement {
     /// One target that is both the plan and the hard deadline, no new depth past half of it
@@ -3150,16 +3169,34 @@ pub enum TimeManagement {
     /// A soft time checked between depths and a hard maximum that aborts a depth, the future
     /// increments counted (`split_times_ms`, `SplitTimeParameters`).
     Split,
+    /// Modelled on Reckless's time management: two base bounds from the clock and the move number,
+    /// the soft one scaled after every depth by five factors of the search (`reckless_bounds_ms`,
+    /// `RecklessTimeParameters`, `TimeManager::reckless_multiplier`).
+    Reckless,
 }
 
 impl TimeLimit {
     /// This limit with `previous_score` as the previous move's score, if it is a clock.
     pub fn with_previous_score(self, previous_score: Option<i32>) -> TimeLimit {
         match self {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, management, overhead_ms, .. } => {
-                TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms }
+            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, management, overhead_ms, fullmove, .. } => {
+                TimeLimit::Clock {
+                    time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms, fullmove,
+                }
             }
-            fixed => fixed,
+            other => other,
+        }
+    }
+
+    /// This limit with `fullmove` as the game's full-move number, if it is a clock.
+    pub fn with_fullmove(self, fullmove: u32) -> TimeLimit {
+        match self {
+            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms, .. } => {
+                TimeLimit::Clock {
+                    time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms, fullmove,
+                }
+            }
+            other => other,
         }
     }
 }
@@ -3178,13 +3215,22 @@ pub const SINGLE_MOVE_CAP_MS: u64 = 500;
 /// must not be cut short (they call `choose_best_move` directly, so they never reach this), and never
 /// for `go infinite`, which runs until told to stop. A ponder search is capped too, but ignores its
 /// deadline until `ponderhit` (`PonderState`).
+///
+/// Under `TimeManagement::Reckless` a forced move searches depth 1 alone (`Fixed` at 0 ms, as
+/// `movetime 0`), spending no clock (the developer, 2026-11-13): its shallow score is used as it is,
+/// and the ponder move comes from the transposition table (`uci.rs`'s `ponder_move`).
 pub fn single_move_limit(board: &Board, limit: Option<TimeLimit>) -> Option<TimeLimit> {
     if crate::movegen::legal::legal_moves(board, board.side_to_move()).len() != 1 {
         return limit;
     }
     Some(match limit {
-        Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, management, overhead_ms, .. }) => {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move: true, previous_score, management, overhead_ms }
+        Some(TimeLimit::Clock { management: TimeManagement::Reckless, .. }) | Some(TimeLimit::Movetime { .. }) => {
+            TimeLimit::Fixed { target_ms: 0 }
+        }
+        Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, management, overhead_ms, fullmove, .. }) => {
+            TimeLimit::Clock {
+                time_ms, inc_ms, moves_to_go, single_move: true, previous_score, management, overhead_ms, fullmove,
+            }
         }
         Some(TimeLimit::Fixed { target_ms }) => TimeLimit::Fixed { target_ms: target_ms.min(SINGLE_MOVE_CAP_MS) },
         None => TimeLimit::Fixed { target_ms: SINGLE_MOVE_CAP_MS },
@@ -3235,6 +3281,20 @@ const MAX_CLOCK_FRACTION: f64 = 0.5;
 /// since lag does not shrink with the clock. It matters at default settings: rating-list testers set
 /// no option. lichess-bot keeps a margin of its own on top.
 pub const DEFAULT_MOVE_OVERHEAD_MS: u64 = 20;
+
+/// The `Move Overhead` option's default under `TimeManagement::Reckless`: Reckless's own
+/// `MoveOverhead` default, followed as it is, with its fixed `RECKLESS_EXTRA_MARGIN_MS` on top. Classic
+/// and Split keep `DEFAULT_MOVE_OVERHEAD_MS`, so the duels compare Reckless as it would ship against
+/// them as they are (the developer, 2026-11-13).
+pub const RECKLESS_MOVE_OVERHEAD_MS: u64 = 100;
+
+/// The `Move Overhead` a management uses when no GUI has set the option.
+pub fn default_move_overhead_ms(management: TimeManagement) -> u64 {
+    match management {
+        TimeManagement::Reckless => RECKLESS_MOVE_OVERHEAD_MS,
+        TimeManagement::Classic | TimeManagement::Split => DEFAULT_MOVE_OVERHEAD_MS,
+    }
+}
 
 /// `movetime`'s fraction of the target past which no new depth starts: its own `s`, at the same
 /// value for the same reason.
@@ -3367,6 +3427,130 @@ fn falling_score_factor(previous: Option<i32>, current: i32, pawn_percent: i32) 
     (1.0 + f64::from(previous - current) / scale).clamp(FALLING_SCORE_MIN, FALLING_SCORE_MAX)
 }
 
+/// Kept back from both of `TimeManagement::Reckless`'s bounds after everything else, on top of the
+/// move overhead: Reckless's fixed `TIME_OVERHEAD_MS`, hand-picked, never tuned.
+const RECKLESS_EXTRA_MARGIN_MS: u64 = 15;
+
+/// The parameters of `TimeManagement::Reckless`, modelled on Reckless's time management
+/// (codedeliveryservice/Reckless, `src/time.rs` and `src/search.rs`, read 2026-11-13): its
+/// structure, and its constants as starting values. Fattorini's code is its own, written from that
+/// design, not from Reckless's source.
+///
+/// ```text
+/// Fischer:   avail = max(T - o, 0)
+///            soft  = min((soft_max - soft_rise * exp(-soft_rate * fullmove)) * avail + inc_fraction * I, avail)
+///            hard  = min(hard_fraction * avail + inc_fraction * I, avail)
+/// movestogo: base  = avail / M + inc_fraction * I
+///            soft  = min(cyclic_soft * base, avail + I)
+///            hard  = min(cyclic_hard * base, avail + I)
+/// then both minus RECKLESS_EXTRA_MARGIN_MS
+/// ```
+///
+/// After every completed depth, the soft bound is multiplied by the product of five factors
+/// (`TimeManager::reckless_multiplier`): node fraction, score trend, best-move stability, score
+/// stability and best-move changes.
+///
+/// Two kinds of constant. **Fixed:** Reckless's hand-picked ones (`inc_fraction`, `cyclic_soft`,
+/// `cyclic_hard`, `eval_window_cp`), followed as they are and never tuned; `cyclic_*` are never
+/// exercised by a Fischer tune anyway. **Tuned:** every other one is Reckless's SPSA output
+/// (its sessions up to "SMP SPSA session 200k games", #1072), tuned to Reckless's search, so only a
+/// starting value for Fattorini's own SPSA, run after the search's.
+pub(crate) struct RecklessTimeParameters {
+    /// 0.0594: the soft fraction of the clock approached late in the game.
+    soft_max: f64,
+    /// 0.0492: how far below `soft_max` the soft fraction starts, at move 0.
+    soft_rise: f64,
+    /// 0.0386: how fast, per full move, the soft fraction rises toward `soft_max`.
+    soft_rate: f64,
+    /// 0.7281: the hard bound's fraction of the clock.
+    hard_fraction: f64,
+    /// 0.75, fixed: the share of the increment added to both bounds.
+    inc_fraction: f64,
+    /// 1.0, fixed: under `movestogo`, the soft bound in even shares of the clock.
+    cyclic_soft: f64,
+    /// 5.0, fixed: under `movestogo`, the hard bound in even shares of the clock.
+    cyclic_hard: f64,
+    /// Node fraction `f`, the share of the search's nodes spent under the best move:
+    /// `max(nodes_a - nodes_b * f, nodes_min)`. Large `f`, the move is clear, stop early.
+    nodes_a: f64,
+    nodes_b: f64,
+    nodes_min: f64,
+    /// Score trend `d`, the previous move's score minus this depth's, in Reckless's centipawns:
+    /// `clamp(trend_a + trend_b * d, trend_min, trend_max)`. Its neutral point is a drop of about
+    /// 5 cp, not 0: an unchanged score gives `trend_a`.
+    trend_a: f64,
+    trend_b: f64,
+    trend_min: f64,
+    trend_max: f64,
+    /// Best-move stability `n`, the depths in a row with the same best move:
+    /// `max(pv_a - pv_b * n, pv_min)`.
+    pv_a: f64,
+    pv_b: f64,
+    pv_min: f64,
+    /// Score stability `n`, the depths in a row with the score within `eval_window_cp` of its
+    /// running average: `max(eval_a - eval_b * n, eval_min)`.
+    eval_a: f64,
+    eval_b: f64,
+    eval_min: f64,
+    /// 12, fixed: the score stability's window, in Reckless's centipawns, scaled to the evaluator's
+    /// pawn. Unchanged since Reckless introduced it, untouched by every SPSA session checked.
+    eval_window_cp: i32,
+    /// Best-move changes `c` during the depth, every new leader at the root counted, aspiration
+    /// re-searches included: `changes_a + ln(1 + changes_b * c)`.
+    changes_a: f64,
+    changes_b: f64,
+}
+
+pub(crate) const RECKLESS_TIME_PARAMETERS: RecklessTimeParameters = RecklessTimeParameters {
+    soft_max: 0.0594,
+    soft_rise: 0.0492,
+    soft_rate: 0.0386,
+    hard_fraction: 0.7281,
+    inc_fraction: 0.75,
+    cyclic_soft: 1.0,
+    cyclic_hard: 5.0,
+    nodes_a: 3.1838,
+    nodes_b: 2.6554,
+    nodes_min: 0.5460,
+    trend_a: 0.7426,
+    trend_b: 0.0480,
+    trend_min: 0.7214,
+    trend_max: 1.4031,
+    pv_a: 1.2881,
+    pv_b: 0.0440,
+    pv_min: 0.7160,
+    eval_a: 1.2664,
+    eval_b: 0.0416,
+    eval_min: 0.8642,
+    eval_window_cp: 12,
+    changes_a: 1.1500,
+    changes_b: 0.2526,
+};
+
+/// The base soft and hard bounds of one move under `TimeManagement::Reckless`, in milliseconds,
+/// before the soft one is scaled -- the one place the formula of `RecklessTimeParameters` lives. A
+/// `movestogo 0` is read as 1.
+fn reckless_bounds_ms(
+    time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, fullmove: u32, overhead_ms: u64, p: &RecklessTimeParameters,
+) -> (u64, u64) {
+    let avail = time_ms.saturating_sub(overhead_ms) as f64;
+    let inc = inc_ms as f64;
+    let (soft, hard) = match moves_to_go {
+        None => {
+            let scale = p.soft_max - p.soft_rise * (-p.soft_rate * f64::from(fullmove)).exp();
+            let soft = (scale * avail + p.inc_fraction * inc).min(avail);
+            let hard = (p.hard_fraction * avail + p.inc_fraction * inc).min(avail);
+            (soft, hard)
+        }
+        Some(moves) => {
+            let base = avail / f64::from(moves.max(1)) + p.inc_fraction * inc;
+            ((p.cyclic_soft * base).min(avail + inc), (p.cyclic_hard * base).min(avail + inc))
+        }
+    };
+    let margin = |ms: f64| (ms as u64).saturating_sub(RECKLESS_EXTRA_MARGIN_MS);
+    (margin(soft), margin(hard))
+}
+
 /// A ponder search's state, shared between `uci.rs` and thread 0. A ponder search is the game
 /// move's own search from `go ponder` on, with the real clock, only kept from stopping while
 /// pondering; on `ponderhit` it goes on from the depth it reached, the time already spent counting
@@ -3443,16 +3627,74 @@ struct TimeManager {
     /// The evaluator's pawn against `piece_value`'s, in percent, which scales `F`.
     pawn_percent: i32,
     falling: f64,
+    /// `TimeManagement::Reckless`'s counters, kept under every management, read by it alone.
+    reckless: RecklessCounters,
+}
+
+/// What `TimeManagement::Reckless`'s five factors read, gathered across the depths of one search
+/// (`TimeManager::record_root_stats`, `TimeManager::record_iteration`).
+#[derive(Default)]
+struct RecklessCounters {
+    /// Nodes spent under each root move, summed over every completed depth.
+    root_nodes: Vec<(Move, u64)>,
+    /// Nodes of every completed depth.
+    total_nodes: u64,
+    /// Best-move changes during the last completed depth.
+    changes: u32,
+    /// The running average of the root score, `(average + score) / 2` after every aspiration
+    /// attempt, seeded with the previous move's score (0 without one).
+    average: i32,
+    /// Depths in a row with the score within the eval window of `average`.
+    eval_stable: u32,
+    /// Depths in a row with the same best move.
+    pv_stable: u32,
+    /// The last completed depth's best move and score.
+    best: Option<(Move, i32)>,
 }
 
 impl TimeManager {
     fn new(limit: Option<TimeLimit>, started: Instant, pawn_percent: i32) -> TimeManager {
-        TimeManager { started, limit, instability: 1.0, last_move: None, pawn_percent, falling: 1.0 }
+        let average = match limit {
+            Some(TimeLimit::Clock { previous_score: Some(score), .. }) => score,
+            _ => 0,
+        };
+        TimeManager {
+            started,
+            limit,
+            instability: 1.0,
+            last_move: None,
+            pawn_percent,
+            falling: 1.0,
+            reckless: RecklessCounters { average, ..RecklessCounters::default() },
+        }
+    }
+
+    /// Takes in what the root of a depth that just completed counted (`RootStats`) and its nodes,
+    /// before `record_iteration`. Only `Reckless` reads them.
+    fn record_root_stats(&mut self, stats: &RootStats, nodes: u64) {
+        let counters = &mut self.reckless;
+        for &(mv, move_nodes) in &stats.nodes {
+            match counters.root_nodes.iter_mut().find(|(seen, _)| *seen == mv) {
+                Some((_, total)) => *total += move_nodes,
+                None => counters.root_nodes.push((mv, move_nodes)),
+            }
+        }
+        counters.total_nodes += nodes;
+        counters.changes = stats.best_move_changes;
+        for &score in &stats.attempt_scores {
+            counters.average = ((i64::from(counters.average) + i64::from(score)) / 2) as i32;
+        }
     }
 
     /// Updates the instability with the best move of a depth that just completed, and `F` with its
-    /// score.
+    /// score; and `Reckless`'s two stability counters, after `record_root_stats`.
     fn record_iteration(&mut self, best_move: Move, score: i32) {
+        let window = RECKLESS_TIME_PARAMETERS.eval_window_cp * self.pawn_percent / 100;
+        let counters = &mut self.reckless;
+        counters.eval_stable = if (score - counters.average).abs() < window { counters.eval_stable + 1 } else { 0 };
+        counters.pv_stable = if self.last_move == Some(best_move) { counters.pv_stable + 1 } else { 0 };
+        counters.best = Some((best_move, score));
+
         self.instability = match self.last_move {
             None => 1.0,
             Some(last_move) => 0.5 * self.instability + 0.5 * f64::from(u8::from(last_move != best_move)),
@@ -3463,10 +3705,60 @@ impl TimeManager {
         }
     }
 
-    /// `None` when there is no time limit at all. Under `Split`, the hard maximum.
+    /// The product of `Reckless`'s five factors (`RecklessTimeParameters`), which scales its soft
+    /// bound; 1 before any depth has completed.
+    fn reckless_multiplier(&self) -> f64 {
+        let p = &RECKLESS_TIME_PARAMETERS;
+        let counters = &self.reckless;
+        let Some((best, score)) = counters.best else {
+            return 1.0;
+        };
+        let best_nodes = counters.root_nodes.iter().find(|(mv, _)| *mv == best).map_or(0, |(_, nodes)| *nodes);
+        let fraction = if counters.total_nodes == 0 { 0.0 } else { best_nodes as f64 / counters.total_nodes as f64 };
+        let nodes = (p.nodes_a - p.nodes_b * fraction).max(p.nodes_min);
+
+        // 1 with no previous score or a decisive one, as `falling_score_factor`: a deliberate
+        // exception to Reckless, whose trend has no such case.
+        let previous = match self.limit {
+            Some(TimeLimit::Clock { previous_score, .. }) => previous_score,
+            _ => None,
+        };
+        let decisive = TB_WIN_SCORE - MAX_PLY as i32;
+        let trend = match previous {
+            Some(previous) if previous.abs() < decisive && score.abs() < decisive => {
+                let drop = f64::from(previous - score) * 100.0 / f64::from(self.pawn_percent);
+                (p.trend_a + p.trend_b * drop).clamp(p.trend_min, p.trend_max)
+            }
+            _ => 1.0,
+        };
+
+        let pv = (p.pv_a - p.pv_b * f64::from(counters.pv_stable)).max(p.pv_min);
+        let eval = (p.eval_a - p.eval_b * f64::from(counters.eval_stable)).max(p.eval_min);
+        let changes = p.changes_a + (p.changes_b * f64::from(counters.changes)).ln_1p();
+        nodes * trend * pv * eval * changes
+    }
+
+    /// `Reckless`'s base soft and hard bounds, `None` for any other limit.
+    fn reckless_bounds(&self) -> Option<(Duration, Duration)> {
+        let Some(TimeLimit::Clock {
+            time_ms, inc_ms, moves_to_go, management: TimeManagement::Reckless, overhead_ms, fullmove, ..
+        }) = self.limit
+        else {
+            return None;
+        };
+        let (soft, hard) =
+            reckless_bounds_ms(time_ms, inc_ms, moves_to_go, fullmove, overhead_ms, &RECKLESS_TIME_PARAMETERS);
+        Some((Duration::from_millis(soft), Duration::from_millis(hard)))
+    }
+
+    /// `None` when there is no time limit at all. Under `Split` and `Reckless`, the hard maximum.
     fn target(&self) -> Option<Duration> {
         match self.limit? {
             TimeLimit::Fixed { target_ms } => Some(Duration::from_millis(target_ms)),
+            TimeLimit::Movetime { ms } => Some(Duration::from_millis(ms.saturating_sub(RECKLESS_EXTRA_MARGIN_MS))),
+            TimeLimit::Clock { management: TimeManagement::Reckless, .. } => {
+                self.reckless_bounds().map(|(_, hard)| hard)
+            }
             TimeLimit::Clock { management: TimeManagement::Split, .. } => self.split_times().map(|(_, hard)| hard),
             TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, .. } => {
                 let target =
@@ -3495,8 +3787,15 @@ impl TimeManager {
     }
 
     /// Whether a new depth may start: under `Split`, the elapsed time is still under the soft time;
+    /// under `Reckless`, under the soft bound times `reckless_multiplier`, or under `movetime` itself;
     /// otherwise under `s * target`.
     fn should_start_next(&self) -> bool {
+        if let Some((soft, _)) = self.reckless_bounds() {
+            return self.started.elapsed() < soft.mul_f64(self.reckless_multiplier());
+        }
+        if let Some(TimeLimit::Movetime { ms }) = self.limit {
+            return self.started.elapsed() < Duration::from_millis(ms);
+        }
         if let Some((soft, _)) = self.split_times() {
             return self.started.elapsed() < soft;
         }
@@ -3558,7 +3857,12 @@ pub fn time_limit(
         return None;
     }
     if let Some(movetime) = movetime {
-        return Some(TimeLimit::Fixed { target_ms: movetime.saturating_sub(move_overhead_ms) });
+        return Some(match management {
+            TimeManagement::Reckless => TimeLimit::Movetime { ms: movetime },
+            TimeManagement::Classic | TimeManagement::Split => {
+                TimeLimit::Fixed { target_ms: movetime.saturating_sub(move_overhead_ms) }
+            }
+        });
     }
 
     let (my_time, my_inc) = match board.side_to_move() {
@@ -3566,13 +3870,14 @@ pub fn time_limit(
         Color::Black => (btime, binc.unwrap_or(0)),
     };
     let my_time = my_time?;
-    // `Split` keeps the overhead back itself, once per move of its horizon (`split_times_ms`).
+    // `Split` keeps the overhead back itself, once per move of its horizon (`split_times_ms`);
+    // `Reckless` once (`reckless_bounds_ms`).
     let time_ms = match management {
         TimeManagement::Classic => {
             let reserves = movestogo.map_or(2, |moves| u64::from(moves.max(1)) + 2);
             my_time.saturating_sub(move_overhead_ms.saturating_mul(reserves))
         }
-        TimeManagement::Split => my_time,
+        TimeManagement::Split | TimeManagement::Reckless => my_time,
     };
     Some(TimeLimit::Clock {
         time_ms,
@@ -3582,6 +3887,7 @@ pub fn time_limit(
         previous_score: None,
         management,
         overhead_ms: move_overhead_ms,
+        fullmove: 1,
     })
 }
 
@@ -3693,7 +3999,34 @@ pub fn pesto_quiescence(board: &Board) -> i32 {
 /// What one root search hands back: the principal variation, its score, the nodes, whether it was
 /// stopped, the selective depth, then the killers, history, continuation history and correction
 /// history the next iteration starts from.
-type RootResult = (Vec<Move>, i32, u64, bool, u32, Vec<[Option<Move>; 2]>, [[i32; 64]; 12], Vec<i32>, Vec<i32>);
+type RootResult =
+    (Vec<Move>, i32, u64, bool, u32, Vec<[Option<Move>; 2]>, [[i32; 64]; 12], Vec<i32>, Vec<i32>, RootStats);
+
+/// What the root of one depth's search counts for `TimeManagement::Reckless`
+/// (`TimeManager::record_root_stats`), gathered at `ply == 0` in `alpha_beta_with_buffer` and in
+/// `search_root_pondering`'s aspiration loop, over every attempt of the depth.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RootStats {
+    /// Nodes spent under each root move searched.
+    nodes: Vec<(Move, u64)>,
+    /// How many times a root move other than the first searched scored above `alpha`: a new leader.
+    best_move_changes: u32,
+    /// The score of every aspiration attempt not stopped, in order.
+    attempt_scores: Vec<i32>,
+}
+
+impl RootStats {
+    /// Adds `nodes` to `mv`'s count, and one change if `new_leader`.
+    fn record(&mut self, mv: Move, nodes: u64, new_leader: bool) {
+        match self.nodes.iter_mut().find(|(seen, _)| *seen == mv) {
+            Some((_, total)) => *total += nodes,
+            None => self.nodes.push((mv, nodes)),
+        }
+        if new_leader {
+            self.best_move_changes += 1;
+        }
+    }
+}
 
 /// `search_root` for a search that may be a ponder search (`ponder`: see `PonderState`).
 /// `parameters` replaces the evaluator's own (`default_parameters_for`) when given.
@@ -3752,6 +4085,7 @@ fn search_root_pondering(
         if search.stopped {
             break attempt;
         }
+        search.root_stats.attempt_scores.push(attempt);
         if attempt <= alpha {
             // Fail low: the true score is at most `attempt`, so the window's own floor was
             // set too high. `beta` shrinks to the old `alpha` (the true score is now known to
@@ -3774,7 +4108,7 @@ fn search_root_pondering(
 
     (
         search.pv.line(0).to_vec(), score, search.nodes, search.stopped, search.seldepth, search.killers,
-        search.history, search.continuation_history, search.correction_history,
+        search.history, search.continuation_history, search.correction_history, search.root_stats,
     )
 }
 
@@ -3994,6 +4328,7 @@ pub fn choose_best_move_with_progress(
             updated_history,
             updated_continuation_history,
             updated_correction_history,
+            root_stats,
         ) = search_root_pondering(
             board, depth, deadline, ancestors.to_vec(), killers, history, continuation_history, correction_history, tt,
             tablebase, evaluator, parameters, previous_score, thread_idx, stop_signal, &excluded, ponder,
@@ -4014,6 +4349,7 @@ pub fn choose_best_move_with_progress(
         previous_score = Some(score);
         total_nodes += nodes;
         best_move = Some(pv[0]);
+        time_manager.record_root_stats(&root_stats, nodes);
         time_manager.record_iteration(pv[0], score);
         let time_ms = started.elapsed().as_millis() as u64;
         reports.push(IterationReport { depth, seldepth, score, nodes: total_nodes, pv, time_ms });
@@ -4106,6 +4442,7 @@ pub fn choose_best_move_multipv_with_progress(
             updated_history,
             updated_continuation_history,
             updated_correction_history,
+            root_stats,
         ) = search_root_pondering(
             board, depth, deadline, ancestors.to_vec(), killers.clone(), history, continuation_history.clone(),
             correction_history.clone(), tt, tablebase, evaluator, parameters, previous_score, 0, stop_signal, &tablebase_excluded,
@@ -4120,6 +4457,8 @@ pub fn choose_best_move_multipv_with_progress(
         previous_score = Some(score);
         total_nodes += nodes;
         best_move = Some(pv[0]);
+        // Rank 1 alone feeds the time manager; the extra ranks' nodes stay out of its counts.
+        time_manager.record_root_stats(&root_stats, nodes);
         time_manager.record_iteration(pv[0], score);
 
         // Extra ranks 2..=multipv: one independent, full-window search_root call per rank, at
@@ -5256,7 +5595,7 @@ mod tests {
             pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
             eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
-            excluded_root_moves: Vec::new(),
+            excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
             correction_history: vec![0; CORRECTION_HISTORY_LEN],
@@ -5301,7 +5640,7 @@ mod tests {
             pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
             eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
-            excluded_root_moves: Vec::new(),
+            excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
             correction_history: vec![0; CORRECTION_HISTORY_LEN],
@@ -5345,7 +5684,7 @@ mod tests {
             pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
             eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
-            excluded_root_moves: Vec::new(),
+            excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
             correction_history: vec![0; CORRECTION_HISTORY_LEN],
@@ -5415,7 +5754,7 @@ mod tests {
             pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
             eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
-            excluded_root_moves: Vec::new(),
+            excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
             correction_history: vec![0; CORRECTION_HISTORY_LEN],
@@ -5454,7 +5793,7 @@ mod tests {
             pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
             eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
-            excluded_root_moves: Vec::new(),
+            excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
             correction_history: vec![0; CORRECTION_HISTORY_LEN],
@@ -5760,6 +6099,7 @@ mod tests {
             previous_score: None,
             management: TimeManagement::Classic,
             overhead_ms,
+            fullmove: 1,
         }
     }
 
@@ -5773,6 +6113,7 @@ mod tests {
             previous_score: None,
             management: TimeManagement::Split,
             overhead_ms,
+            fullmove: 1,
         }
     }
 
@@ -6136,6 +6477,175 @@ mod tests {
         }
     }
 
+    /// A `Reckless` clock limit at move `fullmove`.
+    fn reckless_clock(
+        time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, previous_score: Option<i32>, fullmove: u32,
+    ) -> TimeLimit {
+        TimeLimit::Clock {
+            time_ms,
+            inc_ms,
+            moves_to_go,
+            single_move: false,
+            previous_score,
+            management: TimeManagement::Reckless,
+            overhead_ms,
+            fullmove,
+        }
+    }
+
+    #[test]
+    fn reckless_bounds_by_hand() {
+        let p = &RECKLESS_TIME_PARAMETERS;
+        // 10+0.1 at move 1, 100 ms overhead: avail 9,900; scale 0.0594 - 0.0492 * e^-0.0386, about
+        // 0.012063, so soft 119.4 + 75 = 194, hard 7,208.2 + 75 = 7,283, both minus 15.
+        assert_eq!(reckless_bounds_ms(10_000, 100, None, 1, 100, p), (179, 7_268));
+        // Later in the game the soft fraction rises toward 0.0594: at move 60, about 0.0545, so
+        // about 540 + 75 - 15.
+        let (soft_60, hard_60) = reckless_bounds_ms(10_000, 100, None, 60, 100, p);
+        assert!((590..=610).contains(&soft_60), "{soft_60}");
+        assert_eq!(hard_60, 7_268, "the hard bound ignores the move number");
+        // 40/15 with 40 to go: an even share of 899,900, 22,497, and five of them.
+        assert_eq!(reckless_bounds_ms(900_000, 0, Some(40), 1, 100, p), (22_482, 112_472));
+        // One move to go: both bounds capped at the clock.
+        assert_eq!(reckless_bounds_ms(900_000, 0, Some(1), 1, 100, p), (899_885, 899_885));
+        assert_eq!(reckless_bounds_ms(900_000, 0, Some(0), 1, 100, p), (899_885, 899_885), "movestogo 0 read as 1");
+        // A clock below the overhead leaves nothing.
+        assert_eq!(reckless_bounds_ms(50, 0, None, 1, 100, p), (0, 0));
+        assert_eq!(reckless_bounds_ms(50, 1_000, None, 1, 100, p), (0, 0), "capped at the clock left");
+    }
+
+    /// A `Reckless` time manager after one completed depth: best move `e2e4` with `best_nodes` of
+    /// `total_nodes`, `changes` new leaders, one aspiration attempt at `score`.
+    fn reckless_after_one_depth(
+        previous: Option<i32>, score: i32, best_nodes: u64, total_nodes: u64, changes: u32,
+    ) -> TimeManager {
+        let best = Move::new(Square::E2, Square::E4, None);
+        let other = Move::new(Square::D2, Square::D4, None);
+        let mut manager =
+            TimeManager::new(Some(reckless_clock(180_000, 2_000, None, 100, previous, 1)), Instant::now(), 100);
+        let mut stats = RootStats::default();
+        stats.record(best, best_nodes, false);
+        if total_nodes > best_nodes {
+            stats.record(other, total_nodes - best_nodes, false);
+        }
+        stats.best_move_changes = changes;
+        stats.attempt_scores.push(score);
+        manager.record_root_stats(&stats, total_nodes);
+        manager.record_iteration(best, score);
+        manager
+    }
+
+    #[test]
+    fn reckless_multiplier_by_hand() {
+        let p = &RECKLESS_TIME_PARAMETERS;
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let m = |previous, score, best_nodes, changes| {
+            reckless_after_one_depth(previous, score, best_nodes, 100, changes).reckless_multiplier()
+        };
+
+        // Every node on the best move, unchanged score, first depth: node fraction at its floor,
+        // trend at its neutral `trend_a`, no stability yet but the score's first depth in the window.
+        let expected = p.nodes_min * p.trend_a * p.pv_a * (p.eval_a - p.eval_b) * p.changes_a;
+        assert!(close(m(Some(0), 0, 100, 0), expected));
+
+        // Node fraction: a tenth of the nodes on the best move.
+        assert!(close(m(None, 0, 10, 0) / m(None, 0, 100, 0), (p.nodes_a - p.nodes_b * 0.1) / p.nodes_min));
+        // Best-move changes.
+        assert!(close(m(None, 0, 100, 3) / m(None, 0, 100, 0), (p.changes_a + (p.changes_b * 3.0).ln_1p()) / p.changes_a));
+        // Score trend: its ceiling on a falling score, its floor on a rising one.
+        assert!(close(m(Some(0), -1_000, 100, 0) / m(None, -1_000, 100, 0), p.trend_max));
+        assert!(close(m(Some(0), 1_000, 100, 0) / m(None, 1_000, 100, 0), p.trend_min));
+        // 1 with a decisive score on either side, Fattorini's exception to Reckless.
+        assert!(close(m(Some(TB_WIN_SCORE), 1_000, 100, 0) / m(None, 1_000, 100, 0), 1.0));
+        assert!(close(m(Some(0), TB_WIN_SCORE, 100, 0) / m(None, TB_WIN_SCORE, 100, 0), 1.0));
+    }
+
+    #[test]
+    fn reckless_stability_counters_reach_their_floors() {
+        let p = &RECKLESS_TIME_PARAMETERS;
+        let best = Move::new(Square::E2, Square::E4, None);
+        let mut manager = TimeManager::new(Some(reckless_clock(180_000, 2_000, None, 100, None, 1)), Instant::now(), 100);
+        for _ in 0..40 {
+            let mut stats = RootStats::default();
+            stats.record(best, 100, false);
+            stats.attempt_scores.push(0);
+            manager.record_root_stats(&stats, 100);
+            manager.record_iteration(best, 0);
+        }
+        assert_eq!(manager.reckless.pv_stable, 39, "the first depth has nothing to repeat");
+        assert_eq!(manager.reckless.eval_stable, 40);
+        let expected = p.nodes_min * p.pv_min * p.eval_min * p.changes_a;
+        assert!((manager.reckless_multiplier() - expected).abs() < 1e-9, "no previous score: trend 1");
+
+        let mut stats = RootStats::default();
+        stats.attempt_scores.push(500);
+        manager.record_root_stats(&stats, 0);
+        manager.record_iteration(Move::new(Square::D2, Square::D4, None), 500);
+        assert_eq!((manager.reckless.pv_stable, manager.reckless.eval_stable), (0, 0), "a new move, a new score");
+    }
+
+    #[test]
+    fn reckless_deadline_is_the_hard_bound_and_never_moves() {
+        let started = Instant::now();
+        let mut manager = TimeManager::new(Some(reckless_clock(10_000, 100, None, 100, Some(0), 1)), started, 100);
+        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(7_268)));
+        let best = Move::new(Square::E2, Square::E4, None);
+        for score in [0, -300, 200] {
+            let mut stats = RootStats::default();
+            stats.record(best, 10, true);
+            stats.attempt_scores.push(score);
+            manager.record_root_stats(&stats, 10);
+            manager.record_iteration(best, score);
+            assert_eq!(manager.deadline(), Some(started + Duration::from_millis(7_268)));
+        }
+    }
+
+    #[test]
+    fn reckless_movetime_keeps_no_overhead_back() {
+        let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 100, TimeManagement::Reckless);
+        assert_eq!(limit, Some(TimeLimit::Movetime { ms: 2_000 }));
+        let started = Instant::now();
+        let manager = TimeManager::new(limit, started, 100);
+        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(1_985)));
+        assert!(manager.should_start_next());
+    }
+
+    #[test]
+    fn reckless_clock_passes_the_time_as_given_with_the_full_move_number() {
+        let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 100, TimeManagement::Reckless)
+            .map(|limit| limit.with_fullmove(30));
+        assert_eq!(limit, Some(reckless_clock(60_000, 1_000, None, 100, None, 30)));
+    }
+
+    #[test]
+    fn a_forced_move_under_reckless_searches_depth_one_only() {
+        let (forced, _) = Board::from_fen(ONE_LEGAL_MOVE).unwrap();
+        let clock_limit = Some(reckless_clock(600_000, 0, None, 100, Some(30), 20));
+        assert_eq!(single_move_limit(&forced, clock_limit), Some(TimeLimit::Fixed { target_ms: 0 }));
+        assert_eq!(single_move_limit(&forced, Some(TimeLimit::Movetime { ms: 2_000 })), Some(TimeLimit::Fixed { target_ms: 0 }));
+        let manager = TimeManager::new(Some(TimeLimit::Fixed { target_ms: 0 }), Instant::now(), 100);
+        assert!(!manager.should_start_next(), "no depth past 1");
+
+        let (start, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        assert_eq!(single_move_limit(&start, clock_limit), clock_limit, "more than one legal move: unchanged");
+    }
+
+    #[test]
+    fn search_root_counts_nodes_per_root_move_and_its_attempts() {
+        let (board, _) = Board::from_fen("4k3/p7/8/2p5/4N3/8/8/4K3 w - - 0 1").unwrap();
+        let (_pv, score, nodes, stopped, .., stats) = search_root(
+            &board, 3, None, Vec::new(), vec![[None, None]; MAX_PLY as usize], [[0; 64]; 12], vec![0; CONTINUATION_HISTORY_LEN],
+            &TranspositionTable::new(1), &SyzygyTablebase::new(), None, None, 0, &AtomicBool::new(false), &[],
+        );
+        assert!(!stopped);
+        assert!(!stats.nodes.is_empty());
+        let counted: u64 = stats.nodes.iter().map(|(_, n)| n).sum();
+        assert!(counted < nodes, "the root node itself and pruned moves are not under any root move");
+        assert_eq!(stats.attempt_scores, vec![score], "no previous score: one full-window attempt");
+    }
+
     #[test]
     fn search_root_picks_the_move_that_wins_more_material() {
         // Same position as `alpha_beta_depth_one_prefers_the_move_that_wins_more_material`
@@ -6287,7 +6797,7 @@ mod tests {
         // threaded through and handed back, not silently dropped), not the algorithm again.
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let (.., killers, _history, _continuation_history, _correction_history) =
+        let (.., killers, _history, _continuation_history, _correction_history, _root_stats) =
             search_root(
                 &board, 3, None, Vec::new(), vec![[None, None]; MAX_PLY as usize], [[0; 64]; 12], vec![0; CONTINUATION_HISTORY_LEN],
                 &TranspositionTable::new(1), &SyzygyTablebase::new(), None, None, 0, &AtomicBool::new(false), &[],
