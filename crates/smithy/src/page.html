@@ -275,7 +275,7 @@ function work(view, waiting, stop = "") {
         + `<div>${whole(view.done)} of ${whole(view.pairs)} pairs (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
         + `${view.time ? times(view, true) : ""}</div>${bar(view.done, view.pairs)}`
         + (view.reference_nps ? `<div class="muted">Bench: ${whole(Math.round(view.reference_nps))} nodes/s per thread on this machine, every arena's clock scaled to it</div>` : "")
-        + table(["parameter", "start", "now"], view.theta.map((p) => [p.name, String(p.start), number(p.now, 1)]));
+        + table(["parameter", "start", "now"], view.theta.map((p) => [p.name, String(p.start), nowText(p)]));
     default:
       return `<h2>Nothing dealt</h2><div class="muted">${escape(waiting)}</div>`;
   }
@@ -517,6 +517,13 @@ function jobScreen() {
 // Whether the open screen is the job's own.
 function jobHere() {
   return currentRun !== null && state.config === current && jobScreen() === currentRun;
+}
+
+// A tuned parameter's value now, to its start's scale and one digit more: a search margin of 150
+// as 150.3, a time parameter of 0.0594 as 0.05941, so a small one never shows as 0.0.
+function nowText(p) {
+  const decimals = (String(p.start).split(".")[1] || "").length + 1;
+  return number(p.now, Math.max(1, decimals));
 }
 
 function tuneText(tune) {
