@@ -31,5 +31,11 @@ plays) is the same cause.
 3. `tune_job`: under a clock, the spec's reference, else a bench recorded.
 4. Tests: a reference round trips through the spec and survives a reopen; a spec without one reads
    as none.
+**Found on the restart (2026-11-13), to fix later:** a smithy starting shows its last job, and for
+a tune that opens it (`last_job`, `Tune::open`), which creates its folder and writes `spec.txt`:
+a tune's folder moved away came back at once, empty, and the page offered "Resume time tune" at 0
+games. Harmless (no pairs, no reference yet, so the first real start still benches), but showing
+should not write: `last_job` to read the tune's files without opening it.
+
 5. The developer: stop the tune, move `time-tune/` away (here and on Drive), make the smithy's
    machine idle, start the time tune fresh.
