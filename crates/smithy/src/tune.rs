@@ -222,6 +222,10 @@ pub(crate) struct Tune {
     seed: u64,
     /// As `spec.txt` spells it: `depth 9` or `10+0.1`.
     control: String,
+    /// Under a clock, the speed every arena's clock is scaled to, benched once at the first start and
+    /// kept in `spec.txt`, so a restart never moves the clock (2026-11-13: three restarts gave
+    /// 1.26M, 1.39M and 1.02M); `None` until benched.
+    pub(crate) reference_nps: Option<f64>,
     specs: Vec<Spec>,
     schedule: Schedule,
     dir: String,
@@ -288,6 +292,7 @@ impl Tune {
             seed: spsa::seed_of(&args.player, kind),
             // Scaled at every open, a resume's included: its spec records the scaled control.
             control: args.scale.map_or(args.control.clone(), |s| scale::control(&args.control, s)),
+            reference_nps: std::fs::read_to_string(&spec_path).ok().and_then(|text| reference_in_spec(&text)),
             schedule: Schedule::new(pairs, spsa::R_END, &specs),
             theta: spsa::start_theta(&specs),
             specs,
@@ -343,10 +348,20 @@ impl Tune {
             }
         }
         text.push_str(&format!("pairs\t{}\nr_end\t{}\nseed\t{}\ncontrol\t{}\n", self.pairs, self.r_end, self.seed, self.control));
+        if let Some(nps) = self.reference_nps {
+            text.push_str(&format!("reference_nps\t{nps}\n"));
+        }
         for (name, spec) in self.kind.names().iter().zip(self.specs.iter()) {
             text.push_str(&format!("{name}\t{}\t{}\t{}\t{}\n", spec.start, spec.min, spec.max, spec.c_end));
         }
         text
+    }
+
+    /// Records `nps`, the first start's bench, as the tune's reference speed, `spec.txt` rewritten
+    /// with it, so every resume reads it back rather than benching again.
+    pub(crate) fn record_reference(&mut self, nps: f64) -> Result<(), String> {
+        self.reference_nps = Some(nps);
+        write_atomically(&format!("{}/spec.txt", self.dir), &self.spec_text())
     }
 
     pub(crate) fn done(&self) -> bool {
@@ -478,6 +493,11 @@ impl Tune {
         }
         Ok(())
     }
+}
+
+/// The reference speed a `spec.txt`'s `text` records, `None` before its first bench.
+fn reference_in_spec(text: &str) -> Option<f64> {
+    text.lines().find_map(|line| line.strip_prefix("reference_nps\t")).and_then(|value| value.parse().ok())
 }
 
 /// The kind, pairs and specs a `spec.txt`'s `text` records; a spec without a kind line a search
@@ -656,6 +676,7 @@ pub(crate) mod tests {
             r_end: spsa::R_END,
             seed: spsa::seed_of("pesto", kind),
             control: "depth 2".to_string(),
+            reference_nps: std::fs::read_to_string(format!("{dir}/spec.txt")).ok().and_then(|text| reference_in_spec(&text)),
             schedule: Schedule::new(pairs, spsa::R_END, &specs),
             theta: spsa::start_theta(&specs),
             specs,
@@ -745,6 +766,21 @@ pub(crate) mod tests {
         assert!(tune.parameters_path().ends_with("/time-parameters.txt"));
         let tuned = fattorini::search::TimeParameters::read_file(tune.parameters_path()).unwrap().unwrap();
         assert_eq!(tuned, spsa::time_parameters(&tune.theta), "unrounded");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The reference speed is benched once: recorded in the spec, read back by a reopen, which then
+    /// agrees with the spec rather than being refused; none before it is recorded.
+    #[test]
+    fn a_tunes_reference_speed_is_kept_in_its_spec_across_a_reopen() {
+        let dir = temp_dir("reference");
+        let mut tune = tune_in(&dir, 4);
+        assert_eq!(tune.reference_nps, None);
+        assert!(!tune.spec_text().contains("reference_nps"));
+        tune.record_reference(1_154_842.5).unwrap();
+        let again = tune_in(&dir, 4);
+        assert_eq!(again.reference_nps, Some(1_154_842.5), "read back, exact");
+        assert!(again.spec_text().contains("reference_nps\t1154842.5\n"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

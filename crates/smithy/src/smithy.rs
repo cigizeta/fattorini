@@ -4851,7 +4851,7 @@ fn tune_job(status: &Status, player: &str, kind: TuneKind) -> Result<String, Str
     status.lock().scaled_job = args.scale.is_some();
     // Taken before the tune opens, which fetches the remote's copy when it is further on.
     let _lease = lease::take(&tune::lease_path(player, kind)?, player)?;
-    let tune = Tune::open(&args)?;
+    let mut tune = Tune::open(&args)?;
     if tune.done() {
         return Err(format!(
             "{player}'s {} is tuned already, in {}: retuning is not supported yet; move or delete that folder by hand to tune it again",
@@ -4864,16 +4864,22 @@ fn tune_job(status: &Status, player: &str, kind: TuneKind) -> Result<String, Str
         Some(path) => Some(fattorini::nnue::Network::load(path).map_err(|error| format!("failed to load network {path}: {error}"))?),
         None => None,
     };
-    // The speed every arena's clock is scaled to: this machine's, loaded as an arena's would be.
-    let reference_nps = match tune.limit() {
-        Limit::Clock(_) => {
-            let threads = (std::thread::available_parallelism().map_or(1, |cores| cores.get()) / 2).max(1);
-            log::info!("benching this machine on {threads} threads, the arenas' reference speed");
-            let nps = loaded_bench(network.as_ref(), threads);
-            log::info!("bench: {nps:.0} nodes per second per thread");
+    // The speed every arena's clock is scaled to: this machine's, loaded as an arena's would be,
+    // benched at the tune's first start alone and kept in its spec, so a restart never moves it.
+    let reference_nps = match (tune.limit(), tune.reference_nps) {
+        (Limit::Clock(_), Some(nps)) => {
+            log::info!("the tune's reference speed, benched at its first start: {nps:.0} nodes per second per thread");
             Some(nps)
         }
-        Limit::Depth(_) => None,
+        (Limit::Clock(_), None) => {
+            let threads = (std::thread::available_parallelism().map_or(1, |cores| cores.get()) / 2).max(1);
+            log::info!("benching this machine on {threads} threads, the arenas' reference speed for the whole tune");
+            let nps = loaded_bench(network.as_ref(), threads);
+            log::info!("bench: {nps:.0} nodes per second per thread");
+            tune.record_reference(nps)?;
+            Some(nps)
+        }
+        (Limit::Depth(_), _) => None,
     };
     begin(&status.shared, &format!("{}/chores.txt", tune.dir()), None)?;
     status.lock().reference_nps = reference_nps;
