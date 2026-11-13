@@ -6,6 +6,8 @@ Status: **design settled** with the developer 2026-11-13; steps 1 to 8 done the 
 lc0-psq-threats-screlu-g1-r1@tuned@classic against challenger
 lc0-psq-threats-screlu-g1-r1@tuned@reckless", clock 180+2, the form and its words seen working
 on the page (the clock presets restyled as links that day: as buttons they read as fields).
+Tests 5 and 6 stopped, their clocks scaled down by the smithy's low bench (smithy-bench.md); test
+7, the same duel, runs at a true 180+2.
 
 ## Why
 

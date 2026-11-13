@@ -1,7 +1,7 @@
 # The smithy's bench, made comparable to the arenas'
 
-Status: **design settled** with the developer 2026-11-13; steps 1 and 2 done, step 3 written, the
-same day. Next: step 3 compiled, then step 2's check again.
+Status: **done 2026-11-13,** every step; to move to `done/`. The smithy's bench and its machine's
+arena's now agree within 2% (0.67 before, 0.84 with `mimalloc` alone, 1.02 with the best of five).
 
 ## Why
 
@@ -43,4 +43,6 @@ Cargo.toml records self-play slowed by it, 2,215 positions per second against 2,
    `LOADED_BENCH_RUNS = 5` runs (about 5 s): one run of about a second is at the mercy of the CPU
    still raising its clock or a background task. Not done: the bench refused while an arena on the
    smithy's machine plays (test 6's machine was idle, so it would not have helped). Then step 2's
-   check again, at the next 180+2 test. **Written 2026-11-13, not yet compiled.**
+   check again, at the next 180+2 test. **Done 2026-11-13:** test 7's smithy benched 1,154,842
+   against its machine's arena's 1,134,506, both fresh, five runs each: 1.02, within the noise.
+   The bug is fixed.

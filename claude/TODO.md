@@ -281,7 +281,9 @@ changes).
   started with the arena on the smithy's machine playing, dealt clocks of 87.129+0.968 and
   120.122+1.335: about 90 to 120 s blitz at an idle machine's depth, not 180+2. The smithy's
   machine was idle then: the gap is between the processes, most likely the allocator (the arena's
-  `mimalloc`, the smithy's system heap). **Being fixed: smithy-bench.md.**
+  `mimalloc`, the smithy's system heap). **Fixed 2026-11-13 (smithy-bench.md):** the smithy on
+  `mimalloc` and one `loaded_bench`, the fastest of five runs; the two benches now agree within 2%.
+  This item goes once that doc is in `done/`.
 
 - **Lc0's Convert, if it runs again:** skip a slow tar only while another worker downloads at normal
   speed (a stall reads as slowness today), and stop retrying a tar skipped N times.

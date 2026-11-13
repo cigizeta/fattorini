@@ -20,7 +20,9 @@ middlegame (0.8 to 0.9 s a move around move 10 against Classic's 0.4 to 0.7 s) a
 endgame moves (1.0 to 1.4 s), while Classic stays at 0.1 to 0.3 s for most of the game: its
 "no depth past half the target" keeps a large reserve unspent.
 
-**Running: test 5 on the smithy, every arena (smithy-time-management-tests.md).** **Next: a 180+2
+**Running: test 7 on the smithy, every arena (smithy-time-management-tests.md),** at a true 180+2
+once the smithy's bench was fixed (smithy-bench.md); tests 5 and 6 were stopped as played at
+scaled-down clocks. **Next: a 180+2
 duel of untuned Reckless against Classic (the developer, 2026-11-13),** before the
 tune, at the control that matters for Lichess; if Reckless wins it, it can ship untuned and the
 tune becomes an improvement measured later. The tune needs groundwork first anyway: the arena's
