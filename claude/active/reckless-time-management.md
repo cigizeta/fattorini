@@ -339,6 +339,16 @@ Code read 2026-11-13: `TimeLimit`, `TimeManagement`, `time_limit`, `TimeManager`
      bounds (`HARD_SOFT_RATIO`), still never past 0.7281 of the clock. The soft fraction
      (`SOFT_MAX`) is left as Reckless's; the next 180+2 test against Classic shows the clock
      profile against the target.
+     **Test 8, early (22 games):** Reckless's clock left 53%, 15%, 5% after moves 20, 40, 60
+     (target 45, 20, 10), no move over 15% of the base, 30% of its moves under 10%. The late 5% is
+     the formula's equilibrium, not drift: the clock stops falling where `scale * clock +
+     INC_FRACTION * I = I`, at `(1 - INC_FRACTION) * I / scale`, 0.25 * 2 s / 0.055, about 9 s, 5% of
+     180 s.
+     **Plan (the developer, 2026-11-13): nothing changed until test 8 ends.** Reckless ahead: the
+     thin late buffer is not hurting. Level, with its losses in long endgames: `INC_FRACTION` 0.5
+     rather than 0.75 (the equilibrium about 18 s, 10%; moves 20 to 40 almost unchanged, the clock
+     term dominating there), one change in one more test. Not `SOFT_MAX`, which would slow every
+     move from 20 to 40 as well.
   3. **The tune** (32k pairs at 10+0.1), then **the verdict** at 180+2, tuned against the
      incumbent.
 

@@ -2134,13 +2134,20 @@ fn catalog() -> Catalog {
     let dir = matches::TESTS_DIR;
     let tests = matches::read_log(dir)
         .into_iter()
-        .map(|record| {
+        .map(|mut record| {
             // Its live block once more, rebuilt from its record, so an ended test keeps it.
             let path = matches::pairs_path(dir, record.number);
             let view = match (record.spec(), recorded_pairs(&path, 1)) {
                 (Ok(spec), Ok(mut pairs)) => {
+                    let pairs = pairs.remove(0);
+                    // An interrupted line holds the counts of its start: its pairs say what was played.
+                    if record.verdict == matches::INTERRUPTED {
+                        let judged = matches::judge(spec.kind, &pairs);
+                        record.games = judged.games;
+                        record.challenger_points = judged.challenger_points;
+                    }
                     let wdl = recorded_wdl(&path, 1).remove(0);
-                    Some(test_view(record.number, &spec, &pairs.remove(0), &wdl, &recorded_times(&path)))
+                    Some(test_view(record.number, &spec, &pairs, &wdl, &recorded_times(&path)))
                 }
                 _ => None,
             };
@@ -5006,6 +5013,11 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
     let record = matches::pairs_path(dir, number);
     begin(&status.shared, &format!("{dir}/chores.txt"), None)?;
     mark_start(&record)?;
+    // Logged at once as interrupted, replaced by its final line when it ends: a test that dies
+    // without ending (a power cut, a crash) stays listed and resumable, and `prune` never removes
+    // its files unseen.
+    let at_start = matches::judge(spec.kind, &pairs);
+    matches::put(dir, &test_record(spec, number, &started, at_start.games, at_start.challenger_points, matches::INTERRUPTED.to_string()))?;
     let mixed = if spec.mixed() { ", one side tuned and the other not" } else { "" };
     let resumed = if resumed_games > 0 { format!(", resumed at {} games", progress::grouped(resumed_games)) } else { String::new() };
     log::info!(
@@ -5058,28 +5070,30 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         (Some(verdict), _) => verdict.clone(),
         (None, _) => format!("stopped: {}", judged.status),
     };
-    matches::put(
-        dir,
-        &matches::Record {
-            number,
-            started,
-            ended: log_time(),
-            kind: spec.kind.name().to_string(),
-            settings: spec.kind.settings(),
-            challenger: spec.challenger.text(),
-            champion: spec.champion.text(),
-            limit: spec.limit.text(),
-            games: judged.games,
-            challenger_points: judged.challenger_points,
-            verdict: verdict.clone(),
-            mixed: spec.mixed(),
-        },
-    )?;
+    matches::put(dir, &test_record(spec, number, &started, judged.games, judged.challenger_points, verdict.clone()))?;
     Ok(format!(
         "test {number}: {verdict}, after {} games, the champion {} of them{mixed}",
         judged.games,
         points_text(judged.games as f64 - judged.challenger_points)
     ))
+}
+
+/// Test `number`'s log line, ended now.
+fn test_record(spec: &matches::Spec, number: u32, started: &str, games: u64, challenger_points: f64, verdict: String) -> matches::Record {
+    matches::Record {
+        number,
+        started: started.to_string(),
+        ended: log_time(),
+        kind: spec.kind.name().to_string(),
+        settings: spec.kind.settings(),
+        challenger: spec.challenger.text(),
+        champion: spec.champion.text(),
+        limit: spec.limit.text(),
+        games,
+        challenger_points,
+        verdict,
+        mixed: spec.mixed(),
+    }
 }
 
 /// How often a tune's files that change along it are copied to the remote (`Tune::mirror`), beside its

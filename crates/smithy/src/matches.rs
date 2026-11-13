@@ -468,7 +468,11 @@ pub struct Record {
     pub mixed: bool,
 }
 
-const HEADER: &str = "number\tstarted\tended\tkind\tsettings\tchallenger\tchampion\tlimit\tgames\tchallenger_points\tverdict\tmixed";
+/// The verdict a test is logged with at its start, until its final line replaces it: one that never
+/// reached its end (a power cut, a crash) keeps it, and so reads as stopped and may be resumed.
+pub const INTERRUPTED: &str = "stopped: interrupted";
+
+const HEADER: &str ="number\tstarted\tended\tkind\tsettings\tchallenger\tchampion\tlimit\tgames\tchallenger_points\tverdict\tmixed";
 
 impl Record {
     /// Whether it was stopped before its verdict, and so may be resumed while it is kept.
@@ -753,6 +757,25 @@ mod tests {
             verdict: "won by the challenger".to_string(),
             mixed: true,
         }
+    }
+
+    /// A test's start line reads as stopped, so a test that dies unended stays resumable; its end
+    /// replaces it.
+    #[test]
+    fn an_interrupted_line_is_resumable_and_replaced_by_the_end() {
+        let dir = std::env::temp_dir().join(format!("fattorini-smithy-interrupted-{}", std::process::id())).display().to_string();
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        put(&dir, &record(1)).unwrap();
+        put(&dir, &Record { verdict: INTERRUPTED.to_string(), games: 0, challenger_points: 0.0, ..record(2) }).unwrap();
+        let log = read_log(&dir);
+        assert_eq!(log.len(), 2);
+        assert!(log[1].stopped(), "a power cut leaves it resumable");
+        put(&dir, &record(2)).unwrap();
+        let log = read_log(&dir);
+        assert_eq!(log.iter().map(|record| record.number).collect::<Vec<_>>(), [1, 2], "replaced, not added");
+        assert_eq!(log[1], record(2));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
