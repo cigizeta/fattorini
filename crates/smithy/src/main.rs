@@ -102,7 +102,7 @@ const USAGE: &str = "usage: smithy start | stop | status\n       \
      started by hand (arena start); its jobs are started and stopped from its page opened on this machine,\n        \
      http://127.0.0.1:47821/: a forge, the training run of a configs/ config, full where CUDA is or\n        \
      scaled anywhere on the CPU, a tune of a player's search\n        \
-     parameters, a test, or PeSTO's Play, one at a time; beside them Lc0's Convert, which converts Lc0's\n        \
+     or, after it, time parameters, a test, or PeSTO's Play, one at a time; beside them Lc0's Convert, which converts Lc0's\n        \
      training tars into data/lc0 up to configs/lc0.yaml's cap, or a book job, which makes an opening\n        \
      book of a PGN in data/books/ on Drive. stop and status reach it from another terminal on\n        \
      the same machine)";

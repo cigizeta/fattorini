@@ -282,7 +282,7 @@ pub const MARGIN_PER_PLY: i32 = 2 * piece_value(PieceType::Pawn);
 
 /// The values a search prunes, orders and windows by, as run-time parameters rather than constants,
 /// so that one process can play two sets against each other. `DEFAULT` is the untuned search; a
-/// tune moves every value (`parameters.txt`). The margins are in `piece_value`'s pawn.
+/// tune moves every value (`search-parameters.txt`). The margins are in `piece_value`'s pawn.
 ///
 /// Each default is argued from what its mechanism means in chess, not from one evaluator, since the
 /// margins are scaled to each evaluator's own pawn; what suits one evaluator better is its own tune's
@@ -3129,7 +3129,10 @@ impl<'a> Search<'a> {
     }
 }
 
-/// The time limit of one `go` command, as read from its arguments by `time_limit`.
+/// The time limit of one `go` command, as read from its arguments by `time_limit`. Its clock
+/// carries the 22 time parameters, about 220 bytes: kept inline and `Copy`, since a limit is made
+/// and copied once a move, never in the tree.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeLimit {
     /// A fixed target, used as given, no new depth past `FIXED_STOP_FRACTION` of it: only ever
@@ -3142,8 +3145,9 @@ pub enum TimeLimit {
     /// from its own side, for the score trend and the running average (`TimeManager`); `None` on its
     /// first move. `overhead_ms`: the `Move Overhead`, kept back by `time_bounds_ms`. `fullmove`:
     /// the game's full-move number (FEN field 6), which grows the soft fraction of the clock
-    /// (`TimeLimit::with_fullmove`); 1 until set.
-    Clock { time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, previous_score: Option<i32>, overhead_ms: u64, fullmove: u32 },
+    /// (`TimeLimit::with_fullmove`); 1 until set. `time`: the time parameters the clock is planned
+    /// with, carried here since only a clock reads them.
+    Clock { time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, previous_score: Option<i32>, overhead_ms: u64, fullmove: u32, time: TimeParameters },
     /// `go movetime`, Reckless's way: no move overhead kept back, a new depth starts while less than
     /// `ms` has elapsed, and the running one aborts at `ms - EXTRA_MARGIN_MS`.
     Movetime { ms: u64 },
@@ -3151,23 +3155,19 @@ pub enum TimeLimit {
 
 impl TimeLimit {
     /// This limit with `previous_score` as the previous move's score, if it is a clock.
-    pub fn with_previous_score(self, previous_score: Option<i32>) -> TimeLimit {
-        match self {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, overhead_ms, fullmove, .. } => {
-                TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, fullmove }
-            }
-            other => other,
+    pub fn with_previous_score(mut self, previous_score: Option<i32>) -> TimeLimit {
+        if let TimeLimit::Clock { previous_score: field, .. } = &mut self {
+            *field = previous_score;
         }
+        self
     }
 
     /// This limit with `fullmove` as the game's full-move number, if it is a clock.
-    pub fn with_fullmove(self, fullmove: u32) -> TimeLimit {
-        match self {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, .. } => {
-                TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, fullmove }
-            }
-            other => other,
+    pub fn with_fullmove(mut self, fullmove: u32) -> TimeLimit {
+        if let TimeLimit::Clock { fullmove: field, .. } = &mut self {
+            *field = fullmove;
         }
+        self
     }
 }
 
@@ -3222,11 +3222,11 @@ const EXTRA_MARGIN_MS: u64 = 15;
 ///
 /// ```text
 /// Fischer:   avail = max(T - o, 0)
-///            soft  = min((soft_max - soft_rise * exp(-soft_rate * fullmove)) * avail + inc_fraction * I, avail)
-///            hard  = min(hard_fraction * avail + inc_fraction * I, avail)
-/// movestogo: base  = avail / M + inc_fraction * I
-///            soft  = min(cyclic_soft * base, avail + I)
-///            hard  = min(cyclic_hard * base, avail + I)
+///            soft  = min(max(soft_max - soft_rise * exp(-soft_rate * fullmove), MIN_SOFT_FRACTION) * avail + INC_FRACTION * I, avail)
+///            hard  = min(hard_fraction * avail + INC_FRACTION * I, hard_soft_ratio * soft, avail)
+/// movestogo: base  = avail / M + INC_FRACTION * I
+///            soft  = min(CYCLIC_SOFT * base, avail + I)
+///            hard  = min(CYCLIC_HARD * base, avail + I)
 /// then both minus EXTRA_MARGIN_MS
 /// ```
 ///
@@ -3234,99 +3234,245 @@ const EXTRA_MARGIN_MS: u64 = 15;
 /// (`TimeManager::multiplier`): node fraction, score trend, best-move stability, score
 /// stability and best-move changes.
 ///
-/// Two kinds of constant. **Fixed:** Reckless's hand-picked ones (`inc_fraction`, `cyclic_soft`,
-/// `cyclic_hard`, `eval_window_cp`), followed as they are and never tuned; `cyclic_*` are never
-/// exercised by a Fischer tune anyway. **Fattorini's:** `hard_soft_ratio`, `multiplier_min`,
-/// `multiplier_max` and `nodes_a`, chosen for Fattorini's search after Reckless's own spent its
-/// clock by move 30 in a 180+2 test. **Tuned:** every other one is Reckless's SPSA output (its
-/// sessions up to "SMP SPSA session 200k games", #1072), tuned to Reckless's search, so only a
-/// starting value for Fattorini's own SPSA, run after the search's.
-pub(crate) struct TimeParameters {
+/// Every field is tuned by the time management's SPSA, and is real-valued. **Fattorini's:**
+/// `hard_soft_ratio`, `multiplier_min`, `multiplier_max` and `nodes_a` started from values chosen
+/// for Fattorini's search after Reckless's own spent its clock by move 30 in a 180+2 test.
+/// **Reckless's:** every other one started from Reckless's SPSA output (its sessions up to "SMP
+/// SPSA session 200k games", #1072), tuned to Reckless's search. Reckless's hand-picked constants
+/// are never tuned, so they are not here: `INC_FRACTION`, `CYCLIC_SOFT`, `CYCLIC_HARD`,
+/// `EVAL_WINDOW_CP`, and `EXTRA_MARGIN_MS`.
+///
+/// One set per network, as the search's: a tune writes `time-parameters.txt` beside it, since the
+/// factors read the network's scores and the tree its evaluation shapes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimeParameters {
     /// 0.0594: the soft fraction of the clock approached late in the game.
-    soft_max: f64,
+    pub soft_max: f64,
     /// 0.0492: how far below `soft_max` the soft fraction starts, at move 0.
-    soft_rise: f64,
+    pub soft_rise: f64,
     /// 0.0386: how fast, per full move, the soft fraction rises toward `soft_max`.
-    soft_rate: f64,
+    pub soft_rate: f64,
     /// 0.7281: the hard bound's fraction of the clock.
-    hard_fraction: f64,
+    pub hard_fraction: f64,
     /// 3, Fattorini's: under a Fischer clock the hard bound is at most this many soft bounds. Under
     /// Reckless's 0.7281 alone, one move could take three quarters of the clock, and in a 180+2
     /// test it took half (2026-11-13).
-    hard_soft_ratio: f64,
+    pub hard_soft_ratio: f64,
     /// 0.5 and 2.0, Fattorini's: the bounds of the five factors' product, so no move stretches
     /// its soft bound beyond twice or cuts it below half, whatever the factors read.
-    multiplier_min: f64,
-    multiplier_max: f64,
-    /// 0.75, fixed: the share of the increment added to both bounds.
-    inc_fraction: f64,
-    /// 1.0, fixed: under `movestogo`, the soft bound in even shares of the clock.
-    cyclic_soft: f64,
-    /// 5.0, fixed: under `movestogo`, the hard bound in even shares of the clock.
-    cyclic_hard: f64,
+    pub multiplier_min: f64,
+    pub multiplier_max: f64,
     /// Node fraction `f`, the share of the search's nodes spent under the best move:
     /// `max(nodes_a - nodes_b * f, nodes_min)`. Large `f`, the move is clear, stop early.
-    nodes_a: f64,
-    nodes_b: f64,
-    nodes_min: f64,
+    pub nodes_a: f64,
+    pub nodes_b: f64,
+    pub nodes_min: f64,
     /// Score trend `d`, the previous move's score minus this depth's, in Reckless's centipawns:
     /// `clamp(trend_a + trend_b * d, trend_min, trend_max)`. Its neutral point is a drop of about
     /// 5 cp, not 0: an unchanged score gives `trend_a`.
-    trend_a: f64,
-    trend_b: f64,
-    trend_min: f64,
-    trend_max: f64,
+    pub trend_a: f64,
+    pub trend_b: f64,
+    pub trend_min: f64,
+    pub trend_max: f64,
     /// Best-move stability `n`, the depths in a row with the same best move:
     /// `max(pv_a - pv_b * n, pv_min)`.
-    pv_a: f64,
-    pv_b: f64,
-    pv_min: f64,
-    /// Score stability `n`, the depths in a row with the score within `eval_window_cp` of its
+    pub pv_a: f64,
+    pub pv_b: f64,
+    pub pv_min: f64,
+    /// Score stability `n`, the depths in a row with the score within `EVAL_WINDOW_CP` of its
     /// running average: `max(eval_a - eval_b * n, eval_min)`.
-    eval_a: f64,
-    eval_b: f64,
-    eval_min: f64,
-    /// 12, fixed: the score stability's window, in Reckless's centipawns, scaled to the evaluator's
-    /// pawn. Unchanged since Reckless introduced it, untouched by every SPSA session checked.
-    eval_window_cp: i32,
+    pub eval_a: f64,
+    pub eval_b: f64,
+    pub eval_min: f64,
     /// Best-move changes `c` during the depth, every new leader at the root counted, aspiration
     /// re-searches included: `changes_a + ln(1 + changes_b * c)`.
-    changes_a: f64,
-    changes_b: f64,
+    pub changes_a: f64,
+    pub changes_b: f64,
 }
 
-pub(crate) const TIME_PARAMETERS: TimeParameters = TimeParameters {
-    soft_max: 0.0594,
-    soft_rise: 0.0492,
-    soft_rate: 0.0386,
-    hard_fraction: 0.7281,
-    hard_soft_ratio: 3.0,
-    multiplier_min: 0.5,
-    multiplier_max: 2.0,
-    inc_fraction: 0.75,
-    cyclic_soft: 1.0,
-    cyclic_hard: 5.0,
-    // Fattorini's, not Reckless's 3.1838: `fattorini tm-probe` measured Fattorini's median node
-    // fraction at 0.55 to 0.71 (depths 10 to 18), where Reckless's line gave 1.3 to 1.7, its
-    // floor of 0.546 suggesting Reckless's own fraction sits near 1. Moved so a fraction of 0.7
-    // gives about 0.8, the slope kept (2026-11-13).
-    nodes_a: 2.66,
-    nodes_b: 2.6554,
-    nodes_min: 0.5460,
-    trend_a: 0.7426,
-    trend_b: 0.0480,
-    trend_min: 0.7214,
-    trend_max: 1.4031,
-    pv_a: 1.2881,
-    pv_b: 0.0440,
-    pv_min: 0.7160,
-    eval_a: 1.2664,
-    eval_b: 0.0416,
-    eval_min: 0.8642,
-    eval_window_cp: 12,
-    changes_a: 1.1500,
-    changes_b: 0.2526,
-};
+/// 0.75, hand-picked by Reckless, never tuned: the share of the increment added to both bounds.
+const INC_FRACTION: f64 = 0.75;
+/// 1.0, hand-picked by Reckless, never tuned: under `movestogo`, the soft bound in even shares of
+/// the clock. Never exercised by a Fischer tune.
+const CYCLIC_SOFT: f64 = 1.0;
+/// 5.0, hand-picked by Reckless, never tuned: under `movestogo`, the hard bound in even shares.
+const CYCLIC_HARD: f64 = 5.0;
+/// 12, hand-picked by Reckless, never tuned: the score stability's window, in Reckless's
+/// centipawns, scaled to the evaluator's pawn. Unchanged since Reckless introduced it, untouched by
+/// every SPSA session checked.
+const EVAL_WINDOW_CP: i32 = 12;
+/// The soft fraction's floor: a tune may perturb `soft_rise` past `soft_max`, which would make the
+/// fraction at move 0 negative. Never reached at the defaults, whose fraction starts at 0.0102.
+const MIN_SOFT_FRACTION: f64 = 0.005;
+
+impl TimeParameters {
+    pub const DEFAULT: TimeParameters = TimeParameters {
+        soft_max: 0.0594,
+        soft_rise: 0.0492,
+        soft_rate: 0.0386,
+        hard_fraction: 0.7281,
+        hard_soft_ratio: 3.0,
+        multiplier_min: 0.5,
+        multiplier_max: 2.0,
+        // Fattorini's, not Reckless's 3.1838: `fattorini tm-probe` measured Fattorini's median node
+        // fraction at 0.55 to 0.71 (depths 10 to 18), where Reckless's line gave 1.3 to 1.7, its
+        // floor of 0.546 suggesting Reckless's own fraction sits near 1. Moved so a fraction of 0.7
+        // gives about 0.8, the slope kept (2026-11-13).
+        nodes_a: 2.66,
+        nodes_b: 2.6554,
+        nodes_min: 0.5460,
+        trend_a: 0.7426,
+        trend_b: 0.0480,
+        trend_min: 0.7214,
+        trend_max: 1.4031,
+        pv_a: 1.2881,
+        pv_b: 0.0440,
+        pv_min: 0.7160,
+        eval_a: 1.2664,
+        eval_b: 0.0416,
+        eval_min: 0.8642,
+        changes_a: 1.1500,
+        changes_b: 0.2526,
+    };
+
+    /// The fields' names, in declaration order: the keys of a `time-parameters.txt`, and the order
+    /// of `values` and `from_values`.
+    pub const NAMES: [&'static str; 22] = [
+        "soft_max",
+        "soft_rise",
+        "soft_rate",
+        "hard_fraction",
+        "hard_soft_ratio",
+        "multiplier_min",
+        "multiplier_max",
+        "nodes_a",
+        "nodes_b",
+        "nodes_min",
+        "trend_a",
+        "trend_b",
+        "trend_min",
+        "trend_max",
+        "pv_a",
+        "pv_b",
+        "pv_min",
+        "eval_a",
+        "eval_b",
+        "eval_min",
+        "changes_a",
+        "changes_b",
+    ];
+
+    /// The fields as an array, in `NAMES`' order.
+    pub fn values(&self) -> [f64; 22] {
+        [
+            self.soft_max,
+            self.soft_rise,
+            self.soft_rate,
+            self.hard_fraction,
+            self.hard_soft_ratio,
+            self.multiplier_min,
+            self.multiplier_max,
+            self.nodes_a,
+            self.nodes_b,
+            self.nodes_min,
+            self.trend_a,
+            self.trend_b,
+            self.trend_min,
+            self.trend_max,
+            self.pv_a,
+            self.pv_b,
+            self.pv_min,
+            self.eval_a,
+            self.eval_b,
+            self.eval_min,
+            self.changes_a,
+            self.changes_b,
+        ]
+    }
+
+    /// The inverse of `values`.
+    pub fn from_values(values: [f64; 22]) -> TimeParameters {
+        let [soft_max, soft_rise, soft_rate, hard_fraction, hard_soft_ratio, multiplier_min, multiplier_max, nodes_a, nodes_b, nodes_min, trend_a, trend_b, trend_min, trend_max, pv_a, pv_b, pv_min, eval_a, eval_b, eval_min, changes_a, changes_b] =
+            values;
+        TimeParameters {
+            soft_max,
+            soft_rise,
+            soft_rate,
+            hard_fraction,
+            hard_soft_ratio,
+            multiplier_min,
+            multiplier_max,
+            nodes_a,
+            nodes_b,
+            nodes_min,
+            trend_a,
+            trend_b,
+            trend_min,
+            trend_max,
+            pv_a,
+            pv_b,
+            pv_min,
+            eval_a,
+            eval_b,
+            eval_min,
+            changes_a,
+            changes_b,
+        }
+    }
+
+    /// The text of a `time-parameters.txt`: one `name<TAB>value` line per field, in `NAMES`' order,
+    /// each value in Rust's shortest form that reads back to the same `f64`.
+    pub fn to_file_text(&self) -> String {
+        TimeParameters::NAMES.iter().zip(self.values()).map(|(name, value)| format!("{name}\t{value}\n")).collect()
+    }
+
+    /// The parameters in a `time-parameters.txt`'s `text`, read from `path` (named in errors). Every
+    /// field exactly once, in any order, each a finite number, and nothing else, as
+    /// `SearchParameters::parse_file_text`.
+    pub fn parse_file_text(path: &str, text: &str) -> Result<TimeParameters, String> {
+        let mut values: [Option<f64>; 22] = [None; 22];
+        for line in text.lines() {
+            let Some((name, value)) = line.split_once('\t') else {
+                return Err(format!("{path}: expected \"name<TAB>value\", got {line:?}"));
+            };
+            let Some(index) = TimeParameters::NAMES.iter().position(|&known| known == name) else {
+                return Err(format!("{path}: unknown time parameter {name:?}"));
+            };
+            let Some(value) = value.trim().parse::<f64>().ok().filter(|value| value.is_finite()) else {
+                return Err(format!("{path}: {name} is not a finite number: {value:?}"));
+            };
+            if values[index].replace(value).is_some() {
+                return Err(format!("{path}: {name} appears twice"));
+            }
+        }
+        let mut complete = [0.0; 22];
+        for (index, value) in values.iter().enumerate() {
+            let Some(value) = value else {
+                return Err(format!("{path}: {} is missing", TimeParameters::NAMES[index]));
+            };
+            complete[index] = *value;
+        }
+        Ok(TimeParameters::from_values(complete))
+    }
+
+    /// The `time-parameters.txt` at `path`: `None` when there is none, an `Err` when it cannot be
+    /// read or parsed.
+    pub fn read_file(path: &str) -> Result<Option<TimeParameters>, String> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("{path}: {error}")),
+        };
+        TimeParameters::parse_file_text(path, &text).map(Some)
+    }
+
+    /// Writes these parameters to `path`, through a `.tmp` file renamed into place.
+    pub fn write_file(&self, path: &str) -> Result<(), String> {
+        let tmp_path = format!("{path}.tmp");
+        std::fs::write(&tmp_path, self.to_file_text()).map_err(|error| format!("{tmp_path}: {error}"))?;
+        std::fs::rename(&tmp_path, path).map_err(|error| format!("{path}: {error}"))
+    }
+}
 
 /// The base soft and hard bounds of one move, in milliseconds, before the soft one is scaled -- the
 /// one place the formula of `TimeParameters` lives. A `movestogo 0` is read as 1.
@@ -3337,14 +3483,14 @@ fn time_bounds_ms(
     let inc = inc_ms as f64;
     let (soft, hard) = match moves_to_go {
         None => {
-            let scale = p.soft_max - p.soft_rise * (-p.soft_rate * f64::from(fullmove)).exp();
-            let soft = (scale * avail + p.inc_fraction * inc).min(avail);
-            let hard = (p.hard_fraction * avail + p.inc_fraction * inc).min(p.hard_soft_ratio * soft).min(avail);
+            let scale = (p.soft_max - p.soft_rise * (-p.soft_rate * f64::from(fullmove)).exp()).max(MIN_SOFT_FRACTION);
+            let soft = (scale * avail + INC_FRACTION * inc).min(avail);
+            let hard = (p.hard_fraction * avail + INC_FRACTION * inc).min(p.hard_soft_ratio * soft).min(avail);
             (soft, hard)
         }
         Some(moves) => {
-            let base = avail / f64::from(moves.max(1)) + p.inc_fraction * inc;
-            ((p.cyclic_soft * base).min(avail + inc), (p.cyclic_hard * base).min(avail + inc))
+            let base = avail / f64::from(moves.max(1)) + INC_FRACTION * inc;
+            ((CYCLIC_SOFT * base).min(avail + inc), (CYCLIC_HARD * base).min(avail + inc))
         }
     };
     let margin = |ms: f64| (ms as u64).saturating_sub(EXTRA_MARGIN_MS);
@@ -3494,12 +3640,21 @@ impl TimeManager {
     /// Updates the two stability counters with the best move and score of a depth that just
     /// completed, after `record_root_stats`.
     fn record_iteration(&mut self, best_move: Move, score: i32) {
-        let window = TIME_PARAMETERS.eval_window_cp * self.pawn_percent / 100;
+        let window = EVAL_WINDOW_CP * self.pawn_percent / 100;
         let counters = &mut self.counters;
         counters.eval_stable = if (score - counters.average).abs() < window { counters.eval_stable + 1 } else { 0 };
         counters.pv_stable = if self.last_move == Some(best_move) { counters.pv_stable + 1 } else { 0 };
         counters.best = Some((best_move, score));
         self.last_move = Some(best_move);
+    }
+
+    /// The clock's time parameters; the defaults under any other limit, where `tm-probe` still reads
+    /// the factors.
+    fn parameters(&self) -> TimeParameters {
+        match self.limit {
+            Some(TimeLimit::Clock { time, .. }) => time,
+            _ => TimeParameters::DEFAULT,
+        }
     }
 
     /// The product of the five factors (`TimeParameters`), bounded, which scales the soft bound; 1
@@ -3510,7 +3665,7 @@ impl TimeManager {
 
     /// The five factors as they stand, and what they read; `None` before any depth has completed.
     fn factors(&self) -> Option<TimeFactors> {
-        let p = &TIME_PARAMETERS;
+        let p = &self.parameters();
         let counters = &self.counters;
         let (best, score) = counters.best?;
         let best_nodes = counters.root_nodes.iter().find(|(mv, _)| *mv == best).map_or(0, |(_, nodes)| *nodes);
@@ -3552,10 +3707,10 @@ impl TimeManager {
 
     /// The base soft and hard bounds under a clock, `None` for any other limit.
     fn bounds(&self) -> Option<(Duration, Duration)> {
-        let Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, overhead_ms, fullmove, .. }) = self.limit else {
+        let Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, overhead_ms, fullmove, time, .. }) = self.limit else {
             return None;
         };
-        let (soft, hard) = time_bounds_ms(time_ms, inc_ms, moves_to_go, fullmove, overhead_ms, &TIME_PARAMETERS);
+        let (soft, hard) = time_bounds_ms(time_ms, inc_ms, moves_to_go, fullmove, overhead_ms, &time);
         Some((Duration::from_millis(soft), Duration::from_millis(hard)))
     }
 
@@ -3605,6 +3760,7 @@ impl TimeManager {
 /// own time field is missing entirely, there's nothing to plan from, so this falls back to `None`
 /// too -- the same "no limit" behavior as a bare `go`.
 ///
+/// `time`, the player's time parameters, travels inside a clock limit, the one limit that reads it.
 /// `move_overhead_ms` (the `Move Overhead` option, `DEFAULT_MOVE_OVERHEAD_MS`) travels beside the
 /// clock, which is passed as given; `time_bounds_ms` keeps it back once. `movetime` keeps none back,
 /// Reckless's way (`TimeLimit::Movetime`).
@@ -3619,6 +3775,7 @@ pub fn time_limit(
     movetime: Option<u64>,
     infinite: bool,
     move_overhead_ms: u64,
+    time: TimeParameters,
 ) -> Option<TimeLimit> {
     if infinite {
         return None;
@@ -3638,6 +3795,7 @@ pub fn time_limit(
         previous_score: None,
         overhead_ms: move_overhead_ms,
         fullmove: 1,
+        time,
     })
 }
 
@@ -5902,7 +6060,7 @@ mod tests {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
         // No increment sent means an increment of 0, and no movestogo means Fischer.
-        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false, 0);
+        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false, 0, TimeParameters::DEFAULT);
         assert_eq!(limit, Some(clock(60_000, 0, None, 0, None, 1)));
     }
 
@@ -5910,14 +6068,14 @@ mod tests {
     fn clock(
         time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, previous_score: Option<i32>, fullmove: u32,
     ) -> TimeLimit {
-        TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, fullmove }
+        TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, fullmove, time: TimeParameters::DEFAULT }
     }
 
     #[test]
     fn time_limit_selects_black_time_when_black_is_to_move() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false, 0);
+        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false, 0, TimeParameters::DEFAULT);
         assert_eq!(limit, Some(clock(90_000, 100, None, 0, None, 1)));
     }
 
@@ -5925,7 +6083,7 @@ mod tests {
     fn time_limit_passes_movestogo_through_under_a_repeating_control() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 0);
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 0, TimeParameters::DEFAULT);
         assert_eq!(limit, Some(clock(60_000, 0, Some(10), 0, None, 1)));
     }
 
@@ -5968,7 +6126,7 @@ mod tests {
     fn time_limit_movetime_takes_precedence_over_wtime_and_btime_and_is_used_as_given() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false, 100);
+        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false, 100, TimeParameters::DEFAULT);
         assert_eq!(limit, Some(TimeLimit::Movetime { ms: 2_000 }));
     }
 
@@ -5979,14 +6137,14 @@ mod tests {
         // Even with a perfectly good wtime present, infinite wins -- meaning "no deadline, run
         // until stop or max_depth," genuinely honored now that go_search runs asynchronously
         // and polls a shared stop flag regardless of whether any deadline was ever set.
-        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true, 0), None);
+        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true, 0, TimeParameters::DEFAULT), None);
     }
 
     #[test]
     fn time_limit_is_none_with_no_time_control_at_all() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, None, None, None, None, None, false, 0), None);
+        assert_eq!(time_limit(&board, None, None, None, None, None, None, false, 0, TimeParameters::DEFAULT), None);
     }
 
     #[test]
@@ -5996,14 +6154,14 @@ mod tests {
         // bare `go`, rather than guessing from the wrong side's clock.
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false, 0), None);
+        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false, 0, TimeParameters::DEFAULT), None);
     }
 
     #[test]
     fn a_clock_below_the_overhead_still_plays_a_legal_move() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(30), None, None, None, None, None, false, 100);
+        let limit = time_limit(&board, Some(30), None, None, None, None, None, false, 100, TimeParameters::DEFAULT);
         assert_eq!(limit, Some(clock(30, 0, None, 100, None, 1)));
         let (reports, best_move) = choose_best_move(
             &board, MAX_PLY, limit, &[], &TranspositionTable::new(1), &SyzygyTablebase::new(), None, 0,
@@ -6045,8 +6203,38 @@ mod tests {
     }
 
     #[test]
+    fn time_parameters_round_trip_their_file_and_refuse_a_malformed_one() {
+        let tuned = TimeParameters { soft_max: 0.0612345678901, changes_b: 0.3, ..TimeParameters::DEFAULT };
+        let text = tuned.to_file_text();
+        assert_eq!(TimeParameters::parse_file_text("t", &text), Ok(tuned), "exact through the text");
+        assert_eq!(text.lines().count(), 22);
+        let without_last = text.lines().take(21).collect::<Vec<_>>().join("\n");
+        assert!(TimeParameters::parse_file_text("t", &without_last).unwrap_err().contains("changes_b is missing"));
+        assert!(TimeParameters::parse_file_text("t", &format!("{text}soft_max\t0.05\n")).unwrap_err().contains("twice"));
+        assert!(TimeParameters::parse_file_text("t", &format!("{text}inc_fraction\t0.75\n")).unwrap_err().contains("unknown"));
+        assert!(TimeParameters::parse_file_text("t", &text.replace("0.3", "NaN")).unwrap_err().contains("finite"));
+        assert_eq!(TimeParameters::from_values(TimeParameters::DEFAULT.values()), TimeParameters::DEFAULT);
+    }
+
+    #[test]
+    fn a_clocks_own_time_parameters_set_its_bounds() {
+        let quick = TimeParameters { soft_max: 0.03, soft_rise: 0.0, ..TimeParameters::DEFAULT };
+        let limit = TimeLimit::Clock {
+            time_ms: 10_000, inc_ms: 0, moves_to_go: None, previous_score: None, overhead_ms: 0, fullmove: 1, time: quick,
+        };
+        let manager = TimeManager::new(Some(limit), Instant::now(), 100);
+        assert_eq!(manager.bounds(), Some((Duration::from_millis(285), Duration::from_millis(885))), "0.03 of 10 s, minus 15");
+    }
+
+    #[test]
+    fn a_soft_rise_past_soft_max_floors_the_soft_fraction() {
+        let inverted = TimeParameters { soft_max: 0.02, soft_rise: 0.05, ..TimeParameters::DEFAULT };
+        assert_eq!(time_bounds_ms(10_000, 0, None, 1, 0, &inverted).0, 35, "0.005 of 10 s, minus 15");
+    }
+
+    #[test]
     fn time_bounds_by_hand() {
-        let p = &TIME_PARAMETERS;
+        let p = &TimeParameters::DEFAULT;
         // 10+0.1 at move 1, 100 ms overhead: avail 9,900; scale 0.0594 - 0.0492 * e^-0.0386, about
         // 0.012063, so soft 119.4 + 75 = 194.4; hard 7,208.2 + 75 = 7,283 but at most three soft
         // bounds, 583.3; both minus 15.
@@ -6092,7 +6280,7 @@ mod tests {
 
     #[test]
     fn the_multiplier_by_hand() {
-        let p = &TIME_PARAMETERS;
+        let p = &TimeParameters::DEFAULT;
         let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
         let m = |previous, score, best_nodes, changes| {
             // The product, before `multiplier_min` and `multiplier_max` bound it.
@@ -6118,7 +6306,7 @@ mod tests {
 
     #[test]
     fn the_stability_counters_reach_their_floors() {
-        let p = &TIME_PARAMETERS;
+        let p = &TimeParameters::DEFAULT;
         let best = Move::new(Square::E2, Square::E4, None);
         let mut manager = TimeManager::new(Some(clock(180_000, 2_000, None, 100, None, 1)), Instant::now(), 100);
         for _ in 0..40 {
@@ -6161,7 +6349,7 @@ mod tests {
     #[test]
     fn movetime_keeps_no_overhead_back() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 100);
+        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 100, TimeParameters::DEFAULT);
         assert_eq!(limit, Some(TimeLimit::Movetime { ms: 2_000 }));
         let started = Instant::now();
         let manager = TimeManager::new(limit, started, 100);
@@ -6172,7 +6360,7 @@ mod tests {
     #[test]
     fn the_clock_is_passed_as_given_with_the_overhead_and_the_full_move_number() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 100)
+        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 100, TimeParameters::DEFAULT)
             .map(|limit| limit.with_fullmove(30).with_previous_score(Some(-40)));
         assert_eq!(limit, Some(clock(60_000, 1_000, None, 100, Some(-40), 30)));
     }

@@ -3,7 +3,7 @@
 //! runs on the arenas (the `score` chores the smithy's score job deals); this module holds what does
 //! not search:
 //!
-//! - **The scores file**, `data/books/<source>/scores-<network>-<tuned|untuned>-d<depth>.txt`, beside
+//! - **The scores file**, `data/books/<source>/scores-<network>-<suffix>-d<depth>.txt`, beside
 //!   the source's graph: a header naming everything the scores depend on (the graph, the network and
 //!   its parameters in full, the build, the depth, the search's table), then one `row` per book move
 //!   as its record arrives: parent key, Polyglot move, child key, score from the side that played
@@ -40,9 +40,9 @@ const WORST_LISTED: usize = 20;
 /// The largest Polyglot weight: the best move of each position gets it.
 const TOP_WEIGHT: f64 = 65_535.0;
 
-/// The name of a scores file, from the network's player name, whether it plays tuned, and the depth.
-pub(crate) fn file_name(player: &str, tuned: bool, depth: u32) -> String {
-    format!("scores-{player}-{}-d{depth}.txt", if tuned { "tuned" } else { "untuned" })
+/// The name of a scores file, from the network's player name, its suffix, and the depth.
+pub(crate) fn file_name(player: &str, tuning: fattorini::pipeline::players::TuningSuffix, depth: u32) -> String {
+    format!("scores-{player}-{}-d{depth}.txt", tuning.text())
 }
 
 /// Whether `name` is a scores file's: `scores-...-d<depth>.txt`.
@@ -375,10 +375,10 @@ mod tests {
 
     #[test]
     fn a_scores_file_is_named_after_its_scoring() {
-        let name = file_name("lc0-psq-threats-screlu-g1-r1", true, 20);
-        assert_eq!(name, "scores-lc0-psq-threats-screlu-g1-r1-tuned-d20.txt");
+        let name = file_name("lc0-psq-threats-screlu-g1-r1", fattorini::pipeline::players::TuningSuffix::SearchTuned, 20);
+        assert_eq!(name, "scores-lc0-psq-threats-screlu-g1-r1-search-tuned-d20.txt");
         assert!(is_scores_file(&name));
-        assert_eq!(stem(&name), "lc0-psq-threats-screlu-g1-r1-tuned-d20");
+        assert_eq!(stem(&name), "lc0-psq-threats-screlu-g1-r1-search-tuned-d20");
         for other in ["graph.txt", "scores-x-d.txt", "scores-x-dz.txt", "book-n9-points.txt"] {
             assert!(!is_scores_file(other), "{other}");
         }

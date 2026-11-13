@@ -55,10 +55,10 @@ its config, then each part marked by a letter, the run always and last:
   `pesto-psq-g1-l0.95-r1`.
 
 A generation has at most one winner, so the winner's name leaves its lambda out; the page shows it
-beside it. A player is a network with what it searches with,
-always written after an `@`: `@tuned`, its tune, or `@untuned`, the defaults
-(`pesto-psq-g1-r1@tuned`, `pesto@untuned`). Only a generation's winner is tuned; a new tune replaces
-the old one.
+beside it. A player is a network with what it plays with, always written after an `@`: `@untuned`,
+the defaults; `@search-tuned`, its search tune and the default clock; or `@search-time-tuned`, its
+search and time tunes (`pesto-psq-g1-r1@search-tuned`, `pesto@untuned`). A suffix whose tune is
+missing is refused. Only a generation's winner is tuned.
 
 **Generation 1** trains on its source's whole corpus, judged on the source's whole frozen test set,
 with no play phase, and refuses to start until the corpus is complete; the run records the sizes in
@@ -304,7 +304,7 @@ by a tune scaled as their run, to debug the tune itself.
 ## Matches
 
 ```bash
-./bin/arena duel pesto@untuned pesto-psq-g1-r1@tuned --time 10+0.1
+./bin/arena duel pesto@untuned pesto-psq-g1-r1@search-tuned --time 10+0.1
 ```
 
 - `match <a> <b> [<n>]`: a best of n games, 400 by default, stopped once decided; `--full` plays
@@ -313,8 +313,8 @@ by a tune scaled as their run, to debug the tune itself.
 - `duel <a> <b>`: until one is shown stronger, or 800 games (400 pairs).
 
 Each needs `--depth <d>` or `--time <base+inc>`. A player is a Fattorini player, `pesto` or a forge run's
-network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@tuned` or
-`@untuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
+network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@untuned`,
+`@search-tuned` or `@search-time-tuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
 `data/engines.yaml`, with no suffix. Against an external engine, the Fattorini player plays over
 UCI: the arena first builds it with its network and parameters embedded, as a snapshot, into
 `target/uci-players/`.
@@ -324,12 +324,12 @@ UCI: the arena first builds it with its network and parameters embedded, as a sn
 A snapshot is a release build of `fattorini` with a player's network and parameters embedded:
 
 ```bash
-./bin/arena snapshot pesto-psq-g1-r1@tuned
+./bin/arena snapshot pesto-psq-g1-r1@search-tuned
 ```
 
-The player is `pesto` or a full run's generation winner, `@tuned` or `@untuned`. The snapshot is
+The player is `pesto` or a full run's generation winner, with its suffix. The snapshot is
 written straight to Drive, never locally:
-`/g/My Drive/fattorini/data/snapshots/fattorini-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`
+`/g/My Drive/fattorini/data/snapshots/fattorini-<player>-<suffix>-<YYYYMMDD-HHMM>.exe`
 (UTC). A new snapshot replaces the older ones of the same player and suffix, so lichess-bot's
 `config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
 embeds. `fattorini about`, its UCI name and a first `info string` say exactly what it is: the
@@ -351,20 +351,20 @@ cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), 
    Syzygy tables:
 
    ```bash
-   ./bin/arena match <anchor> <player>@tuned 400 --time 1+0.5 --hash 128 --full
+   ./bin/arena match <anchor> <player>@search-time-tuned 400 --time 1+0.5 --hash 128 --full
    ```
 
    the control rescaled by Stockfish 10's `bench` on another machine (`claude/` holds the method).
 3. `RELEASE-NOTES.md`: the version, the network, the strength table.
 4. Commit, then tag and push the tag: `v<version>`, or a candidate `v<version>-rc.<n>` first.
-5. `./bin/arena release <player>@tuned --dry-run` once, then without `--dry-run`. Every check runs
+5. `./bin/arena release <player>@search-time-tuned --dry-run` once, then without `--dry-run`. Every check runs
    before the upload: the version's month, HEAD at the tag, the tree clean, the tag matching the version, the notes
    naming it, no release of the tag yet, the `.exe` free of `VCRUNTIME140.dll`, its `about` and
    `bench`.
 6. Read the draft on GitHub, then publish it there. A candidate that proves broken: delete its draft
    and tag the next candidate, never moving a tag anyone has seen.
 
-## Tuning search parameters
+## Tuning search and time parameters
 
 A tune of a network's search parameters by SPSA is the smithy's other job, its pairs played by the
 same arenas, started from the smithy's page: the winner of a generation that passed its gate in an
@@ -388,11 +388,17 @@ the default parameters on both sides, so they judge the networks alone, except P
 its tune wherever it is a side.
 
 Under a clock the smithy benches its own machine at the start, and every arena scales its clock to
-its speed against that one. The result goes to the network's `parameters.txt`. A forge run's
-network is tuned in its generation's folder, `run-<n>/gen-<g>/tune/`.
+its speed against that one. The result goes to the network's `search-parameters.txt`. A forge run's
+network is tuned in its generation's folder, `run-<n>/gen-<g>/search-tune/`.
 
-**One tune a network:** an unfinished one resumes when started again; a new tune of a network whose
-tune is finished is refused, since retuning is not supported yet. To tune it again, move or delete
+**Then the time management:** once a network's search tune is finished, the page offers its time
+tune (`--time-tune <player>`): the 22 time parameters by SPSA, under the same `tune:` settings, both
+sides playing the network's search tune, from the time defaults. The result goes to
+`time-parameters.txt` beside the search's, the tune's files to `time-tune/`. Its verdict is a duel
+at a long clock, `@search-time-tuned` against `@search-tuned`.
+
+**One tune of each kind a network:** an unfinished one resumes when started again; a new tune whose
+kind is finished is refused, since retuning is not supported yet. To tune it again, move or delete
 its tune folder by hand.
 
 ### The firewall

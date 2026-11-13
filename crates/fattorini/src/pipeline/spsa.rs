@@ -1,20 +1,21 @@
-//! SPSA as fishtest runs it (`spsa_handler.py`, `spsa_workflow.py`, fetched 2026-10-16), over the
-//! search's ten `SearchParameters`: pure functions, no games and no files, so the method is tested on
-//! its own. A pair of games, colours reversed on one opening, plays theta + c_k Delta against
-//! theta - c_k Delta; its result moves each parameter along Delta, then clips it to its range.
-//! `smithy start --spsa` runs it, the arenas playing the pairs.
+//! SPSA as fishtest runs it (`spsa_handler.py`, `spsa_workflow.py`, fetched 2026-10-16), over one
+//! kind of parameters (`TuneKind`): the search's ten `SearchParameters`, or the time management's
+//! 22 `TimeParameters`. Pure functions, no games and no files, so the method is tested on its own. A
+//! pair of games, colours reversed on one opening, plays theta + c_k Delta against theta - c_k
+//! Delta; its result moves each parameter along Delta, then clips it to its range. `smithy start
+//! --spsa` runs it, the arenas playing the pairs.
 //!
 //! Chosen with the developer on 2026-10-16, `r_end` revised on 2026-10-20: one `r_end` for all
-//! parameters (`R_END`), and each
-//! parameter's range and `c_end` from its scale (`SPECS`). The number of pairs N is each tune's own,
-//! its config's `length:`, `default` (`DEFAULT_TUNE_PAIRS`) or a number. A tune starts from its
-//! teacher's tune (`specs_from`), or from `SPECS`' starts, the default parameters, when its player
-//! has no tuned teacher (the developer, 2026-11-08, reversing 2026-10-23's "every tune from the
-//! defaults": each generation's teacher plays its tune in self-play, and the next tune goes on from
-//! it). theta is kept as real numbers, a player rounding each value to the nearest integer when it
-//! plays.
+//! parameters (`R_END`), and each parameter's range and `c_end` from its scale (`SEARCH_SPECS`,
+//! `TIME_SPECS`). `a_end = R_END * c_end^2` is scale-free, so one `R_END` serves both kinds. The
+//! number of pairs N is each tune's own, its config's `length:`, `default` (`DEFAULT_TUNE_PAIRS`) or
+//! a number. A search tune starts from its teacher's tune (`specs_from`), or from `SEARCH_SPECS`'
+//! starts, the default parameters, when its player has no tuned teacher (the developer, 2026-11-08,
+//! reversing 2026-10-23's "every tune from the defaults": each generation's teacher plays its tune in
+//! self-play, and the next tune goes on from it). theta is kept as real numbers; a search player
+//! rounds each value to the nearest integer when it plays, a time player plays them as they are.
 
-use crate::search::SearchParameters;
+use crate::search::{SearchParameters, TimeParameters};
 
 /// `length: default`: a tune of 65,536 games, every generation's (the developer, 2026-11-08: each
 /// teacher tuned as well as a release, since it plays its tune in self-play), about 15 hours on the
@@ -45,53 +46,132 @@ pub const MAX_CLOCK_FACTOR: f64 = 4.0;
 /// of 2.04+0.02 for 2+0.02.
 const CLOCK_FACTOR_DEAD_BAND: f64 = 0.05;
 
-/// One parameter's start, range and perturbation at the end of the schedule.
+/// What a tune tunes: the search's parameters, or the time management's, played with the network's
+/// tuned search (the developer, 2026-11-13: a network is trained, then its search tuned, then its
+/// time).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TuneKind {
+    Search,
+    Time,
+}
+
+impl TuneKind {
+    /// As `spec.txt` and a config's `tune:` spell it.
+    pub fn text(self) -> &'static str {
+        match self {
+            TuneKind::Search => "search",
+            TuneKind::Time => "time",
+        }
+    }
+
+    pub fn parse(text: &str) -> Result<TuneKind, String> {
+        match text {
+            "search" => Ok(TuneKind::Search),
+            "time" => Ok(TuneKind::Time),
+            _ => Err(format!("a tune's kind is search or time, got {text:?}")),
+        }
+    }
+
+    /// Its parameters' names, in their order.
+    pub fn names(self) -> &'static [&'static str] {
+        match self {
+            TuneKind::Search => &SearchParameters::NAMES,
+            TuneKind::Time => &TimeParameters::NAMES,
+        }
+    }
+
+    /// Its parameters' starts, ranges and perturbations.
+    pub fn specs(self) -> &'static [Spec] {
+        match self {
+            TuneKind::Search => &SEARCH_SPECS,
+            TuneKind::Time => &TIME_SPECS,
+        }
+    }
+}
+
+/// One parameter's start, range and perturbation at the end of the schedule, as real numbers: a
+/// search parameter's are whole, a time parameter's are not.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spec {
-    pub start: i32,
-    pub min: i32,
-    pub max: i32,
+    pub start: f64,
+    pub min: f64,
+    pub max: f64,
     /// The gap at which theta +/- c_end differ by a few Elo. `c_k` shrinks by only 1.1 to 1.2 over
     /// the run, so this is in effect the whole run's perturbation.
     pub c_end: f64,
 }
 
-/// The ten parameters, in `SearchParameters::NAMES`' order, each starting at its default (a test
-/// holds the two together). Since the defaults moved (2026-11-08): a range re-centred where the new
-/// value sat near its edge, reverse futility's floor at half its value and the aspiration window's
-/// floor near where the last tune ended; and `c_end` kept at its old share of its value, an eighth
-/// for the margins and a fifth for the aspiration window, so a smaller value is not perturbed by a
-/// larger part of itself.
-pub const SPECS: [Spec; 10] = [
-    Spec { start: 150, min: 50, max: 400, c_end: 19.0 },
-    Spec { start: 100, min: 25, max: 300, c_end: 12.5 },
-    Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
-    Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
-    Spec { start: 200, min: 50, max: 400, c_end: 25.0 },
-    Spec { start: 150, min: 50, max: 400, c_end: 19.0 },
-    Spec { start: 50, min: 0, max: 200, c_end: 10.0 },
-    Spec { start: 10, min: 3, max: 40, c_end: 2.0 },
-    Spec { start: -35, min: -100, max: -5, c_end: 5.0 },
-    Spec { start: -140, min: -512, max: 0, c_end: 32.0 },
+const fn spec(start: f64, min: f64, max: f64, c_end: f64) -> Spec {
+    Spec { start, min, max, c_end }
+}
+
+/// The ten search parameters, in `SearchParameters::NAMES`' order, each starting at its default (a
+/// test holds the two together). Since the defaults moved (2026-11-08): a range re-centred where the
+/// new value sat near its edge, reverse futility's floor at half its value and the aspiration
+/// window's floor near where the last tune ended; and `c_end` kept at its old share of its value, an
+/// eighth for the margins and a fifth for the aspiration window, so a smaller value is not perturbed
+/// by a larger part of itself.
+pub const SEARCH_SPECS: [Spec; 10] = [
+    spec(150.0, 50.0, 400.0, 19.0),
+    spec(100.0, 25.0, 300.0, 12.5),
+    spec(200.0, 50.0, 400.0, 25.0),
+    spec(200.0, 50.0, 400.0, 25.0),
+    spec(200.0, 50.0, 400.0, 25.0),
+    spec(150.0, 50.0, 400.0, 19.0),
+    spec(50.0, 0.0, 200.0, 10.0),
+    spec(10.0, 3.0, 40.0, 2.0),
+    spec(-35.0, -100.0, -5.0, 5.0),
+    spec(-140.0, -512.0, 0.0, 32.0),
 ];
 
-/// theta, the tune's current point, as real numbers in `SearchParameters::NAMES`' order.
-pub type Theta = [f64; 10];
+/// The 22 time parameters, in `TimeParameters::NAMES`' order, each starting at its default (accepted
+/// by the developer, 2026-11-13; revisited after the first tune's traces). `c_end` about a tenth of
+/// the value's scale; a slope near zero perturbed by its own size rather than its value's. Ranges
+/// wide enough that no start sits near an edge, a factor's floor below its intercept, and
+/// `multiplier_min < multiplier_max` and `trend_min < trend_max` held by the ranges themselves.
+/// `soft_rise` may pass `soft_max`: the time manager floors the soft fraction.
+pub const TIME_SPECS: [Spec; 22] = [
+    spec(0.0594, 0.03, 0.10, 0.006),
+    spec(0.0492, 0.02, 0.08, 0.006),
+    spec(0.0386, 0.01, 0.10, 0.006),
+    spec(0.7281, 0.30, 0.90, 0.06),
+    spec(3.0, 1.5, 6.0, 0.4),
+    spec(0.5, 0.2, 0.9, 0.06),
+    spec(2.0, 1.2, 4.0, 0.25),
+    spec(2.66, 1.5, 4.0, 0.3),
+    spec(2.6554, 1.0, 4.0, 0.3),
+    spec(0.546, 0.3, 0.9, 0.06),
+    spec(0.7426, 0.5, 1.2, 0.08),
+    spec(0.048, 0.0, 0.15, 0.008),
+    spec(0.7214, 0.4, 1.0, 0.08),
+    spec(1.4031, 1.0, 2.5, 0.15),
+    spec(1.2881, 0.8, 2.0, 0.12),
+    spec(0.044, 0.0, 0.15, 0.008),
+    spec(0.716, 0.4, 1.0, 0.08),
+    spec(1.2664, 0.8, 2.0, 0.12),
+    spec(0.0416, 0.0, 0.15, 0.008),
+    spec(0.8642, 0.5, 1.0, 0.08),
+    spec(1.15, 0.7, 2.0, 0.12),
+    spec(0.2526, 0.0, 1.0, 0.04),
+];
 
-/// `SPECS` starting from `start` instead of the defaults, each value clamped into its parameter's
-/// range: a tune going on from its teacher's tune. The ranges and perturbations stay `SPECS`'.
-pub fn specs_from(start: &SearchParameters) -> [Spec; 10] {
-    let values = start.values();
-    let mut specs = SPECS;
-    for (spec, value) in specs.iter_mut().zip(values) {
-        spec.start = value.clamp(spec.min, spec.max);
-    }
-    specs
+/// theta, the tune's current point, as real numbers in its kind's names' order.
+pub type Theta = Vec<f64>;
+
+/// The search parameters as real numbers, in `NAMES`' order.
+pub fn search_values(parameters: &SearchParameters) -> Vec<f64> {
+    parameters.values().iter().map(|&value| f64::from(value)).collect()
+}
+
+/// `specs` starting from `start` instead of their own starts, each value clamped into its
+/// parameter's range: a tune going on from its teacher's tune. The ranges and perturbations stay.
+pub fn specs_from(specs: &[Spec], start: &[f64]) -> Vec<Spec> {
+    specs.iter().zip(start).map(|(spec, &value)| Spec { start: value.clamp(spec.min, spec.max), ..*spec }).collect()
 }
 
 /// The specs' starts as theta.
-pub fn start_theta(specs: &[Spec; 10]) -> Theta {
-    specs.map(|spec| spec.start as f64)
+pub fn start_theta(specs: &[Spec]) -> Theta {
+    specs.iter().map(|spec| spec.start).collect()
 }
 
 /// fishtest's gain sequences, each parameter with its own `c` and `a` from its own `c_end`:
@@ -100,19 +180,19 @@ pub fn start_theta(specs: &[Spec; 10]) -> Theta {
 #[derive(Clone, Debug)]
 pub struct Schedule {
     stability: f64,
-    c: [f64; 10],
-    a: [f64; 10],
+    c: Vec<f64>,
+    a: Vec<f64>,
 }
 
 const GAMMA: f64 = 0.101;
 const ALPHA: f64 = 0.602;
 
 impl Schedule {
-    pub fn new(pairs: u32, r_end: f64, specs: &[Spec; 10]) -> Schedule {
+    pub fn new(pairs: u32, r_end: f64, specs: &[Spec]) -> Schedule {
         let n = pairs as f64;
         let stability = n / 10.0;
-        let c = specs.map(|spec| spec.c_end * n.powf(GAMMA));
-        let a = specs.map(|spec| r_end * spec.c_end * spec.c_end * (stability + n).powf(ALPHA));
+        let c = specs.iter().map(|spec| spec.c_end * n.powf(GAMMA)).collect();
+        let a = specs.iter().map(|spec| r_end * spec.c_end * spec.c_end * (stability + n).powf(ALPHA)).collect();
         Schedule { stability, c, a }
     }
 
@@ -128,11 +208,16 @@ impl Schedule {
 }
 
 /// A pair's direction: a random sign per parameter.
-pub type Delta = [i32; 10];
+pub type Delta = Vec<i32>;
 
-/// Pair `k`'s Delta, from `seed` and `k` alone, so a pair's direction is reproducible from its index:
-/// splitmix64 over the two, one bit per sign.
-pub fn draw_delta(seed: u64, k: u32) -> Delta {
+/// The most parameters a Delta can sign: one bit of a 64-bit draw each.
+pub const MAX_PARAMETERS: usize = 64;
+
+/// Pair `k`'s Delta over `count` parameters, from `seed` and `k` alone, so a pair's direction is
+/// reproducible from its index: splitmix64 over the two, one bit per sign. A shorter Delta is the
+/// start of a longer one, so the search's ten signs are what they were before the time tune.
+pub fn draw_delta(seed: u64, k: u32, count: usize) -> Delta {
+    assert!(count <= MAX_PARAMETERS, "a Delta signs at most {MAX_PARAMETERS} parameters");
     let mut state = seed ^ (k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let mut next = || -> u64 {
         state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -142,14 +227,20 @@ pub fn draw_delta(seed: u64, k: u32) -> Delta {
         z ^ (z >> 31)
     };
     let bits = next();
-    std::array::from_fn(|i| if (bits >> i) & 1 == 1 { 1 } else { -1 })
+    (0..count).map(|i| if (bits >> i) & 1 == 1 { 1 } else { -1 }).collect()
 }
 
-/// A tune's seed from its player's name (FNV-1a), so the same network always draws the same Deltas
-/// and a rerun from scratch repeats the run (the developer, 2026-10-18).
-pub fn seed_of(player: &str) -> u64 {
+/// A tune's seed from its player's name and kind (FNV-1a), so the same network always draws the same
+/// Deltas and a rerun from scratch repeats the run (the developer, 2026-10-18). A search tune's seed
+/// is its player's name alone, as before the time tune; a time tune's its name and ` time`, so its
+/// Deltas are not the search tune's.
+pub fn seed_of(player: &str, kind: TuneKind) -> u64 {
+    let text = match kind {
+        TuneKind::Search => player.to_string(),
+        TuneKind::Time => format!("{player} time"),
+    };
     let mut hash: u64 = 0xCBF2_9CE4_8422_2325;
-    for byte in player.bytes() {
+    for byte in text.bytes() {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
     }
@@ -157,32 +248,36 @@ pub fn seed_of(player: &str) -> u64 {
 }
 
 fn clip(value: f64, spec: &Spec) -> f64 {
-    value.clamp(spec.min as f64, spec.max as f64)
+    value.clamp(spec.min, spec.max)
 }
 
-/// The parameters one side of pair `k` plays: theta + `sign` c_k Delta, `sign` +1 or -1, clipped to
-/// each range and rounded.
-pub fn point(theta: &Theta, schedule: &Schedule, specs: &[Spec; 10], k: u32, delta: &Delta, sign: i32) -> SearchParameters {
-    let values: [i32; 10] = std::array::from_fn(|i| {
-        let shifted = theta[i] + (sign * delta[i]) as f64 * schedule.c_k(i, k);
-        clip(shifted, &specs[i]).round() as i32
-    });
-    SearchParameters::from_values(values)
+/// The values one side of pair `k` plays: theta + `sign` c_k Delta, `sign` +1 or -1, clipped to each
+/// range, not rounded (`search_point`, `time_point`).
+pub fn point(theta: &[f64], schedule: &Schedule, specs: &[Spec], k: u32, delta: &[i32], sign: i32) -> Vec<f64> {
+    (0..specs.len()).map(|i| clip(theta[i] + (sign * delta[i]) as f64 * schedule.c_k(i, k), &specs[i])).collect()
+}
+
+/// `values`, ten in `SearchParameters::NAMES`' order, each rounded to the nearest integer.
+pub fn search_parameters(values: &[f64]) -> SearchParameters {
+    let rounded: [i32; 10] = std::array::from_fn(|i| values[i].round() as i32);
+    SearchParameters::from_values(rounded)
+}
+
+/// `values`, 22 in `TimeParameters::NAMES`' order, as they are.
+pub fn time_parameters(values: &[f64]) -> TimeParameters {
+    TimeParameters::from_values(std::array::from_fn(|i| values[i]))
 }
 
 /// theta after pair `k`, whose result from the plus side is `r = wins - losses` (-2 to 2): each
 /// parameter moves by `a_k / c_k * r * Delta_i` (fishtest's `R_k * c_k * r * flip`, `R_k = a_k /
 /// c_k^2`), then is clipped to its range.
-pub fn update(theta: &Theta, schedule: &Schedule, specs: &[Spec; 10], k: u32, delta: &Delta, r: i32) -> Theta {
-    std::array::from_fn(|i| {
-        let step = schedule.a_k(i, k) / schedule.c_k(i, k) * r as f64 * delta[i] as f64;
-        clip(theta[i] + step, &specs[i])
-    })
-}
-
-/// theta rounded, as the tune's result.
-pub fn rounded(theta: &Theta) -> SearchParameters {
-    SearchParameters::from_values(theta.map(|value| value.round() as i32))
+pub fn update(theta: &[f64], schedule: &Schedule, specs: &[Spec], k: u32, delta: &[i32], r: i32) -> Theta {
+    (0..specs.len())
+        .map(|i| {
+            let step = schedule.a_k(i, k) / schedule.c_k(i, k) * r as f64 * delta[i] as f64;
+            clip(theta[i] + step, &specs[i])
+        })
+        .collect()
 }
 
 /// The clock factor of a client of speed `client_nps` against the server's `reference_nps`: above 1
@@ -202,94 +297,127 @@ mod tests {
     }
 
     #[test]
-    fn the_specs_start_at_the_search_defaults_inside_their_ranges() {
-        assert_eq!(rounded(&start_theta(&SPECS)), SearchParameters::DEFAULT);
-        for (i, spec) in SPECS.iter().enumerate() {
-            assert!(spec.min <= spec.start && spec.start <= spec.max, "{}", SearchParameters::NAMES[i]);
-            assert!(spec.c_end > 0.0);
+    fn the_specs_start_at_the_defaults_inside_their_ranges() {
+        assert_eq!(search_parameters(&start_theta(&SEARCH_SPECS)), SearchParameters::DEFAULT);
+        assert_eq!(time_parameters(&start_theta(&TIME_SPECS)), TimeParameters::DEFAULT);
+        for kind in [TuneKind::Search, TuneKind::Time] {
+            assert_eq!(kind.specs().len(), kind.names().len());
+            assert!(kind.specs().len() <= MAX_PARAMETERS);
+            assert_eq!(TuneKind::parse(kind.text()), Ok(kind));
+            for (spec, name) in kind.specs().iter().zip(kind.names()) {
+                assert!(spec.min <= spec.start && spec.start <= spec.max, "{name}");
+                assert!(spec.c_end > 0.0, "{name}");
+            }
         }
+        // The bounds that must stay ordered, held by their ranges.
+        let by_name = |name: &str| TIME_SPECS[TimeParameters::NAMES.iter().position(|&known| known == name).unwrap()];
+        assert!(by_name("multiplier_min").max < by_name("multiplier_max").min);
+        assert!(by_name("trend_min").max <= by_name("trend_max").min);
     }
 
     #[test]
     fn a_tune_from_its_teacher_s_tune_starts_there_clamped_its_ranges_kept() {
-        assert_eq!(specs_from(&SearchParameters::DEFAULT), SPECS, "from the defaults, the specs themselves");
+        assert_eq!(specs_from(&SEARCH_SPECS, &search_values(&SearchParameters::DEFAULT)), SEARCH_SPECS.to_vec(), "from the defaults, the specs themselves");
         let teacher = SearchParameters { reverse_futility_margin: 96, aspiration_delta: 1, good_quiet_threshold: -600, ..SearchParameters::DEFAULT };
-        let specs = specs_from(&teacher);
-        assert_eq!(rounded(&start_theta(&specs)), SearchParameters { aspiration_delta: 3, good_quiet_threshold: -512, ..teacher }, "clamped");
-        for (spec, default) in specs.iter().zip(SPECS) {
+        let specs = specs_from(&SEARCH_SPECS, &search_values(&teacher));
+        assert_eq!(search_parameters(&start_theta(&specs)), SearchParameters { aspiration_delta: 3, good_quiet_threshold: -512, ..teacher }, "clamped");
+        for (spec, default) in specs.iter().zip(SEARCH_SPECS) {
             assert_eq!((spec.min, spec.max, spec.c_end), (default.min, default.max, default.c_end));
         }
     }
 
     #[test]
     fn the_schedule_ends_at_c_end_and_a_end() {
-        let schedule = Schedule::new(PAIRS, R_END, &SPECS);
-        for (i, spec) in SPECS.iter().enumerate() {
-            assert!(close(schedule.c_k(i, PAIRS - 1), spec.c_end), "{i}: {}", schedule.c_k(i, PAIRS - 1));
-            assert!(close(schedule.a_k(i, PAIRS - 1), R_END * spec.c_end * spec.c_end), "{i}");
-            assert!(schedule.c_k(i, 0) > schedule.c_k(i, PAIRS - 1), "c_k shrinks");
-            assert!(schedule.a_k(i, 0) > schedule.a_k(i, PAIRS - 1), "a_k shrinks");
+        for specs in [&SEARCH_SPECS[..], &TIME_SPECS[..]] {
+            let schedule = Schedule::new(PAIRS, R_END, specs);
+            for (i, spec) in specs.iter().enumerate() {
+                assert!(close(schedule.c_k(i, PAIRS - 1), spec.c_end), "{i}: {}", schedule.c_k(i, PAIRS - 1));
+                assert!(close(schedule.a_k(i, PAIRS - 1), R_END * spec.c_end * spec.c_end), "{i}");
+                assert!(schedule.c_k(i, 0) > schedule.c_k(i, PAIRS - 1), "c_k shrinks");
+                assert!(schedule.a_k(i, 0) > schedule.a_k(i, PAIRS - 1), "a_k shrinks");
+            }
         }
     }
 
     #[test]
     fn a_delta_depends_on_the_seed_and_k_alone_and_is_balanced() {
-        assert_eq!(draw_delta(7, 42), draw_delta(7, 42));
-        assert_ne!(draw_delta(7, 42), draw_delta(7, 43));
-        assert_ne!(draw_delta(7, 42), draw_delta(8, 42));
+        assert_eq!(draw_delta(7, 42, 22), draw_delta(7, 42, 22));
+        assert_ne!(draw_delta(7, 42, 22), draw_delta(7, 43, 22));
+        assert_ne!(draw_delta(7, 42, 22), draw_delta(8, 42, 22));
+        assert_eq!(draw_delta(7, 42, 10)[..], draw_delta(7, 42, 22)[..10], "the search's signs, the start of the time's");
+        let seed = seed_of("amanda-0001", TuneKind::Time);
         let draws = 10_000;
-        for i in 0..10 {
-            let plus = (0..draws).filter(|&k| draw_delta(seed_of("amanda-0001"), k)[i] == 1).count();
+        for i in 0..22 {
+            let plus = (0..draws).filter(|&k| draw_delta(seed, k, 22)[i] == 1).count();
             assert!((4_700..=5_300).contains(&plus), "parameter {i}: {plus} of {draws} positive");
         }
-        assert_eq!(seed_of("amanda-0001"), seed_of("amanda-0001"));
-        assert_ne!(seed_of("amanda-0001"), seed_of("amanda-0002"));
+        assert_eq!(seed_of("amanda-0001", TuneKind::Search), seed_of("amanda-0001", TuneKind::Search));
+        assert_ne!(seed_of("amanda-0001", TuneKind::Search), seed_of("amanda-0002", TuneKind::Search));
+        assert_ne!(seed_of("amanda-0001", TuneKind::Search), seed_of("amanda-0001", TuneKind::Time));
+    }
+
+    /// A search tune's seed is what it was before kinds existed, so a tune under way resumes with
+    /// the same Deltas: FNV-1a of the name alone.
+    #[test]
+    fn a_search_tunes_seed_is_its_players_name_alone() {
+        assert_eq!(seed_of("", TuneKind::Search), 0xCBF2_9CE4_8422_2325);
     }
 
     #[test]
     fn a_point_moves_by_c_k_along_delta_clipped_and_rounded() {
-        let schedule = Schedule::new(PAIRS, R_END, &SPECS);
-        let theta = start_theta(&SPECS);
-        let delta: Delta = [1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
+        let schedule = Schedule::new(PAIRS, R_END, &SEARCH_SPECS);
+        let theta = start_theta(&SEARCH_SPECS);
+        let delta: Delta = vec![1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
         let k = PAIRS - 1;
-        let plus = point(&theta, &schedule, &SPECS, k, &delta, 1).values();
-        let minus = point(&theta, &schedule, &SPECS, k, &delta, -1).values();
+        let side = |theta: &[f64], sign| search_parameters(&point(theta, &schedule, &SEARCH_SPECS, k, &delta, sign)).values();
+        let plus = side(&theta, 1);
+        let minus = side(&theta, -1);
         // Futility and null move: margins of 200, perturbed by 25 at the end, Delta +1 and -1.
         assert_eq!(plus[2], 225);
         assert_eq!(minus[2], 175);
         assert_eq!(plus[3], 175);
         assert_eq!(plus[7], 8, "10 - 2");
         // Clipped at the range: -6 + 5 is past the top, -5.
-        let mut high = theta;
+        let mut high = theta.clone();
         high[8] = -6.0;
-        assert_eq!(point(&high, &schedule, &SPECS, k, &delta, 1).values()[8], -5);
+        assert_eq!(side(&high, 1)[8], -5);
         // Rounded to the nearest integer.
-        let mut fractional = theta;
+        let mut fractional = theta.clone();
         fractional[2] = 200.4;
-        assert_eq!(point(&fractional, &schedule, &SPECS, k, &delta, 1).values()[2], 225);
+        assert_eq!(side(&fractional, 1)[2], 225);
+    }
+
+    #[test]
+    fn a_time_point_is_played_unrounded() {
+        let schedule = Schedule::new(PAIRS, R_END, &TIME_SPECS);
+        let theta = start_theta(&TIME_SPECS);
+        let delta = vec![1; 22];
+        let plus = time_parameters(&point(&theta, &schedule, &TIME_SPECS, PAIRS - 1, &delta, 1));
+        assert!(close(plus.soft_max, 0.0594 + 0.006));
+        assert!(close(plus.hard_soft_ratio, 3.0 + 0.4));
     }
 
     #[test]
     fn an_update_moves_along_delta_with_the_result_and_clips() {
-        let schedule = Schedule::new(PAIRS, R_END, &SPECS);
-        let theta = start_theta(&SPECS);
-        let delta: Delta = [1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
-        assert_eq!(update(&theta, &schedule, &SPECS, 0, &delta, 0), theta, "a drawn pair moves nothing");
+        let schedule = Schedule::new(PAIRS, R_END, &SEARCH_SPECS);
+        let theta = start_theta(&SEARCH_SPECS);
+        let delta: Delta = vec![1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
+        assert_eq!(update(&theta, &schedule, &SEARCH_SPECS, 0, &delta, 0), theta, "a drawn pair moves nothing");
         // Futility and null move: margins of 200 with the same spec, Delta +1 and -1.
-        let won = update(&theta, &schedule, &SPECS, 0, &delta, 2);
+        let won = update(&theta, &schedule, &SEARCH_SPECS, 0, &delta, 2);
         let step = schedule.a_k(2, 0) / schedule.c_k(2, 0) * 2.0;
         assert!(close(won[2], 200.0 + step), "{}", won[2]);
         assert!(close(won[3], 200.0 - step));
-        let lost = update(&theta, &schedule, &SPECS, 0, &delta, -2);
+        let lost = update(&theta, &schedule, &SEARCH_SPECS, 0, &delta, -2);
         assert!(close(lost[2], 200.0 - step));
         // At the end, a 2-0 pair moves a margin by 2 * r_end * c_end.
         let k = PAIRS - 1;
-        let end = update(&theta, &schedule, &SPECS, k, &delta, 2);
+        let end = update(&theta, &schedule, &SEARCH_SPECS, k, &delta, 2);
         assert!(close(end[2] - 200.0, 2.0 * R_END * 25.0));
         // Clipped at the range.
-        let mut low = theta;
+        let mut low = theta.clone();
         low[2] = 50.0;
-        assert_eq!(update(&low, &schedule, &SPECS, 0, &delta, -2)[2], 50.0);
+        assert_eq!(update(&low, &schedule, &SEARCH_SPECS, 0, &delta, -2)[2], 50.0);
     }
 
     #[test]

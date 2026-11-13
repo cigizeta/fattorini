@@ -1,14 +1,16 @@
-//! A tune, the smithy's job of a player, as its config's `tune:` says (`args_of`): a Fattorini player's ten search parameters by SPSA
-//! (`fattorini::pipeline::spsa`), every pair played by the arenas. Pairs of games, colours
+//! A tune, the smithy's job of a player, as its config's `tune:` says (`args_of`): one kind of a
+//! Fattorini player's parameters by SPSA (`fattorini::pipeline::spsa`), its ten search parameters
+//! or, after them, its 22 time parameters with its tuned search, every pair played by the arenas. Pairs of games, colours
 //! reversed on one random book opening, between theta + c_k Delta and theta - c_k Delta, one `k` per
 //! pair; theta moves as each pair arrives, in the order they arrive, each with its own `k`, as
 //! fishtest's workers do. Every game ends early by the tablebase, win and draw rules: a tune's chores
 //! say so (`Chore::adjudicate`).
 //!
-//! The run's folder (`FattoriniPlayer::tune_dir`) holds:
+//! The run's folder (`FattoriniPlayer::tune_paths`: `search-tune/` or `time-tune/`) holds:
 //!
-//! - `spec.txt`: what the run is (player, pairs, `r_end`, seed, control, the ten specs), written at the
-//!   first start; a later start that disagrees is refused rather than resumed.
+//! - `spec.txt`: what the run is (player, a time tune's kind, pairs, `r_end`, seed, control, the
+//!   specs), written at the first start; a later start that disagrees is refused rather than
+//!   resumed. A search tune's has no kind line, as before the time tune.
 //! - `state.tsv`: the pairs whose result is in theta, and theta, rewritten after every pair, so a stop
 //!   loses only the pairs in flight. A resume starts its new pairs from that count, so their `k`s,
 //!   and Deltas, are drawn again.
@@ -18,7 +20,7 @@
 //!
 //! The folder is this machine's while the tune runs, its files that change copied whole to the remote's
 //! mirror of it now and then (`mirror`); done, it moves there whole (`hand_over`), beside the tuned
-//! network's `parameters.txt`. A folder here without its finished twin on the remote is a tune in
+//! network's `search-parameters.txt` or `time-parameters.txt`. A folder here without its finished twin on the remote is a tune in
 //! progress; one found only on the remote is fetched back to resume or to say it is done.
 
 use std::io::Write;
@@ -29,7 +31,7 @@ use fattorini::pipeline::remote;
 
 use super::{archive, lease, scale, tree};
 use fattorini::pipeline::protocol::{Entry, Limit, Player};
-use fattorini::pipeline::spsa::{self, Schedule, Spec, Theta, MAX_CLOCK_FACTOR, MIN_CLOCK_FACTOR};
+use fattorini::pipeline::spsa::{self, Schedule, Spec, Theta, TuneKind, MAX_CLOCK_FACTOR, MIN_CLOCK_FACTOR};
 use fattorini::search::SearchParameters;
 
 /// A tune's control when none is given: arena's short time control.
@@ -49,9 +51,15 @@ pub(crate) struct TuneArgs {
     pub(crate) control: String,
     /// `--pairs <n>`: a new tune's; none for a resume.
     pub(crate) pairs: Option<u32>,
-    /// A new tune's starting values: its teacher's tune (the smithy's `teacher_tune`), `None` for the
-    /// defaults. A resume keeps its `spec.txt`'s, whatever this says.
+    /// What it tunes, the search unless the smithy says otherwise.
+    pub(crate) kind: TuneKind,
+    /// A new search tune's starting values: its teacher's tune (the smithy's `teacher_tune`), `None`
+    /// for the defaults. A resume keeps its `spec.txt`'s, whatever this says. A time tune starts from
+    /// the time defaults.
     pub(crate) start: Option<SearchParameters>,
+    /// A time tune's search, the player's finished search tune, which both sides play; `None` for a
+    /// search tune.
+    pub(crate) search: Option<SearchParameters>,
     /// A scaled run's network's `s`: its tune's pairs and control scaled as its run, for debugging
     /// the tune alone; none for every other player.
     pub(crate) scale: Option<u64>,
@@ -98,7 +106,7 @@ impl TuneArgs {
                 return Err(format!("--time takes <base+inc> in seconds, got {control:?}"));
             }
         }
-        Ok(TuneArgs { player: player.clone(), control, pairs, start: None, scale: None })
+        Ok(TuneArgs { player: player.clone(), control, pairs, kind: TuneKind::Search, start: None, search: None, scale: None })
     }
 }
 
@@ -162,14 +170,19 @@ fn remote_of(local: &str) -> String {
     remote::remote_path(local)
 }
 
-/// `player`'s tune's lease on the remote (`lease.rs`).
-pub(crate) fn lease_path(player: &str) -> Result<String, String> {
-    Ok(format!("{}/{}", remote_of(&resolve(player)?.tune_dir), lease::FILE))
+/// `player`'s tune of `kind`'s folder, here.
+fn tune_dir(player: &str, kind: TuneKind) -> Result<String, String> {
+    Ok(resolve(player)?.tune_paths(kind).1.to_string())
 }
 
-/// The pairs whose result the tune in `dir` holds, 0 when it holds none.
-fn pairs_done(dir: &str) -> u32 {
-    read_state(&format!("{dir}/state.tsv"), spsa::start_theta(&spsa::SPECS)).map_or(0, |(k_done, _)| k_done)
+/// `player`'s tune of `kind`'s lease on the remote (`lease.rs`).
+pub(crate) fn lease_path(player: &str, kind: TuneKind) -> Result<String, String> {
+    Ok(format!("{}/{}", remote_of(&tune_dir(player, kind)?), lease::FILE))
+}
+
+/// The pairs whose result the tune of `kind` in `dir` holds, 0 when it holds none.
+fn pairs_done(dir: &str, kind: TuneKind) -> u32 {
+    read_state(&format!("{dir}/state.tsv"), kind.names(), spsa::start_theta(kind.specs())).map_or(0, |(k_done, _)| k_done)
 }
 
 /// A new tune's `pairs`, scaled down for a scaled network as a round robin's are, never below
@@ -178,14 +191,14 @@ fn scaled_pairs(pairs: u32, scale: Option<u64>) -> u32 {
     scale.map_or(pairs, |s| scale::games(pairs, s, MIN_PAIRS))
 }
 
-/// `player`'s tune as its files stand, for the page: its pairs done and its pairs in all; `None`
-/// before it starts, or when its files cannot be read.
-pub(crate) fn progress(player: &str) -> Option<(u32, u32)> {
-    let local = resolve(player).ok()?.tune_dir;
+/// `player`'s tune of `kind` as its files stand, for the page: its pairs done and its pairs in all;
+/// `None` before it starts, or when its files cannot be read.
+pub(crate) fn progress(player: &str, kind: TuneKind) -> Option<(u32, u32)> {
+    let local = tune_dir(player, kind).ok()?;
     // Here while it runs, on the remote once done.
     let dir = if Path::new(&format!("{local}/spec.txt")).is_file() { local.clone() } else { remote_of(&local) };
-    let (pairs, specs) = run_in_spec(&std::fs::read_to_string(format!("{dir}/spec.txt")).ok()?)?;
-    let (k_done, _) = read_state(&format!("{dir}/state.tsv"), spsa::start_theta(&specs)).ok()?;
+    let (_, pairs, specs) = run_in_spec(&std::fs::read_to_string(format!("{dir}/spec.txt")).ok()?)?;
+    let (k_done, _) = read_state(&format!("{dir}/state.tsv"), kind.names(), spsa::start_theta(&specs)).ok()?;
     Some((k_done, pairs))
 }
 
@@ -201,12 +214,15 @@ pub(crate) struct Tune {
     pub(crate) player: String,
     /// The tuned player's network file, `None` for pesto.
     pub(crate) network: Option<String>,
+    pub(crate) kind: TuneKind,
+    /// A time tune's search, played by both sides; `None` for a search tune.
+    search: Option<SearchParameters>,
     pub(crate) pairs: u32,
     r_end: f64,
     seed: u64,
     /// As `spec.txt` spells it: `depth 9` or `10+0.1`.
     control: String,
-    specs: [Spec; 10],
+    specs: Vec<Spec>,
     schedule: Schedule,
     dir: String,
     parameters_path: String,
@@ -226,36 +242,57 @@ impl Tune {
     /// Opens `args`' tune in its folder, resuming what is there.
     pub(crate) fn open(args: &TuneArgs) -> Result<Tune, String> {
         let player = resolve(&args.player)?;
-        let spec_path = format!("{}/spec.txt", player.tune_dir);
+        let kind = args.kind;
+        if kind == TuneKind::Time && args.search.is_none() {
+            return Err(format!("{}'s time tune needs its search tune, which both sides play", args.player));
+        }
+        let (parameters_path, dir) = player.tune_paths(kind);
+        let (parameters_path, dir) = (parameters_path.to_string(), dir.to_string());
+        let spec_path = format!("{dir}/spec.txt");
         // A tune moved to the remote, done, or its copy when this machine lost its own or another
         // smithy took it further: fetched back, so a done one says so and an unfinished one resumes
         // where it got to. The lease is the remote's alone.
-        let moved = remote_of(&player.tune_dir);
-        let remote_ahead = !Path::new(&spec_path).is_file() || pairs_done(&moved) > pairs_done(&player.tune_dir);
+        let moved = remote_of(&dir);
+        let remote_ahead = !Path::new(&spec_path).is_file() || pairs_done(&moved, kind) > pairs_done(&dir, kind);
         if remote_ahead && Path::new(&format!("{moved}/spec.txt")).is_file() {
-            tree::copy(&moved, &player.tune_dir, &|relative| relative != lease::FILE, true)?;
+            tree::copy(&moved, &dir, &|relative| relative != lease::FILE, true)?;
         }
         // A resumed tune's pairs and starts are its spec's, its pairs scaled already when its network
-        // is a scaled run's; a new tune's start from its teacher's tune, or the defaults.
+        // is a scaled run's; a new search tune's start from its teacher's tune, or the defaults; a new
+        // time tune's from the time defaults.
         let (pairs, specs) = match args.pairs {
-            Some(pairs) => (scaled_pairs(pairs, args.scale), args.start.as_ref().map_or(spsa::SPECS, spsa::specs_from)),
-            None => std::fs::read_to_string(&spec_path).ok().and_then(|text| run_in_spec(&text)).ok_or_else(|| {
-                format!("{spec_path} records no tune yet: a new tune needs its length, --pairs <n>")
-            })?,
+            Some(pairs) => {
+                let specs = match (kind, &args.start) {
+                    (TuneKind::Search, Some(start)) => spsa::specs_from(&spsa::SEARCH_SPECS, &spsa::search_values(start)),
+                    _ => kind.specs().to_vec(),
+                };
+                (scaled_pairs(pairs, args.scale), specs)
+            }
+            None => {
+                let recorded = std::fs::read_to_string(&spec_path).ok().and_then(|text| run_in_spec(&text));
+                let (recorded_kind, pairs, specs) =
+                    recorded.ok_or_else(|| format!("{spec_path} records no tune yet: a new tune needs its length, --pairs <n>"))?;
+                if recorded_kind != kind {
+                    return Err(format!("{spec_path} records a {} tune, not a {} one", recorded_kind.text(), kind.text()));
+                }
+                (pairs, specs)
+            }
         };
         let mut tune = Tune {
             player: args.player.clone(),
             network: player.network.clone(),
+            kind,
+            search: args.search,
             pairs,
             r_end: spsa::R_END,
-            seed: spsa::seed_of(&args.player),
+            seed: spsa::seed_of(&args.player, kind),
             // Scaled at every open, a resume's included: its spec records the scaled control.
             control: args.scale.map_or(args.control.clone(), |s| scale::control(&args.control, s)),
-            specs,
             schedule: Schedule::new(pairs, spsa::R_END, &specs),
-            dir: player.tune_dir.clone(),
-            parameters_path: player.parameters_path.clone(),
             theta: spsa::start_theta(&specs),
+            specs,
+            dir,
+            parameters_path,
             k_done: 0,
             next_k: 0,
             returned: Vec::new(),
@@ -263,9 +300,9 @@ impl Tune {
         };
         std::fs::create_dir_all(&tune.dir).map_err(|error| format!("{}: {error}", tune.dir))?;
         check_spec(&spec_path, &tune.spec_text())?;
-        (tune.k_done, tune.theta) = read_state(&tune.state_path(), tune.theta)?;
+        (tune.k_done, tune.theta) = read_state(&tune.state_path(), kind.names(), tune.theta.clone())?;
         tune.next_k = tune.k_done;
-        check_pairs_header(&tune.pairs_path())?;
+        check_pairs_header(&tune.pairs_path(), kind)?;
         Ok(tune)
     }
 
@@ -294,10 +331,19 @@ impl Tune {
     }
 
     /// `spec.txt`'s text: one `name<TAB>value` line per setting, then one line per parameter with its
-    /// start, range and `c_end`.
+    /// start, range and `c_end`. A time tune says its kind, and the search both sides play; a search
+    /// tune's text is what it was before the time tune, so one under way still resumes.
     fn spec_text(&self) -> String {
-        let mut text = format!("player\t{}\npairs\t{}\nr_end\t{}\nseed\t{}\ncontrol\t{}\n", self.player, self.pairs, self.r_end, self.seed, self.control);
-        for (name, spec) in SearchParameters::NAMES.iter().zip(self.specs.iter()) {
+        let mut text = format!("player\t{}\n", self.player);
+        if self.kind == TuneKind::Time {
+            text.push_str(&format!("kind\t{}\n", self.kind.text()));
+            if let Some(search) = &self.search {
+                let values: Vec<String> = search.values().iter().map(i32::to_string).collect();
+                text.push_str(&format!("search\t{}\n", values.join(",")));
+            }
+        }
+        text.push_str(&format!("pairs\t{}\nr_end\t{}\nseed\t{}\ncontrol\t{}\n", self.pairs, self.r_end, self.seed, self.control));
+        for (name, spec) in self.kind.names().iter().zip(self.specs.iter()) {
             text.push_str(&format!("{name}\t{}\t{}\t{}\t{}\n", spec.start, spec.min, spec.max, spec.c_end));
         }
         text
@@ -334,12 +380,18 @@ impl Tune {
     }
 
     /// Pair `k`'s entry: theta + c_k Delta against theta - c_k Delta at theta as it is now, explicit
-    /// parameters both, `network` the tuned player's hash, its `k` in a tag.
+    /// parameters both, `network` the tuned player's hash, its `k` in a tag. A search tune's sides
+    /// play the default clock; a time tune's play its search, the same on both sides, and their own
+    /// time points.
     pub(crate) fn entry(&self, k: u32, network: &str) -> Entry {
-        let delta = spsa::draw_delta(self.seed, k);
-        let side = |sign: i32| Player {
-            network: network.to_string(),
-            parameters: Some(spsa::point(&self.theta, &self.schedule, &self.specs, k, &delta, sign)),
+        let delta = spsa::draw_delta(self.seed, k, self.specs.len());
+        let side = |sign: i32| {
+            let values = spsa::point(&self.theta, &self.schedule, &self.specs, k, &delta, sign);
+            let (parameters, time) = match self.kind {
+                TuneKind::Search => (spsa::search_parameters(&values), None),
+                TuneKind::Time => (self.search.expect("a time tune has its search"), Some(spsa::time_parameters(&values))),
+            };
+            Player { network: network.to_string(), parameters: Some(parameters), time }
         };
         Entry { players: vec![side(1), side(-1)], count: 1, tags: vec![(K_TAG.to_string(), k.to_string())] }
     }
@@ -350,26 +402,30 @@ impl Tune {
         if self.done() || !self.applied.insert(k) {
             return Ok(());
         }
-        let delta = spsa::draw_delta(self.seed, k);
+        let delta = spsa::draw_delta(self.seed, k, self.specs.len());
         self.theta = spsa::update(&self.theta, &self.schedule, &self.specs, k, &delta, r);
         self.k_done += 1;
-        write_atomically(&self.state_path(), &state_text(self.k_done, &self.theta))?;
+        write_atomically(&self.state_path(), &state_text(self.k_done, self.kind.names(), &self.theta))?;
         let signs: String = delta.iter().map(|&sign| if sign > 0 { '+' } else { '-' }).collect();
         let values: Vec<String> = self.theta.iter().map(|value| format!("{value:.3}")).collect();
         append(&self.pairs_path(), &format!("{k}\t{r}\t{source}\t{signs}\t{}\n", values.join("\t")))
     }
 
-    /// Writes the result, theta rounded, to the player's `parameters.txt`: in the tune's folder first,
-    /// then, when the network's is elsewhere (on the remote, its generation moved there), copied there
-    /// whole.
-    pub(crate) fn finish(&self) -> Result<SearchParameters, String> {
-        let tuned = spsa::rounded(&self.theta);
-        let here = format!("{}/parameters.txt", self.dir);
-        tuned.write_file(&here)?;
+    /// Writes the result to the player's file of its kind: a search tune's theta rounded to
+    /// `search-parameters.txt`, a time tune's as it is to `time-parameters.txt`. In the tune's folder
+    /// first, then, when the network's is elsewhere (on the remote, its generation moved there),
+    /// copied there whole.
+    pub(crate) fn finish(&self) -> Result<(), String> {
+        let file = Path::new(&self.parameters_path).file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
+        let here = format!("{}/{file}", self.dir);
+        match self.kind {
+            TuneKind::Search => spsa::search_parameters(&self.theta).write_file(&here)?,
+            TuneKind::Time => spsa::time_parameters(&self.theta).write_file(&here)?,
+        }
         if here != self.parameters_path {
             remote::copy_replacing(&here, &self.parameters_path).map_err(|error| error.to_string())?;
         }
-        Ok(tuned)
+        Ok(())
     }
 
     /// The tune's files that change along it (`spec.txt`, `state.tsv`, `pairs.tsv`, `chores.txt`), each
@@ -394,8 +450,8 @@ impl Tune {
     }
 
     /// Each parameter's name, start and theta now.
-    pub(crate) fn rows(&self) -> Vec<(&'static str, i32, f64)> {
-        SearchParameters::NAMES.iter().zip(self.specs.iter()).zip(self.theta.iter()).map(|((&name, spec), &now)| (name, spec.start, now)).collect()
+    pub(crate) fn rows(&self) -> Vec<(&'static str, f64, f64)> {
+        self.kind.names().iter().zip(self.specs.iter()).zip(self.theta.iter()).map(|((&name, spec), &now)| (name, spec.start, now)).collect()
     }
 
     /// Whether `tag`, a game's `TimeControl`, is the tune's clock scaled within the clamps a client
@@ -423,17 +479,22 @@ impl Tune {
     }
 }
 
-/// The pairs and specs a `spec.txt`'s `text` records.
-fn run_in_spec(text: &str) -> Option<(u32, [Spec; 10])> {
+/// The kind, pairs and specs a `spec.txt`'s `text` records; a spec without a kind line a search
+/// tune's.
+fn run_in_spec(text: &str) -> Option<(TuneKind, u32, Vec<Spec>)> {
+    let kind = match text.lines().find_map(|line| line.strip_prefix("kind\t")) {
+        Some(kind) => TuneKind::parse(kind).ok()?,
+        None => TuneKind::Search,
+    };
     let pairs = text.lines().find_map(|line| line.strip_prefix("pairs\t")).and_then(|value| value.parse().ok())?;
-    let mut specs = spsa::SPECS;
-    for (spec, name) in specs.iter_mut().zip(SearchParameters::NAMES.iter()) {
+    let mut specs = kind.specs().to_vec();
+    for (spec, name) in specs.iter_mut().zip(kind.names().iter()) {
         let line = text.lines().find_map(|line| line.strip_prefix(&format!("{name}\t")))?;
         let values: Vec<&str> = line.split('\t').collect();
         let [start, min, max, c_end] = values.as_slice() else { return None };
         *spec = Spec { start: start.parse().ok()?, min: min.parse().ok()?, max: max.parse().ok()?, c_end: c_end.parse().ok()? };
     }
-    Some((pairs, specs))
+    Some((kind, pairs, specs))
 }
 
 /// Writes `spec.txt` at a first start, or checks that an existing one says the same.
@@ -469,31 +530,32 @@ fn write_atomically(path: &str, text: &str) -> Result<(), String> {
     std::fs::rename(&tmp_path, path).map_err(|error| format!("{path}: {error}"))
 }
 
-/// `state.tsv`'s text: `k_done`, then theta, one `name<TAB>value` line each, the values exact (Rust's
-/// shortest representation reads back to the same `f64`).
-fn state_text(k_done: u32, theta: &Theta) -> String {
+/// `state.tsv`'s text: `k_done`, then theta, one `name<TAB>value` line each in `names`' order, the
+/// values exact (Rust's shortest representation reads back to the same `f64`).
+fn state_text(k_done: u32, names: &[&str], theta: &[f64]) -> String {
     let mut text = format!("k_done\t{k_done}\n");
-    for (name, value) in SearchParameters::NAMES.iter().zip(theta.iter()) {
+    for (name, value) in names.iter().zip(theta.iter()) {
         text.push_str(&format!("{name}\t{value}\n"));
     }
     text
 }
 
-/// `state.tsv` at `path`: `k_done` and theta, or 0 and `start` when there is none.
-fn read_state(path: &str, start: Theta) -> Result<(u32, Theta), String> {
+/// `state.tsv` at `path`, its parameters `names`: `k_done` and theta, or 0 and `start` when there
+/// is none.
+fn read_state(path: &str, names: &[&str], start: Theta) -> Result<(u32, Theta), String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, start)),
         Err(error) => return Err(format!("{path}: {error}")),
     };
-    let malformed = || format!("{path}: expected k_done and the ten parameters, one name<TAB>value line each");
+    let malformed = || format!("{path}: expected k_done and the {} parameters, one name<TAB>value line each", names.len());
     let mut lines = text.lines();
     let k_done: u32 = match lines.next().and_then(|line| line.split_once('\t')) {
         Some(("k_done", value)) => value.parse().map_err(|_| malformed())?,
         _ => return Err(malformed()),
     };
     let mut theta = start;
-    for (i, name) in SearchParameters::NAMES.iter().enumerate() {
+    for (i, name) in names.iter().enumerate() {
         match lines.next().and_then(|line| line.split_once('\t')) {
             Some((found, value)) if found == *name => theta[i] = value.parse().map_err(|_| malformed())?,
             _ => return Err(malformed()),
@@ -507,16 +569,17 @@ fn read_state(path: &str, start: Theta) -> Result<(u32, Theta), String> {
 
 /// `pairs.tsv`'s header: the pair's `k`, its result from the plus side, the machine that played it,
 /// its Delta as signs, theta after.
-fn pairs_header() -> String {
-    format!("k\tr\tsource\tdelta\t{}\n", SearchParameters::NAMES.join("\t"))
+fn pairs_header(kind: TuneKind) -> String {
+    format!("k\tr\tsource\tdelta\t{}\n", kind.names().join("\t"))
 }
 
 /// Starts `pairs.tsv` with its header, or checks that an existing one has today's.
-fn check_pairs_header(path: &str) -> Result<(), String> {
+fn check_pairs_header(path: &str, kind: TuneKind) -> Result<(), String> {
+    let header = pairs_header(kind);
     match std::fs::read_to_string(path) {
-        Ok(text) if text.lines().next() == Some(pairs_header().trim_end()) => Ok(()),
-        Ok(_) => Err(format!("{path} has another header than today's ({}): move it away to resume", pairs_header().trim_end())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => append(path, &pairs_header()),
+        Ok(text) if text.lines().next() == Some(header.trim_end()) => Ok(()),
+        Ok(_) => Err(format!("{path} has another header than today's ({}): move it away to resume", header.trim_end())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => append(path, &header),
         Err(error) => Err(format!("{path}: {error}")),
     }
 }
@@ -567,31 +630,45 @@ pub(crate) mod tests {
         }
     }
 
-    /// A tune of pesto in `dir`, `pairs` pairs at depth 2, as `open` would make it.
+    /// A search tune of pesto in `dir`, `pairs` pairs at depth 2, as `open` would make it.
     pub(crate) fn tune_in(dir: &str, pairs: u32) -> Tune {
+        tune_of_kind_in(dir, pairs, TuneKind::Search)
+    }
+
+    /// The search a time tune of the tests plays.
+    const TIME_TUNE_SEARCH: SearchParameters = SearchParameters { razoring_margin: 111, ..SearchParameters::DEFAULT };
+
+    /// A tune of `kind` of pesto in `dir`, as `tune_in`; a time tune plays `TIME_TUNE_SEARCH`.
+    fn tune_of_kind_in(dir: &str, pairs: u32, kind: TuneKind) -> Tune {
         std::fs::create_dir_all(dir).unwrap();
-        let specs = spsa::SPECS;
+        let specs = kind.specs().to_vec();
+        let file = match kind {
+            TuneKind::Search => fattorini::nnue::SEARCH_PARAMETERS_FILE,
+            TuneKind::Time => fattorini::nnue::TIME_PARAMETERS_FILE,
+        };
         let mut tune = Tune {
             player: "pesto".to_string(),
             network: None,
+            kind,
+            search: (kind == TuneKind::Time).then_some(TIME_TUNE_SEARCH),
             pairs,
             r_end: spsa::R_END,
-            seed: spsa::seed_of("pesto"),
+            seed: spsa::seed_of("pesto", kind),
             control: "depth 2".to_string(),
-            specs,
             schedule: Schedule::new(pairs, spsa::R_END, &specs),
-            dir: dir.to_string(),
-            parameters_path: format!("{dir}/parameters.txt"),
             theta: spsa::start_theta(&specs),
+            specs,
+            dir: dir.to_string(),
+            parameters_path: format!("{dir}/{file}"),
             k_done: 0,
             next_k: 0,
             returned: Vec::new(),
             applied: std::collections::HashSet::new(),
         };
         check_spec(&format!("{dir}/spec.txt"), &tune.spec_text()).unwrap();
-        (tune.k_done, tune.theta) = read_state(&tune.state_path(), tune.theta).unwrap();
+        (tune.k_done, tune.theta) = read_state(&tune.state_path(), kind.names(), tune.theta.clone()).unwrap();
         tune.next_k = tune.k_done;
-        check_pairs_header(&tune.pairs_path()).unwrap();
+        check_pairs_header(&tune.pairs_path(), kind).unwrap();
         tune
     }
 
@@ -634,10 +711,50 @@ pub(crate) mod tests {
         assert!(tune.done());
         assert_eq!(std::fs::read_to_string(tune.pairs_path()).unwrap().lines().count(), 1 + 4);
         let again = tune_in(&dir, 4);
-        assert_eq!((again.k_done, again.theta), (4, tune.theta), "the state reads back");
+        assert_eq!((again.k_done, &again.theta), (4, &tune.theta), "the state reads back");
         assert_eq!(SearchParameters::read_file(tune.parameters_path()).unwrap(), None);
-        let tuned = tune.finish().unwrap();
-        assert_eq!(SearchParameters::read_file(tune.parameters_path()).unwrap(), Some(tuned));
+        tune.finish().unwrap();
+        assert!(tune.parameters_path().ends_with("/search-parameters.txt"));
+        assert_eq!(SearchParameters::read_file(tune.parameters_path()).unwrap(), Some(spsa::search_parameters(&tune.theta)));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A time tune: both sides play its search and their own time points; its state, spec and result
+    /// are the 22 time parameters', unrounded.
+    #[test]
+    fn a_time_tune_plays_its_search_and_tunes_the_clock() {
+        let dir = temp_dir("time");
+        let mut tune = tune_of_kind_in(&dir, 4, TuneKind::Time);
+        let entry = tune.entry(2, "pesto");
+        for player in &entry.players {
+            assert_eq!(player.parameters, Some(TIME_TUNE_SEARCH), "the same search on both sides");
+        }
+        assert_ne!(entry.players[0].time, entry.players[1].time);
+        assert!(entry.players[0].time.is_some());
+        assert_eq!(run_in_spec(&tune.spec_text()), Some((TuneKind::Time, 4, spsa::TIME_SPECS.to_vec())));
+        assert!(tune.spec_text().contains("kind\ttime\n"));
+        for k in 0..4 {
+            tune.take_k();
+            tune.record(k, 1, "alpha").unwrap();
+        }
+        let again = tune_of_kind_in(&dir, 4, TuneKind::Time);
+        assert_eq!((again.k_done, &again.theta), (4, &tune.theta), "22 values read back");
+        assert_eq!(tune.rows().len(), 22);
+        tune.finish().unwrap();
+        assert!(tune.parameters_path().ends_with("/time-parameters.txt"));
+        let tuned = fattorini::search::TimeParameters::read_file(tune.parameters_path()).unwrap().unwrap();
+        assert_eq!(tuned, spsa::time_parameters(&tune.theta), "unrounded");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A search tune's spec is what it was before kinds existed, so one under way resumes.
+    #[test]
+    fn a_search_tunes_spec_has_no_kind_line() {
+        let dir = temp_dir("search-spec");
+        let tune = tune_in(&dir, 4);
+        let text = tune.spec_text();
+        assert!(text.starts_with("player\tpesto\npairs\t4\n"), "{text}");
+        assert!(text.contains("\nrazoring_margin\t150\t50\t400\t19\n"), "whole numbers as before: {text}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -659,7 +776,7 @@ pub(crate) mod tests {
         assert!(check_spec(&format!("{dir}/spec.txt"), &tune.spec_text()).is_ok());
         let refused = check_spec(&format!("{dir}/spec.txt"), &tune.spec_text().replace("pairs\t4", "pairs\t5")).unwrap_err();
         assert!(refused.contains("4 pairs") && refused.contains("5 pairs") && !refused.contains('\n'), "{refused}");
-        assert_eq!(run_in_spec(&tune.spec_text()), Some((4, spsa::SPECS)));
+        assert_eq!(run_in_spec(&tune.spec_text()), Some((TuneKind::Search, 4, spsa::SEARCH_SPECS.to_vec())));
         std::fs::remove_dir_all(&dir).ok();
     }
 

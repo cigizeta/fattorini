@@ -158,7 +158,8 @@ function duration(seconds) {
 }
 
 // A test's title: its kind and settings, then its two sides by role, the champion first as on the
-// form and the gauge, each a player whose name says the parameters it plays (`@tuned`, `@untuned`).
+// form and the gauge, each a player whose name says what it plays (`@untuned`, `@search-tuned`,
+// `@search-time-tuned`).
 function testTitle(view) {
   const settings = view.test === "match" ? ` of ${view.settings} pairs` : view.test === "sprt" ? ` [${view.settings.replace(",", ", ")}]` : "";
   return `${view.test}${settings}: champion ${view.champion} against challenger ${view.challenger}`;
@@ -253,7 +254,7 @@ function work(view, waiting, stop = "") {
       const progress = length + evidence;
       // A side's points and their share of the games: `452.0 (48.5%)`.
       const side = (points) => `${number(points, 1)} (${percent(view.games > 0 ? points / view.games : 0.5)})`;
-      const mixed = view.mixed ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
+      const mixed = view.mixed ? `<div class="bad">mixed: the two sides tuned differently</div>` : "";
       const title = `<h2>${escape(testTitle(view))}</h2>`;
       return (stop ? `<div class="row">${title}${stop}</div>` : title) + `<div class="muted">${escape(view.limit)}</div>${mixed}`
         + progress
@@ -523,14 +524,22 @@ function tuneText(tune) {
   return tune[0] >= tune[1] ? `tuned, ${whole(tune[1])} pairs` : `tune at ${whole(tune[0])} of ${whole(tune[1])} pairs`;
 }
 
-// A player's tune: where it stands, and, on this machine, Tune for a tune not finished, as its
-// config's tune: says.
+const tuneDone = (tune) => tune && tune[0] >= tune[1];
+const timeTuneScreen = (player) => `tune of ${player}, time`;
+
+// A player's tunes: its search's, then, once that is done, its time management's (the developer,
+// 2026-11-13: the search first, then the time); where each stands and, on this machine, a button
+// for one not finished, as its config's tune: says.
 function tuneRow(player) {
-  const done = player.tune && player.tune[0] >= player.tune[1];
-  const controls = token && !done
-    ? ` <button data-tune="${escape(player.name)}" data-screen="${escape(tuneScreen(player.name))}"${running ? " disabled" : ""}>${player.tune ? "Resume tune" : "Tune"}</button><span class="said bad"></span>`
+  const button = (word, screen, tune, label) => token && !tuneDone(tune)
+    ? ` <button data-tune="${escape(player.name)}" data-tune-word="${word}" data-screen="${escape(screen)}"${running ? " disabled" : ""}>${tune ? `Resume ${label}` : label[0].toUpperCase() + label.slice(1)}</button><span class="said bad"></span>`
     : "";
-  return `<div class="row"><span>${escape(player.name)}: ${escape(tuneText(player.tune))}</span>${controls}</div>`;
+  const search = `<div class="row"><span>${escape(player.name)}, search: ${escape(tuneText(player.tune))}</span>`
+    + button("--tune", tuneScreen(player.name), player.tune, "tune") + `</div>`;
+  const time = !tuneDone(player.tune) ? ""
+    : `<div class="row"><span>${escape(player.name)}, time: ${escape(tuneText(player.time_tune))}</span>`
+      + button("--time-tune", timeTuneScreen(player.name), player.time_tune, "time tune") + `</div>`;
+  return search + time;
 }
 
 function runWhere(run) {
@@ -728,7 +737,7 @@ function drawConfig() {
     button.onclick = () => { location.hash = screenHash(current, button.dataset.screenOpen); };
   });
   element.querySelectorAll("[data-tune]").forEach((button) => {
-    button.onclick = () => start(["--tune", button.dataset.tune], button);
+    button.onclick = () => start([button.dataset.tuneWord, button.dataset.tune], button);
   });
   element.querySelectorAll("[data-source]").forEach((button) => {
     button.onclick = () => start([button.dataset.source, current], button);
@@ -793,7 +802,7 @@ function booksScreen() {
     const networks = catalog.networks.filter((network) => network.name !== "pesto");
     const score = source.graph === null || !token || networks.length === 0 ? ""
       : `<div class="row"><select class="scoreNetwork">${networks.map((network, index) => option(network.name, network.name, index === networks.length - 1)).join("")}</select>`
-        + `<select class="scoreTuned">${option("tuned", "tuned", true)}${option("untuned", "untuned", false)}</select>`
+        + `<select class="scoreTuned">${option("search-tuned", "search-tuned", true)}${option("untuned", "untuned", false)}</select>`
         + ` depth <input class="scoreDepth" type="number" min="1" max="30" step="1" value="20" size="3">`
         + `<button data-score="${escape(source.name)}"${state.running ? " disabled" : ""}>Score book</button><span class="said bad"></span></div>`;
     return `<section><h2>${escape(source.name)}</h2><div class="muted">${escape(source.pgn || "no PGN")}</div>`
@@ -901,10 +910,11 @@ function sideRow(label, side) {
         return option(n.name, what, n.name === network.name);
       }).join(""));
   }
-  const tunable = network.tuned;
-  if (!tunable) testForm[side + "Parameters"] = "untuned";
-  const parameters = option("untuned", "untuned", testForm[side + "Parameters"] === "untuned")
-    + (tunable ? option("tuned", "its tune", testForm[side + "Parameters"] === "tuned") : "");
+  // Each suffix offered only when the network has its tunes: `search-tuned` with a search tune,
+  // `search-time-tuned` with both.
+  const offered = ["untuned"].concat(network.tuned ? ["search-tuned"] : [], network.time_tuned ? ["search-time-tuned"] : []);
+  if (!offered.includes(testForm[side + "Parameters"])) testForm[side + "Parameters"] = "untuned";
+  const parameters = offered.map((suffix) => option(suffix, suffix, testForm[side + "Parameters"] === suffix)).join("");
   return `<div class="row"><label>${label}</label>${steps}<select data-field="${side}Parameters">${parameters}</select></div>`;
 }
 
@@ -913,7 +923,7 @@ function testWords() {
   const f = testForm;
   const settings = f.kind === "match" ? f.pairs.trim() : f.kind === "sprt" ? `${f.elo0.trim()},${f.elo1.trim()}` : "-";
   const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${clockText().text}`;
-  // Each side a player, its parameters after its `@`: `tuned` or `untuned`.
+  // Each side a player, its suffix after its `@`: `untuned`, `search-tuned` or `search-time-tuned`.
   const side = (name) => `${f[name]}@${f[name + "Parameters"]}`;
   return ["--test", f.kind, settings, side("challenger"), side("champion"), limit];
 }
@@ -948,9 +958,10 @@ function testsScreen() {
         + `${option("repeating", "repeating", f.clockKind === "repeating")}</select> ${clockFields}</div>`
         + `<div class="row"><label></label>${presets}</div>`
       : "");
-  // As `Spec::mixed`: two different players, one tuned; one player against itself measures its tune.
+  // As `Spec::mixed`: two different players, tuned differently; one player against itself measures
+  // its tune.
   const mixed = f.challengerParameters !== f.championParameters && f.challenger !== f.champion
-    ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
+    ? `<div class="bad">mixed: the two sides tuned differently</div>` : "";
   const form = token
     ? `<section><h2>New test</h2><form onsubmit="return false">`
       + `<div class="row"><label>Kind</label><select data-field="kind">${kinds}</select></div>${settings}`
@@ -988,7 +999,7 @@ function testScreen() {
   }
   const score = t.games > 0 ? `, the champion ${percent(1 - t.challenger_points / t.games)}` : "";
   return `<section><h2>${escape(testTitle(view))}</h2><div class="muted">${escape(t.limit)}; started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
-    + (t.mixed ? `<div class="bad">mixed: one side tuned, the other not</div>` : "")
+    + (t.mixed ? `<div class="bad">mixed: the two sides tuned differently</div>` : "")
     + `<div>${whole(t.games)} games${score}</div><div><b>${escape(t.verdict)}</b></div>${resume}</section>`;
 }
 

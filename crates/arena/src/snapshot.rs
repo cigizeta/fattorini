@@ -1,7 +1,8 @@
-//! `arena snapshot <player>@<tuned|untuned>`: a release build of `fattorini` with that player's
-//! network and parameters embedded, and a description of itself (`build.rs`), written straight to
-//! Drive's `data/snapshots/` (never locally), under a name saying what it plays and when it was
-//! taken: `fattorini-<player>-<tuned|untuned>-<YYYYMMDD-HHMM>.exe`, UTC. A command line feature only,
+//! `arena snapshot <player>@<suffix>`: a release build of `fattorini` with that player's network and
+//! parameters embedded, and a description of itself (`build.rs`), written straight to Drive's
+//! `data/snapshots/` (never locally), under a name saying what it plays and when it was taken:
+//! `fattorini-<player>-<suffix>-<YYYYMMDD-HHMM>.exe`, UTC, the suffix `untuned`, `search-tuned` or
+//! `search-time-tuned`. A command line feature only,
 //! run on any machine, no smithy nor claim involved. One a player and suffix: a new
 //! snapshot replaces the older ones of the same player and suffix. lichess-bot's `config.yml` names the one it plays.
 //!
@@ -13,7 +14,7 @@
 use std::process;
 
 use fattorini::pipeline::{players, protocol, remote};
-use fattorini::search::SearchParameters;
+use fattorini::search::{SearchParameters, TimeParameters};
 
 use super::match_player::{self, Engines};
 
@@ -24,10 +25,10 @@ const EMBEDDED_TARGET_DIR: &str = "target/snapshot";
 /// Where snapshots go, as a path under `data/`: written only on Drive, never locally.
 const SNAPSHOTS_DIR: &str = "data/snapshots";
 
-/// `arena snapshot <player>@<tuned|untuned>`: takes the snapshot, or says why not and exits.
+/// `arena snapshot <player>@<suffix>`: takes the snapshot, or says why not and exits.
 pub(crate) fn command(rest: &[String]) {
     let [name] = rest else {
-        eprintln!("usage: arena snapshot <player>@<tuned|untuned>, the player pesto or a generation's winner");
+        eprintln!("usage: arena snapshot <player>@<untuned|search-tuned|search-time-tuned>, the player pesto or a generation's winner");
         process::exit(2);
     };
     match take(name) {
@@ -44,7 +45,7 @@ pub(crate) fn command(rest: &[String]) {
 /// then built, and the same player's older snapshots removed. `Ok` with the file written.
 fn take(name: &str) -> Result<String, String> {
     let Some((player, suffix)) = name.split_once('@') else {
-        return Err(format!("{name:?}: say what it searches with, {name}@tuned or {name}@untuned"));
+        return Err(format!("{name:?}: say what it plays with, as {name}@search-tuned"));
     };
     may_snapshot(player)?;
     // Fattorini players only reach here, so the registry is read only to tell them from an engine.
@@ -57,12 +58,10 @@ fn take(name: &str) -> Result<String, String> {
     let prefix = format!("fattorini-{player}-{suffix}-");
     let stem = format!("{prefix}{stamp}");
     let out = format!("{dir}/{stem}.exe");
-    let parameters_file = parameters_file(entry.parameters, EMBEDDED_TARGET_DIR, &stem)?;
+    let files = parameter_files(entry.parameters, entry.time, EMBEDDED_TARGET_DIR, &stem)?;
     let description = describe(name, &protocol::current_commit(), &now_text());
-    let built = build_embedded(&EmbeddedBuild::plain(entry.net.as_deref(), parameters_file.as_deref(), &description), &out);
-    if let Some(file) = &parameters_file {
-        std::fs::remove_file(file).ok();
-    }
+    let built = build_embedded(&EmbeddedBuild::plain(entry.net.as_deref(), &files, &description), &out);
+    files.remove();
     built?;
     // One snapshot a player and suffix: the older ones go, only once the new one is in place.
     let older = remote::list(SNAPSHOTS_DIR, &|file| is_older_snapshot(file, &prefix, &stem)).map_err(|error| error.to_string())?;
@@ -74,18 +73,43 @@ fn take(name: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// The parameters as a local file in `dir`, for `build.rs`, beside the build while it runs; none for
-/// the untuned defaults, which need no file. The caller removes it after the build.
-pub(crate) fn parameters_file(parameters: Option<SearchParameters>, dir: &str, stem: &str) -> Result<Option<String>, String> {
-    match parameters {
-        Some(parameters) if parameters != SearchParameters::DEFAULT => {
-            std::fs::create_dir_all(dir).map_err(|error| format!("failed to create {dir}: {error}"))?;
-            let file = format!("{dir}/{stem}.parameters.txt");
-            parameters.write_file(&file)?;
-            Ok(Some(file))
+/// The parameter files a build embeds (`build.rs`), each local, beside the build while it runs;
+/// none for a kind at its defaults, which needs no file.
+#[derive(Debug, Default)]
+pub(crate) struct ParameterFiles {
+    pub(crate) search: Option<String>,
+    pub(crate) time: Option<String>,
+}
+
+impl ParameterFiles {
+    /// Removes the files, after the build.
+    pub(crate) fn remove(&self) {
+        for file in [&self.search, &self.time].into_iter().flatten() {
+            std::fs::remove_file(file).ok();
         }
-        _ => Ok(None),
     }
+}
+
+/// The parameters as local files in `dir`, named after `stem`, for `build.rs`; none for a kind
+/// absent or at its defaults. The caller removes them after the build (`ParameterFiles::remove`).
+pub(crate) fn parameter_files(
+    search: Option<SearchParameters>, time: Option<TimeParameters>, dir: &str, stem: &str,
+) -> Result<ParameterFiles, String> {
+    let mut files = ParameterFiles::default();
+    let create_dir = || std::fs::create_dir_all(dir).map_err(|error| format!("failed to create {dir}: {error}"));
+    if let Some(search) = search.filter(|search| *search != SearchParameters::DEFAULT) {
+        create_dir()?;
+        let file = format!("{dir}/{stem}.search-parameters.txt");
+        search.write_file(&file)?;
+        files.search = Some(file);
+    }
+    if let Some(time) = time.filter(|time| *time != TimeParameters::DEFAULT) {
+        create_dir()?;
+        let file = format!("{dir}/{stem}.time-parameters.txt");
+        time.write_file(&file)?;
+        files.time = Some(file);
+    }
+    Ok(files)
 }
 
 /// Whether `file` is another snapshot of the player and suffix `prefix` names: the prefix, then a
@@ -140,7 +164,7 @@ pub(crate) fn describe(player: &str, commit: &str, taken: &str) -> String {
 }
 
 /// A release's description: the tag, written whole, where a snapshot says the commit, as
-/// `lc0-psq-threats-screlu-g1-r1@tuned v0.1.0 2026-11-20 10:00 UTC`.
+/// `lc0-psq-threats-screlu-g1-r1@search-tuned v0.1.0 2026-11-20 10:00 UTC`.
 pub(crate) fn describe_release(player: &str, tag: &str, built: &str) -> String {
     format!("{player} {tag} {built}")
 }
@@ -156,8 +180,8 @@ pub(crate) fn now_text() -> String {
 pub(crate) struct EmbeddedBuild<'a> {
     /// The `.nnue`; none, the PeSTO evaluation.
     pub(crate) network: Option<&'a str>,
-    /// The `parameters.txt`; none, the untuned defaults.
-    pub(crate) parameters: Option<&'a str>,
+    /// The parameter files; a kind without one, its defaults.
+    pub(crate) parameters: &'a ParameterFiles,
     pub(crate) description: &'a str,
     /// The third-party notices, a release's alone.
     pub(crate) notices: Option<&'a str>,
@@ -168,7 +192,7 @@ pub(crate) struct EmbeddedBuild<'a> {
 
 impl<'a> EmbeddedBuild<'a> {
     /// A snapshot's or a match's build: in `EMBEDDED_TARGET_DIR`, no notices, the runtime dynamic.
-    pub(crate) fn plain(network: Option<&'a str>, parameters: Option<&'a str>, description: &'a str) -> EmbeddedBuild<'a> {
+    pub(crate) fn plain(network: Option<&'a str>, parameters: &'a ParameterFiles, description: &'a str) -> EmbeddedBuild<'a> {
         EmbeddedBuild { network, parameters, description, notices: None, target_dir: EMBEDDED_TARGET_DIR, static_runtime: false }
     }
 }
@@ -188,7 +212,13 @@ pub(crate) fn build_embedded(build: &EmbeddedBuild, out: &str) -> Result<(), Str
     let absolute = |path: &str| {
         std::path::absolute(path).map(|path| path.into_os_string()).map_err(|error| format!("{path}: {error}"))
     };
-    for (variable, path) in [("FATTORINI_EVALFILE", build.network), ("FATTORINI_PARAMETERS", build.parameters), ("FATTORINI_NOTICES", build.notices)] {
+    let variables = [
+        ("FATTORINI_EVALFILE", build.network),
+        ("FATTORINI_SEARCH_PARAMETERS", build.parameters.search.as_deref()),
+        ("FATTORINI_TIME_PARAMETERS", build.parameters.time.as_deref()),
+        ("FATTORINI_NOTICES", build.notices),
+    ];
+    for (variable, path) in variables {
         match path {
             Some(path) => command.env(variable, absolute(path)?),
             None => command.env_remove(variable),
@@ -215,8 +245,11 @@ mod tests {
     fn a_description_says_the_player_the_commit_and_what_is_embedded() {
         let description = describe("pesto@untuned", "0123456789abcdef (modified)", "2026-11-06 15:32 UTC");
         assert_eq!(description, "pesto@untuned 0123456-dirty 2026-11-06 15:32 UTC");
-        assert_eq!(describe("pesto@tuned", "0123456789abcdef", "2026-11-06 15:32 UTC"), "pesto@tuned 0123456 2026-11-06 15:32 UTC");
-        assert_eq!(describe_release("pesto@tuned", "v2026.11.0-rc.2", "2026-11-06 15:32 UTC"), "pesto@tuned v2026.11.0-rc.2 2026-11-06 15:32 UTC");
+        assert_eq!(describe("pesto@search-tuned", "0123456789abcdef", "2026-11-06 15:32 UTC"), "pesto@search-tuned 0123456 2026-11-06 15:32 UTC");
+        assert_eq!(
+            describe_release("pesto@search-tuned", "v2026.11.0-rc.2", "2026-11-06 15:32 UTC"),
+            "pesto@search-tuned v2026.11.0-rc.2 2026-11-06 15:32 UTC"
+        );
     }
 
     #[test]
@@ -225,7 +258,11 @@ mod tests {
         let stem = "fattorini-pesto-untuned-20261106-1532";
         assert!(is_older_snapshot("fattorini-pesto-untuned-20261105-0900.exe", prefix, stem));
         assert!(!is_older_snapshot("fattorini-pesto-untuned-20261106-1532.exe", prefix, stem));
-        assert!(!is_older_snapshot("fattorini-pesto-tuned-20261105-0900.exe", prefix, stem));
+        assert!(!is_older_snapshot("fattorini-pesto-search-tuned-20261105-0900.exe", prefix, stem));
+        assert!(
+            !is_older_snapshot("fattorini-pesto-search-time-tuned-20261105-0900.exe", "fattorini-pesto-search-tuned-", stem),
+            "each suffix its own"
+        );
         assert!(!is_older_snapshot("fattorini-pesto-psq-g1-r1-untuned-20261105-0900.exe", "fattorini-pesto-", stem));
         assert!(!is_older_snapshot("fattorini-pesto-untuned-20261105-0900.exe.partial", prefix, stem));
     }

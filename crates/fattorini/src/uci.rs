@@ -11,7 +11,7 @@ use crate::perft::perft;
 use crate::search::{
     choose_best_move_multipv_with_progress, choose_best_move_with_parameters, choose_best_move_with_progress,
     root_reported_score, select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
-    SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
+    SearchParameters, TimeParameters, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
 };
 use crate::tablebase::{SyzygyTablebase, TbResult};
 use crate::tt::TranspositionTable;
@@ -580,6 +580,9 @@ pub struct Engine {
     /// The search parameters every search uses: the embedded ones (`embedded_parameters`), then any
     /// field a `setoption` of its UCI name sets.
     parameters: SearchParameters,
+    /// The time parameters every clock is planned with: the embedded ones
+    /// (`embedded_time_parameters`), no option setting them.
+    time_parameters: TimeParameters,
     /// What the build is (`embedded_description`), said in `id name`; empty for a development build.
     description: String,
     /// Whether the next `go` pins this process to a core group (`core_pinning.rs`): set by `run`
@@ -633,6 +636,7 @@ impl Engine {
             tablebase: Arc::new(SyzygyTablebase::new()),
             evaluator: None,
             parameters: SearchParameters::DEFAULT,
+            time_parameters: TimeParameters::DEFAULT,
             description: String::new(),
             pin_at_next_go: false,
             last_score: Arc::new(Mutex::new(None)),
@@ -644,6 +648,7 @@ impl Engine {
         let mut engine = Engine::new();
         engine.evaluator = embedded_evaluator();
         engine.parameters = embedded_parameters();
+        engine.time_parameters = embedded_time_parameters();
         engine.description = embedded_description();
         engine
     }
@@ -946,6 +951,7 @@ impl Engine {
             movetime,
             infinite,
             self.move_overhead_ms,
+            self.time_parameters,
         )
         .map(|limit| limit.with_fullmove(self.fullmove));
         // A game move with one legal move searches depth 1 (`single_move_limit`); `infinite` does
@@ -1212,8 +1218,13 @@ fn ponder_move(board: &Board, pv: &[Move], tt: &TranspositionTable) -> Option<Mo
 /// option nor file beside the binary chooses a network.
 const EMBEDDED_NETWORK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded.nnue"));
 
-/// The `parameters.txt` a build embeds (`FATTORINI_PARAMETERS`), empty for the untuned defaults.
-const EMBEDDED_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-parameters.txt"));
+/// The `search-parameters.txt` a build embeds (`FATTORINI_SEARCH_PARAMETERS`), empty for the
+/// untuned defaults.
+const EMBEDDED_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-search-parameters.txt"));
+
+/// The `time-parameters.txt` a build embeds (`FATTORINI_TIME_PARAMETERS`), empty for the untuned
+/// defaults.
+const EMBEDDED_TIME_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-time-parameters.txt"));
 
 /// What the build is (`FATTORINI_DESCRIPTION`), one line, empty for a development build.
 const EMBEDDED_DESCRIPTION: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-description.txt"));
@@ -1242,6 +1253,19 @@ pub fn embedded_parameters() -> SearchParameters {
     }
     let text = String::from_utf8_lossy(EMBEDDED_PARAMETERS);
     SearchParameters::parse_file_text("the embedded parameters", &text).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(1);
+    })
+}
+
+/// The embedded time parameters, `TimeParameters::DEFAULT` when the build has none; malformed ones
+/// end the process, as bad search parameters do.
+pub fn embedded_time_parameters() -> TimeParameters {
+    if EMBEDDED_TIME_PARAMETERS.is_empty() {
+        return TimeParameters::DEFAULT;
+    }
+    let text = String::from_utf8_lossy(EMBEDDED_TIME_PARAMETERS);
+    TimeParameters::parse_file_text("the embedded time parameters", &text).unwrap_or_else(|error| {
         eprintln!("{error}");
         std::process::exit(1);
     })
@@ -1512,7 +1536,7 @@ mod tests {
 
     #[test]
     fn a_search_parameter_is_no_uci_option() {
-        // Set only by the `parameters.txt` beside the network, so no GUI can disagree with it.
+        // Set only by the `search-parameters.txt` beside the network, so no GUI can disagree with it.
         assert_eq!(parse_command("setoption name RazoringMargin value 150"), UciCommand::Unknown);
     }
 

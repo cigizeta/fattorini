@@ -42,7 +42,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::lan::{field, fields};
-use crate::search::SearchParameters;
+use crate::search::{SearchParameters, TimeParameters};
 
 /// The port the smithy listens on, for the arenas and its control.
 pub const SMITHY_PORT: u16 = 47_821;
@@ -501,26 +501,35 @@ impl Limit {
 const RETIRED_TIME_MANAGEMENTS: [&str; 3] = ["Classic", "Split", "Reckless"];
 
 /// A player of a chore: a network by its file's path below the store (the `HelloReply`'s), `data/...`
-/// as the mirrored tree names it, one exact file, or `PESTO`; and the search parameters it plays with, `None` for its own (a network's tuning, or the defaults). The smithy
-/// writes a tuned player's values in full, so an arena reads no file for them. A third field, the
-/// time management of the duels of 2026-11 (`RETIRED_TIME_MANAGEMENTS`), is no longer written; read
-/// back it is ignored, so a chore of a smithy one build behind still parses, and any other third
-/// field is refused.
+/// as the mirrored tree names it, one exact file, or `PESTO`; the search parameters it plays with,
+/// `None` for its own (a network's tuning, or the defaults); and its time parameters, `None` for the
+/// defaults. The smithy writes a tuned player's values in full, so an arena reads no file for them:
+/// the search's as `name=value`, the time's after them on the same list as `tm.name=value`, all 22
+/// or none. An arena a build behind refuses a `tm.` key as an unknown parameter, so a forgotten
+/// update fails the chore rather than playing the default clock unnoticed. A third field, the time
+/// management of the duels of 2026-11 (`RETIRED_TIME_MANAGEMENTS`), is no longer written; read back
+/// it is ignored, so a chore of a smithy one build behind still parses, and any other third field is
+/// refused.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Player {
     pub network: String,
     pub parameters: Option<SearchParameters>,
+    pub time: Option<TimeParameters>,
 }
+
+/// The prefix of a time parameter's key in a player's text.
+const TIME_KEY_PREFIX: &str = "tm.";
 
 impl Player {
     pub fn text(&self) -> String {
-        let parameters = match &self.parameters {
-            None => "own".to_string(),
-            Some(parameters) => {
-                SearchParameters::NAMES.iter().zip(parameters.values()).map(|(name, value)| format!("{name}={value}")).collect::<Vec<_>>().join(",")
-            }
+        let mut pairs: Vec<String> = match &self.parameters {
+            None => vec!["own".to_string()],
+            Some(parameters) => SearchParameters::NAMES.iter().zip(parameters.values()).map(|(name, value)| format!("{name}={value}")).collect(),
         };
-        format!("{}\t{parameters}", self.network)
+        if let Some(time) = &self.time {
+            pairs.extend(TimeParameters::NAMES.iter().zip(time.values()).map(|(name, value)| format!("{TIME_KEY_PREFIX}{name}={value}")));
+        }
+        format!("{}\t{}", self.network, pairs.join(","))
     }
 
     pub fn parse(text: &str) -> Result<Player, String> {
@@ -533,13 +542,16 @@ impl Player {
             Some((parameters, management)) if RETIRED_TIME_MANAGEMENTS.iter().any(|retired| retired.eq_ignore_ascii_case(management)) => parameters,
             Some((_, management)) => return Err(format!("player: {management:?} is no time management of the duels")),
         };
-        let parameters = if parameters == "own" {
-            None
-        } else {
-            let lines: Vec<String> = parameters.split(',').map(|pair| pair.replacen('=', "\t", 1)).collect();
-            Some(SearchParameters::parse_file_text("player", &lines.join("\n"))?)
+        let (time_pairs, search_pairs): (Vec<&str>, Vec<&str>) = parameters.split(',').partition(|pair| pair.starts_with(TIME_KEY_PREFIX));
+        let lines = |pairs: &[&str]| -> String {
+            pairs.iter().map(|pair| pair.trim_start_matches(TIME_KEY_PREFIX).replacen('=', "\t", 1)).collect::<Vec<_>>().join("\n")
         };
-        Ok(Player { network: network.to_string(), parameters })
+        let time = if time_pairs.is_empty() { None } else { Some(TimeParameters::parse_file_text("player", &lines(&time_pairs))?) };
+        let parameters = match search_pairs.as_slice() {
+            ["own"] => None,
+            _ => Some(SearchParameters::parse_file_text("player", &lines(&search_pairs))?),
+        };
+        Ok(Player { network: network.to_string(), parameters, time })
     }
 }
 
@@ -769,8 +781,9 @@ mod tests {
 
     #[test]
     fn every_chore_reads_back() {
-        let own = |network: &str| Player { network: network.to_string(), parameters: None };
+        let own = |network: &str| Player { network: network.to_string(), parameters: None, time: None };
         let tuned = SearchParameters { razoring_margin: -7, ..SearchParameters::DEFAULT };
+        let clock = TimeParameters { soft_max: 0.0612345, changes_b: 0.3, ..TimeParameters::DEFAULT };
         let chores = [
             Chore {
                 id: "c000001".to_string(),
@@ -789,7 +802,7 @@ mod tests {
                 entries: vec![
                     Entry {
                         players: vec![
-                            Player { network: "aa".to_string(), parameters: Some(tuned) },
+                            Player { network: "aa".to_string(), parameters: Some(tuned), time: None },
                             own("bb"),
                         ],
                         count: 1,
@@ -817,8 +830,8 @@ mod tests {
                 reference_nps: None,
                 entries: vec![Entry {
                     players: vec![
-                        Player { network: "aa".to_string(), parameters: Some(tuned) },
-                        own("aa"),
+                        Player { network: "aa".to_string(), parameters: Some(tuned), time: Some(clock) },
+                        Player { network: "aa".to_string(), parameters: None, time: Some(TimeParameters::DEFAULT) },
                     ],
                     count: 1,
                     tags: vec![("K".to_string(), "3".to_string())],
@@ -840,7 +853,7 @@ mod tests {
             adjudicate: false,
             reference_nps: None,
             entries: vec![Entry {
-                players: vec![Player { network: "aa".to_string(), parameters: None }],
+                players: vec![Player { network: "aa".to_string(), parameters: None, time: None }],
                 count: 1,
                 tags: vec![
                     (SCORE_PARENT_TAG.to_string(), "463b96181691fc9c".to_string()),
@@ -875,7 +888,7 @@ mod tests {
 
     #[test]
     fn a_retired_time_management_field_is_read_and_ignored() {
-        let player = Player { network: "aa".to_string(), parameters: None };
+        let player = Player { network: "aa".to_string(), parameters: None, time: None };
         assert_eq!(player.text(), "aa\town");
         assert_eq!(Player::parse("aa\town"), Ok(player.clone()));
         assert_eq!(Player::parse("aa\town\tReckless"), Ok(player.clone()), "a chore of the duels' builds");
@@ -891,6 +904,8 @@ mod tests {
         assert!(parse_entries("player\taa\town\n").is_err(), "a player before any entry");
         assert!(parse_entries("entry\t1\nplayer\taa\trazoring_margin=1\n").is_err(), "parameters are all given, or none");
         assert!(parse_entries("entry\t1\nplayer\taa\town\tSlow\n").is_err(), "no time management of the duels");
+        assert!(parse_entries("entry\t1\nplayer\taa\town,tm.soft_max=0.05\n").is_err(), "time parameters are all given, or none");
+        assert!(parse_entries("entry\t1\nplayer\taa\town,tm.inc_fraction=0.75\n").is_err(), "a hand-picked constant is no time parameter");
         assert!(parse_entries("entry\t1\ntag\tK\ta\"b\n").is_err(), "a value no PGN tag can hold");
     }
 }

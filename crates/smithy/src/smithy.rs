@@ -63,7 +63,8 @@ use super::cache::CacheRecord;
 use fattorini::nnue::Tuning;
 use fattorini::labels::{Curve, LOGISTIC};
 use fattorini::bench::loaded_bench;
-use fattorini::search::SearchParameters;
+use fattorini::pipeline::spsa::TuneKind;
+use fattorini::search::{SearchParameters, TimeParameters};
 
 use super::matches;
 use super::rounds_display;
@@ -681,7 +682,7 @@ enum Work {
 // alone, except PeSTO, which plays its tune wherever it is a side. The tune at depth 9 cost no
 // quality: the lc0 network's against the defaults drew at depth 9, leaning to the tune.
 
-/// `player`'s finished tune, its `parameters.txt` (PeSTO's in its tune's folder); `None` while it has
+/// `player`'s finished search tune, its `search-parameters.txt` (PeSTO's in its tuning folder); `None` while it has
 /// none, a tune under way included, which writes it only at its end.
 fn finished_tune(player: &str) -> Result<Option<SearchParameters>, String> {
     if player == PESTO {
@@ -843,10 +844,12 @@ struct Shared {
 }
 
 /// How a test's pairs are played: its limit, and the challenger's and the champion's parameters, each
-/// given in full, the defaults or its tune.
+/// given in full, the defaults or its tune; and their time parameters, each its time tune in full, or
+/// `None` for the default clock.
 struct TestDealing {
     limit: Limit,
     parameters: [SearchParameters; 2],
+    time: [Option<TimeParameters>; 2],
 }
 
 /// A book's scoring as it is dealt: what every record must match (the network's player, depth,
@@ -854,7 +857,7 @@ struct TestDealing {
 /// started, each dealt by its index as a tune deals its `k`s (`Dealt::ks`), and its file.
 struct ScoreDealing {
     source: String,
-    /// The side as the job names it, `<network>@tuned`.
+    /// The side as the job names it, `<network>@search-tuned`.
     side: String,
     network: String,
     parameters: SearchParameters,
@@ -916,7 +919,7 @@ impl ScoreDealing {
     }
 
     fn player(&self) -> Player {
-        Player { network: self.network.clone(), parameters: Some(self.parameters) }
+        Player { network: self.network.clone(), parameters: Some(self.parameters), time: None }
     }
 }
 
@@ -1073,8 +1076,8 @@ impl Shared {
         for &(pairing, share) in shares {
             let (challenger, teacher) = pairings[pairing].clone();
             let players = vec![
-                Player { network: challenger, parameters: first },
-                Player { network: teacher, parameters: second },
+                Player { network: challenger, parameters: first, time: None },
+                Player { network: teacher, parameters: second, time: None },
             ];
             match dealt.matchups.iter_mut().find(|m| m.pairing == pairing) {
                 Some(matchup) => matchup.dealt += share,
@@ -1134,7 +1137,7 @@ impl Shared {
         let id = self.next_chore_id();
         let reference_nps = if matches!(limit, Limit::Clock(_)) { self.reference_nps } else { None };
         let chore = Chore { id: id.clone(), kind: TaskKind::Spsa, limit, adjudicate: true, reference_nps, entries };
-        let players = vec![Player { network: network.to_string(), parameters: None }; 2];
+        let players = vec![Player { network: network.to_string(), parameters: None, time: None }; 2];
         let dealt = Dealt {
             session: session.to_string(),
             epoch: self.epoch,
@@ -1291,7 +1294,7 @@ impl Shared {
                 (
                     TaskKind::SelfPlay,
                     Limit::Depth(self.depth()),
-                    vec![Player { network: teacher, parameters: Some(parameters) }],
+                    vec![Player { network: teacher, parameters: Some(parameters), time: None }],
                     None,
                     size,
                 )
@@ -1305,11 +1308,15 @@ impl Shared {
                 let (challenger, teacher) = pairings[pairing].clone();
                 // A test's sides play the parameters it gives them, under its limit; a gate's its
                 // `sides`, at the forge's depth.
-                let (limit, [first, second]) = match &self.test {
-                    Some(test) => (test.limit.clone(), test.parameters.map(Some)),
-                    None => (Limit::Depth(self.depth()), sides.map(Some)),
+                // A test's sides also play their time tunes; a gate plays a depth, no clock.
+                let (limit, [first, second], [first_time, second_time]) = match &self.test {
+                    Some(test) => (test.limit.clone(), test.parameters.map(Some), test.time),
+                    None => (Limit::Depth(self.depth()), sides.map(Some), [None; 2]),
                 };
-                let players = vec![Player { network: challenger, parameters: first }, Player { network: teacher, parameters: second }];
+                let players = vec![
+                    Player { network: challenger, parameters: first, time: first_time },
+                    Player { network: teacher, parameters: second, time: second_time },
+                ];
                 (TaskKind::Pair, limit, players, Some(pairing), size.min(self.wanted(Some(pairing))))
             }
         };
@@ -1943,8 +1950,10 @@ struct NetworkEntry {
     /// Its lambda: a candidate's, as its name says, or the winner's, which its name leaves out and
     /// the page shows beside it. `None` for PeSTO.
     lambda: Option<ArmLambda>,
-    /// Whether it has a tune, so may play it.
+    /// Whether it has a search tune, so may play `@search-tuned`.
     tuned: bool,
+    /// Whether it also has a time tune, so may play `@search-time-tuned`.
+    time_tuned: bool,
 }
 
 /// Every network a test may name, PeSTO first: in each run's generations, the winner of each
@@ -1955,12 +1964,24 @@ fn test_networks(runs: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
             .and_then(|player| player.own_tuning())
             .is_ok_and(|tuning| matches!(tuning, Tuning::Parameters(_)))
     };
-    let pesto = NetworkEntry { name: PESTO.to_string(), run: None, generation: None, winner: false, lambda: None, tuned: tuned(PESTO) };
+    let time_tuned = |name: &str| {
+        tuned(name) && players::FattoriniPlayer::resolve(name).and_then(|player| player.own_time_tuning()).is_ok_and(|time| time.is_some())
+    };
+    let pesto = NetworkEntry {
+        name: PESTO.to_string(),
+        run: None,
+        generation: None,
+        winner: false,
+        lambda: None,
+        tuned: tuned(PESTO),
+        time_tuned: time_tuned(PESTO),
+    };
     let mut networks = vec![pesto];
     for (run, generations, winners) in runs {
         for &generation in generations {
             let entry = |name: String, winner: bool, lambda: ArmLambda| NetworkEntry {
                 tuned: tuned(&name),
+                time_tuned: time_tuned(&name),
                 name,
                 run: Some(run.clone()),
                 generation: Some(generation),
@@ -2027,8 +2048,10 @@ struct GenerationEntry {
 #[derive(Serialize)]
 struct PlayerEntry {
     name: String,
-    /// Its tune's pairs done and pairs in all; none before it starts.
+    /// Its search tune's pairs done and pairs in all; none before it starts.
     tune: Option<(u32, u32)>,
+    /// Its time tune's, likewise.
+    time_tune: Option<(u32, u32)>,
 }
 
 /// The names of `configs/`' files, sorted.
@@ -2065,8 +2088,9 @@ fn run_finished(run: &str, state: Option<&GenState>) -> bool {
 }
 
 fn player_entry(name: String) -> PlayerEntry {
-    let tune = tune::progress(&name);
-    PlayerEntry { name, tune }
+    let tune = tune::progress(&name, TuneKind::Search);
+    let time_tune = tune::progress(&name, TuneKind::Time);
+    PlayerEntry { name, tune, time_tune }
 }
 
 fn catalog() -> Catalog {
@@ -2173,7 +2197,44 @@ fn unscaled(player: &str) -> Result<(), String> {
 }
 
 
-fn tune_args(player: &str) -> Result<tune::TuneArgs, String> {
+fn tune_args(player: &str, kind: TuneKind) -> Result<tune::TuneArgs, String> {
+    let mut args = search_tune_args(player)?;
+    if kind == TuneKind::Time {
+        // After the search's (the developer, 2026-11-13): both sides play the finished search tune,
+        // refused while there is none; the clock from the time defaults.
+        args.kind = TuneKind::Time;
+        args.start = None;
+        args.search = Some(required_tune(player, &format!("{player}'s time tune plays"))?);
+    }
+    Ok(args)
+}
+
+/// The words of a tune job of `kind` of `player`: `--tune` for its search, `--time-tune` for its
+/// time management.
+fn tune_words(player: &str, kind: TuneKind) -> Vec<String> {
+    let mode = match kind {
+        TuneKind::Search => TUNE,
+        TuneKind::Time => TIME_TUNE,
+    };
+    vec![mode.to_string(), player.to_string()]
+}
+
+/// The kind a tune job's word asks for, `None` for any other word.
+fn tune_kind(mode: &str) -> Option<TuneKind> {
+    match mode {
+        TUNE => Some(TuneKind::Search),
+        TIME_TUNE => Some(TuneKind::Time),
+        _ => None,
+    }
+}
+
+/// A search tune job's word.
+const TUNE: &str = "--tune";
+/// A time tune job's word: the time management's SPSA, after the search's.
+const TIME_TUNE: &str = "--time-tune";
+
+/// `player`'s search tune, as its config's `tune:` says (`tune_args`).
+fn search_tune_args(player: &str) -> Result<tune::TuneArgs, String> {
     if player == PESTO {
         return tune::args_of(&pesto::load()?.tune, player).map_err(|message| format!("{}: {message}", pesto::CONFIG_PATH));
     }
@@ -2949,7 +3010,7 @@ struct StandingView {
 #[derive(Clone, Serialize)]
 struct ParameterView {
     name: &'static str,
-    start: i32,
+    start: f64,
     now: f64,
 }
 
@@ -3245,7 +3306,13 @@ impl Status {
                 format!("pairs: {played} of {} played, {} pairings of {wanted}", pairings.len() * wanted as usize, pairings.len())
             }
             Work::Tune { .. } => match &shared.tune {
-                Some(tune) => format!("a tune of {}: {} of {} pairs", tune.player, progress::grouped(tune.k_done), progress::grouped(tune.pairs)),
+                Some(tune) => format!(
+                    "a {} tune of {}: {} of {} pairs",
+                    tune.kind.text(),
+                    tune.player,
+                    progress::grouped(tune.k_done),
+                    progress::grouped(tune.pairs)
+                ),
                 None => "a tune".to_string(),
             },
             Work::Score => match &shared.score {
@@ -4505,7 +4572,8 @@ fn job_name(args: &[String]) -> Result<String, String> {
         [mode, config, run, scaled] if mode == "--forge" && run == "new" && scaled == SCALED => {
             Ok(format!("{config}, a new run scaled 1/{}", scale::DEFAULT))
         }
-        [mode, player] if mode == "--tune" => Ok(format!("tune of {player}")),
+        [mode, player] if mode == TUNE => Ok(format!("tune of {player}")),
+        [mode, player] if mode == TIME_TUNE => Ok(format!("tune of {player}, time")),
         [mode, source] if mode == PLAY && source == PESTO => Ok("PeSTO's play".to_string()),
         [mode, source] if mode == CONVERT && source == "lc0" => Ok(SlotJob::Convert.name()),
         [mode, rest @ ..] if mode == BOOK => {
@@ -4519,8 +4587,8 @@ fn job_name(args: &[String]) -> Result<String, String> {
         [mode, words @ ..] if mode == TEST => Ok(format!("test: {}", matches::Spec::parse(words)?.name())),
         [mode, number] if mode == RESUME_TEST => Ok(format!("test {number}, resumed")),
         _ => Err(format!(
-            "a job is --forge <config> <run number or new>, --tune <player>, {TEST} <test>, {PLAY} {PESTO}, {CONVERT} lc0, {BOOK} <source> \
-             or {SCORE_BOOK} <source> <network>@<tuned|untuned> <depth>"
+            "a job is --forge <config> <run number or new>, {TUNE} <player>, {TIME_TUNE} <player>, {TEST} <test>, {PLAY} {PESTO}, {CONVERT} lc0, {BOOK} <source> \
+             or {SCORE_BOOK} <source> <network>@<suffix> <depth>"
         )),
     }
 }
@@ -4563,8 +4631,8 @@ const MAX_SCORE_DEPTH: u32 = 30;
 fn job_config(args: &[String]) -> Option<String> {
     match args {
         [mode, config, ..] if mode == "--forge" => Some(config.clone()),
-        [mode, player] if mode == "--tune" && player == PESTO => Some(PESTO.to_string()),
-        [mode, player] if mode == "--tune" => players::parse_network_name(player).ok().map(|parsed| parsed.config),
+        [mode, player] if tune_kind(mode).is_some() && player == PESTO => Some(PESTO.to_string()),
+        [mode, player] if tune_kind(mode).is_some() => players::parse_network_name(player).ok().map(|parsed| parsed.config),
         [mode, source] if mode == PLAY || mode == CONVERT => Some(source.clone()),
         [mode, ..] if mode == BOOK || mode == SCORE_BOOK => Some(BOOKS_SCREEN.to_string()),
         [mode, ..] if mode == TEST || mode == RESUME_TEST => Some(TESTS_SCREEN.to_string()),
@@ -4644,7 +4712,10 @@ fn last_job() -> Shared {
             shared.state_path = Some(Dirs { root: files.root.clone() }.state());
             shared.forge = Some(files);
         }
-        [mode, player] if mode == "--tune" => shared.tune = tune_args(player).and_then(|args| Tune::open(&args)).ok(),
+        [mode, player] if tune_kind(mode).is_some() => {
+            let kind = tune_kind(mode).expect("a tune's word, checked above");
+            shared.tune = tune_args(player, kind).and_then(|args| Tune::open(&args)).ok();
+        }
         // PeSTO's play: its corpus, on its page, says where it stands.
         [mode, _] if mode == PLAY => {}
         _ => return fresh(),
@@ -4658,7 +4729,7 @@ fn job(status: &Status, args: &[String]) -> Result<String, String> {
     match args {
         [mode, config, run] if mode == "--forge" => forge(status, config, run, None),
         [mode, config, run, scaled] if mode == "--forge" && scaled == SCALED => forge(status, config, run, Some(scale::DEFAULT)),
-        [mode, player] if mode == "--tune" => tune_job(status, player),
+        [mode, player] if tune_kind(mode).is_some() => tune_job(status, player, tune_kind(mode).expect("a tune's word, checked above")),
         [mode, source] if mode == PLAY && source == PESTO => play_pesto(status),
         [mode, words @ ..] if mode == TEST => test_job(status, words),
         [mode, number] if mode == RESUME_TEST => resume_test_job(status, number),
@@ -4767,25 +4838,27 @@ fn begin(shared: &Mutex<Shared>, chores_path: &str, state_path: Option<String>) 
     Ok(())
 }
 
-/// `--tune <player>`: a tune (`tune.rs`) of `player` as its config's `tune:` says (`tune_args`), its
-/// pairs dealt to the arenas until it is done or stopped, then its result written to the player's
-/// `parameters.txt`. One tune a player: an unfinished one resumes, a finished one is refused, since
-/// retuning is not supported yet.
-fn tune_job(status: &Status, player: &str) -> Result<String, String> {
+/// `--tune <player>` or `--time-tune <player>`: a tune (`tune.rs`) of `kind` of `player` as its
+/// config's `tune:` says (`tune_args`), its pairs dealt to the arenas until it is done or stopped,
+/// then its result written to the player's `search-parameters.txt` or `time-parameters.txt`. One
+/// tune of each kind a player: an unfinished one resumes, a finished one is refused, since retuning
+/// is not supported yet.
+fn tune_job(status: &Status, player: &str, kind: TuneKind) -> Result<String, String> {
     // The arenas read the tuned network from the remote, and the tune's files go there.
     remote::check_mounted().map_err(|error| error.to_string())?;
-    let args = tune_args(player)?;
+    let args = tune_args(player, kind)?;
     status.lock().scaled_job = args.scale.is_some();
     // Taken before the tune opens, which fetches the remote's copy when it is further on.
-    let _lease = lease::take(&tune::lease_path(player)?, player)?;
+    let _lease = lease::take(&tune::lease_path(player, kind)?, player)?;
     let tune = Tune::open(&args)?;
     if tune.done() {
         return Err(format!(
-            "{player} is tuned already, in {}: retuning is not supported yet; move or delete that folder by hand to tune it again",
+            "{player}'s {} is tuned already, in {}: retuning is not supported yet; move or delete that folder by hand to tune it again",
+            kind.text(),
             tune.dir()
         ));
     }
-    remember_job(&["--tune".to_string(), player.to_string()]);
+    remember_job(&tune_words(player, kind));
     let network = match &tune.network {
         Some(path) => Some(fattorini::nnue::Network::load(path).map_err(|error| format!("failed to load network {path}: {error}"))?),
         None => None,
@@ -4807,21 +4880,28 @@ fn tune_job(status: &Status, player: &str) -> Result<String, String> {
 }
 
 /// One side of a test as its chores name it: its network by its name on the remote (`publish`) or
-/// `PESTO`, the parameters it plays with in full, and its network loaded, for the bench.
+/// `PESTO`, the parameters it plays with in full, its time parameters in full (`None`, the default
+/// clock), and its network loaded, for the bench.
 struct TestPlayer {
     name: String,
     parameters: SearchParameters,
+    time: Option<TimeParameters>,
     network: Option<fattorini::nnue::Network>,
 }
 
-/// `side` resolved: a forge run's network or PeSTO, with its tune when it plays tuned, which it must
-/// then have.
+/// `side` resolved: a forge run's network or PeSTO, with the tunes its suffix names, which it must
+/// then have (the developer, 2026-11-13: refused, never the defaults quietly).
 fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
     let player = players::FattoriniPlayer::resolve(&side.player)?;
-    let parameters = match (side.tuned, player.own_tuning()?) {
+    let parameters = match (side.tuning.search_tuned(), player.own_tuning()?) {
         (false, _) => SearchParameters::DEFAULT,
         (true, Tuning::Parameters(parameters)) => parameters,
-        (true, Tuning::Untuned) => return Err(format!("{} has no tune: it can only play its defaults", side.player)),
+        (true, Tuning::Untuned) => return Err(format!("{} has no search tune: it can only play @untuned", side.player)),
+    };
+    let time = if side.tuning.time_tuned() {
+        Some(player.own_time_tuning()?.ok_or_else(|| format!("{} has no time tune: no @search-time-tuned", side.player))?)
+    } else {
+        None
     };
     let (name, network) = match &player.network {
         Some(path) => {
@@ -4830,7 +4910,7 @@ fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
         }
         None => (PESTO.to_string(), None),
     };
-    Ok(TestPlayer { name, parameters, network })
+    Ok(TestPlayer { name, parameters, time, network })
 }
 
 /// How often a scoring's file is copied to the remote, beside its end.
@@ -4878,7 +4958,7 @@ fn score_book_job(status: &Status, source: &str, side: &str, depth: &str) -> Res
     .into_iter()
     .map(|(name, value)| (name.to_string(), value))
     .collect();
-    let path = format!("{}/{}", book::folder(source), book_scores::file_name(&side.player, side.tuned, depth));
+    let path = format!("{}/{}", book::folder(source), book_scores::file_name(&side.player, side.tuning, depth));
     // The remote's copy is the scoring so far, after a stop or on another machine.
     let remote_copy = remote::remote_path(&path);
     if !Path::new(&path).is_file() && Path::new(&remote_copy).is_file() {
@@ -5011,7 +5091,7 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
     // its files unseen.
     let at_start = matches::judge(spec.kind, &pairs);
     matches::put(dir, &test_record(spec, number, &started, at_start.games, at_start.challenger_points, matches::INTERRUPTED.to_string()))?;
-    let mixed = if spec.mixed() { ", one side tuned and the other not" } else { "" };
+    let mixed = if spec.mixed() { ", the two sides tuned differently" } else { "" };
     let resumed = if resumed_games > 0 { format!(", resumed at {} games", progress::grouped(resumed_games)) } else { String::new() };
     log::info!(
         "test {number}: {} ({}), {} against {}, {}{mixed}{resumed}",
@@ -5027,6 +5107,7 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         shared.test = Some(TestDealing {
             limit: spec.limit.clone(),
             parameters: [challenger.parameters, champion.parameters],
+            time: [challenger.time, champion.time],
         });
         shared.view = View::Test { number, spec: spec.clone() };
         shared.epoch += 1;
@@ -5144,7 +5225,7 @@ fn run_tune(shared: &Arc<Mutex<Shared>>, tune: Tune, stop: &AtomicBool) -> Resul
     }
     tune.finish()?;
     tune.hand_over()?;
-    Ok(format!("{} pairs done, theta rounded into {}, its folder moved to {}", progress::grouped(tune.pairs), tune.parameters_path(), remote::this_root()))
+    Ok(format!("{} pairs done, theta written to {}, its folder moved to {}", progress::grouped(tune.pairs), tune.parameters_path(), remote::this_root()))
 }
 
 /// Whether libtorch sees a CUDA device here, probed once. Training would otherwise fall back to the
@@ -5822,12 +5903,18 @@ mod tests {
             Ok("the book of elite, softmax 20 scores-n-tuned-d20.txt".to_string())
         );
         assert_eq!(
-            job_name(&words("--score-book elite lc0-psq-threats-screlu-g1-r1@tuned 20")),
-            Ok("the scores of elite, lc0-psq-threats-screlu-g1-r1@tuned, depth 20".to_string())
+            job_name(&words("--score-book elite lc0-psq-threats-screlu-g1-r1@search-tuned 20")),
+            Ok("the scores of elite, lc0-psq-threats-screlu-g1-r1@search-tuned, depth 20".to_string())
         );
-        assert_eq!(job_config(&words("--score-book elite n@tuned 20")), Some(BOOKS_SCREEN.to_string()));
-        assert_eq!(SlotJob::of(&words("--score-book elite n@tuned 20")), None, "the arena slot's");
-        for wrong in ["--score-book elite n@tuned", "--score-book elite n@tuned 0", "--score-book elite n@tuned@slow 20", "--score-book a/b n@tuned 20"] {
+        assert_eq!(job_config(&words("--score-book elite n@search-tuned 20")), Some(BOOKS_SCREEN.to_string()));
+        assert_eq!(SlotJob::of(&words("--score-book elite n@search-tuned 20")), None, "the arena slot's");
+        for wrong in [
+            "--score-book elite n@search-tuned",
+            "--score-book elite n@search-tuned 0",
+            "--score-book elite n@search-tuned@slow 20",
+            "--score-book a/b n@search-tuned 20",
+            "--score-book elite n@tuned 20",
+        ] {
             assert!(job_name(&words(wrong)).is_err(), "{wrong}");
         }
         assert_eq!(SlotJob::of(&words("--convert lc0")), Some(SlotJob::Convert));
@@ -5951,7 +6038,7 @@ mod tests {
         assert_eq!((dealt.kind, &dealt.limit, dealt.entries[0].count), (TaskKind::SelfPlay, &Limit::Depth(generation::SEARCH_DEPTH), TASKS_PER_WORKER));
         assert_eq!(
             dealt.entries[0].players,
-            vec![Player { network: PESTO.to_string(), parameters: Some(TEACHER_TUNE) }],
+            vec![Player { network: PESTO.to_string(), parameters: Some(TEACHER_TUNE), time: None }],
             "the teacher plays its tune"
         );
 
@@ -6193,6 +6280,7 @@ mod tests {
             shared.test = Some(TestDealing {
                 limit: Limit::Clock("10+0.1".to_string()),
                 parameters: [tuned, SearchParameters::DEFAULT],
+                time: [Some(TimeParameters { pv_min: 0.6, ..TimeParameters::DEFAULT }), None],
             });
             shared.work = Some(Work::Pairs {
                 pairings: vec![("aa".to_string(), "bb".to_string())],
@@ -6206,6 +6294,8 @@ mod tests {
         assert_eq!((dealt.kind, &dealt.limit, dealt.reference_nps), (TaskKind::Pair, &Limit::Clock("10+0.1".to_string()), Some(1_000_000.0)));
         let parameters: Vec<Option<SearchParameters>> = dealt.entries[0].players.iter().map(|player| player.parameters).collect();
         assert_eq!(parameters, [Some(tuned), Some(SearchParameters::DEFAULT)], "both given in full, the defaults too");
+        let time: Vec<Option<TimeParameters>> = dealt.entries[0].players.iter().map(|player| player.time).collect();
+        assert_eq!(time, [Some(TimeParameters { pv_min: 0.6, ..TimeParameters::DEFAULT }), None], "a time tune in full, else none");
         assert_eq!(dealt.entries[0].count, 3, "never past what the test may play");
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -23,12 +23,14 @@
 //!   records it. This machine's copy of the run first, then the remote's, where its closed
 //!   generations move.
 //!
-//! A Fattorini player, pesto or a network, is always followed by what it searches with, so that its name
+//! A Fattorini player, pesto or a network, is always followed by what it plays with, so that its name
 //! says it:
 //!
-//! - `@untuned`: the untuned `SearchParameters::DEFAULT`, whatever its `parameters.txt` says.
-//! - `@tuned`: its tune, the `parameters.txt` beside a network or pesto's in
-//!   `players::PESTO_TUNING_DIR`; refused when it has none.
+//! - `@untuned`: the defaults of the search and the clock, whatever its files say.
+//! - `@search-tuned`: its search tune, the `search-parameters.txt` beside a network or pesto's in
+//!   `players::PESTO_TUNING_DIR`, and the default clock; refused when it has no search tune.
+//! - `@search-time-tuned`: both tunes, `search-parameters.txt` and `time-parameters.txt`; refused
+//!   when either is missing.
 //!
 //! In-process, the suffix sets the parameters. Over UCI, against an external engine, the player is
 //! built with its network and those parameters embedded, as a snapshot is (`snapshot::build_embedded`,
@@ -44,8 +46,9 @@ use super::{data_root, snapshot};
 use fattorini::pipeline::{players, protocol, remote};
 // Read by arena's other modules through this one, where every player's name is read.
 pub use fattorini::pipeline::players::parse_network_name;
+use fattorini::pipeline::players::TuningSuffix;
 use fattorini::nnue::Tuning;
-use fattorini::search::SearchParameters;
+use fattorini::search::{SearchParameters, TimeParameters};
 
 /// Stockfish's `Skill Level` option ranges over 0 to 20.
 const MAX_STOCKFISH_SKILL: u64 = 20;
@@ -73,17 +76,12 @@ pub fn build_uci_player(name: &str, entry: &EngineEntry) -> Result<(), String> {
     let Some(path) = entry.path.as_deref().filter(|path| path.starts_with(UCI_PLAYERS_DIR)) else {
         return Ok(());
     };
-    let parameters_file = match entry.parameters {
-        Some(parameters) if parameters != SearchParameters::DEFAULT => {
-            let file = format!("{}.parameters.txt", path.trim_end_matches(std::env::consts::EXE_SUFFIX));
-            std::fs::create_dir_all(UCI_PLAYERS_DIR).map_err(|error| format!("{UCI_PLAYERS_DIR}: {error}"))?;
-            parameters.write_file(&file)?;
-            Some(file)
-        }
-        _ => None,
-    };
+    let stem = std::path::Path::new(path.trim_end_matches(std::env::consts::EXE_SUFFIX))
+        .file_name()
+        .map_or(String::new(), |stem| stem.to_string_lossy().into_owned());
+    let files = snapshot::parameter_files(entry.parameters, entry.time, UCI_PLAYERS_DIR, &stem)?;
     let description = snapshot::describe(name, &protocol::current_commit(), &snapshot::now_text());
-    snapshot::build_embedded(&snapshot::EmbeddedBuild::plain(entry.net.as_deref(), parameters_file.as_deref(), &description), path)
+    snapshot::build_embedded(&snapshot::EmbeddedBuild::plain(entry.net.as_deref(), &files, &description), path)
 }
 
 /// Set on every UCI player, so equal footing does not rest on two engines' defaults happening to
@@ -123,6 +121,7 @@ fn uci_entry(path: &str, options: Vec<(&str, serde_yaml::Value)>) -> EngineEntry
         net: None,
         options: all,
         parameters: None,
+        time: None,
     }
 }
 
@@ -228,29 +227,22 @@ pub fn plays_in_process(one: &str, two: &str, engines: &Engines) -> bool {
     !is_external(one, engines) && !is_external(two, engines)
 }
 
-/// What a Fattorini player's name says it searches with, after its `@`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Suffix {
-    /// `@untuned`: `SearchParameters::DEFAULT`.
-    Untuned,
-    /// `@tuned`: its tune's `parameters.txt`.
-    Tuned,
-}
+/// The suffixes as written, for messages.
+const SUFFIXES: &str = TuningSuffix::WORDS;
 
-/// `name` split into the player and its suffix, `None` when it has no `@`: `pesto-psq-g1-r1@tuned` is
-/// `pesto-psq-g1-r1` with `Suffix::Tuned`.
-fn split_suffix(name: &str) -> Result<(&str, Option<Suffix>), String> {
+/// `name` split into the player and its suffix (`players::TuningSuffix`), `None` when it has no
+/// `@`: `pesto-psq-g1-r1@search-tuned` is `pesto-psq-g1-r1` with `TuningSuffix::SearchTuned`.
+fn split_suffix(name: &str) -> Result<(&str, Option<TuningSuffix>), String> {
     let Some((player, suffix)) = name.split_once('@') else {
         return Ok((name, None));
     };
-    match suffix {
-        "untuned" => Ok((player, Some(Suffix::Untuned))),
-        "tuned" => Ok((player, Some(Suffix::Tuned))),
-        _ => Err(format!("{name:?}: a suffix is tuned (its tune) or untuned, as in {player}@tuned or {player}@untuned")),
+    match TuningSuffix::parse(suffix) {
+        Some(suffix) => Ok((player, Some(suffix))),
+        None => Err(format!("{name:?}: a suffix is {SUFFIXES}, as in {player}@search-tuned")),
     }
 }
 
-/// The parameters the Fattorini player `player` has tuned, `None` if it has none: pesto's in
+/// The search parameters the Fattorini player `player` has tuned, `None` if it has none: pesto's in
 /// `players::PESTO_TUNING_DIR`, a network's beside its file (`nnue::read_tuning_beside`).
 fn tuned_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<SearchParameters>, String> {
     if player == "pesto" {
@@ -261,6 +253,15 @@ fn tuned_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, Strin
         Tuning::Parameters(parameters) => Some(parameters),
         Tuning::Untuned => None,
     })
+}
+
+/// The time parameters the Fattorini player `player` has tuned, `None` if it has none, as
+/// `tuned_parameters`.
+fn tuned_time_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<TimeParameters>, String> {
+    if player == "pesto" {
+        return players::pesto_time_parameters();
+    }
+    fattorini::nnue::read_time_tuning_beside(&players::resolve_network_file_in(player, run_dir)?)
 }
 
 /// The player `name` names, or why it names none. `in_process` is `plays_in_process` for the whole
@@ -279,7 +280,7 @@ pub fn resolve_player(name: &str, in_process: bool, engines: &Engines) -> Result
 /// otherwise.
 fn in_process_entry(net: Option<String>) -> EngineEntry {
     let kind = if net.is_some() { EngineKind::Network } else { EngineKind::Builtin };
-    EngineEntry { kind, path: None, net, options: HashMap::new(), parameters: None }
+    EngineEntry { kind, path: None, net, options: HashMap::new(), parameters: None, time: None }
 }
 
 /// Fattorini with the network at `net`, or the PeSTO evaluation when `None`: in-process when
@@ -305,12 +306,17 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
         return Ok(entry);
     }
     let Some(suffix) = suffix else {
-        return Err(format!("{name:?}: a Fattorini player says what it searches with, {name}@tuned (its tune) or {name}@untuned"));
+        return Err(format!("{name:?}: a Fattorini player says what it plays with, a suffix {SUFFIXES}, as in {name}@search-tuned"));
     };
-    entry.parameters = Some(match suffix {
-        Suffix::Untuned => SearchParameters::DEFAULT,
-        Suffix::Tuned => tuned_parameters(player, run_dir)?.ok_or_else(|| format!("{name:?}: {player} has no tune, so no @tuned"))?,
-    });
+    // A suffix whose files are missing is refused (the developer, 2026-11-13): a name never quietly
+    // plays defaults.
+    let search = || tuned_parameters(player, run_dir)?.ok_or_else(|| format!("{name:?}: {player} has no search tune"));
+    let time = || tuned_time_parameters(player, run_dir)?.ok_or_else(|| format!("{name:?}: {player} has no time tune"));
+    (entry.parameters, entry.time) = match suffix {
+        TuningSuffix::Untuned => (Some(SearchParameters::DEFAULT), None),
+        TuningSuffix::SearchTuned => (Some(search()?), None),
+        TuningSuffix::SearchTimeTuned => (Some(search()?), Some(time()?)),
+    };
     if !in_process {
         entry.path = Some(uci_player_path(name));
     }
@@ -479,6 +485,7 @@ mod tests {
             net: None,
             options: options.iter().map(|(name, value)| (name.to_string(), value.clone())).collect(),
             parameters: None,
+            time: None,
         }
     }
 
@@ -521,10 +528,10 @@ mod tests {
     #[test]
     fn fattorini_plays_in_process_only_against_fattorini() {
         let engines = engines();
-        assert!(plays_in_process("amanda-g1-r1@tuned", "pesto@untuned", &engines));
-        assert!(!plays_in_process("amanda-g1-r1@tuned", "stockfish-0", &engines), "an external engine puts both on UCI");
+        assert!(plays_in_process("amanda-g1-r1@search-tuned", "pesto@untuned", &engines));
+        assert!(!plays_in_process("amanda-g1-r1@search-tuned", "stockfish-0", &engines), "an external engine puts both on UCI");
         assert!(!plays_in_process("stockfish-elo-1500", "pesto@untuned", &engines));
-        assert!(!plays_in_process("reckless", "amanda-g1-r1@tuned", &engines), "a registered engine is external");
+        assert!(!plays_in_process("reckless", "amanda-g1-r1@search-tuned", &engines), "a registered engine is external");
     }
 
     #[test]
@@ -532,14 +539,14 @@ mod tests {
         let engines = engines();
         let entry = resolve_player("pesto@untuned", true, &engines).unwrap();
         assert_eq!((entry.kind, entry.parameters), (EngineKind::Builtin, Some(SearchParameters::DEFAULT)));
-        assert!(resolve_player("pesto", true, &engines).unwrap_err().contains("says what it searches with"));
+        assert!(resolve_player("pesto", true, &engines).unwrap_err().contains("says what it plays with"));
         assert!(resolve_player("pesto", false, &engines).is_err(), "over UCI too");
-        for name in ["pesto@150", "pesto@x", "pesto@", "pesto@t2", "pesto@Tuned", "pesto@untuned+blend"] {
+        for name in ["pesto@150", "pesto@x", "pesto@", "pesto@t2", "pesto@Tuned", "pesto@untuned+blend", "pesto@tuned", "pesto@time-tuned"] {
             assert!(resolve_player(name, true, &engines).is_err(), "{name:?}");
             assert!(resolve_player(name, false, &engines).is_err(), "{name:?}");
         }
         assert!(resolve_player("stockfish-5@untuned", false, &engines).is_err(), "an external engine takes no suffix");
-        assert!(resolve_player("reckless@tuned", false, &engines).is_err());
+        assert!(resolve_player("reckless@search-tuned", false, &engines).is_err());
     }
 
     #[test]
@@ -610,7 +617,7 @@ mod tests {
     #[test]
     fn a_registry_name_a_built_in_player_has_is_refused() {
         let path = test_executable();
-        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "fattorini@tuned"] {
+        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "fattorini@search-tuned"] {
             let entries = HashMap::from([(name.to_string(), registered(&path, &[]))]);
             assert!(Engines::from_entries(Some(entries), "test").is_err(), "{name:?}");
         }
@@ -641,19 +648,31 @@ mod tests {
             assert!(resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &runs).is_err(), "{name:?}");
         }
 
-        // Untuned: no @tuned.
+        // Untuned: neither tuned suffix.
+        let resolve = |suffix: &str, in_process| resolve_player_with(&format!("{name}@{suffix}"), in_process, &Engines::none(), &runs);
         for in_process in [false, true] {
             assert!(resolve_player_with(name, in_process, &Engines::none(), &runs).is_err(), "no suffix");
-            assert!(resolve_player_with(&format!("{name}@tuned"), in_process, &Engines::none(), &runs).is_err(), "no tune");
+            assert!(resolve("search-tuned", in_process).unwrap_err().contains("no search tune"));
+            assert!(resolve("search-time-tuned", in_process).is_err());
         }
-        // Tuned: @tuned is its parameters.txt, in-process and over UCI alike, and @untuned the defaults.
+        // Search-tuned: @search-tuned is its search-parameters.txt and the default clock, in-process and
+        // over UCI alike; @search-time-tuned still refused, with no time tune; @untuned the defaults.
         let tuned = SearchParameters { razoring_margin: 120, ..SearchParameters::DEFAULT };
-        tuned.write_file(&fattorini::nnue::parameters_file_beside(&candidate)).unwrap();
+        tuned.write_file(&fattorini::nnue::search_parameters_file_beside(&candidate)).unwrap();
         for in_process in [false, true] {
-            let entry = resolve_player_with(&format!("{name}@tuned"), in_process, &Engines::none(), &runs).unwrap();
-            assert_eq!(entry.parameters, Some(tuned));
-            let entry = resolve_player_with(&format!("{name}@untuned"), in_process, &Engines::none(), &runs).unwrap();
-            assert_eq!(entry.parameters, Some(SearchParameters::DEFAULT));
+            let entry = resolve("search-tuned", in_process).unwrap();
+            assert_eq!((entry.parameters, entry.time), (Some(tuned), None));
+            assert!(resolve("search-time-tuned", in_process).unwrap_err().contains("no time tune"));
+            let entry = resolve("untuned", in_process).unwrap();
+            assert_eq!((entry.parameters, entry.time), (Some(SearchParameters::DEFAULT), None));
+        }
+        // Both tuned: @search-time-tuned plays both files; @search-tuned still the default clock.
+        let clock = TimeParameters { pv_min: 0.6, ..TimeParameters::DEFAULT };
+        clock.write_file(&fattorini::nnue::time_parameters_file_beside(&candidate)).unwrap();
+        for in_process in [false, true] {
+            let entry = resolve("search-time-tuned", in_process).unwrap();
+            assert_eq!((entry.parameters, entry.time), (Some(tuned), Some(clock)));
+            assert_eq!(resolve("search-tuned", in_process).unwrap().time, None, "the time file ignored");
         }
         std::fs::remove_dir_all(&root).ok();
     }

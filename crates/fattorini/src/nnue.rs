@@ -1116,11 +1116,12 @@ pub struct QuantizedPsqNetwork {
 }
 
 /// A player's tuned search, as the files beside its network (or pesto's tuning directory)
-/// give it: `parameters.txt`, else nothing.
+/// give it: `search-parameters.txt`, else nothing. The time tuning is read apart
+/// (`read_time_tuning_beside`): only a suffix and a build read it, never the search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tuning {
     Untuned,
-    /// Every parameter, from `parameters.txt`.
+    /// Every parameter, from `search-parameters.txt`.
     Parameters(SearchParameters),
 }
 
@@ -2619,21 +2620,39 @@ impl Network {
     }
 }
 
-/// The `parameters.txt` in the directory of the file at `path`: where a tune writes every search
-/// parameter it settled on. One per directory, since each network has its own: a champion's
-/// `gen-<g>/`, a candidate's `lambda-<l>/`.
-pub fn parameters_file_beside(path: &str) -> String {
+/// The file of the search tune's result: every search parameter it settled on.
+pub const SEARCH_PARAMETERS_FILE: &str = "search-parameters.txt";
+
+/// The file of the time tune's result: every time parameter it settled on. Beside the search's, so
+/// neither tune rewrites the other's.
+pub const TIME_PARAMETERS_FILE: &str = "time-parameters.txt";
+
+/// The `search-parameters.txt` in the directory of the file at `path`. One per directory, since
+/// each network has its own: a champion's `gen-<g>/`, a candidate's `lambda-<l>/`.
+pub fn search_parameters_file_beside(path: &str) -> String {
     let directory = Path::new(path).parent().unwrap_or(Path::new(""));
-    directory.join("parameters.txt").to_string_lossy().into_owned()
+    directory.join(SEARCH_PARAMETERS_FILE).to_string_lossy().into_owned()
 }
 
-/// The tuning beside the file at `path`: `parameters.txt` if present, else `Untuned`. A malformed
-/// file is an `Err`.
+/// The `time-parameters.txt` in the directory of the file at `path`, as the search's.
+pub fn time_parameters_file_beside(path: &str) -> String {
+    let directory = Path::new(path).parent().unwrap_or(Path::new(""));
+    directory.join(TIME_PARAMETERS_FILE).to_string_lossy().into_owned()
+}
+
+/// The search tuning beside the file at `path`: `search-parameters.txt` if present, else
+/// `Untuned`. A malformed file is an `Err`.
 pub fn read_tuning_beside(path: &str) -> Result<Tuning, String> {
-    Ok(match SearchParameters::read_file(&parameters_file_beside(path))? {
+    Ok(match SearchParameters::read_file(&search_parameters_file_beside(path))? {
         Some(parameters) => Tuning::Parameters(parameters),
         None => Tuning::Untuned,
     })
+}
+
+/// The time tuning beside the file at `path`: `time-parameters.txt` if present. A malformed file is
+/// an `Err`.
+pub fn read_time_tuning_beside(path: &str) -> Result<Option<crate::search::TimeParameters>, String> {
+    crate::search::TimeParameters::read_file(&time_parameters_file_beside(path))
 }
 
 /// Every shape agreement the format itself cannot enforce. Run before a byte is written and after
@@ -5286,15 +5305,25 @@ pub(crate) mod tests {
         assert_eq!(network.pawn_percent(), measure_label_percent(|board| quantized.evaluate(board)));
         assert_eq!(network.pawn_percent() % PAWN_SCALE_STEP_PERCENT, 0);    }
 
-    /// A network without `parameters.txt` is untuned; `parameters.txt` round trips every field, and a
-    /// malformed one is refused rather than falling back.
+    /// A network without `search-parameters.txt` is untuned; the file round trips every field, and a
+    /// malformed one is refused rather than falling back. The time file is read beside it alike.
     #[test]
     fn a_loaded_network_carries_the_parameters_beside_it() {
         let dir = std::env::temp_dir().join(format!("fattorini-nnue-parameters-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("champion.nnue").to_str().unwrap().to_string();
-        let parameters_path = parameters_file_beside(&path);
-        assert_eq!(Path::new(&parameters_path), dir.join("parameters.txt"));
+        let parameters_path = search_parameters_file_beside(&path);
+        assert_eq!(Path::new(&parameters_path), dir.join("search-parameters.txt"));
+        let time_path = time_parameters_file_beside(&path);
+        assert_eq!(Path::new(&time_path), dir.join("time-parameters.txt"));
+        std::fs::remove_file(&time_path).ok();
+        assert_eq!(read_time_tuning_beside(&path), Ok(None));
+        let time = crate::search::TimeParameters { pv_b: 0.05, ..crate::search::TimeParameters::DEFAULT };
+        time.write_file(&time_path).unwrap();
+        assert_eq!(read_time_tuning_beside(&path), Ok(Some(time)));
+        std::fs::write(&time_path, "pv_b\t0.05\n").unwrap();
+        assert!(read_time_tuning_beside(&path).is_err(), "21 missing");
+        std::fs::remove_file(&time_path).ok();
         sample_network(16, &[8]).write(&path).unwrap();
         std::fs::remove_file(&parameters_path).ok();
         assert_eq!(Network::load(&path).unwrap().tuning(), Tuning::Untuned);

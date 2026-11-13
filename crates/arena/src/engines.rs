@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use fattorini::nnue::Tuning;
-use fattorini::search::SearchParameters;
+use fattorini::search::{SearchParameters, TimeParameters};
 use serde::Deserialize;
 
 /// The registry's one place, per machine and gitignored.
@@ -44,12 +44,17 @@ pub struct EngineEntry {
     pub net: Option<String>,
     #[serde(default)]
     pub options: HashMap<String, serde_yaml::Value>,
-    /// A Fattorini player's search parameters from its name's suffix, `@untuned` or `@tuned`: an
-    /// in-process player searches with them, a UCI one has them embedded in its build
-    /// (`match_player::build_uci_player`). `None` plays the player's own tuning (`tuning`), as a
-    /// player built from paths does (the gate's); always `None` for an external engine.
+    /// A Fattorini player's search parameters from its name's suffix (`@untuned`, `@search-tuned`,
+    /// `@search-time-tuned`): an in-process player searches with them, a UCI one has them embedded in
+    /// its build (`match_player::build_uci_player`). `None` plays the player's own tuning
+    /// (`tuning`), as a player built from paths does (the gate's); always `None` for an external
+    /// engine.
     #[serde(skip)]
     pub parameters: Option<SearchParameters>,
+    /// A Fattorini player's time parameters from its suffix, `@search-time-tuned`'s alone; `None`
+    /// plays the defaults. Played or embedded as `parameters` are.
+    #[serde(skip)]
+    pub time: Option<TimeParameters>,
 }
 
 pub use fattorini::pipeline::players::pesto_parameters;
@@ -91,7 +96,7 @@ impl EngineEntry {
     }
 
     /// `name` with what this player searches with, for the run's header line: a suffixed name as it
-    /// is, else `@untuned` for an untuned player, ` (parameters.txt)` for a tuned one; a UCI player's
+    /// is, else `@untuned` for an untuned player, ` (search-parameters.txt)` for a tuned one; a UCI player's
     /// name as it is. A malformed file shows as untuned here, and the player's own start reports it.
     pub fn label(&self, name: &str) -> String {
         if name.contains('@') || self.kind == EngineKind::Uci {
@@ -99,7 +104,7 @@ impl EngineEntry {
         }
         match self.own_tuning().unwrap_or(Tuning::Untuned) {
             Tuning::Untuned => format!("{name}@untuned"),
-            Tuning::Parameters(_) => format!("{name} (parameters.txt)"),
+            Tuning::Parameters(_) => format!("{name} (search-parameters.txt)"),
         }
     }
 }

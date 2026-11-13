@@ -41,6 +41,7 @@ use fattorini::pipeline::protocol::{
     RELEASE_PATH, SCORE_FEN_TAG, SCORE_MOVE_TAG, SCORE_PARENT_TAG, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH,
     TASK_PATH,
 };
+use fattorini::search::TimeParameters;
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
 
@@ -754,9 +755,22 @@ impl Arena {
             tags.push(("TimeControl".to_string(), spec.text.clone()));
         }
         let control: Control = spec.control;
-        let mut challenger_player =
-            InProcessPlayer::new(challenger_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, challenger.parameters);
-        let mut teacher_player = InProcessPlayer::new(teacher_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, teacher.parameters);
+        // A player's time parameters are the chore's, else the defaults: the smithy writes a tuned
+        // set in full, so no file is read here.
+        let mut challenger_player = InProcessPlayer::new(
+            challenger_network,
+            Arc::clone(&self.tablebase),
+            PAIR_HASH_MB,
+            challenger.parameters,
+            challenger.time.unwrap_or(TimeParameters::DEFAULT),
+        );
+        let mut teacher_player = InProcessPlayer::new(
+            teacher_network,
+            Arc::clone(&self.tablebase),
+            PAIR_HASH_MB,
+            teacher.parameters,
+            teacher.time.unwrap_or(TimeParameters::DEFAULT),
+        );
         let recording =
             Recording { event_name: "fattorini arena", round: 1, champion_name: &teacher.network, challenger_name: &challenger.network, pgn_path: "" };
         // A tune's games end early by the tablebase, win and draw rules; a round robin's and a gate's never.
@@ -1091,7 +1105,7 @@ mod tests {
             adjudicate: false,
             reference_nps: None,
             entries: vec![protocol::Entry {
-                players: vec![Player { network: PESTO.to_string(), parameters }],
+                players: vec![Player { network: PESTO.to_string(), parameters, time: None }],
                 count: 1,
                 tags: Vec::new(),
             }],
@@ -1102,7 +1116,7 @@ mod tests {
     }
 
     fn matchup(first: &str, second: &str, count: u32) -> Entry {
-        let own = |network: &str| Player { network: network.to_string(), parameters: None };
+        let own = |network: &str| Player { network: network.to_string(), parameters: None, time: None };
         Entry { players: vec![own(first), own(second)], count, tags: Vec::new() }
     }
 

@@ -12,6 +12,7 @@
 
 use serde::Serialize;
 
+use fattorini::pipeline::players::TuningSuffix;
 use fattorini::pipeline::protocol::Limit;
 
 use super::sprt::{Sprt, Verdict};
@@ -83,13 +84,13 @@ impl Kind {
     }
 }
 
-/// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`),
-/// whether it plays its tune (`parameters.txt`) or the defaults. Written as a player, the network
-/// with what it searches with: `<network>@tuned` or `<network>@untuned`.
+/// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`), and
+/// what it plays with (`players::TuningSuffix`). Written as a player, the network with its suffix:
+/// `<network>@search-tuned`, as the arena's players.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Side {
     pub player: String,
-    pub tuned: bool,
+    pub tuning: TuningSuffix,
 }
 
 /// The time managements a side could name during the duels of 2026-11, as a third `@` field: read
@@ -97,14 +98,15 @@ pub struct Side {
 const RETIRED_TIME_MANAGEMENTS: [&str; 3] = ["classic", "split", "reckless"];
 
 impl Side {
-    /// As a player's name: `<network>@tuned` or `<network>@untuned`.
+    /// As a player's name: `<network>@<suffix>`.
     pub fn text(&self) -> String {
-        format!("{}@{}", self.player, if self.tuned { "tuned" } else { "untuned" })
+        format!("{}@{}", self.player, self.tuning.text())
     }
 
-    /// `text` read back, a retired time management after it dropped.
+    /// `text` read back, a retired time management after it dropped. `@tuned` is no suffix any more:
+    /// the tests list's rows naming it were rewritten once to `@search-tuned`.
     pub fn parse(text: &str) -> Result<Side, String> {
-        let wrong = || format!("a side is <network>@<tuned|untuned>, not {text:?}");
+        let wrong = || format!("a side is <network>@<suffix>, the suffix {}, not {text:?}", TuningSuffix::WORDS);
         let (player, suffix) = text.split_once('@').ok_or_else(wrong)?;
         if player.is_empty() {
             return Err(wrong());
@@ -114,12 +116,8 @@ impl Side {
             Some((tuning, management)) if RETIRED_TIME_MANAGEMENTS.iter().any(|retired| retired.eq_ignore_ascii_case(management)) => tuning,
             Some(_) => return Err(wrong()),
         };
-        let tuned = match tuning {
-            "tuned" => true,
-            "untuned" => false,
-            _ => return Err(wrong()),
-        };
-        Ok(Side { player: player.to_string(), tuned })
+        let tuning = TuningSuffix::parse(tuning).ok_or_else(wrong)?;
+        Ok(Side { player: player.to_string(), tuning })
     }
 }
 
@@ -138,7 +136,7 @@ impl Spec {
     pub fn parse(words: &[String]) -> Result<Spec, String> {
         let [kind, settings, challenger, champion, limit] = words else {
             return Err(
-                "a test is --test <duel|match|sprt> <settings> <challenger>@<tuned|untuned> <champion>@<tuned|untuned> <limit>".to_string()
+                "a test is --test <duel|match|sprt> <settings> <challenger>@<suffix> <champion>@<suffix> <limit>".to_string()
             );
         };
         Ok(Spec {
@@ -149,11 +147,11 @@ impl Spec {
         })
     }
 
-    /// Whether two different players meet, one with its tune and the other with the defaults: allowed,
-    /// and always said, since the result then weighs the tune as much as the networks. One player
-    /// against itself, tuned against untuned, is not mixed: it is how a tune is measured.
+    /// Whether two different players meet with different tunings: allowed, and always said, since the
+    /// result then weighs the tunes as much as the networks. One player against itself with two
+    /// tunings is not mixed: it is how a tune is measured.
     pub fn mixed(&self) -> bool {
-        self.challenger.tuned != self.champion.tuned && self.challenger.player != self.champion.player
+        self.challenger.tuning != self.champion.tuning && self.challenger.player != self.champion.player
     }
     pub fn name(&self) -> String {
         format!("{} of {} against {}", self.kind.name(), self.champion.text(), self.challenger.text())
@@ -451,7 +449,7 @@ pub struct Record {
     pub ended: String,
     pub kind: String,
     pub settings: String,
-    /// Each side as a player, `<network>@tuned` or `<network>@untuned` (`Side::text`).
+    /// Each side as a player, `<network>@<suffix>` (`Side::text`).
     pub challenger: String,
     pub champion: String,
     pub limit: String,
@@ -459,7 +457,7 @@ pub struct Record {
     pub challenger_points: f64,
     /// The verdict, or `stopped` with what it had.
     pub verdict: String,
-    /// One side tuned and the other not.
+    /// Two different players with different tunings (`Spec::mixed`).
     pub mixed: bool,
 }
 
@@ -646,29 +644,36 @@ mod tests {
 
     #[test]
     fn a_side_s_retired_time_management_is_read_and_dropped() {
-        let side = Side { player: "aa".to_string(), tuned: true };
-        assert_eq!(Side::parse("aa@tuned@reckless").unwrap(), side);
-        assert_eq!(Side::parse("aa@tuned@Classic").unwrap(), side, "read in any case");
-        assert_eq!(Side::parse("aa@tuned@split").unwrap().text(), "aa@tuned", "never written");
-        for wrong in ["aa@tuned@slow", "aa@tuned@", "aa@reckless", "aa@reckless@tuned"] {
+        let side = Side { player: "aa".to_string(), tuning: TuningSuffix::SearchTuned };
+        assert_eq!(Side::parse("aa@search-tuned@reckless").unwrap(), side);
+        assert_eq!(Side::parse("aa@search-tuned@Classic").unwrap(), side, "read in any case");
+        assert_eq!(Side::parse("aa@search-tuned@split").unwrap().text(), "aa@search-tuned", "never written");
+        for wrong in ["aa@search-tuned@slow", "aa@search-tuned@", "aa@reckless", "aa@reckless@search-tuned"] {
             assert!(Side::parse(wrong).is_err(), "{wrong:?}");
         }
-        // A duel of the managements, logged on 2026-11-13, still reads back.
-        assert!(Spec::parse(&words("duel - aa@tuned@reckless aa@tuned@classic", "clock 180+2")).is_ok());
+        // A duel of the managements, logged on 2026-11-13 and its row rewritten, still reads back.
+        assert!(Spec::parse(&words("duel - aa@search-tuned@reckless aa@search-tuned@classic", "clock 180+2")).is_ok());
     }
 
     #[test]
     fn a_test_s_words_read_back() {
-        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@tuned pesto@untuned", "clock 10+0.1")).unwrap();
+        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@search-tuned pesto@untuned", "clock 10+0.1")).unwrap();
         assert_eq!(spec.kind, Kind::Sprt { elo0: 0.0, elo1: 5.0 });
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
         assert_eq!(
             spec.challenger,
-            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true }
+            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuning: TuningSuffix::SearchTuned }
         );
-        assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@tuned".to_string(), "pesto@untuned".to_string()));
+        assert_eq!(
+            (spec.challenger.text(), spec.champion.text()),
+            ("lc0-psq-g1-a1-l0.03-r1@search-tuned".to_string(), "pesto@untuned".to_string())
+        );
         assert!(spec.mixed());
-        assert!(!Spec::parse(&words("duel - aa@tuned aa@untuned", "clock 10+0.1")).unwrap().mixed(), "a tune measured against its own defaults");
+        assert!(!Spec::parse(&words("duel - aa@search-tuned aa@untuned", "clock 10+0.1")).unwrap().mixed(), "a tune measured against its own defaults");
+        assert!(
+            !Spec::parse(&words("duel - aa@search-time-tuned aa@search-tuned", "clock 180+2")).unwrap().mixed(),
+            "the time tune's verdict"
+        );
         assert_eq!(Spec::parse(&words("match 500 aa@untuned bb@untuned", "depth 9")).unwrap().kind, Kind::Match { pairs: 500 });
         for wrong in [
             "match 0 aa@untuned bb@untuned",
@@ -679,7 +684,9 @@ mod tests {
             "duel - aa bb@untuned",
             "duel - aa@150 bb@untuned",
             "duel - aa@t2 bb@untuned",
-            "duel - @tuned bb@untuned",
+            "duel - @search-tuned bb@untuned",
+            // Renamed once, no alias (the developer, 2026-11-13).
+            "duel - aa@tuned bb@untuned",
             // The search switches, removed 2026-11-02.
             "duel - aa@untuned+blend bb@untuned",
         ] {
@@ -743,7 +750,7 @@ mod tests {
             kind: "duel".to_string(),
             settings: "-".to_string(),
             challenger: "aa@untuned".to_string(),
-            champion: "bb@tuned".to_string(),
+            champion: "bb@search-tuned".to_string(),
             limit: "depth 9".to_string(),
             games: 10,
             challenger_points: 7.5,
@@ -796,7 +803,7 @@ mod tests {
         let stopped = Record { verdict: "stopped: no games yet".to_string(), ..record(4) };
         put(&dir, &stopped).unwrap();
         assert!(read_log(&dir)[0].stopped());
-        assert_eq!(read_log(&dir)[0].spec().unwrap(), Spec::parse(&words("duel - aa@untuned bb@tuned", "depth 9")).unwrap());
+        assert_eq!(read_log(&dir)[0].spec().unwrap(), Spec::parse(&words("duel - aa@untuned bb@search-tuned", "depth 9")).unwrap());
         put(&dir, &record(4)).unwrap();
         assert_eq!(read_log(&dir), [record(4)]);
         std::fs::remove_dir_all(&dir).ok();

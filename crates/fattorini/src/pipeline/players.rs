@@ -12,30 +12,93 @@ use std::path::Path;
 
 use super::preprocessing_config::ArmLambda;
 use super::{generation, preprocessing_config, remote};
-use crate::nnue::{self, Tuning};
-use crate::search::SearchParameters;
+use crate::nnue::{self, Tuning, SEARCH_PARAMETERS_FILE, TIME_PARAMETERS_FILE};
+use crate::search::{SearchParameters, TimeParameters};
+use super::spsa::TuneKind;
 
-/// Where pesto's tune writes its `parameters.txt`, and where its in-process player reads it: pesto
-/// has no network file to sit beside.
+/// Where pesto's tunes write their parameter files, and where its in-process player reads them:
+/// pesto has no network file to sit beside.
 pub const PESTO_TUNING_DIR: &str = "data/spsa/pesto";
 
-/// Pesto's tuned parameters (`PESTO_TUNING_DIR`), this machine's when it has them, else the remote's,
-/// where a finished tune moves; `None` if never tuned.
-pub fn pesto_parameters() -> Result<Option<SearchParameters>, String> {
-    let local = format!("{PESTO_TUNING_DIR}/parameters.txt");
-    if Path::new(&local).is_file() {
-        return SearchParameters::read_file(&local);
+/// What a Fattorini player's name says it plays with, after its `@`, each naming what is tuned (the
+/// developer, 2026-11-13): a later kind of tune adds a word rather than making a name wrong. `@tuned`,
+/// the one tuned suffix before the time tune, was renamed `@search-tuned` once, with no alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuningSuffix {
+    /// `@untuned`: the defaults of the search and the clock, whatever its files say.
+    Untuned,
+    /// `@search-tuned`: its `search-parameters.txt`, and the default clock even when a
+    /// `time-parameters.txt` exists, so the time tune's verdict duel can play the two clocks.
+    SearchTuned,
+    /// `@search-time-tuned`: its `search-parameters.txt` and its `time-parameters.txt`.
+    SearchTimeTuned,
+}
+
+impl TuningSuffix {
+    /// Every suffix, as written, for messages.
+    pub const WORDS: &'static str = "untuned, search-tuned or search-time-tuned";
+
+    /// As written after the `@`.
+    pub fn text(self) -> &'static str {
+        match self {
+            TuningSuffix::Untuned => "untuned",
+            TuningSuffix::SearchTuned => "search-tuned",
+            TuningSuffix::SearchTimeTuned => "search-time-tuned",
+        }
     }
-    SearchParameters::read_file(&remote::remote_path(&local))
+
+    /// `text` read back, `None` for any other word.
+    pub fn parse(text: &str) -> Option<TuningSuffix> {
+        [TuningSuffix::Untuned, TuningSuffix::SearchTuned, TuningSuffix::SearchTimeTuned].into_iter().find(|suffix| suffix.text() == text)
+    }
+
+    /// Whether it plays a search tune.
+    pub fn search_tuned(self) -> bool {
+        self != TuningSuffix::Untuned
+    }
+
+    /// Whether it plays a time tune.
+    pub fn time_tuned(self) -> bool {
+        self == TuningSuffix::SearchTimeTuned
+    }
+}
+
+/// The folder each kind of tune keeps its files in, named as the suffixes (`@search-tuned`,
+/// `@search-time-tuned`): in a generation's folder, or pesto's `PESTO_TUNING_DIR`.
+pub fn tune_dir_name(kind: TuneKind) -> &'static str {
+    match kind {
+        TuneKind::Search => "search-tune",
+        TuneKind::Time => "time-tune",
+    }
+}
+
+/// The file of pesto's named `file`, this machine's when it has it, else the remote's, where a
+/// finished tune moves.
+fn pesto_file(file: &str) -> String {
+    let local = format!("{PESTO_TUNING_DIR}/{file}");
+    if Path::new(&local).is_file() { local } else { remote::remote_path(&local) }
+}
+
+/// Pesto's tuned search parameters (`PESTO_TUNING_DIR`); `None` if never tuned.
+pub fn pesto_parameters() -> Result<Option<SearchParameters>, String> {
+    SearchParameters::read_file(&pesto_file(SEARCH_PARAMETERS_FILE))
+}
+
+/// Pesto's tuned time parameters (`PESTO_TUNING_DIR`); `None` if never tuned.
+pub fn pesto_time_parameters() -> Result<Option<TimeParameters>, String> {
+    TimeParameters::read_file(&pesto_file(TIME_PARAMETERS_FILE))
 }
 
 /// A Fattorini player as a tune sees it: the network it evaluates with (`None` for pesto), where
-/// its tuned parameters are read and written, and the folder its tune keeps its files in.
+/// each kind of tuned parameters is read and written, and the folder each kind of tune keeps its
+/// files in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FattoriniPlayer {
     pub network: Option<String>,
-    pub parameters_path: String,
-    pub tune_dir: String,
+    pub search_parameters_path: String,
+    pub time_parameters_path: String,
+    pub search_tune_dir: String,
+    pub time_tune_dir: String,
 }
 
 impl FattoriniPlayer {
@@ -51,17 +114,42 @@ impl FattoriniPlayer {
         if name == super::protocol::PESTO {
             return Ok(FattoriniPlayer {
                 network: None,
-                parameters_path: local(&format!("{PESTO_TUNING_DIR}/parameters.txt")),
-                tune_dir: local(PESTO_TUNING_DIR),
+                search_parameters_path: local(&format!("{PESTO_TUNING_DIR}/{SEARCH_PARAMETERS_FILE}")),
+                time_parameters_path: local(&format!("{PESTO_TUNING_DIR}/{TIME_PARAMETERS_FILE}")),
+                search_tune_dir: local(&format!("{PESTO_TUNING_DIR}/{}", tune_dir_name(TuneKind::Search))),
+                time_tune_dir: local(&format!("{PESTO_TUNING_DIR}/{}", tune_dir_name(TuneKind::Time))),
             });
         }
         let network = resolve_network_file_under(name, local)?;
         let parsed = parse_network_name(name)?;
         // Only a generation's winner is tuned (the developer, 2026-10-24), in its generation's
-        // `tune/`. A candidate has no tune of its own: the `parameters.txt` beside it exists only when
-        // it is the winner, and is then the winner's, so it points at the winner's folder too.
-        let tune_dir = local(&format!("{}/{}/tune", run_dir(&parsed.run())?, generation_dir_name(parsed.generation)));
-        Ok(FattoriniPlayer { parameters_path: nnue::parameters_file_beside(&network), network: Some(network), tune_dir })
+        // folder. A candidate has no tune of its own: the parameter files beside it exist only when
+        // it is the winner, and are then the winner's, so it points at the winner's folders too.
+        let generation = format!("{}/{}", run_dir(&parsed.run())?, generation_dir_name(parsed.generation));
+        Ok(FattoriniPlayer {
+            search_parameters_path: nnue::search_parameters_file_beside(&network),
+            time_parameters_path: nnue::time_parameters_file_beside(&network),
+            network: Some(network),
+            search_tune_dir: local(&format!("{generation}/{}", tune_dir_name(TuneKind::Search))),
+            time_tune_dir: local(&format!("{generation}/{}", tune_dir_name(TuneKind::Time))),
+        })
+    }
+
+    /// Where a tune of `kind` writes its result, and the folder it keeps its files in.
+    pub fn tune_paths(&self, kind: TuneKind) -> (&str, &str) {
+        match kind {
+            TuneKind::Search => (&self.search_parameters_path, &self.search_tune_dir),
+            TuneKind::Time => (&self.time_parameters_path, &self.time_tune_dir),
+        }
+    }
+
+    /// Its tuned time parameters, `None` if it has none: a network's file beside it, pesto's in
+    /// `PESTO_TUNING_DIR`.
+    pub fn own_time_tuning(&self) -> Result<Option<TimeParameters>, String> {
+        match &self.network {
+            Some(network) => nnue::read_time_tuning_beside(network),
+            None => pesto_time_parameters(),
+        }
     }
 
     /// The parameters it plays with when its name has no suffix: a network's file beside it,
@@ -420,9 +508,11 @@ mod tests {
             "generation\twinner\tgate_games\tgate_share\tpassed\n1\t0.03\t300\t0.5600\ttrue\n",
         )
         .unwrap();
-        let tune_dir = |name: &str| FattoriniPlayer::resolve_under(name, &local).unwrap().tune_dir;
-        assert_eq!(tune_dir("fine-g1-r1"), format!("{generation_dir}/tune"), "the winner's, its generation's");
-        assert_eq!(tune_dir("fine-g1-l0.03-r1"), format!("{generation_dir}/tune"), "a candidate has none of its own");
+        let player = |name: &str| FattoriniPlayer::resolve_under(name, &local).unwrap();
+        assert_eq!(player("fine-g1-r1").search_tune_dir, format!("{generation_dir}/search-tune"), "the winner's, its generation's");
+        assert_eq!(player("fine-g1-r1").time_tune_dir, format!("{generation_dir}/time-tune"));
+        assert_eq!(player("fine-g1-l0.03-r1").search_tune_dir, format!("{generation_dir}/search-tune"), "a candidate has none of its own");
+        assert_eq!(player("fine-g1-r1").tune_paths(TuneKind::Time).1, format!("{generation_dir}/time-tune"));
         std::fs::remove_dir_all(&root).ok();
     }
 }

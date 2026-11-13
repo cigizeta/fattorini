@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use fattorini::nnue::Network;
 use fattorini::search::{
-    choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, DEFAULT_MOVE_OVERHEAD_MS, MAX_PLY,
+    choose_best_move_with_progress, single_move_limit, time_limit, SearchParameters, TimeParameters, DEFAULT_MOVE_OVERHEAD_MS,
+    MAX_PLY,
 };
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
@@ -29,10 +30,13 @@ pub struct InProcessPlayer {
     /// Shared, unlike the table: probing is stateless and the loaded tables are never mutated, so
     /// there is no reason for each of 32 players to hold its own copy of the six-piece set.
     tablebase: Arc<SyzygyTablebase>,
-    /// The search parameters it plays with: a suffix's (`@tuned`, `@untuned`), or pesto's tuning;
-    /// `None` searches with the network's own tuning, or
+    /// The search parameters it plays with: a suffix's (`@search-tuned`, `@untuned`), or pesto's
+    /// tuning; `None` searches with the network's own tuning, or
     /// the defaults (`search::choose_best_move_with_progress`).
     parameters: Option<SearchParameters>,
+    /// The time parameters its clock is planned with: a suffix's (`@search-time-tuned`), a chore's,
+    /// or the defaults.
+    time: TimeParameters,
     /// The final score of its previous move in this game, for the time manager's score trend
     /// (`TimeLimit::with_previous_score`), as the engine keeps between `go`s. Cleared by
     /// `new_game`.
@@ -43,8 +47,9 @@ impl InProcessPlayer {
     /// `hash_mb` is the table's size, the same number a UCI player is given as `Hash`.
     pub fn new(
         evaluator: Option<Arc<Network>>, tablebase: Arc<SyzygyTablebase>, hash_mb: usize, parameters: Option<SearchParameters>,
+        time: TimeParameters,
     ) -> InProcessPlayer {
-        InProcessPlayer { evaluator, tt: TranspositionTable::new(hash_mb), tablebase, parameters, last_score: None }
+        InProcessPlayer { evaluator, tt: TranspositionTable::new(hash_mb), tablebase, parameters, time, last_score: None }
     }
 }
 
@@ -98,6 +103,7 @@ impl Player for InProcessPlayer {
                     None,
                     false,
                     DEFAULT_MOVE_OVERHEAD_MS,
+                    self.time,
                 )
                 .map(|limit| limit.with_previous_score(self.last_score).with_fullmove(request.fullmove));
                 (MAX_PLY, limit, &own_stop)
@@ -156,7 +162,7 @@ mod tests {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let (board, _) = Board::from_fen(fen).unwrap();
         let mut player =
-            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters { razoring_margin: 150, ..SearchParameters::DEFAULT }));
+            InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, Some(SearchParameters { razoring_margin: 150, ..SearchParameters::DEFAULT }), TimeParameters::DEFAULT);
         player.new_game().expect("an in-process player never faults");
         let ancestors = vec![board.hash()];
         let remaining = Duration::from_secs(2);
@@ -194,7 +200,7 @@ mod tests {
     fn a_player_at_move_thirty_answers_in_time() {
         let fen = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 30";
         let (board, _) = Board::from_fen(fen).unwrap();
-        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None);
+        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None, TimeParameters::DEFAULT);
         player.new_game().expect("an in-process player never faults");
         let ancestors = vec![board.hash()];
         let remaining = Duration::from_secs(2);
@@ -223,7 +229,7 @@ mod tests {
     #[test]
     fn choosing_a_move_at_a_fixed_depth_reports_a_legal_move_with_its_score() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None);
+        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None, TimeParameters::DEFAULT);
         player.new_game().expect("an in-process player never faults");
 
         let ancestors = vec![board.hash()];
@@ -262,7 +268,7 @@ mod tests {
     #[test]
     fn a_player_whose_stop_signal_is_already_set_still_answers_with_the_move_depth_one_found() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None);
+        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None, TimeParameters::DEFAULT);
         let ancestors = vec![board.hash()];
         let request = MoveRequest {
             starting_fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",

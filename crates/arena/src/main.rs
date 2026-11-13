@@ -8,9 +8,9 @@
 //!   exactly one of `--depth <1-9>` or `--time <clock>`.
 //! - `arena start|stop|status`: an arena, playing the smithy's self-play, round-robin, gate and tune
 //!   chores (`chores.rs`).
-//! - `arena snapshot <player>@<tuned|untuned>`: a build of the engine with that player embedded,
+//! - `arena snapshot <player>@<suffix>`: a build of the engine with that player embedded,
 //!   into Drive's `data/snapshots/` (`snapshot.rs`). Hidden: not in the usage.
-//! - `arena release <player>@<tuned|untuned> [--dry-run]`: a binary release at a tag, built here and
+//! - `arena release <player>@<suffix> [--dry-run]`: a binary release at a tag, built here and
 //!   drafted on GitHub with `gh` (`release.rs`). Hidden: not in the usage.
 //! - `arena <tournament-id>`: fitness-selection phase 1 scope only, a single pairing -- round
 //!   1's first real (bye-free) match, per proper bracket seeding -- rather than a full bracket. The
@@ -124,8 +124,9 @@ fn print_usage_and_exit() -> ! {
     eprintln!("  a player is stockfish-<level> (0 to 20), stockfish-elo-<rating> (1320 to 3190), an engine of");
     eprintln!("  data/engines.yaml, or a Fattorini player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
     eprintln!("  or <config>-g<g>-l<lambda>-r<n>, that lambda's candidate in generation g");
-    eprintln!("  a Fattorini player is always followed by what it searches with: @tuned, its tune, or @untuned,");
-    eprintln!("  the defaults; against an external engine it plays over UCI, built first with both embedded");
+    eprintln!("  a Fattorini player is always followed by what it plays with: @untuned, the defaults; @search-tuned,");
+    eprintln!("  its search tune; or @search-time-tuned, its search and time tunes; against an external engine it");
+    eprintln!("  plays over UCI, built first with them embedded");
     process::exit(1);
 }
 
@@ -440,8 +441,8 @@ mod tests {
 
     #[test]
     fn each_command_takes_the_champion_then_the_challenger_its_value_and_one_control() {
-        let versus = parsed("sprt", &["stockfish-elo-1500", "amanda-g1-r1@tuned", "35", "--time", "3+2"]);
-        assert_eq!((versus.champion.as_str(), versus.challenger.as_str()), ("stockfish-elo-1500", "amanda-g1-r1@tuned"));
+        let versus = parsed("sprt", &["stockfish-elo-1500", "amanda-g1-r1@search-tuned", "35", "--time", "3+2"]);
+        assert_eq!((versus.champion.as_str(), versus.challenger.as_str()), ("stockfish-elo-1500", "amanda-g1-r1@search-tuned"));
         assert_eq!(versus.rule, Rule::Sprt(config::SprtSpec { elo_d: 35.0 }));
         assert_eq!(versus.control.text, "3+2");
         assert_eq!(versus.hash_mb, 16, "the default");

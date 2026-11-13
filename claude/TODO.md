@@ -30,6 +30,10 @@ longer exists, so no tablebases; all fixed the same day. To check in its log whi
 the past week's games before trusting them (the 2612, the +1.59 in KQ vs KN). Every arena to be
 updated to the commit before the next gate or tune.
 
+**Order (the developer, 2026-11-13):** `lc0-psq-threats-screlu-g1-r1`, search-tuned, is time-tuned
+now (time-management-spsa.md, its plan time-management-spsa-implementation.md, the suffixes of
+tuning-suffixes.md). Every later network: trained, then its search tuned, then its time.
+
 **In progress (2026-11-11): blitz time management** (blitz-time-management.md, its plan
 blitz-time-management-implementation.md). Two Lichess blitz games ended with a minute and half the
 clock unused; the new `Split` time management (a soft time, a hard maximum, the future increments

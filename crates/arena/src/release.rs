@@ -1,4 +1,4 @@
-//! `arena release <player>@<tuned|untuned> [--dry-run]`: a binary release, built here and uploaded
+//! `arena release <player>@<suffix> [--dry-run]`: a binary release, built here and uploaded
 //! to GitHub as a draft with `gh`, the developer's own login. Hidden like `snapshot`: not in the usage.
 //!
 //! A release is a snapshot's build (`snapshot::build_embedded`, the snapshot's rule) made at a tag,
@@ -41,13 +41,13 @@ const DRY_RUN_TAG: &str = "v0.0.0-dry-run";
 /// The version every crate of the workspace shares (`[workspace.package]`), the engine's `id name`.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// `arena release <player>@<tuned|untuned> [--dry-run]`: makes the draft, or says why not and exits.
+/// `arena release <player>@<suffix> [--dry-run]`: makes the draft, or says why not and exits.
 pub(crate) fn command(rest: &[String]) {
     let (name, dry_run) = match rest {
         [name] => (name, false),
         [name, flag] if flag == "--dry-run" => (name, true),
         _ => {
-            eprintln!("usage: arena release <player>@<tuned|untuned> [--dry-run], the player pesto or a generation's winner");
+            eprintln!("usage: arena release <player>@<untuned|search-tuned|search-time-tuned> [--dry-run], the player pesto or a generation's winner");
             process::exit(2);
         }
     };
@@ -60,7 +60,7 @@ pub(crate) fn command(rest: &[String]) {
 fn release(name: &str, dry_run: bool) -> Result<(), String> {
     // 1. The player, as a snapshot's.
     let Some((player, _)) = name.split_once('@') else {
-        return Err(format!("{name:?}: say what it searches with, {name}@tuned or {name}@untuned"));
+        return Err(format!("{name:?}: say what it plays with, as {name}@search-tuned"));
     };
     snapshot::may_snapshot(player)?;
     let entry = match_player::resolve_player(name, false, &Engines::load()?)?;
@@ -105,20 +105,18 @@ fn release(name: &str, dry_run: bool) -> Result<(), String> {
     // 5. The build.
     let stem = format!("fattorini-{tag}");
     let exe = format!("{RELEASE_TARGET_DIR}/{stem}.exe");
-    let parameters_file = snapshot::parameters_file(entry.parameters, RELEASE_TARGET_DIR, &stem)?;
+    let files = snapshot::parameter_files(entry.parameters, entry.time, RELEASE_TARGET_DIR, &stem)?;
     let description = snapshot::describe_release(name, &tag, &snapshot::now_text());
     let build = EmbeddedBuild {
         network: entry.net.as_deref(),
-        parameters: parameters_file.as_deref(),
+        parameters: &files,
         description: &description,
         notices: Some(&notices),
         target_dir: RELEASE_TARGET_DIR,
         static_runtime: true,
     };
     let built = snapshot::build_embedded(&build, &exe);
-    if let Some(file) = &parameters_file {
-        std::fs::remove_file(file).ok();
-    }
+    files.remove();
     built?;
 
     // 6. The checks on the `.exe` itself.
