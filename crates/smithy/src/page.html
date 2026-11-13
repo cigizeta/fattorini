@@ -276,7 +276,13 @@ function work(view, waiting, stop = "") {
         + `<div>${whole(2 * view.done)} of ${whole(2 * view.pairs)} games (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
         + `${view.time ? times(view) : ""}</div>${bar(view.done, view.pairs)}`
         + (view.reference_nps ? `<div class="muted">Bench: ${whole(Math.round(view.reference_nps))} nodes/s per thread on this machine, every arena's clock scaled to it</div>` : "")
-        + table(["parameter", "start", "now"], view.theta.map((p) => [p.name, String(p.start), nowText(p)]));
+        + table(["parameter", "start", "now"], (() => {
+          // One count of decimals for the whole table, the most any start has and one more, both
+          // columns alike, so every decimal point lines up: a search tune's 150 as 150.0, a time
+          // tune's 0.0594 as 0.05940 and its 3 as 3.00000.
+          const decimals = 1 + Math.max(0, ...view.theta.map((p) => (String(p.start).split(".")[1] || "").length));
+          return view.theta.map((p) => [p.name, number(p.start, decimals), number(p.now, decimals)]);
+        })());
     default:
       return `<h2>Nothing dealt</h2><div class="muted">${escape(waiting)}</div>`;
   }
@@ -518,13 +524,6 @@ function jobScreen() {
 // Whether the open screen is the job's own.
 function jobHere() {
   return currentRun !== null && state.config === current && jobScreen() === currentRun;
-}
-
-// A tuned parameter's value now, to its start's scale and one digit more: a search margin of 150
-// as 150.3, a time parameter of 0.0594 as 0.05941, so a small one never shows as 0.0.
-function nowText(p) {
-  const decimals = (String(p.start).split(".")[1] || "").length + 1;
-  return number(p.now, Math.max(1, decimals));
 }
 
 function tuneText(tune) {
