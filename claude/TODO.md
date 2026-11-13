@@ -245,8 +245,8 @@ changes).
   depend on the search's curves (a depth's cost, how often the best move changes, the score's
   swings), so they are tuned against the search that ships. Only after Split's verdict
   (blitz-time-management-v2.md) and the smithy's bench on an idle machine (below), ideally after the
-  speed work too. **Tuned (the developer, 2026-11-13): the 18 SPSA-born constants of
-  reckless-time-management.md,** from Reckless's values; never its hand-picked ones, the overhead
+  speed work too. **Designed 2026-11-13: time-management-spsa.md.** **Tuned (the developer,
+  2026-11-13): the 18 SPSA-born constants of reckless-time-management.md,** from Reckless's values; never its hand-picked ones, the overhead
   and margin among them, which a lag-free tune would drive to zero. At 10+0.1, scaled by the bench as every tune: its increment is 1/100 of the base against
   3+2's 1/90, so the clock goes through the same phases, and a few Elo needs 32k pairs or more. On
   every available arena, each idle: each game is its own comparison, both sides on one machine.
