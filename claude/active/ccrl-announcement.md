@@ -62,6 +62,10 @@ the name already in the README's copyright line. The code is declared AI assiste
 
 ## TalkChess, first (the developer, 2026-11-13)
 
+**Posted 2026-11-13,** with its own subject, in BBCode (`[list]`, `[url=...]`), each paragraph
+one line: phpBB keeps every line break and reads no Markdown, so the indented text below, pasted
+as it is, previewed badly.
+
 The CCRL account still waits for activation; TalkChess is announced first, **as a reply in the
 one dedicated topic, "New engine releases 2026 H2"**
 (https://talkchess.com/viewtopic.php?t=86481), not a topic of its own; the subject line below

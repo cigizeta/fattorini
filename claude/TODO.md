@@ -100,6 +100,8 @@ Also waiting: the CCRL forum account's activation.
    CCRL Public forum (linked from CCRL's pages). Registered 2026-11-11, under the developer's real
    name as the board prefers; waiting for the administrators' activation, then the first two posts
    are approved before they appear. The post drafted, ready to paste: ccrl-announcement.md.
+   **Announced on TalkChess 2026-11-13** meanwhile, in "New engine releases 2026 H2", asking the
+   CCRL testers to include it; to watch for replies and test results.
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08): drafted 2026-11-11 in
    cpw-page.md, not waiting for CCRL (the developer, 2026-11-11), claiming no rating ever; a wiki
    account next. As planned: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
