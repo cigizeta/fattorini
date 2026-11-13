@@ -353,8 +353,22 @@ Code read 2026-11-13: `TimeLimit`, `TimeManagement`, `time_limit`, `TimeManager`
      304.5 over 654 games (53.4%, +129 -174 =351 from Classic's side), crossing the duel's
      threshold at 53.4%; about +24 Elo at face value, an upper estimate as every first crossing.
      Interrupted by a power cut at 256 games and resumed (test-row-at-start.md). By the plan above,
-     Reckless ahead: `INC_FRACTION` stays 0.75, no further hand-picked test. The clock profile over
-     the whole test not yet counted (`data/tm-count.py`).
+     Reckless ahead: `INC_FRACTION` stays 0.75, no further hand-picked test. The clock over the
+     whole test (`data/tm-count.py`, the pairing confirmed by 419 forced moves against Classic's 0):
+
+     | median clock left | target | Reckless | Classic |
+     |---|---|---|---|
+     | after move 20 | 45% | 52% | 63% |
+     | after move 40 | 20% | 13% | 36% |
+     | after move 60 | 10% | 5% | 27% |
+     | games under 10% at move 60 | | 404 of 494 | 1 of 494 |
+     | moves under 10% of the base | | 19,077 of 46,840 (41%) | 124 of 46,798 |
+     | moves over 15% of the base | | 0 | 1 |
+
+     Shaped as aimed (no long moves, spending between moves 20 and 40), but late: from move 40 most
+     games run on the formula's equilibrium of about 5%. It won anyway, so the thin buffer did not
+     cost. The Lichess complaint (a minute unused) is gone: Classic still ends with over a quarter
+     of its clock.
   3. **The tune** (32k pairs at 10+0.1), then **the verdict** at 180+2, tuned against the
      incumbent.
 
