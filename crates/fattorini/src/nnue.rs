@@ -32,7 +32,7 @@ use crate::simd::{
     activation_dot_i16_avx2, activations_i16_avx2, add_assign_avx2, add_assign_i16_avx2, add_rows_saturating_i16_avx2, clipped_copy_avx2,
     clipped_dot_product_pair_avx2, clipped_dot_products_8_avx2, clipped_relu_avx2, dot_product_avx2, dot_products_8_avx2, dots_i16_8_avx2, dots_u8_i8_8_avx2,
     hidden_values_avx2, pairwise_activations_i16_avx2, pairwise_dot_i16_avx2, screlu_activations_i16_avx2, screlu_dot2_i16_avx2,
-    screlu_dot_i16_avx2, update_i16_avx2, whole_products_f32_avx2, Activation,
+    screlu_dot_i16_avx2, screlu_dot_threats_i16_avx2, update_i16_avx2, whole_products_f32_avx2, Activation,
     DOT_PRODUCT_BLOCK,
 };
 
@@ -1036,12 +1036,18 @@ thread_local! {
         const { RefCell::new(RefreshCache { network: 0, entries: Vec::new(), added: Vec::new(), removed: Vec::new() }) };
 }
 
+/// `THREAT_SCRATCH`'s contents: the two accumulators with their threats, then the two perspectives'
+/// threat rows.
+type ThreatScratch = (Vec<i16>, Vec<i16>, Vec<u16>, Vec<u16>);
+
 thread_local! {
     /// A psq_threats evaluation's two accumulators with their threat rows added, per thread, so the
     /// search's own per-ply accumulators stay piece-square only; and its threat rows, reused, not
     /// allocated at every evaluation (a quarter of one, measured 2026-10-29 by `nnue_bench
     /// --threat-parts`).
-    static THREAT_SCRATCH: RefCell<(Vec<i16>, Vec<i16>, Vec<u16>)> = const { RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
+    /// The fourth, the opponent's threat rows, kept beside the side to move's when the two are read
+    /// at once (`screlu_dot_threats_i16_avx2`).
+    static THREAT_SCRATCH: RefCell<ThreatScratch> = const { RefCell::new((Vec::new(), Vec::new(), Vec::new(), Vec::new())) };
 
     /// A quantized first hidden layer's input activations, computed once per evaluation and read by
     /// every group of eight rows. Per thread, sized on the first evaluation and reused after it,
@@ -1627,6 +1633,13 @@ impl QuantizedPsqNetwork {
     /// side to move's first; for a psq_threats network, each with its threat rows added first.
     /// Vectorized where the shapes allow (`evaluate_lanes`).
     pub fn evaluate_by_color_cp(&self, accumulators: &[Vec<i16>; 2], board: &Board) -> i32 {
+        self.evaluate_by_color_cp_fused(accumulators, board, true)
+    }
+
+    /// `evaluate_by_color_cp`, `fused` letting a screlu output head read the lanes with their threats
+    /// added in registers, nothing copied (`screlu_dot_threats_i16_avx2`); without it, the copy
+    /// path every other head takes. The two give the same integers, which the tests check.
+    fn evaluate_by_color_cp_fused(&self, accumulators: &[Vec<i16>; 2], board: &Board, fused: bool) -> i32 {
         let side_to_move = board.side_to_move();
         let own = &accumulators[side_to_move as usize];
         let opponent = &accumulators[side_to_move.opposite() as usize];
@@ -1635,7 +1648,20 @@ impl QuantizedPsqNetwork {
         }
         THREAT_SCRATCH.with(|scratch| {
             let mut scratch = scratch.borrow_mut();
-            let (own_with_threats, opponent_with_threats, rows) = &mut *scratch;
+            let (own_with_threats, opponent_with_threats, rows, opponent_rows) = &mut *scratch;
+            if let QuantizedHead::Output { weight, scale, bias } = &self.head
+                && fused
+                && self.screlu
+                && !self.pairwise
+                && own.len().is_multiple_of(16)
+            {
+                rows.clear();
+                opponent_rows.clear();
+                push_threat_rows(self.halfk, board, side_to_move, rows);
+                push_threat_rows(self.halfk, board, side_to_move.opposite(), opponent_rows);
+                let sum = screlu_dot_threats_i16_avx2(own, opponent, rows, opponent_rows, &self.transform, weight, self.activation());
+                return centipawns(output_value(*bias, sum, *scale, PRODUCT_ONE));
+            }
             for (copy, lanes, perspective) in
                 [(&mut *own_with_threats, own, side_to_move), (&mut *opponent_with_threats, opponent, side_to_move.opposite())]
             {
@@ -4246,6 +4272,47 @@ pub(crate) mod tests {
                 }
             }
             assert!(saturated, "width {embedding_dim}: no lane ever left i16, so saturation went untested");
+        }
+    }
+
+    /// The threat rows fused into the screlu head (`screlu_dot_threats_i16_avx2`) give the same value
+    /// as the copy path, psq and halfk, along random games, with threat rows heavy enough that lanes
+    /// saturate: only the store and the reload between the two differ (fused-threats, 2026-11-13).
+    #[test]
+    fn the_fused_threats_head_equals_the_copy_path_saturated_lanes_included() {
+        use crate::movegen::legal::legal_moves;
+
+        for (halfk, embedding_dim) in [(false, 32), (false, 64), (true, 32)] {
+            let mut heavy = if halfk { lively_halfk_network(embedding_dim) } else { lively_threats_screlu_network(embedding_dim) };
+            let (first_threat, rows) = if halfk { (halfk::THREAT_ROW, halfk::ROWS) } else { (psq::ROWS, psq_threats::ROWS) };
+            for row in first_threat..rows {
+                let sign = if row % 2 == 0 { 1.0 } else { -1.0 };
+                for lane in 0..embedding_dim {
+                    heavy.transform[row * embedding_dim + lane] = sign * 100.0;
+                }
+            }
+            let network = QuantizedPsqNetwork::quantize(&heavy).expect("100 at scale 255 fits i16");
+            let mut saturated = false;
+            let mut seed = 0x2545F4914F6CDD1Du64;
+            for _game in 0..6 {
+                let (mut board, _) = Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10").unwrap();
+                for ply in 0..100 {
+                    let accumulators = network.refresh_by_color(&board);
+                    let fused = network.evaluate_by_color_cp_fused(&accumulators, &board, true);
+                    let copied = network.evaluate_by_color_cp_fused(&accumulators, &board, false);
+                    assert_eq!(fused, copied, "halfk {halfk}, width {embedding_dim}, ply {ply}");
+                    saturated |= network.refresh(&board, Color::White).iter().any(|lane| lane.abs() > i16::MAX as i32);
+                    let moves = legal_moves(&board, board.side_to_move());
+                    if moves.is_empty() || board.halfmove_clock() >= 100 {
+                        break;
+                    }
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    board.make_move(moves[(seed >> 32) as usize % moves.len()]);
+                }
+            }
+            assert!(saturated, "halfk {halfk}, width {embedding_dim}: no lane ever left i16, so saturation went untested");
         }
     }
 

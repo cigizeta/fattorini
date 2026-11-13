@@ -205,6 +205,14 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
 
 ## Speed (the developer, 2026-11-09)
 
+**Measured 2026-11-13, one thread, a quiet machine: the goal is met.** Fattorini with
+`lc0-psq-threats-screlu-g1-r1` (today's snapshot) benched 2.46M nodes/s, Stockfish's own `bench`
+1.76M, PeSTO 6.04M (`bin/fattorini bench` embeds no network). The 1.15M below was taken under load.
+Threats (threats-timing.md, `--threat-parts`, depth 13): three quarters of an evaluation (101 of
+137 ns), but at most 19% of a search, evaluation at most 25%: incremental threats would gain at
+most about 23%. The network's cost over PeSTO's (2.5 times per node) lies mostly outside the
+evaluation timed, the accumulator updates the likely share: a profile to say. Not urgent.
+
 **The goal: nodes/s at least Stockfish's, one thread, on the same machine.** A shallower depth than
 Stockfish's is acceptable; a lower speed is not. With `lc0-psq-threats-screlu-g1-r1`, the arena
 benched about 1.15M nodes/s per thread on a quiet machine (the smithy's 841,150 was taken under

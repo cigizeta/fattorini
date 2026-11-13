@@ -51,6 +51,14 @@ one thread, the same machine: depth 12, 4,225,698 nodes both sides, 2,515,046 no
 than the 4-5% the per-evaluation timing projected: a heap allocation likely costs more inside the
 search, its heap busier, than alone in a loop.
 
+## Measured again (2026-11-13, the shipped network, today's search)
+
+`--threat-parts` on the 2,482 positions of the 10+0.1 smoke test of reckless-only.md: whole 137
+ns, head 35 ns (25%), finding 45 ns (33%), copy and add 57 ns (42%); 1.6 threat rows a
+perspective, at most 10. In a depth-13 search (542,327 nodes): evaluation at most 25.4% of the
+time, its threats at most 19.0%. Free threats would make the search at most about 23% faster.
+The engine benched 2.46M nodes/s against Stockfish's 1.76M on the same machine (TODO.md, Speed).
+
 ## Decisions first proposed
 
 1. **Four parts timed apart,** on the same positions: the allocation, the finding, the copy and add,
