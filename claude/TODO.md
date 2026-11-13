@@ -23,8 +23,12 @@ GitHub on 2026-11-11. Next: the CCRL testers (item 5), then the wiki page (item 
 tablebase ending.
 
 **Time management, 2026-11-13: Reckless's hand-picked set beat Classic at 180+2** (test 8, 53.4%
-over 654 games, reckless-time-management.md). To decide: ship it untuned (Classic and Split
-removed, Lichess on the new snapshot), the tune later as an improvement.
+over 654 games, reckless-time-management.md), and ships untuned: Classic, Split and the
+`TimeManagement` option removed (reckless-only.md), Lichess on the new snapshot. **lichess-bot's
+config was stale:** an old engine, `move_overhead` 2000, and a `SyzygyPath` to a tree that no
+longer exists, so no tablebases; all fixed the same day. To check in its log which binary played
+the past week's games before trusting them (the 2612, the +1.59 in KQ vs KN). Every arena to be
+updated to the commit before the next gate or tune.
 
 **In progress (2026-11-11): blitz time management** (blitz-time-management.md, its plan
 blitz-time-management-implementation.md). Two Lichess blitz games ended with a minute and half the

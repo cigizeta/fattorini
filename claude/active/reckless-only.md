@@ -2,8 +2,14 @@
 
 Status: **implemented 2026-11-13**; `cargo test --workspace --release` and clippy clean; smoke
 tests through `bin/arena match` passed the same day, no forfeit: 40/20 (18 games, 3 min, the
-clock refilled) and 10+0.1 (20 games, 82 s). Left: commit, every arena updated, the Lichess
-snapshot with `move_overhead` 385, the cutechess-cli check at the next release. As built,
+clock refilled) and 10+0.1 (20 games, 82 s). **Lichess, 2026-11-13:** the `@tuned` snapshot of
+this build taken; lichess-bot's `config.yml` pointed at it, `move_overhead` 2000 down to 385, and
+its `SyzygyPath` fixed: it named a tree of the project's old name that no longer exists, so a bot
+run from it played with no tables, and its engine was an old pre-rename binary outside the
+repository. Whether that file was the one the bot ran is to check in lichess-bot's log; if it
+was, the past week's Lichess games (the 2612, the +1.59 in KQ vs KN) were not the build TODO.md
+says. Left: every arena updated, the first Lichess games read, the cutechess-cli check at the
+next release. As built,
 three departures from the plan below:
 
 - **`TimeLimit::Fixed` and `SINGLE_MOVE_CAP_MS` stay,** narrowed: `Fixed` is made only by
