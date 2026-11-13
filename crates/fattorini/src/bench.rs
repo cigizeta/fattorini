@@ -46,6 +46,36 @@ pub fn bench_with(evaluator: Option<&Network>, parameters: SearchParameters, dep
     (nodes, started.elapsed().as_secs_f64())
 }
 
+/// How many times `loaded_bench` runs, keeping the fastest: one run is about a second, short enough
+/// that a CPU still raising its clock or a background task slows it; the fastest of five is the
+/// machine's speed. The smithy and the arena read one run each before 2026-11-13, and on one idle
+/// machine the smithy's came out 925,334 nodes per second per thread against the arena's 1,096,999,
+/// scaling every arena's clock to 0.84 of the control asked for.
+pub const LOADED_BENCH_RUNS: usize = 5;
+
+/// The nodes per second of one search thread on this machine with `network`, loaded: `bench` on
+/// `threads` threads at once, the mean of the threads, the fastest of `LOADED_BENCH_RUNS` runs. The
+/// one measure the smithy's reference speed and every arena's own speed are both taken by, so a
+/// clocked test or tune scales each arena's clock by like against like.
+pub fn loaded_bench(network: Option<&Network>, threads: usize) -> f64 {
+    let runs: Vec<f64> = (0..LOADED_BENCH_RUNS).map(|_| loaded_bench_once(network, threads)).collect();
+    fastest(&runs)
+}
+
+/// One run of `loaded_bench`: `bench` on `threads` threads at once, the mean of their nodes per second.
+fn loaded_bench_once(network: Option<&Network>, threads: usize) -> f64 {
+    let runs: Vec<(u64, f64)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads.max(1)).map(|_| scope.spawn(move || bench(network))).collect();
+        handles.into_iter().map(|handle| handle.join().expect("a bench thread panicked")).collect()
+    });
+    runs.iter().map(|&(nodes, seconds)| nodes as f64 / seconds.max(1e-9)).sum::<f64>() / runs.len().max(1) as f64
+}
+
+/// The fastest of `runs`, 0 for none.
+fn fastest(runs: &[f64]) -> f64 {
+    runs.iter().copied().fold(0.0, f64::max)
+}
+
 /// The last line of `fattorini bench`: `<n> nodes <n> nps`, the form engine testers read.
 pub fn bench_line(nodes: u64, seconds: f64) -> String {
     let nps = (nodes as f64 / seconds.max(1e-9)) as u64;
@@ -59,5 +89,12 @@ mod tests {
     #[test]
     fn the_bench_line_gives_nodes_then_nps() {
         assert_eq!(bench_line(3_000_000, 1.5), "3000000 nodes 2000000 nps");
+    }
+
+    #[test]
+    fn a_loaded_bench_keeps_its_fastest_run() {
+        assert_eq!(fastest(&[925_334.0, 1_096_999.0, 1_050_000.0]), 1_096_999.0);
+        assert_eq!(fastest(&[]), 0.0);
+        assert_eq!(LOADED_BENCH_RUNS, 5);
     }
 }

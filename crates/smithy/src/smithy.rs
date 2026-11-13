@@ -61,6 +61,7 @@ use super::scale;
 use super::cache::CacheRecord;
 use fattorini::nnue::Tuning;
 use fattorini::labels::{Curve, LOGISTIC};
+use fattorini::bench::loaded_bench;
 use fattorini::search::{SearchParameters, TimeManagement};
 
 use super::matches;
@@ -4683,16 +4684,6 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         judged.games,
         points_text(judged.games as f64 - judged.challenger_points)
     ))
-}
-
-/// The nodes per second of one search thread on this machine with `network`, loaded: `fattorini bench` on
-/// `threads` threads at once, the mean of the threads.
-fn loaded_bench(network: Option<&fattorini::nnue::Network>, threads: usize) -> f64 {
-    let runs: Vec<(u64, f64)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || fattorini::bench::bench(network))).collect();
-        handles.into_iter().map(|handle| handle.join().expect("a bench thread panicked")).collect()
-    });
-    runs.iter().map(|&(nodes, seconds)| nodes as f64 / seconds.max(1e-9)).sum::<f64>() / runs.len().max(1) as f64
 }
 
 /// How often a tune's files that change along it are copied to the remote (`Tune::mirror`), beside its

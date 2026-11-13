@@ -73,6 +73,8 @@
   button { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; padding: 6px 14px; }
   button:disabled { opacity: 0.5; cursor: default; }
   button.plain { background: var(--bg); border-color: var(--line); color: var(--fg); }
+  /* A clock preset reads as a link, not as a field: it fills the fields beside it. */
+  button.preset { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
   .hidden { display: none; }
   .row h2 { margin: 0; }
   .run { padding: 6px 0; border-bottom: 1px solid var(--line); }
@@ -885,7 +887,9 @@ function testsScreen() {
   const clockFields = f.clockKind === "fischer"
     ? `base ${number("base", 5)} s + increment ${number("increment", 4)} s`
     : `${number("moves", 3)} moves in ${number("periodBase", 5)} s + increment ${number("periodIncrement", 4)} s`;
-  const presets = CLOCK_PRESETS.map((preset, index) => `<button class="plain" data-clock-preset="${index}">${escape(preset.label)}</button>`).join(" ");
+  const presets = `<span class="muted">fill with</span> `
+    + CLOCK_PRESETS.map((preset, index) => `<button class="preset" data-clock-preset="${index}">${escape(preset.label)}</button>`)
+      .join(` <span class="muted">&middot;</span> `);
   const limit = `<div class="row"><label>Search</label>`
     + `<select data-field="limit">${option("depth", "fixed depth", f.limit === "depth")}${option("clock", "clock", f.limit === "clock")}</select>`
     + (f.limit === "depth" ? `<input data-field="depth" size="4" value="${escape(f.depth)}">` : "")

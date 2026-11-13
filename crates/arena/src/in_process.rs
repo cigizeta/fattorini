@@ -40,7 +40,7 @@ pub struct InProcessPlayer {
     last_score: Option<i32>,
     /// Which time management plans its clock, at that management's own default `Move Overhead`
     /// (`default_move_overhead_ms`), as a release with no option set: `Split` but where a smithy
-    /// test names another (smithy-time-management-tests.md's protocol field, `Player::time_management`).
+    /// test names another (the chore's `Player::time_management`), so a test can duel two managements.
     time_management: TimeManagement,
 }
 

@@ -2,7 +2,10 @@
 
 Status: **design settled** with the developer 2026-11-13; steps 1 to 8 done the same day
 (`cargo test -p fattorini -p arena -p smithy --release` and `cargo clippy --workspace
---all-targets` clean). Next: step 9, every arena on this build, then the 180+2 test.
+--all-targets` clean). Step 9 started 2026-11-13: test 5, "duel: champion
+lc0-psq-threats-screlu-g1-r1@tuned@classic against challenger
+lc0-psq-threats-screlu-g1-r1@tuned@reckless", clock 180+2, the form and its words seen working
+on the page (the clock presets restyled as links that day: as buttons they read as fields).
 
 ## Why
 

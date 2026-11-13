@@ -88,7 +88,7 @@ impl Kind {
 /// whether it plays its tune (`parameters.txt`) or the defaults, and which time management plans its
 /// clock. Written as a player, the network with what it searches with: `<network>@tuned` or
 /// `<network>@untuned`, then `@classic` or `@reckless` when its management is not `Split`, so a
-/// line written before reads back unchanged (smithy-time-management-tests.md).
+/// line written before reads back unchanged.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Side {
     pub player: String,

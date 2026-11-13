@@ -261,6 +261,12 @@ changes).
 
 ## Data and tools
 
+- **A test's Stop once did nothing** (2026-11-13, test 6): clicked on the test's screen, opened
+  before the smithy restarted, it sent no request the smithy logged (no "stop asked from the
+  page"); a reload, then Stop, worked. Not the token, which every poll refreshes (`poll`). Suspect:
+  the card redrawn by a poll losing its handler (`bindStop`). To reproduce before fixing; test 5's
+  Stop had worked.
+
 - **The smithy's bench on an idle machine, as the arenas' is** (the developer, 2026-11-09): to
   design, after the current tune (it changes how a tune's games are timed). The tune of
   `lc0-psq-threats-screlu-g1-r1` showed it: the smithy benched its machine at 841,150 nodes/s per
@@ -271,7 +277,11 @@ changes).
   10+0.1. To decide: how the smithy makes sure its machine is idle (no chore dealt and every arena
   on it between chores, or the bench refused while anything runs), whether to take the best of a
   few runs, and whether the page warns when the arena on the smithy's machine and the smithy differ
-  by more than the dead band.
+  by more than the dead band. **Seen again 2026-11-13:** test 5 (180+2, Classic against Reckless),
+  started with the arena on the smithy's machine playing, dealt clocks of 87.129+0.968 and
+  120.122+1.335: about 90 to 120 s blitz at an idle machine's depth, not 180+2. The smithy's
+  machine was idle then: the gap is between the processes, most likely the allocator (the arena's
+  `mimalloc`, the smithy's system heap). **Being fixed: smithy-bench.md.**
 
 - **Lc0's Convert, if it runs again:** skip a slow tar only while another worker downloads at normal
   speed (a stall reads as slowness today), and stop retrying a tar skipped N times.

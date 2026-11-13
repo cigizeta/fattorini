@@ -30,6 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use fattorini::bench::loaded_bench;
 use fattorini::nnue::Network;
 use lan_http::{self as http, Listener, Reply, Request};
 use fattorini::pipeline::protocol::{
@@ -879,17 +880,6 @@ pub(crate) fn wait_for(path: &str, timeout: Duration, poll: Duration, stop: &Ato
         }
         std::thread::sleep(poll.min(timeout - waited));
     }
-}
-
-/// The nodes per second of one search thread on this machine with `network`, loaded: `fattorini bench` on
-/// `threads` threads at once, as the smithy benches its own (its `loaded_bench`), the mean of
-/// the threads.
-fn loaded_bench(network: Option<&Network>, threads: usize) -> f64 {
-    let runs: Vec<(u64, f64)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..threads).map(|_| scope.spawn(move || fattorini::bench::bench(network))).collect();
-        handles.into_iter().map(|handle| handle.join().expect("a bench thread panicked")).collect()
-    });
-    runs.iter().map(|&(nodes, seconds)| nodes as f64 / seconds.max(1e-9)).sum::<f64>() / runs.len().max(1) as f64
 }
 
 /// Whether this build can play `chore`: a self-play game is played to a depth, with the parameters

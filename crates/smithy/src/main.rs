@@ -68,6 +68,12 @@ mod value_head;
 use std::env;
 use std::process;
 
+// As the arena's: the bench the arenas' clocks are scaled by (`fattorini::bench::loaded_bench`) allocates on
+// half the cores at once, and Windows' system allocator does not scale with them. The measurement is
+// beside `mimalloc` in Cargo.toml.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     let mut args = env::args();
     args.next(); // skip argv[0], the binary's own path

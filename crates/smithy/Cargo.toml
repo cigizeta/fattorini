@@ -32,6 +32,11 @@ shakmaty.workspace = true
 # `tch`'s build script (`torch-sys`) searches for a real `libtorch` install at build time. Only this
 # crate depends on it, so `fattorini` and `arena` never need `libtorch` to build.
 tch = "0.24"
+# The global allocator, as the arena's (`main.rs`): the bench every clocked test and tune scales the
+# arenas' clocks by (`loaded_bench`) allocates on half the cores at once, and under Windows' system
+# heap it read about a third below the arena's on the same idle machine (2026-11-13: 732,000 nodes
+# per second per thread against the arena's 1,097,000), so every arena's clock was scaled down.
+mimalloc = "0.1.52"
 
 [lints]
 workspace = true
