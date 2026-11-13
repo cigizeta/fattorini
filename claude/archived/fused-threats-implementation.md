@@ -1,11 +1,22 @@
 # Fused threats: implementation plan
 
+**Reverted 2026-11-13:** exact, but no measurable gain (below). See TODO.md, Speed.
+
 Status: **steps 1 to 5 implemented 2026-11-13**, waiting for `cargo test`, clippy and the
 measurements. As built: `evaluate_by_color_cp` calls `evaluate_by_color_cp_fused(.., true)`, the
 `false` side kept for the test that compares the two; `threat_chunk` has no test of its own, the
 comparison along random games with saturated lanes covering it, as the existing
 `screlu_incremental_evaluation_matches_a_from_scratch_one_with_saturated_lanes` now does for the
 fused path.
+
+## Measured (2026-11-13)
+
+- `cargo test --workspace --release` and clippy clean.
+- `--threat-parts` on the 10+0.1 smoke test's 5,052 positions: whole 133.8 ns (137 before, on
+  2,482 positions of the other smoke run), head 39.3, finding 55.2, copy and add 39.3 (the
+  remainder); depth 13, 542,327 nodes, evaluation at most 25.8%, threats at most 18.2%.
+- Snapshot `bench`: **565,412 nodes** (exact, as before), **2,465,798 nodes/s** against 2.46M
+  before: no measurable gain. The store and reload were nearly free, the scratch staying in L1.
 
 ## Steps
 

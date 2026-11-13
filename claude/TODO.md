@@ -225,8 +225,13 @@ changes).
 
 1. **Measure:** `bin/fattorini bench` and Stockfish's `bench` on the same idle machine, then the
    bench timing the threat step alone (threats-timing.md), so the share of each cost is known.
-2. **Make the threats incremental** (threats-timing.md, designed 2026-10-29): today the threat
-   features are recomputed from zero at every evaluation, while psq's are kept incrementally.
+2. **Threats optimization: closed 2026-11-13, for today's threats.** The fused kernel
+   (fused-threats.md, fused-threats-implementation.md) was exact (565,412 nodes) but gained nothing
+   (2,465,798 nodes/s against 2.46M), and was reverted; pawn shifts and incremental threats were
+   dropped with it. Today's threats are sparse (a side's pieces attacking the opponent's, 1.6 rows a
+   perspective), so adding them is already cheap. **Reopened with richer threats:** a features
+   experiment adding more rows (attacks on own pieces, x-rays, pins) designs incremental threats
+   with it.
 3. **Then down the profile:** accumulator handling, move generation, make/unmake and legality, TT,
    `quiescence_from`; each kept only if a bench shows it pays.
 

@@ -254,38 +254,14 @@ pub(crate) fn add_assign_i16_avx2(destination: &mut [i16], source: &[i16]) {
 /// itself. Saturating is exact for an accumulator lane, not an approximation: a lane is only ever
 /// read as an activation, clamped to `0..=one` first, and `one` is within `i16`.
 pub(crate) fn add_rows_saturating_i16_avx2(destination: &mut [i16], source: &[i16], rows: &[i16], added: &[u16]) {
-    use std::arch::x86_64::{__m256i, _mm256_storeu_si256};
+    use std::arch::x86_64::{
+        __m128i, __m256i, _mm256_add_epi32, _mm256_cvtepi16_epi32, _mm256_packs_epi32, _mm256_permute4x64_epi64,
+        _mm256_storeu_si256, _mm_loadu_si128,
+    };
 
     let length = destination.len();
     debug_assert_eq!(length, source.len());
     debug_assert!(added.iter().all(|&row| (row as usize + 1) * length <= rows.len()));
-    let chunks = length / 16;
-    for chunk in 0..chunks {
-        let offset = chunk * 16;
-        unsafe {
-            let packed = threat_chunk(source.as_ptr(), rows, length, offset, added);
-            _mm256_storeu_si256(destination.as_mut_ptr().add(offset) as *mut __m256i, packed);
-        }
-    }
-    for i in (chunks * 16)..length {
-        let sum = source[i] as i32 + added.iter().map(|&row| rows[row as usize * length + i] as i32).sum::<i32>();
-        destination[i] = sum.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-    }
-}
-
-/// The sixteen lanes at `offset` of `source` plus every `added` row's same lanes (row `r` at
-/// `rows[r * length..]`), summed in `i32` and saturated to `i16`, in a register: one chunk of
-/// `add_rows_saturating_i16_avx2`, returned rather than stored, so a caller can read it where it is.
-///
-/// # Safety
-/// `source` must point at `length` readable `i16`s, `offset + 16 <= length`, and every added row
-/// must lie within `rows`.
-unsafe fn threat_chunk(source: *const i16, rows: &[i16], length: usize, offset: usize, added: &[u16]) -> std::arch::x86_64::__m256i {
-    use std::arch::x86_64::{
-        __m128i, __m256i, _mm256_add_epi32, _mm256_cvtepi16_epi32, _mm256_packs_epi32, _mm256_permute4x64_epi64,
-        _mm_loadu_si128,
-    };
-
     // Sixteen `i16` lanes from `lanes` widened to two registers of eight `i32`: lanes 0 to 7, 8 to 15.
     let widen = |lanes: *const i16| -> [__m256i; 2] {
         unsafe {
@@ -295,53 +271,26 @@ unsafe fn threat_chunk(source: *const i16, rows: &[i16], length: usize, offset: 
             ]
         }
     };
-    unsafe {
-        let [mut low, mut high] = widen(source.add(offset));
-        for &row in added {
-            let [row_low, row_high] = widen(rows.as_ptr().add(row as usize * length + offset));
-            low = _mm256_add_epi32(low, row_low);
-            high = _mm256_add_epi32(high, row_high);
-        }
-        // `packs` saturates, but within each 128-bit half: its 64-bit quarters come out as lanes
-        // 0 to 3, 8 to 11, 4 to 7, 12 to 15. 0xD8 takes the quarters in order 0, 2, 1, 3.
-        _mm256_permute4x64_epi64(_mm256_packs_epi32(low, high), 0xD8)
-    }
-}
-
-/// `screlu_dot_i16_avx2` over the two perspectives' lanes with their threat rows added first, as
-/// `add_rows_saturating_i16_avx2` adds them, without storing the sums: each chunk is built in a
-/// register (`threat_chunk`), activated there (`activations_of`), squared and multiplied by its
-/// weights. The same integers as the copy followed by `screlu_dot_i16_avx2`, so exact: only the
-/// store and the reload between the two are gone (fused-threats, 2026-11-13). `transform` holds the
-/// rows, each `own.len()` long; each perspective a multiple of 16 lanes, `weights` both long, own first.
-pub(crate) fn screlu_dot_threats_i16_avx2(
-    own: &[i16], opponent: &[i16], own_rows: &[u16], opponent_rows: &[u16], transform: &[i16], weights: &[i16],
-    activation: Activation,
-) -> i32 {
-    use std::arch::x86_64::{
-        __m256i, _mm256_add_epi16, _mm256_add_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_mullo_epi16,
-        _mm256_set1_epi16, _mm256_setzero_si256, _mm256_srli_epi16,
-    };
-
-    let length = own.len();
-    debug_assert_eq!(length % 16, 0);
-    debug_assert_eq!(length, opponent.len());
-    debug_assert_eq!(weights.len(), 2 * length);
-    debug_assert!(own_rows.iter().chain(opponent_rows).all(|&row| (row as usize + 1) * length <= transform.len()));
-
-    let mut sum = unsafe { _mm256_setzero_si256() };
-    for (start, lanes, added) in [(0, own, own_rows), (length, opponent, opponent_rows)] {
-        for chunk in 0..length / 16 {
-            let offset = chunk * 16;
-            unsafe {
-                let a = activations_of(threat_chunk(lanes.as_ptr(), transform, length, offset, added), activation);
-                let squares = _mm256_srli_epi16(_mm256_add_epi16(_mm256_mullo_epi16(a, a), _mm256_set1_epi16(256)), 9);
-                let weight = _mm256_loadu_si256(weights.as_ptr().add(start + offset) as *const __m256i);
-                sum = _mm256_add_epi32(sum, _mm256_madd_epi16(squares, weight));
+    let chunks = length / 16;
+    for chunk in 0..chunks {
+        let offset = chunk * 16;
+        unsafe {
+            let [mut low, mut high] = widen(source.as_ptr().add(offset));
+            for &row in added {
+                let [row_low, row_high] = widen(rows.as_ptr().add(row as usize * length + offset));
+                low = _mm256_add_epi32(low, row_low);
+                high = _mm256_add_epi32(high, row_high);
             }
+            // `packs` saturates, but within each 128-bit half: its 64-bit quarters come out as lanes
+            // 0 to 3, 8 to 11, 4 to 7, 12 to 15. 0xD8 takes the quarters in order 0, 2, 1, 3.
+            let packed = _mm256_permute4x64_epi64(_mm256_packs_epi32(low, high), 0xD8);
+            _mm256_storeu_si256(destination.as_mut_ptr().add(offset) as *mut __m256i, packed);
         }
     }
-    horizontal_sum_epi32(sum)
+    for i in (chunks * 16)..length {
+        let sum = source[i] as i32 + added.iter().map(|&row| rows[row as usize * length + i] as i32).sum::<i32>();
+        destination[i] = sum.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    }
 }
 
 /// `child = parent - removed rows + added rows` on a quantized accumulator's `i16` lanes, in one
@@ -440,20 +389,13 @@ pub(crate) struct Activation {
 /// # Safety
 /// `lanes` must point at 16 readable `i16`s.
 unsafe fn activations_16(lanes: *const i16, activation: Activation) -> std::arch::x86_64::__m256i {
-    use std::arch::x86_64::{__m256i, _mm256_loadu_si256};
-
-    unsafe { activations_of(_mm256_loadu_si256(lanes as *const __m256i), activation) }
-}
-
-/// Sixteen accumulator lanes already in a register, as activations: `activations_16` without the
-/// load, so a lane computed in registers (`threat_chunk`) is activated where it is.
-fn activations_of(loaded: std::arch::x86_64::__m256i, activation: Activation) -> std::arch::x86_64::__m256i {
     use std::arch::x86_64::{
-        _mm256_add_epi16, _mm256_max_epi16, _mm256_min_epi16, _mm256_set1_epi16, _mm256_setzero_si256, _mm256_sra_epi16,
-        _mm_cvtsi32_si128,
+        __m256i, _mm256_add_epi16, _mm256_loadu_si256, _mm256_max_epi16, _mm256_min_epi16, _mm256_set1_epi16,
+        _mm256_setzero_si256, _mm256_sra_epi16, _mm_cvtsi32_si128,
     };
 
     unsafe {
+        let loaded = _mm256_loadu_si256(lanes as *const __m256i);
         let clamped = _mm256_min_epi16(_mm256_max_epi16(loaded, _mm256_setzero_si256()), _mm256_set1_epi16(activation.one));
         let rounded = _mm256_add_epi16(clamped, _mm256_set1_epi16(activation.rounding));
         _mm256_sra_epi16(rounded, _mm_cvtsi32_si128(activation.shift as i32))

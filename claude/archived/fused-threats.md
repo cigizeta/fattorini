@@ -1,5 +1,8 @@
 # Threat rows fused into the screlu head
 
+**Abandoned 2026-11-13, see fused-threats-implementation.md:** A built, exact, no gain, reverted;
+B and C dropped while the threats stay this sparse.
+
 Status: **design, 2026-11-13**, agreed with the developer in outline ("A then C"); C revised below
 after reading the code. No implementation plan yet.
 
