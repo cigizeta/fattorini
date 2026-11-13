@@ -1388,6 +1388,7 @@ dependencies = [
  "flate2",
  "lan-http",
  "log",
+ "mimalloc",
  "pgn-reader",
  "pgn-replay",
  "progress",
