@@ -371,6 +371,12 @@ pub const SCORE_FEN_TAG: &str = "Position";
 /// million nodes) rarely replaces an entry it will want again.
 pub const SCORE_HASH_MB: usize = 64;
 
+/// Each score search's node cap, beside its depth: a position whose tree explodes stops at the
+/// deepest depth it completed within it, the same on every machine, rather than holding its worker
+/// for minutes (one bench position took 34 s to depth 18, the rest under 2 s). About 45 s of one
+/// thread; named in the scores file's header.
+pub const SCORE_MAX_NODES: u64 = 50_000_000;
+
 /// What starts a score task's body after its session line, telling it from a PGN.
 pub const SCORE_RECORD_LINE: &str = "score_record\t1";
 

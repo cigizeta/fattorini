@@ -34,6 +34,11 @@ windows-sys = { workspace = true, features = [
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
 ] }
+# The engine binary's global allocator (`main.rs`), as the arena's and the smithy's: Lazy SMP's
+# threads, and `tm-probe`'s searches side by side, allocate at once, and Windows' system allocator
+# does not scale with them (the arena measured 2,505 positions per second with it against 2,215
+# without, at 16 threads). Compiled from C source.
+mimalloc = "0.1.52"
 
 # `nnue_bench` reads PGN games, resolving them through the `pgn-replay` source it includes, and reads
 # zstd-compressed segments.

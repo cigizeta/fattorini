@@ -290,7 +290,49 @@ Code read 2026-11-13: `TimeLimit`, `TimeManagement`, `time_limit`, `TimeManager`
      then a 10+0.1 duel against the incumbent, and the arena's per-move clock read for how the time
      is spent. Not a ship decision.
   2. **Starting values for the tune,** chosen from what step 1 shows: Reckless's, or adjusted where
-     the clock use looks wrong for Fattorini's search.
+     the clock use looks wrong for Fattorini's search. **Settled (the developer, 2026-11-13): our
+     own defaults, not Reckless's.** Test 7's PGN (180+2, unfinished) shows Reckless spending up to
+     half its clock on one early move, at two or three depths beyond its usual, then playing dozens
+     of moves on the increment alone and losing: its multipliers measure Fattorini's search (node
+     fraction, move and score stability, the next iteration's cost) with constants fitted to
+     Reckless's. The tune starts from values chosen for Fattorini, from the measured clock use.
+     Counted over test 7's first 154 games of each side (`data/tm-count.py`, clocks as shares of
+     the arena's scaled base; Reckless found by the pair order, checked by its 85 depth-1 forced
+     moves against Classic's 0):
+
+     | | Reckless | Classic |
+     |---|---|---|
+     | score | 48.7% | 51.3% |
+     | clock left after move 20, median | 20% | 63% |
+     | after move 40 | 1% | 37% |
+     | after move 60 | 2% | 28% |
+     | moves played under 10% of the base | 7,312 of 10,358 | 32 of 10,365 |
+     | moves over 15% of the base | 243, median depth +2 | 0 |
+
+     Reckless as copied spends its clock by move 30 and plays most moves on the increment, its long
+     moves stretched by the multipliers (two depths beyond its usual), not by a slow last
+     iteration. Classic errs the other way: 28% of the clock unused at move 60, the Lichess
+     complaint that the bot leaves time on the clock. That both stay near 50% says depth beyond
+     about 22 buys little at this control, and that a management between the two has room.
+  2b. **Hand-picked values, then a new 180+2 test (the developer, 2026-11-13),** aimed at a clock
+     profile between the two: median clock left about 45% after move 20, 20% after move 40, 10%
+     after move 60. Classic stays as it is, the comparison's incumbent ("Classic can stay
+     broken"). Planned changes: the node factor recentred on Fattorini's own typical node fraction
+     (measured first), the multiplier's product capped (0.5 to 2.0 to start), the hard bound a few
+     times the soft one rather than 0.73 of the clock.
+     **The measurement (the developer, 2026-11-13): `fattorini tm-probe [<depth>]`,** beside
+     `bench`: its 49 positions searched to the depth (22 by default), one thread, a fresh table
+     each, with the build's network and parameters; after every completed depth the node fraction
+     `f`, the stability counters, the best-move changes, each factor and their product; then the
+     medians per depth. Plan: search.rs exposes the five factors (`RecklessFactors`, which
+     `reckless_multiplier` then reads) and an iteration loop that reports them beside each
+     `IterationReport`; bench.rs runs the positions and words the table; main.rs takes the
+     subcommand. Built 2026-11-13, the positions side by side over the machine's threads (the
+     factors come from nodes and scores, not time), and the engine binary moved to `mimalloc`.
+     **First run, depth 18** (`data/tm-probe-18.txt`, 47 of 49 positions reporting): median node
+     fraction `f` 0.13 at depth 1, 0.55 at depth 10, 0.71 at depth 18; the node factor 1.73 at
+     depth 10, 1.31 at 18; the product 2.35 at depth 10, 2.13 at 13, 1.47 at 18. Position 37 took
+     34 s to depth 18, every other under 2 s: a tree that explodes, a search question of its own.
   3. **The tune** (32k pairs at 10+0.1), then **the verdict** at 180+2, tuned against the
      incumbent.
 

@@ -1305,6 +1305,11 @@ struct Search<'a> {
     /// ever clear it, since a `Search` is fresh per iterative-deepening iteration and never
     /// reused.
     stopped: bool,
+    /// This iteration's node budget, `None` for none: once `nodes` reaches it, checked at the same
+    /// `CHECK_INTERVAL` points as `deadline`, the iteration stops as a tripped deadline stops it.
+    /// On one thread with a fresh table it trips at the same node on every machine, which a clock
+    /// never does: a book's scoring caps its searches by it (`choose_best_move_capped`).
+    node_limit: Option<u64>,
     /// Whether the immediately preceding recursive call, one ply up, made a null move to get
     /// here -- read by null-move pruning's own gate to refuse a second null move stacked
     /// directly on the first, which would mean neither side actually moved and would tell this
@@ -1522,6 +1527,7 @@ fn new_search<'a>(
         pv: PvTable::new(),
         deadline,
         stopped: false,
+        node_limit: None,
         null_move_in_progress: false,
         // Set by `search_root_pondering`, as `tablebase` below is.
         ponder: None,
@@ -1811,7 +1817,7 @@ impl<'a> Search<'a> {
                 self.stopped = true;
                 return alpha;
             }
-            if self.is_out_of_time() {
+            if self.is_out_of_time() || self.node_limit.is_some_and(|limit| self.nodes >= limit) {
                 self.stopped = true;
                 // Thread 0 alone reaches this: broadcasts the decision to every other
                 // thread sharing this same `go`'s stop_signal, not just this one's own
@@ -3649,6 +3655,24 @@ struct TimeManager {
     reckless: RecklessCounters,
 }
 
+/// `TimeManagement::Reckless`'s five factors after a completed depth, and what they read: the share
+/// of the root's nodes spent under the best move (`fraction`), the two stability counters and the
+/// best-move changes; their product, `multiplier`, scales the soft bound. Public for
+/// `fattorini tm-probe`, which measures them on Fattorini's own search.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RecklessFactors {
+    pub fraction: f64,
+    pub pv_stable: u32,
+    pub eval_stable: u32,
+    pub best_move_changes: u32,
+    pub nodes: f64,
+    pub trend: f64,
+    pub pv: f64,
+    pub eval: f64,
+    pub changes: f64,
+    pub multiplier: f64,
+}
+
 /// What `TimeManagement::Reckless`'s five factors read, gathered across the depths of one search
 /// (`TimeManager::record_root_stats`, `TimeManager::record_iteration`).
 #[derive(Default)]
@@ -3726,11 +3750,15 @@ impl TimeManager {
     /// The product of `Reckless`'s five factors (`RecklessTimeParameters`), which scales its soft
     /// bound; 1 before any depth has completed.
     fn reckless_multiplier(&self) -> f64 {
+        self.reckless_factors().map_or(1.0, |factors| factors.multiplier)
+    }
+
+    /// `Reckless`'s five factors as they stand, and what they read; `None` before any depth has
+    /// completed.
+    fn reckless_factors(&self) -> Option<RecklessFactors> {
         let p = &RECKLESS_TIME_PARAMETERS;
         let counters = &self.reckless;
-        let Some((best, score)) = counters.best else {
-            return 1.0;
-        };
+        let (best, score) = counters.best?;
         let best_nodes = counters.root_nodes.iter().find(|(mv, _)| *mv == best).map_or(0, |(_, nodes)| *nodes);
         let fraction = if counters.total_nodes == 0 { 0.0 } else { best_nodes as f64 / counters.total_nodes as f64 };
         let nodes = (p.nodes_a - p.nodes_b * fraction).max(p.nodes_min);
@@ -3753,7 +3781,18 @@ impl TimeManager {
         let pv = (p.pv_a - p.pv_b * f64::from(counters.pv_stable)).max(p.pv_min);
         let eval = (p.eval_a - p.eval_b * f64::from(counters.eval_stable)).max(p.eval_min);
         let changes = p.changes_a + (p.changes_b * f64::from(counters.changes)).ln_1p();
-        nodes * trend * pv * eval * changes
+        Some(RecklessFactors {
+            fraction,
+            pv_stable: counters.pv_stable,
+            eval_stable: counters.eval_stable,
+            best_move_changes: counters.changes,
+            nodes,
+            trend,
+            pv,
+            eval,
+            changes,
+            multiplier: nodes * trend * pv * eval * changes,
+        })
     }
 
     /// `Reckless`'s base soft and hard bounds, `None` for any other limit.
@@ -4056,7 +4095,23 @@ fn search_root_pondering(
     parameters: Option<SearchParameters>, previous_score: Option<i32>, thread_idx: u32, stop_signal: &AtomicBool,
     excluded_root_moves: &[Move], ponder: Option<&PonderState>,
 ) -> RootResult {
+    search_root_limited(
+        board, depth, deadline, None, ancestors, killers, history, continuation_history, correction_history, tt, tablebase,
+        evaluator, parameters, previous_score, thread_idx, stop_signal, excluded_root_moves, ponder,
+    )
+}
+
+/// `search_root_pondering` with a node budget for the iteration (`Search::node_limit`).
+#[allow(clippy::too_many_arguments)]
+fn search_root_limited(
+    board: &Board, depth: u32, deadline: Option<Instant>, node_limit: Option<u64>, ancestors: Vec<u64>,
+    killers: Vec<[Option<Move>; 2]>, history: [[i32; 64]; 12], continuation_history: Vec<i32>,
+    correction_history: Vec<i32>, tt: &TranspositionTable, tablebase: &SyzygyTablebase, evaluator: Option<&Network>,
+    parameters: Option<SearchParameters>, previous_score: Option<i32>, thread_idx: u32, stop_signal: &AtomicBool,
+    excluded_root_moves: &[Move], ponder: Option<&PonderState>,
+) -> RootResult {
     let mut search = new_search(depth, deadline, ancestors, killers, history, continuation_history, tt, stop_signal);
+    search.node_limit = node_limit;
     search.correction_history = correction_history;
     search.ponder = ponder;
     // Set directly on the field new_search itself always defaults to None -- see that
@@ -4294,6 +4349,48 @@ pub fn choose_best_move_with_progress(
     stop_signal: &AtomicBool,
     ponder: Option<&PonderState>, mut on_iteration: impl FnMut(&IterationReport),
 ) -> (Vec<IterationReport>, Option<Move>) {
+    iterate(
+        board, max_depth, limit, None, ancestors, tt, tablebase, evaluator, parameters, thread_idx, stop_signal, ponder,
+        |report, _| on_iteration(report),
+    )
+}
+
+/// One thread's search of `board` to `max_depth` or until `max_nodes` nodes, whichever comes first,
+/// no clock: on one thread with a fresh table, the same depths and the same score on every machine.
+/// A depth the cap cuts short is dropped, as a tripped deadline's; depth 1 always completes.
+#[allow(clippy::too_many_arguments)]
+pub fn choose_best_move_capped(
+    board: &Board, max_depth: u32, max_nodes: u64, tt: &TranspositionTable, tablebase: &SyzygyTablebase,
+    evaluator: Option<&Network>, parameters: SearchParameters, stop_signal: &AtomicBool,
+) -> (Vec<IterationReport>, Option<Move>) {
+    iterate(
+        board, max_depth, None, Some(max_nodes), &[], tt, tablebase, evaluator, Some(parameters), 0, stop_signal, None,
+        |_, _| {},
+    )
+}
+
+/// One thread's search of `board` to `max_depth`, no clock, `on_depth` given each completed depth
+/// with `Reckless`'s factors as they then stand, whatever the management: `fattorini tm-probe`.
+#[allow(clippy::too_many_arguments)]
+pub fn choose_best_move_probing(
+    board: &Board, max_depth: u32, tt: &TranspositionTable, tablebase: &SyzygyTablebase, evaluator: Option<&Network>,
+    parameters: SearchParameters, stop_signal: &AtomicBool, mut on_depth: impl FnMut(&IterationReport, Option<RecklessFactors>),
+) -> (Vec<IterationReport>, Option<Move>) {
+    iterate(
+        board, max_depth, None, None, &[], tt, tablebase, evaluator, Some(parameters), 0, stop_signal, None,
+        |report, manager| on_depth(report, manager.reckless_factors()),
+    )
+}
+
+/// `choose_best_move_with_progress`'s loop, `on_iteration` also shown the time manager; `node_cap`,
+/// the nodes of every depth together, each depth after the first given what is left of it.
+#[allow(clippy::too_many_arguments)]
+fn iterate(
+    board: &Board, max_depth: u32, limit: Option<TimeLimit>, node_cap: Option<u64>, ancestors: &[u64], tt: &TranspositionTable,
+    tablebase: &SyzygyTablebase, evaluator: Option<&Network>, parameters: Option<SearchParameters>, thread_idx: u32,
+    stop_signal: &AtomicBool,
+    ponder: Option<&PonderState>, mut on_iteration: impl FnMut(&IterationReport, &TimeManager),
+) -> (Vec<IterationReport>, Option<Move>) {
     let started = Instant::now();
     let mut time_manager = TimeManager::new(limit, started, evaluator.map_or(100, Network::pawn_percent));
     let mut reports = Vec::new();
@@ -4335,6 +4432,17 @@ pub fn choose_best_move_with_progress(
             }
             time_manager.deadline()
         };
+        // Depth 1 always completes, as it does under a clock; a later one gets what is left.
+        let node_limit = match node_cap {
+            Some(cap) if depth > 1 => {
+                let left = cap.saturating_sub(total_nodes);
+                if left == 0 {
+                    break;
+                }
+                Some(left)
+            }
+            _ => None,
+        };
 
         let (
             pv,
@@ -4347,9 +4455,9 @@ pub fn choose_best_move_with_progress(
             updated_continuation_history,
             updated_correction_history,
             root_stats,
-        ) = search_root_pondering(
-            board, depth, deadline, ancestors.to_vec(), killers, history, continuation_history, correction_history, tt,
-            tablebase, evaluator, parameters, previous_score, thread_idx, stop_signal, &excluded, ponder,
+        ) = search_root_limited(
+            board, depth, deadline, node_limit, ancestors.to_vec(), killers, history, continuation_history, correction_history,
+            tt, tablebase, evaluator, parameters, previous_score, thread_idx, stop_signal, &excluded, ponder,
         );
         // Kept even when `stopped` -- see `search_root`'s own doc comment for why a killer or
         // history entry stays trustworthy evidence regardless of whether the iteration that
@@ -4376,7 +4484,7 @@ pub fn choose_best_move_with_progress(
         // check this function doesn't have (there is none after this point today, but the
         // ordering itself is the real guarantee, not an accident of where nothing else happens
         // to intervene yet).
-        on_iteration(reports.last().unwrap());
+        on_iteration(reports.last().unwrap(), &time_manager);
     }
 
     (reports, best_move)
@@ -5602,6 +5710,7 @@ mod tests {
             pv: PvTable::new(),
             deadline: None,
             stopped: false,
+            node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
             ponder: None,
@@ -5647,6 +5756,7 @@ mod tests {
             pv: PvTable::new(),
             deadline: None,
             stopped: false,
+            node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
             ponder: None,
@@ -5691,6 +5801,7 @@ mod tests {
             pv: PvTable::new(),
             deadline: None,
             stopped: false,
+            node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
             ponder: None,
@@ -5761,6 +5872,7 @@ mod tests {
             pv: PvTable::new(),
             deadline: None,
             stopped: false,
+            node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
             ponder: None,
@@ -5800,6 +5912,7 @@ mod tests {
             pv: PvTable::new(),
             deadline: None,
             stopped: false,
+            node_limit: None,
             null_move_in_progress: false,
             stop_signal,
             ponder: None,

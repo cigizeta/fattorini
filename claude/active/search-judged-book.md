@@ -144,6 +144,15 @@ move gets in on human results alone.
   - each softmax book shows its T, its scores file, and the report's two numbers: the share of bad
     moves within reach, and the chance the old book plays one.
 
+- **A node cap beside the depth (the developer, 2026-11-13):** `fattorini tm-probe 18` found one
+  bench position (#37) taking 34 s to depth 18 against under 2 s for every other: at a fixed
+  depth some of 196,000 book positions will explode. Each score search stops at depth 20 or
+  `SCORE_MAX_NODES` (50 million, about 45 s of one thread), whichever first, scored at the deepest
+  depth it completed. A node budget, checked where the search checks its deadline, trips at the
+  same node on every machine, so the scores stay reproducible. The cap is in the scores file's
+  header; the smithy takes a shallower depth (never a deeper one); the softmax record counts the
+  capped moves and the shallowest depth among them.
+
 ## Open questions
 
 None: the steps below are the plan.

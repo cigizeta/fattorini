@@ -1420,6 +1420,20 @@ fn run_write(source: &str, weights: Weights) {
     println!("moved the book to {} and its record beside it", remote::remote_path(&book_path));
 }
 
+/// The scores searched short of their file's depth, stopped by the node cap, and the shallowest
+/// depth among them: `<n> of <rows>, shallowest <d>`.
+fn capped_text(scores: &book_scores::Scores) -> String {
+    let depth: Option<u32> = scores.header.iter().find(|(name, _)| name == "depth").and_then(|(_, value)| value.parse().ok());
+    let Some(depth) = depth else {
+        return "unknown: no depth in the header".to_string();
+    };
+    let capped: Vec<u32> = scores.rows.iter().map(|row| row.depth).filter(|&reached| reached < depth).collect();
+    match capped.iter().min() {
+        Some(shallowest) => format!("{} of {}, shallowest {shallowest}", capped.len(), scores.rows.len()),
+        None => format!("0 of {}", scores.rows.len()),
+    }
+}
+
 /// The softmax write stage: the source's book, every move weighed by its score in `scores` (a scores
 /// file of the source's, by name, complete) at `temperature` centipawns (`book_scores`), as
 /// `book-n<N>-softmax-t<T>-<scores stem>.bin` and its record, which holds the graph's header, the
@@ -1478,6 +1492,7 @@ fn run_write_softmax(source: &str, temperature: f64, scores: &str) {
         ("positions", book.positions.to_string()),
         ("moves", book.entries.len().to_string()),
         ("moves_weighing_0", book.zeros.to_string()),
+        ("moves_capped", capped_text(&stored)),
         ("written", current_time()),
     ] {
         record.push_str(&format!("{name}\t{value}\n"));

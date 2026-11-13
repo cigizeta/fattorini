@@ -1235,7 +1235,8 @@ impl Shared {
             Some(format!("its commit {} is not the scoring's {}", record.commit, score.commit))
         } else if record.bench_nodes != score.bench_nodes {
             Some(format!("its bench searched {} nodes, the smithy's {}: another search", record.bench_nodes, score.bench_nodes))
-        } else if record.depth != score.depth || record.fen != score.moves[k as usize].fen {
+        // A shallower depth is the node cap's (`SCORE_MAX_NODES`), the same on every arena.
+        } else if record.depth > score.depth || record.fen != score.moves[k as usize].fen {
             Some(format!("it searched depth {} of {:?}, not what was dealt", record.depth, record.fen))
         } else {
             None
@@ -4868,6 +4869,7 @@ fn score_book_job(status: &Status, source: &str, side: &str, depth: &str) -> Res
         ("parameters", parameters_text(&player.parameters)),
         ("commit", commit.clone()),
         ("depth", depth.to_string()),
+        ("max_nodes", protocol::SCORE_MAX_NODES.to_string()),
         ("threads", "1".to_string()),
         ("hash_mb", protocol::SCORE_HASH_MB.to_string()),
         ("tablebases", "none".to_string()),

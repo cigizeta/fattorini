@@ -46,6 +46,99 @@ pub fn bench_with(evaluator: Option<&Network>, parameters: SearchParameters, dep
     (nodes, started.elapsed().as_secs_f64())
 }
 
+/// The depth `fattorini tm-probe` searches to by default: about what a 180+2 game reaches in the
+/// opening and middlegame, where the time is spent.
+pub const TM_PROBE_DEPTH: u32 = 22;
+
+/// `fattorini tm-probe [<depth>]`: `Reckless` time management's five factors measured on this
+/// search, every one of `POSITIONS` searched to `depth` as `bench` searches them (one thread, a
+/// fresh table each, `parameters`; the positions side by side over the machine's threads), its
+/// factors after every completed depth. Returns one line per
+/// position and depth (`position depth ms f pv_stable eval_stable changes nodes trend pv eval churn
+/// multiplier`, `ms` the search's time so far, showing a position whose depths grow too costly), then per depth the medians of the node fraction and of each factor, the product
+/// last.
+pub fn tm_probe(evaluator: Option<&Network>, parameters: SearchParameters, depth: u32) -> Vec<String> {
+    use crate::search::{choose_best_move_probing, RecklessFactors};
+    // Every position at once, each on its own thread: the factors come from node counts and
+    // scores, which a one-thread search with a fresh table finds the same however busy the machine
+    // is, so this measures nothing of speed. A pool of the machine's threads takes them in turn.
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(POSITIONS.len());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    // One completed depth of a position: the depth, the search's time so far in ms, the factors.
+    type ProbeRow = (u32, u64, RecklessFactors);
+    let probed: Vec<Vec<ProbeRow>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let tablebase = SyzygyTablebase::new();
+                    let mut done = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(line) = POSITIONS.get(index) else { break };
+                        let tt = TranspositionTable::new(BENCH_HASH_MB);
+                        let mut rows = Vec::new();
+                        choose_best_move_probing(&board(line), depth, &tt, &tablebase, evaluator, parameters, &AtomicBool::new(false), |report, factors| {
+                            if let Some(f) = factors {
+                                rows.push((report.depth, report.time_ms, f));
+                            }
+                        });
+                        done.push((index, rows));
+                    }
+                    done
+                })
+            })
+            .collect();
+        let mut all: Vec<(usize, Vec<ProbeRow>)> =
+            workers.into_iter().flat_map(|worker| worker.join().expect("a probe thread panicked")).collect();
+        all.sort_by_key(|(index, _)| *index);
+        all.into_iter().map(|(_, rows)| rows).collect()
+    });
+    let mut lines =
+        vec!["position\tdepth\tms\tf\tpv_stable\teval_stable\tchanges\tnodes\ttrend\tpv\teval\tchurn\tmultiplier".to_string()];
+    let mut by_depth: Vec<Vec<RecklessFactors>> = vec![Vec::new(); depth as usize + 1];
+    for (index, rows) in probed.iter().enumerate() {
+        for &(report_depth, ms, f) in rows {
+            lines.push(format!(
+                "{}\t{}\t{ms}\t{:.3}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+                index + 1,
+                report_depth,
+                f.fraction,
+                f.pv_stable,
+                f.eval_stable,
+                f.best_move_changes,
+                f.nodes,
+                f.trend,
+                f.pv,
+                f.eval,
+                f.changes,
+                f.multiplier
+            ));
+            if let Some(slot) = by_depth.get_mut(report_depth as usize) {
+                slot.push(f);
+            }
+        }
+    }
+    lines.push("medians: depth\tpositions\tf\tnodes\tpv\teval\tchurn\tmultiplier".to_string());
+    for (d, factors) in by_depth.iter().enumerate().filter(|(_, factors)| !factors.is_empty()) {
+        let median = |value: fn(&RecklessFactors) -> f64| {
+            let mut values: Vec<f64> = factors.iter().map(value).collect();
+            values.sort_by(f64::total_cmp);
+            values[values.len() / 2]
+        };
+        lines.push(format!(
+            "median\t{d}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+            factors.len(),
+            median(|f| f.fraction),
+            median(|f| f.nodes),
+            median(|f| f.pv),
+            median(|f| f.eval),
+            median(|f| f.changes),
+            median(|f| f.multiplier)
+        ));
+    }
+    lines
+}
+
 /// How many times `loaded_bench` runs, keeping the fastest: one run is about a second, short enough
 /// that a CPU still raising its clock or a background task slows it; the fastest of five is the
 /// machine's speed. The smithy and the arena read one run each before 2026-11-13, and on one idle
@@ -85,6 +178,20 @@ pub fn bench_line(nodes: u64, seconds: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tm_probe_reports_every_depth_of_every_position_then_the_medians() {
+        let lines = tm_probe(None, SearchParameters::DEFAULT, 3);
+        assert!(lines[0].starts_with("position\tdepth\tms\tf"));
+        let rows = lines.iter().filter(|line| line.chars().next().is_some_and(|c| c.is_ascii_digit())).count();
+        assert!(rows > POSITIONS.len() * 2 && rows <= POSITIONS.len() * 3, "depths 1 to 3 of about every position: {rows}");
+        let medians: Vec<&String> = lines.iter().filter(|line| line.starts_with("median\t")).collect();
+        assert_eq!(medians.len(), 3);
+        for line in medians {
+            let multiplier: f64 = line.rsplit('\t').next().unwrap().parse().unwrap();
+            assert!(multiplier > 0.0, "{line}");
+        }
+    }
 
     #[test]
     fn the_bench_line_gives_nodes_then_nps() {

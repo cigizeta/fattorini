@@ -1,8 +1,14 @@
+// Many threads allocating at once, Lazy SMP's or `tm-probe`'s: the system allocator does not scale
+// with them, the measurement beside `mimalloc` in Cargo.toml.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// `fattorini` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
 /// `config.yml` (`engine_options`), pins each game's engine to its own physical cores
 /// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints the third-party notices
 /// a release embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
+/// `tm-probe [<depth>]` measures `Reckless` time management's factors on those positions.
 ///
 /// Any other argument stops the engine, so a typo is never silently ignored.
 fn main() {
@@ -22,8 +28,16 @@ fn main() {
                 std::process::exit(2);
             }
         },
+        ["tm-probe"] => run_tm_probe(fattorini::bench::TM_PROBE_DEPTH),
+        ["tm-probe", depth] => match depth.parse::<u32>() {
+            Ok(depth) if depth > 0 => run_tm_probe(depth),
+            _ => {
+                eprintln!("fattorini tm-probe: the depth must be a positive integer, not {depth}");
+                std::process::exit(2);
+            }
+        },
         _ => {
-            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini bench [<depth>]");
+            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini bench [<depth>] | fattorini tm-probe [<depth>]");
             std::process::exit(2);
         }
     }
@@ -60,6 +74,16 @@ fn run_bench(depth: u32) {
     let parameters = fattorini::uci::embedded_parameters();
     let (nodes, seconds) = fattorini::bench::bench_with(evaluator.as_deref(), parameters, depth);
     println!("{}", fattorini::bench::bench_line(nodes, seconds));
+}
+
+/// `fattorini tm-probe [<depth>]`, with what the build embeds: `Reckless` time management's factors
+/// on the bench positions (`bench::tm_probe`), one tab-separated line each, the medians last.
+fn run_tm_probe(depth: u32) {
+    let evaluator = fattorini::uci::embedded_evaluator();
+    let parameters = fattorini::uci::embedded_parameters();
+    for line in fattorini::bench::tm_probe(evaluator.as_deref(), parameters, depth) {
+        println!("{line}");
+    }
 }
 
 /// `fattorini licenses`: the third-party notices, which only a release embeds.

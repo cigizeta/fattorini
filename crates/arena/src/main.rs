@@ -67,8 +67,7 @@ use runner::{Labels, Placement, Resolution, Run};
 use sprt::Sprt;
 
 // Self-play's threads all allocate at once, and Windows' system allocator does not scale with them;
-// the measurement is beside `mimalloc` in Cargo.toml. The engine `fattorini` keeps the system
-// allocator: a GUI game searches with one thread unless told otherwise.
+// the measurement is beside `mimalloc` in Cargo.toml. The engine `fattorini` uses it too.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

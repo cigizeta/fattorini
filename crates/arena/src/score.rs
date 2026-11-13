@@ -1,7 +1,7 @@
 //! A `score` chore's one task: an opening book's move judged by the search, which plays no game.
 //! The position after the move is searched to the chore's depth on one thread, with a fresh table
-//! and no tablebases, so the same move gets the same score on every arena whose build and network
-//! are the same; whether they are is the bench's node count (`bench_nodes`), which the smithy
+//! and no tablebases, or until `SCORE_MAX_NODES` nodes, at the deepest depth completed, so the same
+//! move gets the same score on every arena whose build and network are the same; whether they are is the bench's node count (`bench_nodes`), which the smithy
 //! compares with its own. The score is turned to the side that played the move: the search's is the
 //! side to move's, its opponent.
 
@@ -12,8 +12,8 @@ use fattorini::board::Board;
 use fattorini::movegen::attacks::is_in_check;
 use fattorini::movegen::legal::legal_moves;
 use fattorini::nnue::Network;
-use fattorini::pipeline::protocol::{BookScore, SCORE_HASH_MB};
-use fattorini::search::{choose_best_move_with_parameters, default_parameters_for, SearchParameters};
+use fattorini::pipeline::protocol::{BookScore, SCORE_HASH_MB, SCORE_MAX_NODES};
+use fattorini::search::{choose_best_move_capped, default_parameters_for, SearchParameters};
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
 use fattorini::uci::split_score;
@@ -32,12 +32,23 @@ pub(crate) fn parameters_of(network: Option<&Network>, given: Option<SearchParam
     given.unwrap_or_else(|| default_parameters_for(network))
 }
 
-/// Searches `fen`, the position after a book move, to `depth`, as the module says; `Ok(None)` when
-/// stopped first. A position with no legal move (the book move mated or stalemated) is scored
-/// without a search: a mate in one, or a draw.
+/// Searches `fen`, the position after a book move, to `depth` or `SCORE_MAX_NODES` nodes, whichever
+/// comes first, as the module says: a capped search is scored at the deepest depth it completed.
+/// `Ok(None)` when `stop` was raised before it began. A position with no legal move (the book move
+/// mated or stalemated) is scored without a search: a mate in one, or a draw.
 pub(crate) fn score_position(
     fen: &str, depth: u32, network: Option<&Network>, parameters: SearchParameters, stop: &AtomicBool,
 ) -> Result<Option<Scored>, String> {
+    score_position_capped(fen, depth, SCORE_MAX_NODES, network, parameters, stop)
+}
+
+/// `score_position` at a node cap of `max_nodes`.
+fn score_position_capped(
+    fen: &str, depth: u32, max_nodes: u64, network: Option<&Network>, parameters: SearchParameters, stop: &AtomicBool,
+) -> Result<Option<Scored>, String> {
+    if stop.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(None);
+    }
     let (board, _) = Board::from_fen(fen).map_err(|error| format!("score: {fen:?} is not a FEN: {error:?}"))?;
     if legal_moves(&board, board.side_to_move()).is_empty() {
         let score = if is_in_check(&board, board.side_to_move()) { BookScore::Mate(1) } else { BookScore::Cp(0) };
@@ -46,16 +57,13 @@ pub(crate) fn score_position(
     let tt = TranspositionTable::new(SCORE_HASH_MB);
     // Empty: no tables are read, so a machine holding Syzygy files scores as one without.
     let tablebase = SyzygyTablebase::new();
-    let (reports, _) = choose_best_move_with_parameters(&board, depth, None, &[], &tt, &tablebase, network, parameters, 0, stop);
-    if stop.load(std::sync::atomic::Ordering::SeqCst) {
-        return Ok(None);
-    }
+    // Its own stop flag: the node cap raises it to end the search, and the arena's would stop every
+    // worker. An arena stop waits for this search, at most the cap's seconds.
+    let capped = AtomicBool::new(false);
+    let (reports, _) = choose_best_move_capped(&board, depth, max_nodes, &tt, &tablebase, network, parameters, &capped);
     let Some(last) = reports.last() else {
         return Err(format!("score: the search of {fen:?} reported no depth"));
     };
-    if last.depth < depth {
-        return Err(format!("score: the search of {fen:?} reached depth {} of {depth}", last.depth));
-    }
     let score = match split_score(-last.score) {
         (_, Some(moves)) => BookScore::Mate(moves),
         (Some(cp), _) => BookScore::Cp(cp),
@@ -98,6 +106,18 @@ mod tests {
         let mated = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3";
         let scored = score_position(mated, 20, None, parameters_of(None, None), &stop).unwrap().unwrap();
         assert_eq!((scored.score, scored.nodes), (BookScore::Mate(1), 0));
+    }
+
+    #[test]
+    fn a_capped_search_keeps_its_deepest_completed_depth_the_same_every_time() {
+        let stop = AtomicBool::new(false);
+        let parameters = parameters_of(None, None);
+        let first = score_position_capped(AFTER_E4, 40, 200_000, None, parameters, &stop).unwrap().unwrap();
+        let second = score_position_capped(AFTER_E4, 40, 200_000, None, parameters, &stop).unwrap().unwrap();
+        assert_eq!(first, second, "a node cap trips at the same node every time");
+        assert!(first.depth >= 1 && first.depth < 40, "{first:?}");
+        assert!(first.nodes <= 200_000, "the completed depths fit within the cap: {first:?}");
+        assert!(!stop.load(std::sync::atomic::Ordering::SeqCst), "the cap never raises the caller's stop");
     }
 
     #[test]
