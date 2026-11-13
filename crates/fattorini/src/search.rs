@@ -265,8 +265,9 @@ const FIFTY_MOVE_HALFMOVES: u8 = 100;
 /// every single node would be needless overhead when only the periodic reads spaced this far
 /// apart are actually needed to keep the deadline honest. `1024`: at the roughly 99,000
 /// nodes/second measured in the iterative-deepening timing investigation, that's about a 10ms
-/// window between checks -- small next to the half of the clock `MAX_CLOCK_FRACTION` always leaves
-/// unspent, and a negligible number of actual clock reads per second either way. A
+/// window between checks -- small next to the move overhead and margin every bound keeps back
+/// (`DEFAULT_MOVE_OVERHEAD_MS`, `EXTRA_MARGIN_MS`), and a negligible number of actual clock reads
+/// per second either way. A
 /// placeholder like every other constant here, not a tuned value.
 const CHECK_INTERVAL: u64 = 1024;
 
@@ -1398,7 +1399,7 @@ struct Search<'a> {
     /// move at any deeper ply is a different move in a different position, and coincidentally
     /// sharing a from/to pair with an excluded root move means nothing there.
     excluded_root_moves: Vec<Move>,
-    /// What the root counts for `TimeManagement::Reckless` (`RootStats`): written at `ply == 0` only.
+    /// What the root counts for the time manager (`RootStats`): written at `ply == 0` only.
     root_stats: RootStats,
     /// The picker's move scores, index for index with `moves`: a node's entries sit at the same
     /// indices as its moves, and a child only writes past them. Grown as needed, never shrunk.
@@ -2560,7 +2561,7 @@ impl<'a> Search<'a> {
                                 }
                             }
                         };
-                        // `TimeManagement::Reckless`'s root counters, before `alpha` rises: a move other
+                        // The time manager's root counters, before `alpha` rises: a move other
                         // than the first searched beating `alpha` is a new leader. Not once stopped,
                         // when `child_score` means nothing.
                         if ply == 0 && !self.stopped {
@@ -3129,84 +3130,31 @@ impl<'a> Search<'a> {
 }
 
 /// The time limit of one `go` command, as read from its arguments by `time_limit`.
-///
-/// No safety margin is ever subtracted from either variant. When competing, the GUI's own move
-/// overhead (lichess-bot's) already hands over a reduced clock; locally, `MAX_CLOCK_FRACTION`
-/// leaves half the clock unspent after every move, far more than the stop-to-`bestmove` latency.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeLimit {
-    /// `go movetime`: a fixed target, used as given. With no cap, it overruns by the stop latency
-    /// (a few milliseconds), on the assumption that nothing enforces `movetime` strictly.
+    /// A fixed target, used as given, no new depth past `FIXED_STOP_FRACTION` of it: only ever
+    /// made by `single_move_limit`, for a forced move (0 ms, depth 1 alone) or a forced move under
+    /// `go depth` (`SINGLE_MOVE_CAP_MS`).
     Fixed { target_ms: u64 },
     /// The side to move's clock and increment (`0` when absent), and `movestogo`: `None` under
     /// Fischer, `Some` under a repeating control such as CCRL's 40/15, counting down to `1` before
-    /// each refill. `single_move`: the position has one legal move, so the target is capped at
-    /// `SINGLE_MOVE_CAP_MS` (`single_move_limit`). `previous_score`: the final score of this
-    /// engine's previous search in the game, from its own side, for the falling-score factor
-    /// (`falling_score_factor`); `None` on its first move. `management`: which time management
-    /// plans it. `overhead_ms`: the `Move Overhead`; under `Classic` it is already subtracted from
-    /// `time_ms` (`time_limit`), under `Split` and `Reckless` the formula subtracts it
-    /// (`split_times_ms`, `reckless_bounds_ms`). `fullmove`: the game's full-move number (FEN field
-    /// 6), which grows `Reckless`'s soft fraction of the clock (`TimeLimit::with_fullmove`); 1 until
-    /// set, and read by no other management.
-    Clock {
-        time_ms: u64,
-        inc_ms: u64,
-        moves_to_go: Option<u32>,
-        single_move: bool,
-        previous_score: Option<i32>,
-        management: TimeManagement,
-        overhead_ms: u64,
-        fullmove: u32,
-    },
-    /// `go movetime` under `TimeManagement::Reckless`, Reckless's way: no move overhead kept back, a
-    /// new depth starts while less than `ms` has elapsed, and the running one aborts at
-    /// `ms - RECKLESS_EXTRA_MARGIN_MS`.
+    /// each refill. `previous_score`: the final score of this engine's previous search in the game,
+    /// from its own side, for the score trend and the running average (`TimeManager`); `None` on its
+    /// first move. `overhead_ms`: the `Move Overhead`, kept back by `time_bounds_ms`. `fullmove`:
+    /// the game's full-move number (FEN field 6), which grows the soft fraction of the clock
+    /// (`TimeLimit::with_fullmove`); 1 until set.
+    Clock { time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, previous_score: Option<i32>, overhead_ms: u64, fullmove: u32 },
+    /// `go movetime`, Reckless's way: no move overhead kept back, a new depth starts while less than
+    /// `ms` has elapsed, and the running one aborts at `ms - EXTRA_MARGIN_MS`.
     Movetime { ms: u64 },
-}
-
-/// Which time management plans a clock move. Temporary: all three exist only so one binary can duel
-/// them (the `TimeManagement` UCI option); the losers are removed with this enum once the duels decide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimeManagement {
-    /// One target that is both the plan and the hard deadline, no new depth past half of it
-    /// (`clock_target_ms`, `TimeParameters`).
-    Classic,
-    /// A soft time checked between depths and a hard maximum that aborts a depth, the future
-    /// increments counted (`split_times_ms`, `SplitTimeParameters`).
-    Split,
-    /// Modelled on Reckless's time management: two base bounds from the clock and the move number,
-    /// the soft one scaled after every depth by five factors of the search (`reckless_bounds_ms`,
-    /// `RecklessTimeParameters`, `TimeManager::reckless_multiplier`).
-    Reckless,
-}
-
-impl TimeManagement {
-    /// The name the `TimeManagement` UCI option and the smithy's chores give it.
-    pub fn name(self) -> &'static str {
-        match self {
-            TimeManagement::Classic => "Classic",
-            TimeManagement::Split => "Split",
-            TimeManagement::Reckless => "Reckless",
-        }
-    }
-
-    /// `name` read back, in any case: `reckless` is `Reckless`.
-    pub fn parse(text: &str) -> Option<TimeManagement> {
-        [TimeManagement::Classic, TimeManagement::Split, TimeManagement::Reckless]
-            .into_iter()
-            .find(|management| management.name().eq_ignore_ascii_case(text))
-    }
 }
 
 impl TimeLimit {
     /// This limit with `previous_score` as the previous move's score, if it is a clock.
     pub fn with_previous_score(self, previous_score: Option<i32>) -> TimeLimit {
         match self {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, management, overhead_ms, fullmove, .. } => {
-                TimeLimit::Clock {
-                    time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms, fullmove,
-                }
+            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, overhead_ms, fullmove, .. } => {
+                TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, fullmove }
             }
             other => other,
         }
@@ -3215,250 +3163,62 @@ impl TimeLimit {
     /// This limit with `fullmove` as the game's full-move number, if it is a clock.
     pub fn with_fullmove(self, fullmove: u32) -> TimeLimit {
         match self {
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms, .. } => {
-                TimeLimit::Clock {
-                    time_ms, inc_ms, moves_to_go, single_move, previous_score, management, overhead_ms, fullmove,
-                }
+            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, .. } => {
+                TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, fullmove }
             }
             other => other,
         }
     }
 }
 
-/// The most time a move with a single legal move gets, from Stockfish's `search.cpp` (fetched
-/// 2026-10-03): `if (rootMoves.size() == 1) totalTime = std::min(500.0, totalTime);`, "for a better
-/// viewer experience". It still searches, briefly, to report a score and a ponder move.
+/// The most time a forced move gets under `go depth` (the arena's fixed-depth games), from
+/// Stockfish's `search.cpp` (fetched 2026-10-03): `if (rootMoves.size() == 1) totalTime =
+/// std::min(500.0, totalTime);`, "for a better viewer experience".
 pub const SINGLE_MOVE_CAP_MS: u64 = 500;
 
-/// `limit` for a move played in a game, capped at `SINGLE_MOVE_CAP_MS` when `board` has exactly
-/// one legal move: in a game only the move matters, and a forced move has one. Under a clock the
-/// target is capped (`single_move`); `movetime` becomes at most the cap; no time limit (`go depth`,
-/// the arena's fixed depth) becomes the cap, alongside the depth, whichever ends first.
+/// `limit` for a move played in a game when `board` has exactly one legal move: in a game only the
+/// move matters, and a forced move has one. Under a clock or `movetime` it searches depth 1 alone
+/// (`Fixed` at 0 ms, as `movetime 0`), spending no clock (the developer, 2026-11-13): its shallow
+/// score is used as it is, and the ponder move comes from the transposition table (`uci.rs`'s
+/// `ponder_move`). With no time limit (`go depth`, the arena's fixed depth) it gets
+/// `SINGLE_MOVE_CAP_MS` alongside the depth, whichever ends first.
 ///
 /// Only for game moves: never for self-play or replay, whose depth-9 score is a training label and
 /// must not be cut short (they call `choose_best_move` directly, so they never reach this), and never
-/// for `go infinite`, which runs until told to stop. A ponder search is capped too, but ignores its
+/// for `go infinite`, which runs until told to stop. A ponder search is limited too, but ignores its
 /// deadline until `ponderhit` (`PonderState`).
-///
-/// Under `TimeManagement::Reckless` a forced move searches depth 1 alone (`Fixed` at 0 ms, as
-/// `movetime 0`), spending no clock (the developer, 2026-11-13): its shallow score is used as it is,
-/// and the ponder move comes from the transposition table (`uci.rs`'s `ponder_move`).
 pub fn single_move_limit(board: &Board, limit: Option<TimeLimit>) -> Option<TimeLimit> {
     if crate::movegen::legal::legal_moves(board, board.side_to_move()).len() != 1 {
         return limit;
     }
     Some(match limit {
-        Some(TimeLimit::Clock { management: TimeManagement::Reckless, .. }) | Some(TimeLimit::Movetime { .. }) => {
-            TimeLimit::Fixed { target_ms: 0 }
-        }
-        Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, management, overhead_ms, fullmove, .. }) => {
-            TimeLimit::Clock {
-                time_ms, inc_ms, moves_to_go, single_move: true, previous_score, management, overhead_ms, fullmove,
-            }
-        }
+        Some(TimeLimit::Clock { .. }) | Some(TimeLimit::Movetime { .. }) => TimeLimit::Fixed { target_ms: 0 },
         Some(TimeLimit::Fixed { target_ms }) => TimeLimit::Fixed { target_ms: target_ms.min(SINGLE_MOVE_CAP_MS) },
         None => TimeLimit::Fixed { target_ms: SINGLE_MOVE_CAP_MS },
     })
 }
 
-/// The parameters of the clock target:
-/// `target = min(((alpha + 1/M) * T + beta * I) * (1 + r * C) * F, MAX_CLOCK_FRACTION * T)`,
-/// with `T` the clock, `I` the increment, `M` the moves to go (`1/M = 0` under Fischer), `C` the
-/// search instability in `[0, 1]` (see `TimeManager`) and `F` the falling-score factor
-/// (`falling_score_factor`). Iterative deepening starts no new depth once `s * target` has elapsed,
-/// and aborts the running one at `target`.
-///
-/// Settled by reasonable magnitudes, not tuned, as every search parameter (decided 2026-10-12): a
-/// change of a few Elo is below what a duel can resolve, and Lichess games showed sensible use of
-/// the clock. One set covers Fischer and repeating controls alike.
-pub(crate) struct TimeParameters {
-    /// 0.05: a twentieth of the clock per stable move, so a long game still has most of its clock
-    /// after its first moves; at 3+2, 9 s of a 10 s target.
-    alpha: f64,
-    /// 0.5: half the increment. Below 1, so a stable move spends less than the increment and a
-    /// Fischer clock settles above zero instead of draining; instability, through `r`, is what
-    /// spends beyond it.
-    beta: f64,
-    /// 2.0: a best move changing at every depth (`C = 1`) triples the target, the moves where more
-    /// depth most often changes the choice.
-    r: f64,
-    /// 0.5: a depth costs about as much as all the shallower ones together, so one started past
-    /// half the target would likely be aborted at `target` and its time wasted.
-    s: f64,
-}
-
-pub(crate) const TIME_PARAMETERS: TimeParameters = TimeParameters { alpha: 0.05, beta: 0.5, r: 2.0, s: 0.5 };
-
-/// The cap on any one move, as a fraction of the remaining clock. Under Fischer it binds only in
-/// deep time trouble (even at full instability, only when `T < 4.3 * I` with `F = 1`), and a clock hitting it every move still settles at `2 * I` instead of
-/// draining. Near a refill (`M` small) it is what decides, letting the last move before the control
-/// spend half the clock, the rest carrying over.
-const MAX_CLOCK_FRACTION: f64 = 0.5;
-
 /// The `Move Overhead` option's default, in milliseconds: the time a move is assumed to lose outside
-/// the search's own timing, kept back from every clock and `movetime` (`time_limit`). It covers the
-/// search noticing its deadline (every `CHECK_INTERVAL` nodes, about a millisecond with a network at
-/// the 841,150 nodes/s per thread benched 2026-11-09), unwinding and writing `bestmove`, the GUI's
-/// own handling, and a core briefly taken away when a tester plays several games on one machine.
-/// Stockfish's default is 10; 20 leaves room above it at no measurable cost (about 0.8 s set aside at
-/// the start of a 40/15 control, 40 ms under Fischer). A fixed amount, not a fraction of the clock,
-/// since lag does not shrink with the clock. It matters at default settings: rating-list testers set
-/// no option. lichess-bot keeps a margin of its own on top.
-pub const DEFAULT_MOVE_OVERHEAD_MS: u64 = 20;
+/// the search's own timing, kept back once from the clock (`time_bounds_ms`). Reckless's own
+/// `MoveOverhead` default, followed as it is, with its fixed `EXTRA_MARGIN_MS` on top (the developer,
+/// 2026-11-13). A fixed amount, not a fraction of the clock, since lag does not shrink with the
+/// clock. It matters at default settings: rating-list testers set no option. lichess-bot keeps a
+/// margin of its own on top.
+pub const DEFAULT_MOVE_OVERHEAD_MS: u64 = 100;
 
-/// The `Move Overhead` option's default under `TimeManagement::Reckless`: Reckless's own
-/// `MoveOverhead` default, followed as it is, with its fixed `RECKLESS_EXTRA_MARGIN_MS` on top. Classic
-/// and Split keep `DEFAULT_MOVE_OVERHEAD_MS`, so the duels compare Reckless as it would ship against
-/// them as they are (the developer, 2026-11-13).
-pub const RECKLESS_MOVE_OVERHEAD_MS: u64 = 100;
-
-/// The `Move Overhead` a management uses when no GUI has set the option.
-pub fn default_move_overhead_ms(management: TimeManagement) -> u64 {
-    match management {
-        TimeManagement::Reckless => RECKLESS_MOVE_OVERHEAD_MS,
-        TimeManagement::Classic | TimeManagement::Split => DEFAULT_MOVE_OVERHEAD_MS,
-    }
-}
-
-/// `movetime`'s fraction of the target past which no new depth starts: its own `s`, at the same
-/// value for the same reason.
+/// A `Fixed` target's fraction past which no new depth starts: a depth costs about as much as all
+/// the shallower ones together, so one started past half the target would likely be aborted.
 const FIXED_STOP_FRACTION: f64 = 0.5;
 
-/// The clock target of one move, in milliseconds -- the one place the formula of `TimeParameters`
-/// lives. `falling` is `falling_score_factor`'s `F`, multiplying the target before the cap. A
-/// `movestogo 0` is not valid UCI; it is read as `M = 1` rather than dividing by zero.
-fn clock_target_ms(
-    time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, instability: f64, falling: f64, p: &TimeParameters,
-) -> u64 {
-    let time = time_ms as f64;
-    let inc = inc_ms as f64;
-    let per_move = match moves_to_go {
-        Some(moves) => 1.0 / f64::from(moves.max(1)),
-        None => 0.0,
-    };
-    let target = ((p.alpha + per_move) * time + p.beta * inc) * (1.0 + p.r * instability) * falling;
-    target.min(MAX_CLOCK_FRACTION * time).round() as u64
-}
+/// Kept back from both bounds after everything else, on top of the move overhead: Reckless's fixed
+/// `TIME_OVERHEAD_MS`, hand-picked, never tuned.
+const EXTRA_MARGIN_MS: u64 = 15;
 
-/// The parameters of `TimeManagement::Split`, Stockfish's structure (`timeman.cpp` and
-/// `search.cpp`, fetched 2026-11-11) with our own round constants:
-///
-/// ```text
-/// H    = min(M, horizon), or horizon under Fischer
-/// R    = max(n * I, floor) + o * (H + 2)          the reserve the clock settles near
-/// L    = max(0, T + (H - 1) * I - R)              the time left for the next H moves
-/// plan = L / H
-/// hard = min(k * plan, hard_fraction * T - o)
-/// soft = min(s * plan * (1 + r * C) * F, hard)
-/// ```
-///
-/// with `T` the clock, `I` the increment, `M` the moves to go, `o` the move overhead, `C` the
-/// instability and `F` the falling-score factor. A new depth starts while `soft` has not elapsed;
-/// only `hard` aborts a running one, and it depends on neither `C` nor `F`, so the deadline inside the
-/// tree is fixed for the move.
-///
-/// Why: `Classic` planned `0.05 * T + 0.5 * I` and halved it again by starting no depth past half,
-/// so a Fischer clock settled near 18 increments, about a minute at 3+3. Two Lichess blitz games
-/// (2026-11-11) ended with a minute and with half the clock unused, one of them lost to a missed
-/// tactic. Counting the future increments, as Stockfish's
-/// `timeLeft = time + inc * (mtg - 1) - moveOverhead * (2 + mtg)` does, spends them; the reserve `R`
-/// says where the clock settles instead, since where it settles depends on real spend against the
-/// plan, not on the plan alone.
-///
-/// A first version divided `L` by 25 instead of `H` and started depths until the full soft time: a
-/// depth costs about as much as all the shallower ones together, so it spent about three times
-/// Classic per move early and played on the increment alone from about move 25. It lost to
-/// `Classic` at 10+0.1, 55 to 81 over 136 games (2026-11-11). Stockfish's own constants are heavily
-/// tuned; these are reasonable magnitudes, as every search parameter (decided 2026-10-12).
-pub(crate) struct SplitTimeParameters {
-    /// 50: Stockfish's `mtg` under Fischer, the moves whose increments are counted as available, and
-    /// the divisor: the plan is an even share. Capped at the moves actually left under `movestogo`,
-    /// so the last moves before a refill share the clock among themselves.
-    horizon: u32,
-    /// 5.0: the clock settles near five increments (the developer, 2026-11-11), about 10 s at 3+2.
-    reserve_increments: f64,
-    /// 300: the reserve's floor, so a control with no or a tiny increment keeps a margin.
-    reserve_floor_ms: f64,
-    /// 0.5: as `TimeParameters::s`, no depth starts past half the plan, since one started later
-    /// would run on to about twice the time spent so far. Real spend averages about 0.75 of the plan.
-    s: f64,
-    /// 2.0: as `TimeParameters::r`, a best move changing at every depth triples the soft time.
-    r: f64,
-    /// 3.0: the hard maximum over the plan, room for an unstable move with a falling score
-    /// (`0.5 * 3 * 1.7`).
-    k: f64,
-    /// 0.5: the most of the clock one move may take, `Classic`'s `MAX_CLOCK_FRACTION`; overspending,
-    /// not underspending, is the risk at short controls.
-    hard_fraction: f64,
-}
-
-pub(crate) const SPLIT_TIME_PARAMETERS: SplitTimeParameters = SplitTimeParameters {
-    horizon: 50,
-    reserve_increments: 5.0,
-    reserve_floor_ms: 300.0,
-    s: 0.5,
-    r: 2.0,
-    k: 3.0,
-    hard_fraction: 0.5,
-};
-
-/// The soft time and the hard maximum of one move under `TimeManagement::Split`, in milliseconds
-/// -- the one place the formula of `SplitTimeParameters` lives. A `movestogo 0` is read as 1.
-fn split_times_ms(
-    time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, instability: f64, falling: f64,
-    p: &SplitTimeParameters,
-) -> (u64, u64) {
-    let time = time_ms as f64;
-    let inc = inc_ms as f64;
-    let overhead = overhead_ms as f64;
-    let horizon = moves_to_go.map_or(p.horizon, |moves| moves.clamp(1, p.horizon));
-    let horizon_f = f64::from(horizon);
-    let reserve = (p.reserve_increments * inc).max(p.reserve_floor_ms) + overhead * (horizon_f + 2.0);
-    let left = (time + (horizon_f - 1.0) * inc - reserve).max(0.0);
-    let plan = left / horizon_f;
-    let hard = (p.k * plan).min((p.hard_fraction * time - overhead).max(0.0));
-    let soft = (p.s * plan * (1.0 + p.r * instability) * falling).min(hard);
-    (soft.round() as u64, hard.round() as u64)
-}
-
-/// The score drop, in `piece_value`'s centipawns, that moves the falling-score factor by 1: a drop
-/// of a third of it is about 17% more time, a rise of 40% of it the floor. A round default, scaled
-/// to the evaluator's own pawn (`falling_score_factor`), so a real pawn buys the same time under
-/// every evaluation; judged with the factor as a whole by one duel.
-const FALLING_SCORE_SCALE_CP: i32 = 200;
-
-/// The bounds of the falling-score factor: Stockfish's `std::clamp(fallingEval, 0.576, 1.728)`
-/// (`search.cpp`, fetched 2026-10-08), rounded.
-const FALLING_SCORE_MIN: f64 = 0.6;
-const FALLING_SCORE_MAX: f64 = 1.7;
-
-/// `F`, the falling-score factor of the clock target: above 1 when `current`, the score of the
-/// depth just completed, is below `previous`, the engine's previous move's final score (the search
-/// is finding the position worse than the game thought), below 1 when above it. Stockfish's
-/// `fallingEval`, with one reference instead of two: the previous move's score, without its ring of
-/// the last moves' scores. 1 with no previous score, or when either score is a mate or tablebase
-/// score, whose bands are not evaluations. `pawn_percent` is the evaluator's pawn against
-/// `piece_value`'s.
-fn falling_score_factor(previous: Option<i32>, current: i32, pawn_percent: i32) -> f64 {
-    let Some(previous) = previous else {
-        return 1.0;
-    };
-    let decisive = TB_WIN_SCORE - MAX_PLY as i32;
-    if previous.abs() >= decisive || current.abs() >= decisive {
-        return 1.0;
-    }
-    let scale = f64::from(FALLING_SCORE_SCALE_CP * pawn_percent) / 100.0;
-    (1.0 + f64::from(previous - current) / scale).clamp(FALLING_SCORE_MIN, FALLING_SCORE_MAX)
-}
-
-/// Kept back from both of `TimeManagement::Reckless`'s bounds after everything else, on top of the
-/// move overhead: Reckless's fixed `TIME_OVERHEAD_MS`, hand-picked, never tuned.
-const RECKLESS_EXTRA_MARGIN_MS: u64 = 15;
-
-/// The parameters of `TimeManagement::Reckless`, modelled on Reckless's time management
-/// (codedeliveryservice/Reckless, `src/time.rs` and `src/search.rs`, read 2026-11-13): its
-/// structure, and its constants as starting values. Fattorini's code is its own, written from that
-/// design, not from Reckless's source.
+/// The parameters of the time management, modelled on Reckless's (codedeliveryservice/Reckless,
+/// `src/time.rs` and `src/search.rs`, read 2026-11-13): its structure, and its constants as starting
+/// values. Fattorini's code is its own, written from that design, not from Reckless's source. It
+/// replaced two earlier managements of Fattorini's own after beating the first at 10+0.1 and at
+/// 180+2 (2026-11-13).
 ///
 /// ```text
 /// Fischer:   avail = max(T - o, 0)
@@ -3467,11 +3227,11 @@ const RECKLESS_EXTRA_MARGIN_MS: u64 = 15;
 /// movestogo: base  = avail / M + inc_fraction * I
 ///            soft  = min(cyclic_soft * base, avail + I)
 ///            hard  = min(cyclic_hard * base, avail + I)
-/// then both minus RECKLESS_EXTRA_MARGIN_MS
+/// then both minus EXTRA_MARGIN_MS
 /// ```
 ///
 /// After every completed depth, the soft bound is multiplied by the product of five factors
-/// (`TimeManager::reckless_multiplier`): node fraction, score trend, best-move stability, score
+/// (`TimeManager::multiplier`): node fraction, score trend, best-move stability, score
 /// stability and best-move changes.
 ///
 /// Two kinds of constant. **Fixed:** Reckless's hand-picked ones (`inc_fraction`, `cyclic_soft`,
@@ -3481,7 +3241,7 @@ const RECKLESS_EXTRA_MARGIN_MS: u64 = 15;
 /// clock by move 30 in a 180+2 test. **Tuned:** every other one is Reckless's SPSA output (its
 /// sessions up to "SMP SPSA session 200k games", #1072), tuned to Reckless's search, so only a
 /// starting value for Fattorini's own SPSA, run after the search's.
-pub(crate) struct RecklessTimeParameters {
+pub(crate) struct TimeParameters {
     /// 0.0594: the soft fraction of the clock approached late in the game.
     soft_max: f64,
     /// 0.0492: how far below `soft_max` the soft fraction starts, at move 0.
@@ -3535,7 +3295,7 @@ pub(crate) struct RecklessTimeParameters {
     changes_b: f64,
 }
 
-pub(crate) const RECKLESS_TIME_PARAMETERS: RecklessTimeParameters = RecklessTimeParameters {
+pub(crate) const TIME_PARAMETERS: TimeParameters = TimeParameters {
     soft_max: 0.0594,
     soft_rise: 0.0492,
     soft_rate: 0.0386,
@@ -3568,11 +3328,10 @@ pub(crate) const RECKLESS_TIME_PARAMETERS: RecklessTimeParameters = RecklessTime
     changes_b: 0.2526,
 };
 
-/// The base soft and hard bounds of one move under `TimeManagement::Reckless`, in milliseconds,
-/// before the soft one is scaled -- the one place the formula of `RecklessTimeParameters` lives. A
-/// `movestogo 0` is read as 1.
-fn reckless_bounds_ms(
-    time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, fullmove: u32, overhead_ms: u64, p: &RecklessTimeParameters,
+/// The base soft and hard bounds of one move, in milliseconds, before the soft one is scaled -- the
+/// one place the formula of `TimeParameters` lives. A `movestogo 0` is read as 1.
+fn time_bounds_ms(
+    time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, fullmove: u32, overhead_ms: u64, p: &TimeParameters,
 ) -> (u64, u64) {
     let avail = time_ms.saturating_sub(overhead_ms) as f64;
     let inc = inc_ms as f64;
@@ -3588,7 +3347,7 @@ fn reckless_bounds_ms(
             ((p.cyclic_soft * base).min(avail + inc), (p.cyclic_hard * base).min(avail + inc))
         }
     };
-    let margin = |ms: f64| (ms as u64).saturating_sub(RECKLESS_EXTRA_MARGIN_MS);
+    let margin = |ms: f64| (ms as u64).saturating_sub(EXTRA_MARGIN_MS);
     (margin(soft), margin(hard))
 }
 
@@ -3650,34 +3409,26 @@ fn may_start_next_depth(time_manager: &TimeManager, ponder: Option<&PonderState>
 }
 
 /// Thread 0's time decisions across one iterative deepening run: when to start a new depth, and the
-/// deadline of the one it starts.
-///
-/// The target is recomputed after every completed depth, from the search instability `C`: the
-/// discounted number of best move changes, `C[0] = C[1] = 1` (nothing is known yet), then
-/// `C[k + 1] = 0.5 * C[k] + 0.5 * (move[k] != move[k + 1])`, which stays in `[0, 1]`. A depth runs
-/// against the target fixed when it started, so the deadline inside the tree never moves. A stable
-/// depth can shrink the target below the time already elapsed, which just stops at once.
-///
-/// Under a clock it is also recomputed from the falling-score factor `F` (`falling_score_factor`),
-/// from the score of the depth just completed against the previous move's; 1 before any depth.
+/// deadline of the one it starts. Under a clock, a new depth starts while the elapsed time is under
+/// the soft bound times the five factors' product (`multiplier`), recomputed after every completed
+/// depth; the deadline is the hard bound, fixed for the move, so the deadline inside the tree never
+/// moves.
 struct TimeManager {
     started: Instant,
     limit: Option<TimeLimit>,
-    instability: f64,
     last_move: Option<Move>,
-    /// The evaluator's pawn against `piece_value`'s, in percent, which scales `F`.
+    /// The evaluator's pawn against `piece_value`'s, in percent, which scales the score windows.
     pawn_percent: i32,
-    falling: f64,
-    /// `TimeManagement::Reckless`'s counters, kept under every management, read by it alone.
-    reckless: RecklessCounters,
+    /// What the five factors read.
+    counters: TimeCounters,
 }
 
-/// `TimeManagement::Reckless`'s five factors after a completed depth, and what they read: the share
-/// of the root's nodes spent under the best move (`fraction`), the two stability counters and the
+/// The time manager's five factors after a completed depth, and what they read: the share of the
+/// root's nodes spent under the best move (`fraction`), the two stability counters and the
 /// best-move changes; their product, `multiplier`, scales the soft bound. Public for
 /// `fattorini tm-probe`, which measures them on Fattorini's own search.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RecklessFactors {
+pub struct TimeFactors {
     pub fraction: f64,
     pub pv_stable: u32,
     pub eval_stable: u32,
@@ -3693,10 +3444,10 @@ pub struct RecklessFactors {
     pub multiplier: f64,
 }
 
-/// What `TimeManagement::Reckless`'s five factors read, gathered across the depths of one search
+/// What the time manager's five factors read, gathered across the depths of one search
 /// (`TimeManager::record_root_stats`, `TimeManager::record_iteration`).
 #[derive(Default)]
-struct RecklessCounters {
+struct TimeCounters {
     /// Nodes spent under each root move, summed over every completed depth.
     root_nodes: Vec<(Move, u64)>,
     /// Nodes of every completed depth.
@@ -3720,21 +3471,13 @@ impl TimeManager {
             Some(TimeLimit::Clock { previous_score: Some(score), .. }) => score,
             _ => 0,
         };
-        TimeManager {
-            started,
-            limit,
-            instability: 1.0,
-            last_move: None,
-            pawn_percent,
-            falling: 1.0,
-            reckless: RecklessCounters { average, ..RecklessCounters::default() },
-        }
+        TimeManager { started, limit, last_move: None, pawn_percent, counters: TimeCounters { average, ..TimeCounters::default() } }
     }
 
     /// Takes in what the root of a depth that just completed counted (`RootStats`) and its nodes,
-    /// before `record_iteration`. Only `Reckless` reads them.
+    /// before `record_iteration`.
     fn record_root_stats(&mut self, stats: &RootStats, nodes: u64) {
-        let counters = &mut self.reckless;
+        let counters = &mut self.counters;
         for &(mv, move_nodes) in &stats.nodes {
             match counters.root_nodes.iter_mut().find(|(seen, _)| *seen == mv) {
                 Some((_, total)) => *total += move_nodes,
@@ -3748,42 +3491,33 @@ impl TimeManager {
         }
     }
 
-    /// Updates the instability with the best move of a depth that just completed, and `F` with its
-    /// score; and `Reckless`'s two stability counters, after `record_root_stats`.
+    /// Updates the two stability counters with the best move and score of a depth that just
+    /// completed, after `record_root_stats`.
     fn record_iteration(&mut self, best_move: Move, score: i32) {
-        let window = RECKLESS_TIME_PARAMETERS.eval_window_cp * self.pawn_percent / 100;
-        let counters = &mut self.reckless;
+        let window = TIME_PARAMETERS.eval_window_cp * self.pawn_percent / 100;
+        let counters = &mut self.counters;
         counters.eval_stable = if (score - counters.average).abs() < window { counters.eval_stable + 1 } else { 0 };
         counters.pv_stable = if self.last_move == Some(best_move) { counters.pv_stable + 1 } else { 0 };
         counters.best = Some((best_move, score));
-
-        self.instability = match self.last_move {
-            None => 1.0,
-            Some(last_move) => 0.5 * self.instability + 0.5 * f64::from(u8::from(last_move != best_move)),
-        };
         self.last_move = Some(best_move);
-        if let Some(TimeLimit::Clock { previous_score, .. }) = self.limit {
-            self.falling = falling_score_factor(previous_score, score, self.pawn_percent);
-        }
     }
 
-    /// The product of `Reckless`'s five factors (`RecklessTimeParameters`), which scales its soft
-    /// bound; 1 before any depth has completed.
-    fn reckless_multiplier(&self) -> f64 {
-        self.reckless_factors().map_or(1.0, |factors| factors.multiplier)
+    /// The product of the five factors (`TimeParameters`), bounded, which scales the soft bound; 1
+    /// before any depth has completed.
+    fn multiplier(&self) -> f64 {
+        self.factors().map_or(1.0, |factors| factors.multiplier)
     }
 
-    /// `Reckless`'s five factors as they stand, and what they read; `None` before any depth has
-    /// completed.
-    fn reckless_factors(&self) -> Option<RecklessFactors> {
-        let p = &RECKLESS_TIME_PARAMETERS;
-        let counters = &self.reckless;
+    /// The five factors as they stand, and what they read; `None` before any depth has completed.
+    fn factors(&self) -> Option<TimeFactors> {
+        let p = &TIME_PARAMETERS;
+        let counters = &self.counters;
         let (best, score) = counters.best?;
         let best_nodes = counters.root_nodes.iter().find(|(mv, _)| *mv == best).map_or(0, |(_, nodes)| *nodes);
         let fraction = if counters.total_nodes == 0 { 0.0 } else { best_nodes as f64 / counters.total_nodes as f64 };
         let nodes = (p.nodes_a - p.nodes_b * fraction).max(p.nodes_min);
 
-        // 1 with no previous score or a decisive one, as `falling_score_factor`: a deliberate
+        // 1 with no previous score or a decisive one, whose bands are not evaluations: a deliberate
         // exception to Reckless, whose trend has no such case.
         let previous = match self.limit {
             Some(TimeLimit::Clock { previous_score, .. }) => previous_score,
@@ -3801,7 +3535,7 @@ impl TimeManager {
         let pv = (p.pv_a - p.pv_b * f64::from(counters.pv_stable)).max(p.pv_min);
         let eval = (p.eval_a - p.eval_b * f64::from(counters.eval_stable)).max(p.eval_min);
         let changes = p.changes_a + (p.changes_b * f64::from(counters.changes)).ln_1p();
-        Some(RecklessFactors {
+        Some(TimeFactors {
             fraction,
             pv_stable: counters.pv_stable,
             eval_stable: counters.eval_stable,
@@ -3816,78 +3550,41 @@ impl TimeManager {
         })
     }
 
-    /// `Reckless`'s base soft and hard bounds, `None` for any other limit.
-    fn reckless_bounds(&self) -> Option<(Duration, Duration)> {
-        let Some(TimeLimit::Clock {
-            time_ms, inc_ms, moves_to_go, management: TimeManagement::Reckless, overhead_ms, fullmove, ..
-        }) = self.limit
-        else {
+    /// The base soft and hard bounds under a clock, `None` for any other limit.
+    fn bounds(&self) -> Option<(Duration, Duration)> {
+        let Some(TimeLimit::Clock { time_ms, inc_ms, moves_to_go, overhead_ms, fullmove, .. }) = self.limit else {
             return None;
         };
-        let (soft, hard) =
-            reckless_bounds_ms(time_ms, inc_ms, moves_to_go, fullmove, overhead_ms, &RECKLESS_TIME_PARAMETERS);
+        let (soft, hard) = time_bounds_ms(time_ms, inc_ms, moves_to_go, fullmove, overhead_ms, &TIME_PARAMETERS);
         Some((Duration::from_millis(soft), Duration::from_millis(hard)))
     }
 
-    /// `None` when there is no time limit at all. Under `Split` and `Reckless`, the hard maximum.
+    /// `None` when there is no time limit at all. Under a clock, the hard bound.
     fn target(&self) -> Option<Duration> {
         match self.limit? {
             TimeLimit::Fixed { target_ms } => Some(Duration::from_millis(target_ms)),
-            TimeLimit::Movetime { ms } => Some(Duration::from_millis(ms.saturating_sub(RECKLESS_EXTRA_MARGIN_MS))),
-            TimeLimit::Clock { management: TimeManagement::Reckless, .. } => {
-                self.reckless_bounds().map(|(_, hard)| hard)
-            }
-            TimeLimit::Clock { management: TimeManagement::Split, .. } => self.split_times().map(|(_, hard)| hard),
-            TimeLimit::Clock { time_ms, inc_ms, moves_to_go, single_move, .. } => {
-                let target =
-                    clock_target_ms(time_ms, inc_ms, moves_to_go, self.instability, self.falling, &TIME_PARAMETERS);
-                // After the formula and `MAX_CLOCK_FRACTION`, so the cap only ever lowers it.
-                let target = if single_move { target.min(SINGLE_MOVE_CAP_MS) } else { target };
-                Some(Duration::from_millis(target))
-            }
+            TimeLimit::Movetime { ms } => Some(Duration::from_millis(ms.saturating_sub(EXTRA_MARGIN_MS))),
+            TimeLimit::Clock { .. } => self.bounds().map(|(_, hard)| hard),
         }
     }
 
-    /// The soft time and the hard maximum under `TimeManagement::Split`, the single-move cap
-    /// lowering both; `None` for any other limit.
-    fn split_times(&self) -> Option<(Duration, Duration)> {
-        let Some(TimeLimit::Clock {
-            time_ms, inc_ms, moves_to_go, single_move, management: TimeManagement::Split, overhead_ms, ..
-        }) = self.limit
-        else {
-            return None;
-        };
-        let (soft, hard) = split_times_ms(
-            time_ms, inc_ms, moves_to_go, overhead_ms, self.instability, self.falling, &SPLIT_TIME_PARAMETERS,
-        );
-        let cap = |ms: u64| if single_move { ms.min(SINGLE_MOVE_CAP_MS) } else { ms };
-        Some((Duration::from_millis(cap(soft)), Duration::from_millis(cap(hard))))
-    }
-
-    /// Whether a new depth may start: under `Split`, the elapsed time is still under the soft time;
-    /// under `Reckless`, under the soft bound times `reckless_multiplier`, or under `movetime` itself;
-    /// otherwise under `s * target`.
+    /// Whether a new depth may start: under a clock, the elapsed time is still under the soft bound
+    /// times `multiplier`; under `movetime`, under `movetime` itself; under a `Fixed` target, under
+    /// `FIXED_STOP_FRACTION` of it.
     fn should_start_next(&self) -> bool {
-        if let Some((soft, _)) = self.reckless_bounds() {
-            return self.started.elapsed() < soft.mul_f64(self.reckless_multiplier());
+        match self.limit {
+            None => true,
+            Some(TimeLimit::Clock { .. }) => {
+                self.bounds().is_none_or(|(soft, _)| self.started.elapsed() < soft.mul_f64(self.multiplier()))
+            }
+            Some(TimeLimit::Movetime { ms }) => self.started.elapsed() < Duration::from_millis(ms),
+            Some(TimeLimit::Fixed { target_ms }) => {
+                self.started.elapsed() < Duration::from_millis(target_ms).mul_f64(FIXED_STOP_FRACTION)
+            }
         }
-        if let Some(TimeLimit::Movetime { ms }) = self.limit {
-            return self.started.elapsed() < Duration::from_millis(ms);
-        }
-        if let Some((soft, _)) = self.split_times() {
-            return self.started.elapsed() < soft;
-        }
-        let Some(target) = self.target() else {
-            return true;
-        };
-        let stop_fraction = match self.limit {
-            Some(TimeLimit::Clock { .. }) => TIME_PARAMETERS.s,
-            _ => FIXED_STOP_FRACTION,
-        };
-        self.started.elapsed() < target.mul_f64(stop_fraction)
     }
 
-    /// The instant the depth about to start must abort at: under `Split`, the hard maximum.
+    /// The instant the depth about to start must abort at: under a clock, the hard bound.
     fn deadline(&self) -> Option<Instant> {
         self.target().map(|target| self.started + target)
     }
@@ -3908,16 +3605,9 @@ impl TimeManager {
 /// own time field is missing entirely, there's nothing to plan from, so this falls back to `None`
 /// too -- the same "no limit" behavior as a bare `go`.
 ///
-/// `move_overhead_ms` (the `Move Overhead` option, `DEFAULT_MOVE_OVERHEAD_MS`) is kept back before
-/// anything plans with the time, so a move never plans to spend it. When it takes all the time, the
-/// target is 0: depth 1, which has no deadline, still runs and answers, and nothing deeper starts --
-/// what `movetime 0` has always meant. No floor of 1 ms, which would let a fast depth 2 start. From the clock,
-/// once per move it must still cover: `M + 2` times under `movestogo` (Stockfish's `2 + mtg`), one
-/// for each move left before the control and two spare; twice under Fischer, where the increment
-/// refills the clock and a stable move spends half of it. From `movetime` once, unlike Stockfish:
-/// the search stops at exactly its target, so without it every move would run past `movetime` by
-/// its unwinding and its `bestmove`. All of this is `TimeManagement::Classic`'s; under `Split` the
-/// clock is passed as given with the overhead beside it, and `split_times_ms` keeps it back.
+/// `move_overhead_ms` (the `Move Overhead` option, `DEFAULT_MOVE_OVERHEAD_MS`) travels beside the
+/// clock, which is passed as given; `time_bounds_ms` keeps it back once. `movetime` keeps none back,
+/// Reckless's way (`TimeLimit::Movetime`).
 #[allow(clippy::too_many_arguments)]
 pub fn time_limit(
     board: &Board,
@@ -3929,41 +3619,23 @@ pub fn time_limit(
     movetime: Option<u64>,
     infinite: bool,
     move_overhead_ms: u64,
-    management: TimeManagement,
 ) -> Option<TimeLimit> {
     if infinite {
         return None;
     }
     if let Some(movetime) = movetime {
-        return Some(match management {
-            TimeManagement::Reckless => TimeLimit::Movetime { ms: movetime },
-            TimeManagement::Classic | TimeManagement::Split => {
-                TimeLimit::Fixed { target_ms: movetime.saturating_sub(move_overhead_ms) }
-            }
-        });
+        return Some(TimeLimit::Movetime { ms: movetime });
     }
 
     let (my_time, my_inc) = match board.side_to_move() {
         Color::White => (wtime, winc.unwrap_or(0)),
         Color::Black => (btime, binc.unwrap_or(0)),
     };
-    let my_time = my_time?;
-    // `Split` keeps the overhead back itself, once per move of its horizon (`split_times_ms`);
-    // `Reckless` once (`reckless_bounds_ms`).
-    let time_ms = match management {
-        TimeManagement::Classic => {
-            let reserves = movestogo.map_or(2, |moves| u64::from(moves.max(1)) + 2);
-            my_time.saturating_sub(move_overhead_ms.saturating_mul(reserves))
-        }
-        TimeManagement::Split | TimeManagement::Reckless => my_time,
-    };
     Some(TimeLimit::Clock {
-        time_ms,
+        time_ms: my_time?,
         inc_ms: my_inc,
         moves_to_go: movestogo,
-        single_move: false,
         previous_score: None,
-        management,
         overhead_ms: move_overhead_ms,
         fullmove: 1,
     })
@@ -4080,7 +3752,7 @@ pub fn pesto_quiescence(board: &Board) -> i32 {
 type RootResult =
     (Vec<Move>, i32, u64, bool, u32, Vec<[Option<Move>; 2]>, [[i32; 64]; 12], Vec<i32>, Vec<i32>, RootStats);
 
-/// What the root of one depth's search counts for `TimeManagement::Reckless`
+/// What the root of one depth's search counts for the time manager
 /// (`TimeManager::record_root_stats`), gathered at `ply == 0` in `alpha_beta_with_buffer` and in
 /// `search_root_pondering`'s aspiration loop, over every attempt of the depth.
 #[derive(Clone, Debug, Default)]
@@ -4391,15 +4063,15 @@ pub fn choose_best_move_capped(
 }
 
 /// One thread's search of `board` to `max_depth`, no clock, `on_depth` given each completed depth
-/// with `Reckless`'s factors as they then stand, whatever the management: `fattorini tm-probe`.
+/// with the time manager's factors as they then stand, though no clock is set: `fattorini tm-probe`.
 #[allow(clippy::too_many_arguments)]
 pub fn choose_best_move_probing(
     board: &Board, max_depth: u32, tt: &TranspositionTable, tablebase: &SyzygyTablebase, evaluator: Option<&Network>,
-    parameters: SearchParameters, stop_signal: &AtomicBool, mut on_depth: impl FnMut(&IterationReport, Option<RecklessFactors>),
+    parameters: SearchParameters, stop_signal: &AtomicBool, mut on_depth: impl FnMut(&IterationReport, Option<TimeFactors>),
 ) -> (Vec<IterationReport>, Option<Move>) {
     iterate(
         board, max_depth, None, None, &[], tt, tablebase, evaluator, Some(parameters), 0, stop_signal, None,
-        |report, manager| on_depth(report, manager.reckless_factors()),
+        |report, manager| on_depth(report, manager.factors()),
     )
 }
 
@@ -6230,59 +5902,31 @@ mod tests {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
         // No increment sent means an increment of 0, and no movestogo means Fischer.
-        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false, 0, TimeManagement::Classic);
-        assert_eq!(limit, Some(clock(60_000, 0, None, false)));
+        let limit = time_limit(&board, Some(60_000), Some(999_999), None, Some(500), None, None, false, 0);
+        assert_eq!(limit, Some(clock(60_000, 0, None, 0, None, 1)));
     }
 
-    /// A `Classic` clock limit with no previous score and no overhead.
-    fn clock(time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, single_move: bool) -> TimeLimit {
-        clock_with_overhead(time_ms, inc_ms, moves_to_go, single_move, 0)
-    }
-
-    /// A `Classic` clock limit with no previous score, `overhead_ms` already kept back from `time_ms`.
-    fn clock_with_overhead(
-        time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, single_move: bool, overhead_ms: u64,
+    /// A clock limit at move `fullmove`.
+    fn clock(
+        time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, previous_score: Option<i32>, fullmove: u32,
     ) -> TimeLimit {
-        TimeLimit::Clock {
-            time_ms,
-            inc_ms,
-            moves_to_go,
-            single_move,
-            previous_score: None,
-            management: TimeManagement::Classic,
-            overhead_ms,
-            fullmove: 1,
-        }
-    }
-
-    /// A `Split` clock limit with no previous score.
-    fn split_clock(time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, single_move: bool, overhead_ms: u64) -> TimeLimit {
-        TimeLimit::Clock {
-            time_ms,
-            inc_ms,
-            moves_to_go,
-            single_move,
-            previous_score: None,
-            management: TimeManagement::Split,
-            overhead_ms,
-            fullmove: 1,
-        }
+        TimeLimit::Clock { time_ms, inc_ms, moves_to_go, previous_score, overhead_ms, fullmove }
     }
 
     #[test]
     fn time_limit_selects_black_time_when_black_is_to_move() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false, 0, TimeManagement::Classic);
-        assert_eq!(limit, Some(clock(90_000, 100, None, false)));
+        let limit = time_limit(&board, Some(999_999), Some(90_000), Some(7), Some(100), None, None, false, 0);
+        assert_eq!(limit, Some(clock(90_000, 100, None, 0, None, 1)));
     }
 
     #[test]
     fn time_limit_passes_movestogo_through_under_a_repeating_control() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 0, TimeManagement::Classic);
-        assert_eq!(limit, Some(clock(60_000, 0, Some(10), false)));
+        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 0);
+        assert_eq!(limit, Some(clock(60_000, 0, Some(10), 0, None, 1)));
     }
 
     /// White to move, in check from the queen on g2, with one legal move: `Kxg2`. The pawn keeps
@@ -6290,35 +5934,22 @@ mod tests {
     const ONE_LEGAL_MOVE: &str = "7k/8/8/8/8/8/1p4q1/7K w - - 0 1";
 
     #[test]
-    fn a_single_legal_move_caps_every_kind_of_game_limit_and_nothing_else() {
+    fn a_forced_move_searches_depth_one_under_a_clock_and_is_capped_under_go_depth() {
         let (forced, _) = Board::from_fen(ONE_LEGAL_MOVE).unwrap();
         assert_eq!(crate::movegen::legal::legal_moves(&forced, forced.side_to_move()).len(), 1);
-        let clock_limit = Some(clock(600_000, 0, None, false).with_previous_score(Some(30)));
-        assert_eq!(
-            single_move_limit(&forced, clock_limit),
-            Some(clock(600_000, 0, None, true).with_previous_score(Some(30))),
-            "the cap keeps the previous score"
-        );
+        let clock_limit = Some(clock(600_000, 0, None, 100, Some(30), 20));
+        assert_eq!(single_move_limit(&forced, clock_limit), Some(TimeLimit::Fixed { target_ms: 0 }));
+        assert_eq!(single_move_limit(&forced, Some(TimeLimit::Movetime { ms: 2_000 })), Some(TimeLimit::Fixed { target_ms: 0 }));
+        let manager = TimeManager::new(Some(TimeLimit::Fixed { target_ms: 0 }), Instant::now(), 100);
+        assert!(!manager.should_start_next(), "no depth past 1");
         assert_eq!(single_move_limit(&forced, Some(TimeLimit::Fixed { target_ms: 2_000 })), Some(TimeLimit::Fixed { target_ms: 500 }));
         assert_eq!(single_move_limit(&forced, Some(TimeLimit::Fixed { target_ms: 100 })), Some(TimeLimit::Fixed { target_ms: 100 }));
         assert_eq!(single_move_limit(&forced, None), Some(TimeLimit::Fixed { target_ms: 500 }), "go depth, no clock");
 
         let (start, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        for limit in [clock_limit, Some(TimeLimit::Fixed { target_ms: 2_000 }), None] {
+        for limit in [clock_limit, Some(TimeLimit::Movetime { ms: 2_000 }), Some(TimeLimit::Fixed { target_ms: 2_000 }), None] {
             assert_eq!(single_move_limit(&start, limit), limit, "more than one legal move: unchanged");
         }
-    }
-
-    #[test]
-    fn the_single_move_cap_only_ever_lowers_the_clock_target() {
-        let started = Instant::now();
-        let long = TimeManager::new(Some(clock(600_000, 0, None, true)), started, 100);
-        assert_eq!(long.target(), Some(Duration::from_millis(SINGLE_MOVE_CAP_MS)));
-        // 400 ms left: `MAX_CLOCK_FRACTION` already gives at most 200, under the cap.
-        let short = TimeManager::new(Some(clock(400, 0, None, true)), started, 100);
-        let uncapped = TimeManager::new(Some(clock(400, 0, None, false)), started, 100);
-        assert_eq!(short.target(), uncapped.target());
-        assert!(short.target().unwrap() <= Duration::from_millis(200));
     }
 
     /// Self-play and replay call `choose_best_move` with no limit at all, never through
@@ -6337,8 +5968,8 @@ mod tests {
     fn time_limit_movetime_takes_precedence_over_wtime_and_btime_and_is_used_as_given() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false, 0, TimeManagement::Classic);
-        assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 2_000 }));
+        let limit = time_limit(&board, Some(60_000), Some(60_000), None, None, None, Some(2_000), false, 100);
+        assert_eq!(limit, Some(TimeLimit::Movetime { ms: 2_000 }));
     }
 
     #[test]
@@ -6348,14 +5979,14 @@ mod tests {
         // Even with a perfectly good wtime present, infinite wins -- meaning "no deadline, run
         // until stop or max_depth," genuinely honored now that go_search runs asynchronously
         // and polls a shared stop flag regardless of whether any deadline was ever set.
-        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true, 0, TimeManagement::Classic), None);
+        assert_eq!(time_limit(&board, Some(60_000), None, None, None, None, None, true, 0), None);
     }
 
     #[test]
     fn time_limit_is_none_with_no_time_control_at_all() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, None, None, None, None, None, false, 0, TimeManagement::Classic), None);
+        assert_eq!(time_limit(&board, None, None, None, None, None, None, false, 0), None);
     }
 
     #[test]
@@ -6365,106 +5996,21 @@ mod tests {
         // bare `go`, rather than guessing from the wrong side's clock.
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false, 0, TimeManagement::Classic), None);
+        assert_eq!(time_limit(&board, None, Some(60_000), None, None, None, None, false, 0), None);
     }
 
     #[test]
-    fn the_move_overhead_is_kept_back_twice_from_a_fischer_clock() {
+    fn a_clock_below_the_overhead_still_plays_a_legal_move() {
         let (board, _) =
             Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 20, TimeManagement::Classic);
-        assert_eq!(limit, Some(clock_with_overhead(59_960, 1_000, None, false, 20)), "the increment is left alone");
-    }
-
-    #[test]
-    fn the_move_overhead_is_kept_back_once_per_move_to_go_and_twice_more() {
-        let (board, _) =
-            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(10), None, false, 20, TimeManagement::Classic);
-        assert_eq!(limit, Some(clock_with_overhead(60_000 - 12 * 20, 0, Some(10), false, 20)));
-        // `movestogo 0` is not valid UCI; read as 1, as `clock_target_ms` reads it.
-        let limit = time_limit(&board, Some(60_000), None, None, None, Some(0), None, false, 20, TimeManagement::Classic);
-        assert_eq!(limit, Some(clock_with_overhead(60_000 - 3 * 20, 0, Some(0), false, 20)));
-    }
-
-    #[test]
-    fn the_move_overhead_is_kept_back_from_movetime() {
-        let (board, _) =
-            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 20, TimeManagement::Classic);
-        assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 1_980 }));
-        let limit = time_limit(&board, None, None, None, None, None, Some(10), false, 20, TimeManagement::Classic);
-        assert_eq!(limit, Some(TimeLimit::Fixed { target_ms: 0 }), "depth 1 only, as movetime 0");
-    }
-
-    #[test]
-    fn a_clock_below_the_reserve_still_plays_a_legal_move() {
-        let (board, _) =
-            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(30), None, None, None, None, None, false, 20, TimeManagement::Classic);
-        assert_eq!(limit, Some(clock_with_overhead(0, 0, None, false, 20)));
+        let limit = time_limit(&board, Some(30), None, None, None, None, None, false, 100);
+        assert_eq!(limit, Some(clock(30, 0, None, 100, None, 1)));
         let (reports, best_move) = choose_best_move(
             &board, MAX_PLY, limit, &[], &TranspositionTable::new(1), &SyzygyTablebase::new(), None, 0,
             &AtomicBool::new(false),
         );
-        assert!(best_move.is_some(), "depth 1 still answers when the reserve takes the whole clock");
+        assert!(best_move.is_some(), "depth 1 still answers when the overhead takes the whole clock");
         assert_eq!(reports.last().map(|report| report.depth), Some(1), "and nothing deeper starts");
-    }
-
-    #[test]
-    fn clock_target_at_three_plus_two_spans_one_to_three_times_the_stable_target() {
-        // (0.05 * 180,000 + 0.5 * 2,000) * (1 + 2 * C).
-        assert_eq!(clock_target_ms(180_000, 2_000, None, 0.0, 1.0, &TIME_PARAMETERS), 10_000);
-        assert_eq!(clock_target_ms(180_000, 2_000, None, 1.0, 1.0, &TIME_PARAMETERS), 30_000);
-    }
-
-    #[test]
-    fn clock_target_is_capped_at_half_the_clock_in_time_trouble() {
-        // Uncapped: (0.05 * 1,000 + 0.5 * 2,000) * 3 = 3,150.
-        assert_eq!(clock_target_ms(1_000, 2_000, None, 1.0, 1.0, &TIME_PARAMETERS), 500);
-    }
-
-    #[test]
-    fn clock_target_under_a_repeating_control_grows_as_the_refill_nears() {
-        // 40/15: (0.05 + 1/40) * 900,000 = 67,500; on the last move before the refill the uncapped
-        // (0.05 + 1) * 900,000 exceeds the whole clock, so the cap decides.
-        assert_eq!(clock_target_ms(900_000, 0, Some(40), 0.0, 1.0, &TIME_PARAMETERS), 67_500);
-        assert_eq!(clock_target_ms(900_000, 0, Some(1), 0.0, 1.0, &TIME_PARAMETERS), 450_000);
-    }
-
-    #[test]
-    fn clock_target_reads_movestogo_zero_as_one() {
-        assert_eq!(
-            clock_target_ms(900_000, 0, Some(0), 0.0, 1.0, &TIME_PARAMETERS),
-            clock_target_ms(900_000, 0, Some(1), 0.0, 1.0, &TIME_PARAMETERS),
-        );
-    }
-
-    #[test]
-    fn the_falling_score_factor_multiplies_the_target_before_the_cap() {
-        // 10,000 at 3+2 and C = 0 (above), times F.
-        assert_eq!(clock_target_ms(180_000, 2_000, None, 0.0, 1.7, &TIME_PARAMETERS), 17_000);
-        assert_eq!(clock_target_ms(180_000, 2_000, None, 0.0, 0.6, &TIME_PARAMETERS), 6_000);
-        assert_eq!(clock_target_ms(1_000, 2_000, None, 1.0, 1.7, &TIME_PARAMETERS), 500, "still capped");
-    }
-
-    #[test]
-    fn a_falling_score_gives_more_time_and_a_rising_one_less() {
-        assert_eq!(falling_score_factor(None, -300, 100), 1.0, "no previous move");
-        assert_eq!(falling_score_factor(Some(40), 40, 100), 1.0);
-        assert!((falling_score_factor(Some(40), -27, 100) - 1.335).abs() < 1e-9, "a third of a pawn and more");
-        assert!((falling_score_factor(Some(0), -66, 100) - 1.33).abs() < 1e-9);
-        assert_eq!(falling_score_factor(Some(0), -400, 100), FALLING_SCORE_MAX);
-        assert_eq!(falling_score_factor(Some(0), 200, 100), FALLING_SCORE_MIN);
-        assert!((falling_score_factor(Some(0), 50, 100) - 0.75).abs() < 1e-9);
-    }
-
-    #[test]
-    fn a_mate_or_tablebase_score_on_either_side_leaves_the_target_alone() {
-        for decisive in [mate_in(5), -mate_in(5), tb_win_at(3), tb_loss_at(3)] {
-            assert_eq!(falling_score_factor(Some(decisive), 0, 100), 1.0);
-            assert_eq!(falling_score_factor(Some(0), decisive, 100), 1.0);
-        }
     }
 
     #[test]
@@ -6499,186 +6045,39 @@ mod tests {
     }
 
     #[test]
-    fn the_same_real_drop_gives_the_same_factor_under_every_evaluator_pawn() {
-        // A pawn of 70 PeSTO centipawns' worth: a drop of 70 there is a drop of 100 here.
-        assert_eq!(falling_score_factor(Some(0), -70, 70), falling_score_factor(Some(0), -100, 100));
-    }
-
-    #[test]
-    fn the_time_manager_recomputes_the_falling_factor_after_every_depth_under_a_clock_only() {
-        let a = Move::new(Square::E2, Square::E4, None);
-        let limit = clock(180_000, 2_000, None, false).with_previous_score(Some(0));
-        let mut time_manager = TimeManager::new(Some(limit), Instant::now(), 100);
-        assert_eq!(time_manager.falling, 1.0, "nothing searched yet");
-        time_manager.record_iteration(a, -100);
-        assert_eq!(time_manager.falling, 1.5);
-        time_manager.record_iteration(a, 0);
-        assert_eq!(time_manager.falling, 1.0);
-
-        let mut fixed = TimeManager::new(Some(TimeLimit::Fixed { target_ms: 1_000 }), Instant::now(), 100);
-        fixed.record_iteration(a, -1_000);
-        assert_eq!(fixed.target(), Some(Duration::from_millis(1_000)), "movetime is used as given");
-    }
-
-    #[test]
-    fn time_manager_instability_discounts_best_move_changes() {
-        let a = Move::new(Square::E2, Square::E4, None);
-        let b = Move::new(Square::D2, Square::D4, None);
-        let mut time_manager = TimeManager::new(None, Instant::now(), 100);
-        assert_eq!(time_manager.instability, 1.0);
-        let mut observed = Vec::new();
-        for best_move in [a, a, b, b, b] {
-            time_manager.record_iteration(best_move, 0);
-            observed.push(time_manager.instability);
-        }
-        assert_eq!(observed, vec![1.0, 0.5, 0.75, 0.375, 0.1875]);
-    }
-
-    /// `split_times_ms` with the shipped parameters.
-    fn split(time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, c: f64, f: f64) -> (u64, u64) {
-        split_times_ms(time_ms, inc_ms, moves_to_go, overhead_ms, c, f, &SPLIT_TIME_PARAMETERS)
-    }
-
-    #[test]
-    fn split_time_limit_passes_the_clock_as_given_with_the_overhead_beside_it() {
-        let (board, _) =
-            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 20, TimeManagement::Split);
-        assert_eq!(limit, Some(split_clock(60_000, 1_000, None, false, 20)));
-    }
-
-    #[test]
-    fn split_counts_fifty_moves_of_increments_less_the_reserve_for_a_stable_move() {
-        // 180+2: R = 5 * 2,000; L = 180,000 + 49 * 2,000 - 10,000 = 268,000; plan = L / 50 = 5,360;
-        // soft = 0.5 * plan; hard = 3 * plan.
-        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.0), (2_680, 16_080));
-        // 4:00+3, the 5+3 game's middle game: L = 240,000 + 147,000 - 15,000 = 372,000.
-        assert_eq!(split(240_000, 3_000, None, 0, 0.0, 1.0), (3_720, 22_320));
-        // The overhead, once per move of the horizon and twice more: L = 268,000 - 20 * 52.
-        assert_eq!(split(180_000, 2_000, None, 20, 0.0, 1.0), (2_670, 16_018));
-        // 10+0.1, the duel v1 lost: R = 500 + 1,040; L = 13,360; plan = 267.2.
-        assert_eq!(split(10_000, 100, None, 20, 0.0, 1.0), (134, 802));
-    }
-
-    #[test]
-    fn split_reserve_never_goes_below_its_floor() {
-        // 60+0: R = 300; L = 59,700; plan = 1,194.
-        assert_eq!(split(60_000, 0, None, 0, 0.0, 1.0), (597, 3_582));
-    }
-
-    #[test]
-    fn split_instability_and_a_falling_score_raise_the_soft_time_up_to_the_hard_maximum() {
-        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.0), (8_040, 16_080), "C = 1 triples it");
-        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 1.7), (4_556, 16_080));
-        assert_eq!(split(180_000, 2_000, None, 0, 1.0, 1.7), (13_668, 16_080), "still under hard");
-        assert_eq!(split(180_000, 2_000, None, 0, 0.0, 0.6), (1_608, 16_080), "a rising score: less");
-    }
-
-    #[test]
-    fn split_hard_maximum_is_half_a_low_clock() {
-        // 5 s left at +2: L = 93,000, plan = 1,860; 3 * plan would pass 0.5 * 5,000.
-        assert_eq!(split(5_000, 2_000, None, 0, 0.0, 1.0), (930, 2_500));
-        assert_eq!(split(5_000, 2_000, None, 20, 1.0, 1.7), (2_480, 2_480), "minus the overhead");
-        for (time, inc, c, f) in [(1_000, 0, 1.0, 1.7), (60_000, 500, 0.5, 1.2), (300_000, 3_000, 1.0, 1.7)] {
-            let (soft, hard) = split(time, inc, None, 20, c, f);
-            assert!(soft <= hard && hard <= time / 2, "{time}+{inc}: {soft} {hard}");
-        }
-    }
-
-    #[test]
-    fn split_under_a_repeating_control_shares_the_clock_among_the_moves_left() {
-        // 40/15: R = 300; L = 899,700; plan = L / 40 = 22,492.5.
-        assert_eq!(split(900_000, 0, Some(40), 0, 0.0, 1.0), (11_246, 67_478));
-        // The last move before the refill: plan = all of L, hard capped at half the clock.
-        assert_eq!(split(900_000, 0, Some(1), 0, 0.0, 1.0), (449_850, 450_000));
-        assert_eq!(split(900_000, 0, Some(0), 0, 0.0, 1.0), split(900_000, 0, Some(1), 0, 0.0, 1.0), "0 read as 1");
-    }
-
-    #[test]
-    fn split_with_the_clock_below_the_reserve_plans_nothing() {
-        assert_eq!(split(30, 0, None, 20, 1.0, 1.0), (0, 0));
-    }
-
-    #[test]
-    fn the_split_time_manager_starts_depths_until_the_soft_time_and_aborts_at_the_hard_maximum() {
-        let started = Instant::now();
-        let manager = TimeManager::new(Some(split_clock(180_000, 2_000, None, false, 0)), started, 100);
-        // Before any depth `C` is 1: soft 8,040 ms, hard 16,080 ms.
-        assert!(manager.should_start_next());
-        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(16_080)));
-
-        let empty = TimeManager::new(Some(split_clock(30, 0, None, false, 20)), started, 100);
-        assert!(!empty.should_start_next(), "nothing past depth 1");
-
-        let forced = TimeManager::new(Some(split_clock(600_000, 0, None, true, 0)), started, 100);
-        assert_eq!(forced.split_times(), Some((Duration::from_millis(500), Duration::from_millis(500))));
-        assert_eq!(forced.deadline(), Some(started + Duration::from_millis(SINGLE_MOVE_CAP_MS)));
-    }
-
-    #[test]
-    fn the_split_deadline_ignores_instability_and_the_falling_score() {
-        let a = Move::new(Square::E2, Square::E4, None);
-        let b = Move::new(Square::D2, Square::D4, None);
-        let started = Instant::now();
-        let limit = split_clock(180_000, 2_000, None, false, 0).with_previous_score(Some(0));
-        let mut manager = TimeManager::new(Some(limit), started, 100);
-        let deadline = manager.deadline();
-        for (best_move, score) in [(a, 0), (b, -150), (a, 200)] {
-            manager.record_iteration(best_move, score);
-            assert_eq!(manager.deadline(), deadline);
-        }
-    }
-
-    /// A `Reckless` clock limit at move `fullmove`.
-    fn reckless_clock(
-        time_ms: u64, inc_ms: u64, moves_to_go: Option<u32>, overhead_ms: u64, previous_score: Option<i32>, fullmove: u32,
-    ) -> TimeLimit {
-        TimeLimit::Clock {
-            time_ms,
-            inc_ms,
-            moves_to_go,
-            single_move: false,
-            previous_score,
-            management: TimeManagement::Reckless,
-            overhead_ms,
-            fullmove,
-        }
-    }
-
-    #[test]
-    fn reckless_bounds_by_hand() {
-        let p = &RECKLESS_TIME_PARAMETERS;
+    fn time_bounds_by_hand() {
+        let p = &TIME_PARAMETERS;
         // 10+0.1 at move 1, 100 ms overhead: avail 9,900; scale 0.0594 - 0.0492 * e^-0.0386, about
         // 0.012063, so soft 119.4 + 75 = 194.4; hard 7,208.2 + 75 = 7,283 but at most three soft
         // bounds, 583.3; both minus 15.
-        assert_eq!(reckless_bounds_ms(10_000, 100, None, 1, 100, p), (179, 568));
+        assert_eq!(time_bounds_ms(10_000, 100, None, 1, 100, p), (179, 568));
         // Later in the game the soft fraction rises toward 0.0594: at move 60, about 0.0545, so
         // about 540 + 75 - 15, and the hard bound three of them.
-        let (soft_60, hard_60) = reckless_bounds_ms(10_000, 100, None, 60, 100, p);
+        let (soft_60, hard_60) = time_bounds_ms(10_000, 100, None, 60, 100, p);
         assert!((590..=610).contains(&soft_60), "{soft_60}");
         assert!((1_800..=1_860).contains(&hard_60), "three soft bounds: {hard_60}");
         // A long clock: three soft bounds, far below 0.7281 of it.
-        let (soft_long, hard_long) = reckless_bounds_ms(180_000, 2_000, None, 10, 100, p);
+        let (soft_long, hard_long) = time_bounds_ms(180_000, 2_000, None, 10, 100, p);
         assert!(hard_long < 3 * soft_long + 50 && hard_long < 30_000, "{soft_long} {hard_long}");
         // 40/15 with 40 to go: an even share of 899,900, 22,497, and five of them.
-        assert_eq!(reckless_bounds_ms(900_000, 0, Some(40), 1, 100, p), (22_482, 112_472));
+        assert_eq!(time_bounds_ms(900_000, 0, Some(40), 1, 100, p), (22_482, 112_472));
         // One move to go: both bounds capped at the clock.
-        assert_eq!(reckless_bounds_ms(900_000, 0, Some(1), 1, 100, p), (899_885, 899_885));
-        assert_eq!(reckless_bounds_ms(900_000, 0, Some(0), 1, 100, p), (899_885, 899_885), "movestogo 0 read as 1");
+        assert_eq!(time_bounds_ms(900_000, 0, Some(1), 1, 100, p), (899_885, 899_885));
+        assert_eq!(time_bounds_ms(900_000, 0, Some(0), 1, 100, p), (899_885, 899_885), "movestogo 0 read as 1");
         // A clock below the overhead leaves nothing.
-        assert_eq!(reckless_bounds_ms(50, 0, None, 1, 100, p), (0, 0));
-        assert_eq!(reckless_bounds_ms(50, 1_000, None, 1, 100, p), (0, 0), "capped at the clock left");
+        assert_eq!(time_bounds_ms(50, 0, None, 1, 100, p), (0, 0));
+        assert_eq!(time_bounds_ms(50, 1_000, None, 1, 100, p), (0, 0), "capped at the clock left");
     }
 
-    /// A `Reckless` time manager after one completed depth: best move `e2e4` with `best_nodes` of
+    /// A time manager after one completed depth: best move `e2e4` with `best_nodes` of
     /// `total_nodes`, `changes` new leaders, one aspiration attempt at `score`.
-    fn reckless_after_one_depth(
+    fn manager_after_one_depth(
         previous: Option<i32>, score: i32, best_nodes: u64, total_nodes: u64, changes: u32,
     ) -> TimeManager {
         let best = Move::new(Square::E2, Square::E4, None);
         let other = Move::new(Square::D2, Square::D4, None);
         let mut manager =
-            TimeManager::new(Some(reckless_clock(180_000, 2_000, None, 100, previous, 1)), Instant::now(), 100);
+            TimeManager::new(Some(clock(180_000, 2_000, None, 100, previous, 1)), Instant::now(), 100);
         let mut stats = RootStats::default();
         stats.record(best, best_nodes, false);
         if total_nodes > best_nodes {
@@ -6692,12 +6091,12 @@ mod tests {
     }
 
     #[test]
-    fn reckless_multiplier_by_hand() {
-        let p = &RECKLESS_TIME_PARAMETERS;
+    fn the_multiplier_by_hand() {
+        let p = &TIME_PARAMETERS;
         let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
         let m = |previous, score, best_nodes, changes| {
             // The product, before `multiplier_min` and `multiplier_max` bound it.
-            reckless_after_one_depth(previous, score, best_nodes, 100, changes).reckless_factors().map_or(1.0, |f| f.product)
+            manager_after_one_depth(previous, score, best_nodes, 100, changes).factors().map_or(1.0, |f| f.product)
         };
 
         // Every node on the best move, unchanged score, first depth: node fraction at its floor,
@@ -6718,10 +6117,10 @@ mod tests {
     }
 
     #[test]
-    fn reckless_stability_counters_reach_their_floors() {
-        let p = &RECKLESS_TIME_PARAMETERS;
+    fn the_stability_counters_reach_their_floors() {
+        let p = &TIME_PARAMETERS;
         let best = Move::new(Square::E2, Square::E4, None);
-        let mut manager = TimeManager::new(Some(reckless_clock(180_000, 2_000, None, 100, None, 1)), Instant::now(), 100);
+        let mut manager = TimeManager::new(Some(clock(180_000, 2_000, None, 100, None, 1)), Instant::now(), 100);
         for _ in 0..40 {
             let mut stats = RootStats::default();
             stats.record(best, 100, false);
@@ -6729,24 +6128,24 @@ mod tests {
             manager.record_root_stats(&stats, 100);
             manager.record_iteration(best, 0);
         }
-        assert_eq!(manager.reckless.pv_stable, 39, "the first depth has nothing to repeat");
-        assert_eq!(manager.reckless.eval_stable, 40);
+        assert_eq!(manager.counters.pv_stable, 39, "the first depth has nothing to repeat");
+        assert_eq!(manager.counters.eval_stable, 40);
         let expected = p.nodes_min * p.pv_min * p.eval_min * p.changes_a;
-        let factors = manager.reckless_factors().unwrap();
+        let factors = manager.factors().unwrap();
         assert!((factors.product - expected).abs() < 1e-9, "no previous score: trend 1");
-        assert_eq!(manager.reckless_multiplier(), p.multiplier_min.max(expected), "the product bounded below");
+        assert_eq!(manager.multiplier(), p.multiplier_min.max(expected), "the product bounded below");
 
         let mut stats = RootStats::default();
         stats.attempt_scores.push(500);
         manager.record_root_stats(&stats, 0);
         manager.record_iteration(Move::new(Square::D2, Square::D4, None), 500);
-        assert_eq!((manager.reckless.pv_stable, manager.reckless.eval_stable), (0, 0), "a new move, a new score");
+        assert_eq!((manager.counters.pv_stable, manager.counters.eval_stable), (0, 0), "a new move, a new score");
     }
 
     #[test]
-    fn reckless_deadline_is_the_hard_bound_and_never_moves() {
+    fn the_deadline_is_the_hard_bound_and_never_moves() {
         let started = Instant::now();
-        let mut manager = TimeManager::new(Some(reckless_clock(10_000, 100, None, 100, Some(0), 1)), started, 100);
+        let mut manager = TimeManager::new(Some(clock(10_000, 100, None, 100, Some(0), 1)), started, 100);
         assert_eq!(manager.deadline(), Some(started + Duration::from_millis(568)));
         let best = Move::new(Square::E2, Square::E4, None);
         for score in [0, -300, 200] {
@@ -6760,9 +6159,9 @@ mod tests {
     }
 
     #[test]
-    fn reckless_movetime_keeps_no_overhead_back() {
+    fn movetime_keeps_no_overhead_back() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 100, TimeManagement::Reckless);
+        let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 100);
         assert_eq!(limit, Some(TimeLimit::Movetime { ms: 2_000 }));
         let started = Instant::now();
         let manager = TimeManager::new(limit, started, 100);
@@ -6771,24 +6170,11 @@ mod tests {
     }
 
     #[test]
-    fn reckless_clock_passes_the_time_as_given_with_the_full_move_number() {
+    fn the_clock_is_passed_as_given_with_the_overhead_and_the_full_move_number() {
         let (board, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 100, TimeManagement::Reckless)
-            .map(|limit| limit.with_fullmove(30));
-        assert_eq!(limit, Some(reckless_clock(60_000, 1_000, None, 100, None, 30)));
-    }
-
-    #[test]
-    fn a_forced_move_under_reckless_searches_depth_one_only() {
-        let (forced, _) = Board::from_fen(ONE_LEGAL_MOVE).unwrap();
-        let clock_limit = Some(reckless_clock(600_000, 0, None, 100, Some(30), 20));
-        assert_eq!(single_move_limit(&forced, clock_limit), Some(TimeLimit::Fixed { target_ms: 0 }));
-        assert_eq!(single_move_limit(&forced, Some(TimeLimit::Movetime { ms: 2_000 })), Some(TimeLimit::Fixed { target_ms: 0 }));
-        let manager = TimeManager::new(Some(TimeLimit::Fixed { target_ms: 0 }), Instant::now(), 100);
-        assert!(!manager.should_start_next(), "no depth past 1");
-
-        let (start, _) = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(single_move_limit(&start, clock_limit), clock_limit, "more than one legal move: unchanged");
+        let limit = time_limit(&board, Some(60_000), None, Some(1_000), None, None, None, false, 100)
+            .map(|limit| limit.with_fullmove(30).with_previous_score(Some(-40)));
+        assert_eq!(limit, Some(clock(60_000, 1_000, None, 100, Some(-40), 30)));
     }
 
     #[test]

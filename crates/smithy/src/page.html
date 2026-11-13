@@ -430,7 +430,7 @@ const BOOKS = "books";
 // The New test form's choices, kept across its redraws.
 const testForm = {
   kind: "duel", pairs: "500", elo0: "0", elo1: "5", challenger: "", champion: "pesto",
-  challengerParameters: "untuned", championParameters: "untuned", challengerTime: "split", championTime: "split",
+  challengerParameters: "untuned", championParameters: "untuned",
   limit: "depth", depth: "9",
   // The clock, in labelled fields: no notation to remember (`clockText` writes it). Each kind keeps
   // its own values, so switching back and forth loses nothing.
@@ -905,11 +905,7 @@ function sideRow(label, side) {
   if (!tunable) testForm[side + "Parameters"] = "untuned";
   const parameters = option("untuned", "untuned", testForm[side + "Parameters"] === "untuned")
     + (tunable ? option("tuned", "its tune", testForm[side + "Parameters"] === "tuned") : "");
-  // Which time management plans this side's clock (`matches::Side`): Split unless chosen.
-  const time = ["split", "classic", "reckless"]
-    .map((m) => option(m, `${m[0].toUpperCase()}${m.slice(1)} time`, testForm[side + "Time"] === m)).join("");
-  return `<div class="row"><label>${label}</label>${steps}<select data-field="${side}Parameters">${parameters}</select>`
-    + `<select data-field="${side}Time">${time}</select></div>`;
+  return `<div class="row"><label>${label}</label>${steps}<select data-field="${side}Parameters">${parameters}</select></div>`;
 }
 
 // The job's words for the form's test (`matches::Spec::parse`).
@@ -917,9 +913,8 @@ function testWords() {
   const f = testForm;
   const settings = f.kind === "match" ? f.pairs.trim() : f.kind === "sprt" ? `${f.elo0.trim()},${f.elo1.trim()}` : "-";
   const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${clockText().text}`;
-  // Each side a player, its parameters after its `@`: `tuned` or `untuned`; then its time
-  // management after another `@`, unless Split.
-  const side = (name) => `${f[name]}@${f[name + "Parameters"]}${f[name + "Time"] === "split" ? "" : "@" + f[name + "Time"]}`;
+  // Each side a player, its parameters after its `@`: `tuned` or `untuned`.
+  const side = (name) => `${f[name]}@${f[name + "Parameters"]}`;
   return ["--test", f.kind, settings, side("challenger"), side("champion"), limit];
 }
 

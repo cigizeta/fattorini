@@ -63,7 +63,7 @@ use super::cache::CacheRecord;
 use fattorini::nnue::Tuning;
 use fattorini::labels::{Curve, LOGISTIC};
 use fattorini::bench::loaded_bench;
-use fattorini::search::{SearchParameters, TimeManagement};
+use fattorini::search::SearchParameters;
 
 use super::matches;
 use super::rounds_display;
@@ -843,11 +843,10 @@ struct Shared {
 }
 
 /// How a test's pairs are played: its limit, and the challenger's and the champion's parameters, each
-/// given in full, the defaults or its tune, and their time managements.
+/// given in full, the defaults or its tune.
 struct TestDealing {
     limit: Limit,
     parameters: [SearchParameters; 2],
-    time_managements: [TimeManagement; 2],
 }
 
 /// A book's scoring as it is dealt: what every record must match (the network's player, depth,
@@ -917,7 +916,7 @@ impl ScoreDealing {
     }
 
     fn player(&self) -> Player {
-        Player { network: self.network.clone(), parameters: Some(self.parameters), time_management: TimeManagement::Split }
+        Player { network: self.network.clone(), parameters: Some(self.parameters) }
     }
 }
 
@@ -1074,8 +1073,8 @@ impl Shared {
         for &(pairing, share) in shares {
             let (challenger, teacher) = pairings[pairing].clone();
             let players = vec![
-                Player { network: challenger, parameters: first, time_management: TimeManagement::Split },
-                Player { network: teacher, parameters: second, time_management: TimeManagement::Split },
+                Player { network: challenger, parameters: first },
+                Player { network: teacher, parameters: second },
             ];
             match dealt.matchups.iter_mut().find(|m| m.pairing == pairing) {
                 Some(matchup) => matchup.dealt += share,
@@ -1135,7 +1134,7 @@ impl Shared {
         let id = self.next_chore_id();
         let reference_nps = if matches!(limit, Limit::Clock(_)) { self.reference_nps } else { None };
         let chore = Chore { id: id.clone(), kind: TaskKind::Spsa, limit, adjudicate: true, reference_nps, entries };
-        let players = vec![Player { network: network.to_string(), parameters: None, time_management: TimeManagement::Split }; 2];
+        let players = vec![Player { network: network.to_string(), parameters: None }; 2];
         let dealt = Dealt {
             session: session.to_string(),
             epoch: self.epoch,
@@ -1292,7 +1291,7 @@ impl Shared {
                 (
                     TaskKind::SelfPlay,
                     Limit::Depth(self.depth()),
-                    vec![Player { network: teacher, parameters: Some(parameters), time_management: TimeManagement::Split }],
+                    vec![Player { network: teacher, parameters: Some(parameters) }],
                     None,
                     size,
                 )
@@ -1306,14 +1305,11 @@ impl Shared {
                 let (challenger, teacher) = pairings[pairing].clone();
                 // A test's sides play the parameters it gives them, under its limit; a gate's its
                 // `sides`, at the forge's depth.
-                let (limit, [first, second], [first_time, second_time]) = match &self.test {
-                    Some(test) => (test.limit.clone(), test.parameters.map(Some), test.time_managements),
-                    None => (Limit::Depth(self.depth()), sides.map(Some), [TimeManagement::Split; 2]),
+                let (limit, [first, second]) = match &self.test {
+                    Some(test) => (test.limit.clone(), test.parameters.map(Some)),
+                    None => (Limit::Depth(self.depth()), sides.map(Some)),
                 };
-                let players = vec![
-                    Player { network: challenger, parameters: first, time_management: first_time },
-                    Player { network: teacher, parameters: second, time_management: second_time },
-                ];
+                let players = vec![Player { network: challenger, parameters: first }, Player { network: teacher, parameters: second }];
                 (TaskKind::Pair, limit, players, Some(pairing), size.min(self.wanted(Some(pairing))))
             }
         };
@@ -4549,14 +4545,11 @@ const BOOKS_SCREEN: &str = "books";
 /// (`book_scores`), in the arena slot.
 const SCORE_BOOK: &str = "--score-book";
 
-/// A score job's words checked: a source with a graph's name, a side as a test's (its time
-/// management unsaid, a search to a depth plays none), a depth from 1 to `MAX_SCORE_DEPTH`.
+/// A score job's words checked: a source with a graph's name, a side as a test's, a depth from 1 to
+/// `MAX_SCORE_DEPTH`.
 fn score_book_words(source: &str, side: &str, depth: &str) -> Result<(matches::Side, u32), String> {
     book::check_source(source)?;
     let side = matches::Side::parse(side)?;
-    if side.time_management != TimeManagement::Split {
-        return Err(format!("{SCORE_BOOK}: a search to a depth plays no clock, so {} names no time management", side.player));
-    }
     let depth = depth.parse::<u32>().ok().filter(|depth| (1..=MAX_SCORE_DEPTH).contains(depth)).ok_or(format!("{SCORE_BOOK}: the depth is 1 to {MAX_SCORE_DEPTH}, not {depth:?}"))?;
     Ok((side, depth))
 }
@@ -5034,7 +5027,6 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         shared.test = Some(TestDealing {
             limit: spec.limit.clone(),
             parameters: [challenger.parameters, champion.parameters],
-            time_managements: [spec.challenger.time_management, spec.champion.time_management],
         });
         shared.view = View::Test { number, spec: spec.clone() };
         shared.epoch += 1;
@@ -5835,7 +5827,7 @@ mod tests {
         );
         assert_eq!(job_config(&words("--score-book elite n@tuned 20")), Some(BOOKS_SCREEN.to_string()));
         assert_eq!(SlotJob::of(&words("--score-book elite n@tuned 20")), None, "the arena slot's");
-        for wrong in ["--score-book elite n@tuned", "--score-book elite n@tuned 0", "--score-book elite n@tuned@reckless 20", "--score-book a/b n@tuned 20"] {
+        for wrong in ["--score-book elite n@tuned", "--score-book elite n@tuned 0", "--score-book elite n@tuned@slow 20", "--score-book a/b n@tuned 20"] {
             assert!(job_name(&words(wrong)).is_err(), "{wrong}");
         }
         assert_eq!(SlotJob::of(&words("--convert lc0")), Some(SlotJob::Convert));
@@ -5959,7 +5951,7 @@ mod tests {
         assert_eq!((dealt.kind, &dealt.limit, dealt.entries[0].count), (TaskKind::SelfPlay, &Limit::Depth(generation::SEARCH_DEPTH), TASKS_PER_WORKER));
         assert_eq!(
             dealt.entries[0].players,
-            vec![Player { network: PESTO.to_string(), parameters: Some(TEACHER_TUNE), time_management: TimeManagement::Split }],
+            vec![Player { network: PESTO.to_string(), parameters: Some(TEACHER_TUNE) }],
             "the teacher plays its tune"
         );
 
@@ -6201,7 +6193,6 @@ mod tests {
             shared.test = Some(TestDealing {
                 limit: Limit::Clock("10+0.1".to_string()),
                 parameters: [tuned, SearchParameters::DEFAULT],
-                time_managements: [TimeManagement::Reckless, TimeManagement::Split],
             });
             shared.work = Some(Work::Pairs {
                 pairings: vec![("aa".to_string(), "bb".to_string())],
@@ -6215,8 +6206,6 @@ mod tests {
         assert_eq!((dealt.kind, &dealt.limit, dealt.reference_nps), (TaskKind::Pair, &Limit::Clock("10+0.1".to_string()), Some(1_000_000.0)));
         let parameters: Vec<Option<SearchParameters>> = dealt.entries[0].players.iter().map(|player| player.parameters).collect();
         assert_eq!(parameters, [Some(tuned), Some(SearchParameters::DEFAULT)], "both given in full, the defaults too");
-        let managements: Vec<TimeManagement> = dealt.entries[0].players.iter().map(|player| player.time_management).collect();
-        assert_eq!(managements, [TimeManagement::Reckless, TimeManagement::Split], "each side's own");
         assert_eq!(dealt.entries[0].count, 3, "never past what the test may play");
         std::fs::remove_dir_all(&dir).ok();
     }

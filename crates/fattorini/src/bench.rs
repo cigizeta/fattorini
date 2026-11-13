@@ -50,7 +50,7 @@ pub fn bench_with(evaluator: Option<&Network>, parameters: SearchParameters, dep
 /// opening and middlegame, where the time is spent.
 pub const TM_PROBE_DEPTH: u32 = 22;
 
-/// `fattorini tm-probe [<depth>]`: `Reckless` time management's five factors measured on this
+/// `fattorini tm-probe [<depth>]`: the time management's five factors measured on this
 /// search, every one of `POSITIONS` searched to `depth` as `bench` searches them (one thread, a
 /// fresh table each, `parameters`; the positions side by side over the machine's threads), its
 /// factors after every completed depth. Returns one line per
@@ -58,14 +58,14 @@ pub const TM_PROBE_DEPTH: u32 = 22;
 /// multiplier`, `ms` the search's time so far, showing a position whose depths grow too costly), then per depth the medians of the node fraction and of each factor, the product
 /// last.
 pub fn tm_probe(evaluator: Option<&Network>, parameters: SearchParameters, depth: u32) -> Vec<String> {
-    use crate::search::{choose_best_move_probing, RecklessFactors};
+    use crate::search::{choose_best_move_probing, TimeFactors};
     // Every position at once, each on its own thread: the factors come from node counts and
     // scores, which a one-thread search with a fresh table finds the same however busy the machine
     // is, so this measures nothing of speed. A pool of the machine's threads takes them in turn.
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(POSITIONS.len());
     let next = std::sync::atomic::AtomicUsize::new(0);
     // One completed depth of a position: the depth, the search's time so far in ms, the factors.
-    type ProbeRow = (u32, u64, RecklessFactors);
+    type ProbeRow = (u32, u64, TimeFactors);
     let probed: Vec<Vec<ProbeRow>> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| {
@@ -95,7 +95,7 @@ pub fn tm_probe(evaluator: Option<&Network>, parameters: SearchParameters, depth
     });
     let mut lines =
         vec!["position\tdepth\tms\tf\tpv_stable\teval_stable\tchanges\tnodes\ttrend\tpv\teval\tchurn\tmultiplier".to_string()];
-    let mut by_depth: Vec<Vec<RecklessFactors>> = vec![Vec::new(); depth as usize + 1];
+    let mut by_depth: Vec<Vec<TimeFactors>> = vec![Vec::new(); depth as usize + 1];
     for (index, rows) in probed.iter().enumerate() {
         for &(report_depth, ms, f) in rows {
             lines.push(format!(
@@ -120,7 +120,7 @@ pub fn tm_probe(evaluator: Option<&Network>, parameters: SearchParameters, depth
     }
     lines.push("medians: depth\tpositions\tf\tnodes\tpv\teval\tchurn\tmultiplier".to_string());
     for (d, factors) in by_depth.iter().enumerate().filter(|(_, factors)| !factors.is_empty()) {
-        let median = |value: fn(&RecklessFactors) -> f64| {
+        let median = |value: fn(&TimeFactors) -> f64| {
             let mut values: Vec<f64> = factors.iter().map(value).collect();
             values.sort_by(f64::total_cmp);
             values[values.len() / 2]

@@ -8,7 +8,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints the third-party notices
 /// a release embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
-/// `tm-probe [<depth>]` measures `Reckless` time management's factors on those positions.
+/// `tm-probe [<depth>]` measures the time management's factors on those positions.
 ///
 /// Any other argument stops the engine, so a typo is never silently ignored.
 fn main() {
@@ -76,7 +76,7 @@ fn run_bench(depth: u32) {
     println!("{}", fattorini::bench::bench_line(nodes, seconds));
 }
 
-/// `fattorini tm-probe [<depth>]`, with what the build embeds: `Reckless` time management's factors
+/// `fattorini tm-probe [<depth>]`, with what the build embeds: the time management's factors
 /// on the bench positions (`bench::tm_probe`), one tab-separated line each, the medians last.
 fn run_tm_probe(depth: u32) {
     let evaluator = fattorini::uci::embedded_evaluator();

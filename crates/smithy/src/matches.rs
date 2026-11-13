@@ -13,7 +13,6 @@
 use serde::Serialize;
 
 use fattorini::pipeline::protocol::Limit;
-use fattorini::search::TimeManagement;
 
 use super::sprt::{Sprt, Verdict};
 
@@ -85,46 +84,42 @@ impl Kind {
 }
 
 /// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`),
-/// whether it plays its tune (`parameters.txt`) or the defaults, and which time management plans its
-/// clock. Written as a player, the network with what it searches with: `<network>@tuned` or
-/// `<network>@untuned`, then `@classic` or `@reckless` when its management is not `Split`, so a
-/// line written before reads back unchanged.
+/// whether it plays its tune (`parameters.txt`) or the defaults. Written as a player, the network
+/// with what it searches with: `<network>@tuned` or `<network>@untuned`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Side {
     pub player: String,
     pub tuned: bool,
-    pub time_management: TimeManagement,
 }
 
+/// The time managements a side could name during the duels of 2026-11, as a third `@` field: read
+/// and dropped, so the tests logged then still read back.
+const RETIRED_TIME_MANAGEMENTS: [&str; 3] = ["classic", "split", "reckless"];
+
 impl Side {
-    /// As a player's name: `<network>@tuned` or `<network>@untuned`, then `@<management>` unless `Split`.
+    /// As a player's name: `<network>@tuned` or `<network>@untuned`.
     pub fn text(&self) -> String {
-        let player = format!("{}@{}", self.player, if self.tuned { "tuned" } else { "untuned" });
-        match self.time_management {
-            TimeManagement::Split => player,
-            management => format!("{player}@{}", management.name().to_lowercase()),
-        }
+        format!("{}@{}", self.player, if self.tuned { "tuned" } else { "untuned" })
     }
 
-    /// `text` read back.
+    /// `text` read back, a retired time management after it dropped.
     pub fn parse(text: &str) -> Result<Side, String> {
-        let wrong = || {
-            format!("a side is <network>@<tuned|untuned>, optionally @<classic|split|reckless> after, not {text:?}")
-        };
+        let wrong = || format!("a side is <network>@<tuned|untuned>, not {text:?}");
         let (player, suffix) = text.split_once('@').ok_or_else(wrong)?;
         if player.is_empty() {
             return Err(wrong());
         }
-        let (tuning, time_management) = match suffix.split_once('@') {
-            None => (suffix, TimeManagement::Split),
-            Some((tuning, management)) => (tuning, TimeManagement::parse(management).ok_or_else(wrong)?),
+        let tuning = match suffix.split_once('@') {
+            None => suffix,
+            Some((tuning, management)) if RETIRED_TIME_MANAGEMENTS.iter().any(|retired| retired.eq_ignore_ascii_case(management)) => tuning,
+            Some(_) => return Err(wrong()),
         };
         let tuned = match tuning {
             "tuned" => true,
             "untuned" => false,
             _ => return Err(wrong()),
         };
-        Ok(Side { player: player.to_string(), tuned, time_management })
+        Ok(Side { player: player.to_string(), tuned })
     }
 }
 
@@ -650,18 +645,16 @@ mod tests {
     }
 
     #[test]
-    fn a_side_names_its_time_management_only_when_not_split() {
-        let reckless = Side::parse("aa@tuned@reckless").unwrap();
-        assert_eq!(reckless, Side { player: "aa".to_string(), tuned: true, time_management: TimeManagement::Reckless });
-        assert_eq!(reckless.text(), "aa@tuned@reckless");
-        assert_eq!(Side::parse("aa@untuned@Classic").unwrap().text(), "aa@untuned@classic", "read in any case");
-        assert_eq!(Side::parse("aa@tuned@split").unwrap().text(), "aa@tuned", "Split is never written");
-        assert_eq!(Side::parse("aa@tuned").unwrap().time_management, TimeManagement::Split, "as every line before");
+    fn a_side_s_retired_time_management_is_read_and_dropped() {
+        let side = Side { player: "aa".to_string(), tuned: true };
+        assert_eq!(Side::parse("aa@tuned@reckless").unwrap(), side);
+        assert_eq!(Side::parse("aa@tuned@Classic").unwrap(), side, "read in any case");
+        assert_eq!(Side::parse("aa@tuned@split").unwrap().text(), "aa@tuned", "never written");
         for wrong in ["aa@tuned@slow", "aa@tuned@", "aa@reckless", "aa@reckless@tuned"] {
             assert!(Side::parse(wrong).is_err(), "{wrong:?}");
         }
-        let spec = Spec::parse(&words("duel - aa@tuned@reckless aa@tuned@classic", "clock 180+2")).unwrap();
-        assert!(!spec.mixed(), "one network, both tuned: the managements alone differ");
+        // A duel of the managements, logged on 2026-11-13, still reads back.
+        assert!(Spec::parse(&words("duel - aa@tuned@reckless aa@tuned@classic", "clock 180+2")).is_ok());
     }
 
     #[test]
@@ -671,7 +664,7 @@ mod tests {
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
         assert_eq!(
             spec.challenger,
-            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true, time_management: TimeManagement::Split }
+            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuned: true }
         );
         assert_eq!((spec.challenger.text(), spec.champion.text()), ("lc0-psq-g1-a1-l0.03-r1@tuned".to_string(), "pesto@untuned".to_string()));
         assert!(spec.mixed());

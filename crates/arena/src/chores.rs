@@ -754,11 +754,9 @@ impl Arena {
             tags.push(("TimeControl".to_string(), spec.text.clone()));
         }
         let control: Control = spec.control;
-        let mut challenger_player = InProcessPlayer::new(
-            challenger_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, challenger.parameters, challenger.time_management,
-        );
-        let mut teacher_player =
-            InProcessPlayer::new(teacher_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, teacher.parameters, teacher.time_management);
+        let mut challenger_player =
+            InProcessPlayer::new(challenger_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, challenger.parameters);
+        let mut teacher_player = InProcessPlayer::new(teacher_network, Arc::clone(&self.tablebase), PAIR_HASH_MB, teacher.parameters);
         let recording =
             Recording { event_name: "fattorini arena", round: 1, champion_name: &teacher.network, challenger_name: &challenger.network, pgn_path: "" };
         // A tune's games end early by the tablebase, win and draw rules; a round robin's and a gate's never.
@@ -1004,7 +1002,6 @@ fn with_tags(pgn: &str, tags: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fattorini::search::TimeManagement;
 
     #[test]
     fn tags_go_at_the_end_of_the_tag_section() {
@@ -1094,7 +1091,7 @@ mod tests {
             adjudicate: false,
             reference_nps: None,
             entries: vec![protocol::Entry {
-                players: vec![Player { network: PESTO.to_string(), parameters, time_management: TimeManagement::Split }],
+                players: vec![Player { network: PESTO.to_string(), parameters }],
                 count: 1,
                 tags: Vec::new(),
             }],
@@ -1105,7 +1102,7 @@ mod tests {
     }
 
     fn matchup(first: &str, second: &str, count: u32) -> Entry {
-        let own = |network: &str| Player { network: network.to_string(), parameters: None, time_management: TimeManagement::Split };
+        let own = |network: &str| Player { network: network.to_string(), parameters: None };
         Entry { players: vec![own(first), own(second)], count, tags: Vec::new() }
     }
 

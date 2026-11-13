@@ -42,7 +42,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::lan::{field, fields};
-use crate::search::{SearchParameters, TimeManagement};
+use crate::search::SearchParameters;
 
 /// The port the smithy listens on, for the arenas and its control.
 pub const SMITHY_PORT: u16 = 47_821;
@@ -497,17 +497,19 @@ impl Limit {
     }
 }
 
+/// The time managements a chore could name during the duels of 2026-11: read and dropped.
+const RETIRED_TIME_MANAGEMENTS: [&str; 3] = ["Classic", "Split", "Reckless"];
+
 /// A player of a chore: a network by its file's path below the store (the `HelloReply`'s), `data/...`
 /// as the mirrored tree names it, one exact file, or `PESTO`; and the search parameters it plays with, `None` for its own (a network's tuning, or the defaults). The smithy
-/// writes a tuned player's values in full, so an arena reads no file for them. `time_management`:
-/// which one plans its clock (`TimeManagement`), `Split` unless a test says otherwise, written as a
-/// third field only when not `Split`, so every chore of before reads the same; an arena of a build
-/// before it refuses the field rather than playing the wrong management.
+/// writes a tuned player's values in full, so an arena reads no file for them. A third field, the
+/// time management of the duels of 2026-11 (`RETIRED_TIME_MANAGEMENTS`), is no longer written; read
+/// back it is ignored, so a chore of a smithy one build behind still parses, and any other third
+/// field is refused.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Player {
     pub network: String,
     pub parameters: Option<SearchParameters>,
-    pub time_management: TimeManagement,
 }
 
 impl Player {
@@ -518,10 +520,7 @@ impl Player {
                 SearchParameters::NAMES.iter().zip(parameters.values()).map(|(name, value)| format!("{name}={value}")).collect::<Vec<_>>().join(",")
             }
         };
-        match self.time_management {
-            TimeManagement::Split => format!("{}\t{parameters}", self.network),
-            management => format!("{}\t{parameters}\t{}", self.network, management.name()),
-        }
+        format!("{}\t{parameters}", self.network)
     }
 
     pub fn parse(text: &str) -> Result<Player, String> {
@@ -529,12 +528,10 @@ impl Player {
         if network.is_empty() {
             return Err("player: no network".to_string());
         }
-        let (parameters, time_management) = match rest.split_once('\t') {
-            None => (rest, TimeManagement::Split),
-            Some((parameters, management)) => (
-                parameters,
-                TimeManagement::parse(management).ok_or(format!("player: {management:?} is no time management"))?,
-            ),
+        let parameters = match rest.split_once('\t') {
+            None => rest,
+            Some((parameters, management)) if RETIRED_TIME_MANAGEMENTS.iter().any(|retired| retired.eq_ignore_ascii_case(management)) => parameters,
+            Some((_, management)) => return Err(format!("player: {management:?} is no time management of the duels")),
         };
         let parameters = if parameters == "own" {
             None
@@ -542,7 +539,7 @@ impl Player {
             let lines: Vec<String> = parameters.split(',').map(|pair| pair.replacen('=', "\t", 1)).collect();
             Some(SearchParameters::parse_file_text("player", &lines.join("\n"))?)
         };
-        Ok(Player { network: network.to_string(), parameters, time_management })
+        Ok(Player { network: network.to_string(), parameters })
     }
 }
 
@@ -772,7 +769,7 @@ mod tests {
 
     #[test]
     fn every_chore_reads_back() {
-        let own = |network: &str| Player { network: network.to_string(), parameters: None, time_management: TimeManagement::Split };
+        let own = |network: &str| Player { network: network.to_string(), parameters: None };
         let tuned = SearchParameters { razoring_margin: -7, ..SearchParameters::DEFAULT };
         let chores = [
             Chore {
@@ -792,8 +789,8 @@ mod tests {
                 entries: vec![
                     Entry {
                         players: vec![
-                            Player { network: "aa".to_string(), parameters: Some(tuned), time_management: TimeManagement::Split },
-                            Player { network: "bb".to_string(), parameters: None, time_management: TimeManagement::Reckless },
+                            Player { network: "aa".to_string(), parameters: Some(tuned) },
+                            own("bb"),
                         ],
                         count: 1,
                         tags: vec![("K".to_string(), "17".to_string())],
@@ -820,7 +817,7 @@ mod tests {
                 reference_nps: None,
                 entries: vec![Entry {
                     players: vec![
-                        Player { network: "aa".to_string(), parameters: Some(tuned), time_management: TimeManagement::Classic },
+                        Player { network: "aa".to_string(), parameters: Some(tuned) },
                         own("aa"),
                     ],
                     count: 1,
@@ -843,7 +840,7 @@ mod tests {
             adjudicate: false,
             reference_nps: None,
             entries: vec![Entry {
-                players: vec![Player { network: "aa".to_string(), parameters: None, time_management: TimeManagement::Split }],
+                players: vec![Player { network: "aa".to_string(), parameters: None }],
                 count: 1,
                 tags: vec![
                     (SCORE_PARENT_TAG.to_string(), "463b96181691fc9c".to_string()),
@@ -877,12 +874,12 @@ mod tests {
     }
 
     #[test]
-    fn a_player_names_its_time_management_only_when_not_split() {
-        let player = |time_management| Player { network: "aa".to_string(), parameters: None, time_management };
-        assert_eq!(player(TimeManagement::Split).text(), "aa\town", "as every chore before it");
-        assert_eq!(player(TimeManagement::Reckless).text(), "aa\town\tReckless");
-        assert_eq!(Player::parse("aa\town"), Ok(player(TimeManagement::Split)));
-        assert_eq!(Player::parse("aa\town\treckless"), Ok(player(TimeManagement::Reckless)), "in any case");
+    fn a_retired_time_management_field_is_read_and_ignored() {
+        let player = Player { network: "aa".to_string(), parameters: None };
+        assert_eq!(player.text(), "aa\town");
+        assert_eq!(Player::parse("aa\town"), Ok(player.clone()));
+        assert_eq!(Player::parse("aa\town\tReckless"), Ok(player.clone()), "a chore of the duels' builds");
+        assert_eq!(Player::parse("aa\town\tSplit"), Ok(player));
     }
 
     #[test]
@@ -893,7 +890,7 @@ mod tests {
         assert!(Chore::parse("chore\tc1\nkind\tself\nlimit\tnodes 9\n").is_err());
         assert!(parse_entries("player\taa\town\n").is_err(), "a player before any entry");
         assert!(parse_entries("entry\t1\nplayer\taa\trazoring_margin=1\n").is_err(), "parameters are all given, or none");
-        assert!(parse_entries("entry\t1\nplayer\taa\town\tSlow\n").is_err(), "an unknown time management");
+        assert!(parse_entries("entry\t1\nplayer\taa\town\tSlow\n").is_err(), "no time management of the duels");
         assert!(parse_entries("entry\t1\ntag\tK\ta\"b\n").is_err(), "a value no PGN tag can hold");
     }
 }
