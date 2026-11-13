@@ -60,9 +60,13 @@ for a network with no tuned set, and for every network until its time tune.
 
 Consequences: a snapshot and a release embed the network's time set beside its search set; the
 arena's players read it; a network's tune becomes two, the search's and then the time's, each
-about 12 hours at 32k pairs. **The file (the developer, 2026-11-13): its own,
-`time-parameters.txt`, beside `parameters.txt`,** so neither tune rewrites the other's result.
-`@tuned` reads both, each absent meaning its defaults; `@untuned` neither.
+about 12 hours at 32k pairs. **The files (the developer, 2026-11-13): `time-parameters.txt`
+and `search-parameters.txt`,** side by side, so neither tune rewrites the other's result; the
+search's `parameters.txt` is renamed `search-parameters.txt` (33 mentions in 11 source files,
+three files on Drive under the lc0 network's generation 1). **Renamed once, no fallback (the
+developer, 2026-11-13):** the developer renames the existing files when the code lands, which
+reads the new name alone. `@tuned` reads both, each absent meaning its defaults; `@untuned`
+neither.
 
 ### 4. The SPSA, generalized
 
