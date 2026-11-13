@@ -3476,8 +3476,10 @@ const RECKLESS_EXTRA_MARGIN_MS: u64 = 15;
 ///
 /// Two kinds of constant. **Fixed:** Reckless's hand-picked ones (`inc_fraction`, `cyclic_soft`,
 /// `cyclic_hard`, `eval_window_cp`), followed as they are and never tuned; `cyclic_*` are never
-/// exercised by a Fischer tune anyway. **Tuned:** every other one is Reckless's SPSA output
-/// (its sessions up to "SMP SPSA session 200k games", #1072), tuned to Reckless's search, so only a
+/// exercised by a Fischer tune anyway. **Fattorini's:** `hard_soft_ratio`, `multiplier_min`,
+/// `multiplier_max` and `nodes_a`, chosen for Fattorini's search after Reckless's own spent its
+/// clock by move 30 in a 180+2 test. **Tuned:** every other one is Reckless's SPSA output (its
+/// sessions up to "SMP SPSA session 200k games", #1072), tuned to Reckless's search, so only a
 /// starting value for Fattorini's own SPSA, run after the search's.
 pub(crate) struct RecklessTimeParameters {
     /// 0.0594: the soft fraction of the clock approached late in the game.
@@ -3488,6 +3490,14 @@ pub(crate) struct RecklessTimeParameters {
     soft_rate: f64,
     /// 0.7281: the hard bound's fraction of the clock.
     hard_fraction: f64,
+    /// 3, Fattorini's: under a Fischer clock the hard bound is at most this many soft bounds. Under
+    /// Reckless's 0.7281 alone, one move could take three quarters of the clock, and in a 180+2
+    /// test it took half (2026-11-13).
+    hard_soft_ratio: f64,
+    /// 0.5 and 2.0, Fattorini's: the bounds of the five factors' product, so no move stretches
+    /// its soft bound beyond twice or cuts it below half, whatever the factors read.
+    multiplier_min: f64,
+    multiplier_max: f64,
     /// 0.75, fixed: the share of the increment added to both bounds.
     inc_fraction: f64,
     /// 1.0, fixed: under `movestogo`, the soft bound in even shares of the clock.
@@ -3530,10 +3540,17 @@ pub(crate) const RECKLESS_TIME_PARAMETERS: RecklessTimeParameters = RecklessTime
     soft_rise: 0.0492,
     soft_rate: 0.0386,
     hard_fraction: 0.7281,
+    hard_soft_ratio: 3.0,
+    multiplier_min: 0.5,
+    multiplier_max: 2.0,
     inc_fraction: 0.75,
     cyclic_soft: 1.0,
     cyclic_hard: 5.0,
-    nodes_a: 3.1838,
+    // Fattorini's, not Reckless's 3.1838: `fattorini tm-probe` measured Fattorini's median node
+    // fraction at 0.55 to 0.71 (depths 10 to 18), where Reckless's line gave 1.3 to 1.7, its
+    // floor of 0.546 suggesting Reckless's own fraction sits near 1. Moved so a fraction of 0.7
+    // gives about 0.8, the slope kept (2026-11-13).
+    nodes_a: 2.66,
     nodes_b: 2.6554,
     nodes_min: 0.5460,
     trend_a: 0.7426,
@@ -3563,7 +3580,7 @@ fn reckless_bounds_ms(
         None => {
             let scale = p.soft_max - p.soft_rise * (-p.soft_rate * f64::from(fullmove)).exp();
             let soft = (scale * avail + p.inc_fraction * inc).min(avail);
-            let hard = (p.hard_fraction * avail + p.inc_fraction * inc).min(avail);
+            let hard = (p.hard_fraction * avail + p.inc_fraction * inc).min(p.hard_soft_ratio * soft).min(avail);
             (soft, hard)
         }
         Some(moves) => {
@@ -3670,6 +3687,9 @@ pub struct RecklessFactors {
     pub pv: f64,
     pub eval: f64,
     pub changes: f64,
+    /// The five factors' product, and `multiplier`, the product within `multiplier_min` and
+    /// `multiplier_max`: what the soft bound is scaled by.
+    pub product: f64,
     pub multiplier: f64,
 }
 
@@ -3791,7 +3811,8 @@ impl TimeManager {
             pv,
             eval,
             changes,
-            multiplier: nodes * trend * pv * eval * changes,
+            product: nodes * trend * pv * eval * changes,
+            multiplier: (nodes * trend * pv * eval * changes).clamp(p.multiplier_min, p.multiplier_max),
         })
     }
 
@@ -6628,13 +6649,17 @@ mod tests {
     fn reckless_bounds_by_hand() {
         let p = &RECKLESS_TIME_PARAMETERS;
         // 10+0.1 at move 1, 100 ms overhead: avail 9,900; scale 0.0594 - 0.0492 * e^-0.0386, about
-        // 0.012063, so soft 119.4 + 75 = 194, hard 7,208.2 + 75 = 7,283, both minus 15.
-        assert_eq!(reckless_bounds_ms(10_000, 100, None, 1, 100, p), (179, 7_268));
+        // 0.012063, so soft 119.4 + 75 = 194.4; hard 7,208.2 + 75 = 7,283 but at most three soft
+        // bounds, 583.3; both minus 15.
+        assert_eq!(reckless_bounds_ms(10_000, 100, None, 1, 100, p), (179, 568));
         // Later in the game the soft fraction rises toward 0.0594: at move 60, about 0.0545, so
-        // about 540 + 75 - 15.
+        // about 540 + 75 - 15, and the hard bound three of them.
         let (soft_60, hard_60) = reckless_bounds_ms(10_000, 100, None, 60, 100, p);
         assert!((590..=610).contains(&soft_60), "{soft_60}");
-        assert_eq!(hard_60, 7_268, "the hard bound ignores the move number");
+        assert!((1_800..=1_860).contains(&hard_60), "three soft bounds: {hard_60}");
+        // A long clock: three soft bounds, far below 0.7281 of it.
+        let (soft_long, hard_long) = reckless_bounds_ms(180_000, 2_000, None, 10, 100, p);
+        assert!(hard_long < 3 * soft_long + 50 && hard_long < 30_000, "{soft_long} {hard_long}");
         // 40/15 with 40 to go: an even share of 899,900, 22,497, and five of them.
         assert_eq!(reckless_bounds_ms(900_000, 0, Some(40), 1, 100, p), (22_482, 112_472));
         // One move to go: both bounds capped at the clock.
@@ -6671,7 +6696,8 @@ mod tests {
         let p = &RECKLESS_TIME_PARAMETERS;
         let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
         let m = |previous, score, best_nodes, changes| {
-            reckless_after_one_depth(previous, score, best_nodes, 100, changes).reckless_multiplier()
+            // The product, before `multiplier_min` and `multiplier_max` bound it.
+            reckless_after_one_depth(previous, score, best_nodes, 100, changes).reckless_factors().map_or(1.0, |f| f.product)
         };
 
         // Every node on the best move, unchanged score, first depth: node fraction at its floor,
@@ -6706,7 +6732,9 @@ mod tests {
         assert_eq!(manager.reckless.pv_stable, 39, "the first depth has nothing to repeat");
         assert_eq!(manager.reckless.eval_stable, 40);
         let expected = p.nodes_min * p.pv_min * p.eval_min * p.changes_a;
-        assert!((manager.reckless_multiplier() - expected).abs() < 1e-9, "no previous score: trend 1");
+        let factors = manager.reckless_factors().unwrap();
+        assert!((factors.product - expected).abs() < 1e-9, "no previous score: trend 1");
+        assert_eq!(manager.reckless_multiplier(), p.multiplier_min.max(expected), "the product bounded below");
 
         let mut stats = RootStats::default();
         stats.attempt_scores.push(500);
@@ -6719,7 +6747,7 @@ mod tests {
     fn reckless_deadline_is_the_hard_bound_and_never_moves() {
         let started = Instant::now();
         let mut manager = TimeManager::new(Some(reckless_clock(10_000, 100, None, 100, Some(0), 1)), started, 100);
-        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(7_268)));
+        assert_eq!(manager.deadline(), Some(started + Duration::from_millis(568)));
         let best = Move::new(Square::E2, Square::E4, None);
         for score in [0, -300, 200] {
             let mut stats = RootStats::default();
@@ -6727,7 +6755,7 @@ mod tests {
             stats.attempt_scores.push(score);
             manager.record_root_stats(&stats, 10);
             manager.record_iteration(best, score);
-            assert_eq!(manager.deadline(), Some(started + Duration::from_millis(7_268)));
+            assert_eq!(manager.deadline(), Some(started + Duration::from_millis(568)));
         }
     }
 

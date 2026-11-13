@@ -333,6 +333,12 @@ Code read 2026-11-13: `TimeLimit`, `TimeManagement`, `time_limit`, `TimeManager`
      fraction `f` 0.13 at depth 1, 0.55 at depth 10, 0.71 at depth 18; the node factor 1.73 at
      depth 10, 1.31 at 18; the product 2.35 at depth 10, 2.13 at 13, 1.47 at 18. Position 37 took
      34 s to depth 18, every other under 2 s: a tree that explodes, a search question of its own.
+     **First hand-picked set (the developer, 2026-11-13), in the code:** `NODES_A` 3.1838 to 2.66
+     (a fraction of 0.7 gives about 0.8, the slope kept); the product clamped to 0.5 to 2.0
+     (`MULTIPLIER_MIN`, `MULTIPLIER_MAX`); under a Fischer clock the hard bound at most 3 soft
+     bounds (`HARD_SOFT_RATIO`), still never past 0.7281 of the clock. The soft fraction
+     (`SOFT_MAX`) is left as Reckless's; the next 180+2 test against Classic shows the clock
+     profile against the target.
   3. **The tune** (32k pairs at 10+0.1), then **the verdict** at 180+2, tuned against the
      incumbent.
 
