@@ -22,6 +22,10 @@ GitHub on 2026-11-11. Next: the CCRL testers (item 5), then the wiki page (item 
 (root-tablebase-score.md), its snapshot on Lichess since 2026-11-11, waiting to be seen in a
 tablebase ending.
 
+**Time management, 2026-11-13: Reckless's hand-picked set beat Classic at 180+2** (test 8, 53.4%
+over 654 games, reckless-time-management.md). To decide: ship it untuned (Classic and Split
+removed, Lichess on the new snapshot), the tune later as an improvement.
+
 **In progress (2026-11-11): blitz time management** (blitz-time-management.md, its plan
 blitz-time-management-implementation.md). Two Lichess blitz games ended with a minute and half the
 clock unused; the new `Split` time management (a soft time, a hard maximum, the future increments

@@ -349,6 +349,12 @@ Code read 2026-11-13: `TimeLimit`, `TimeManagement`, `time_limit`, `TimeManager`
      rather than 0.75 (the equilibrium about 18 s, 10%; moves 20 to 40 almost unchanged, the clock
      term dominating there), one change in one more test. Not `SOFT_MAX`, which would slow every
      move from 20 to 40 as well.
+     **Test 8: won by Reckless, 2026-11-13** (the hand-picked set against Classic, 180+2): 349.5 to
+     304.5 over 654 games (53.4%, +129 -174 =351 from Classic's side), crossing the duel's
+     threshold at 53.4%; about +24 Elo at face value, an upper estimate as every first crossing.
+     Interrupted by a power cut at 256 games and resumed (test-row-at-start.md). By the plan above,
+     Reckless ahead: `INC_FRACTION` stays 0.75, no further hand-picked test. The clock profile over
+     the whole test not yet counted (`data/tm-count.py`).
   3. **The tune** (32k pairs at 10+0.1), then **the verdict** at 180+2, tuned against the
      incumbent.
 
