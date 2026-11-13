@@ -157,6 +157,7 @@ Each to confirm the first time it happens:
 - A non-training phase resumed on a machine without CUDA (cpu-phases.md).
 - The polyline measurement's live bar and its Stop (polyline-from-buckets.md).
 - The frozen test set's read in a box of its own, at a resume.
+- A test killed without ending (a power cut) still listed and resumable (test-row-at-start.md).
 
 ## To design
 

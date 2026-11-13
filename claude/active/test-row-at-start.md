@@ -1,7 +1,8 @@
 # A test's row written at its start
 
 Status: **implemented 2026-11-13** (smithy.rs `play_test`, `test_record`, `catalog`; matches.rs
-`INTERRUPTED` and its test), waiting for `cargo test`. Side effect accepted: while a test runs, its
+`INTERRUPTED` and its test). Test 8's line added by hand and test 8 resumed, 2026-11-13. To
+`done/` once a test interrupted after this fix is seen listed and resumed. Side effect accepted: while a test runs, its
 row in the list already reads `stopped: interrupted` (Resume disabled, live counts), its live block
 above saying what is actually happening.
 
