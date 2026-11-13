@@ -106,9 +106,13 @@ pub struct MoveRequest<'a> {
 /// This ply's own limit, as opposed to `Control`'s match-wide one: under a clock the searching side
 /// needs the *live* readings of both clocks, which `Control` cannot carry because it is a config
 /// value shared by every game of the match.
+///
+/// `Fischer` covers every clock, repeating ones included: `moves_to_go` is the side to move's own
+/// count of moves before its next base (`Clock::moves_to_go`), UCI's `movestogo`, `None` under
+/// Fischer proper.
 #[derive(Debug, Clone, Copy)]
 pub enum MoveLimit {
-    Fischer { white_remaining: Duration, black_remaining: Duration, increment: Duration },
+    Fischer { white_remaining: Duration, black_remaining: Duration, increment: Duration, moves_to_go: Option<u32> },
     FixedDepth(u32),
 }
 
@@ -174,6 +178,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_reads_a_repeating_control_as_a_clock() {
+        match Control::parse("40/900") {
+            Control::Fischer(time_control) => assert_eq!(time_control.moves, Some(40)),
+            Control::FixedDepth(depth) => panic!("expected a clock, got depth {depth}"),
+        }
+    }
+
+    #[test]
     fn a_fischer_control_still_has_a_time_control_and_a_fixed_depth_has_none() {
         assert!(Control::parse("3+2").time_control().is_some());
         assert!(Control::parse("depth 9").time_control().is_none());
@@ -185,6 +197,7 @@ mod tests {
             white_remaining: Duration::from_secs(30),
             black_remaining: Duration::from_secs(20),
             increment: Duration::from_secs(2),
+            moves_to_go: None,
         };
         assert_eq!(limit.budget(Color::White), Duration::from_secs(30));
         assert_eq!(limit.budget(Color::Black), Duration::from_secs(20));

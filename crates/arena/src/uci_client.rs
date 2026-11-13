@@ -101,14 +101,10 @@ impl UciClient {
         self.send(&format!("position fen {starting_fen} moves {moves}"))
     }
 
-    pub fn go(&mut self, wtime: Duration, btime: Duration, winc: Duration, binc: Duration) -> Result<(), Fault> {
-        self.send(&format!(
-            "go wtime {} btime {} winc {} binc {}",
-            wtime.as_millis(),
-            btime.as_millis(),
-            winc.as_millis(),
-            binc.as_millis()
-        ))
+    pub fn go(
+        &mut self, wtime: Duration, btime: Duration, winc: Duration, binc: Duration, movestogo: Option<u32>,
+    ) -> Result<(), Fault> {
+        self.send(&go_command(wtime, btime, winc, binc, movestogo))
     }
 
     /// Blocks until `bestmove` arrives or `budget` (the searching side's own remaining clock
@@ -244,8 +240,8 @@ impl Player for UciPlayer {
     fn choose_move(&mut self, request: &MoveRequest, stop_requested: &Arc<AtomicBool>) -> Result<MoveOutcome, Fault> {
         self.client.set_position(request.starting_fen, request.moves_uci)?;
         match request.limit {
-            MoveLimit::Fischer { white_remaining, black_remaining, increment } => {
-                self.client.go(white_remaining, black_remaining, increment, increment)?;
+            MoveLimit::Fischer { white_remaining, black_remaining, increment, moves_to_go } => {
+                self.client.go(white_remaining, black_remaining, increment, increment, moves_to_go)?;
             }
             MoveLimit::FixedDepth(depth) => self.client.go_depth(depth)?,
         }
@@ -298,9 +294,29 @@ fn parse_info_depth(tokens: &[&str]) -> Option<u32> {
     tokens.get(index + 1).and_then(|value| value.parse().ok())
 }
 
+/// The `go` of a clocked move: `movestogo` added under a repeating control alone.
+fn go_command(wtime: Duration, btime: Duration, winc: Duration, binc: Duration, movestogo: Option<u32>) -> String {
+    let mut command =
+        format!("go wtime {} btime {} winc {} binc {}", wtime.as_millis(), btime.as_millis(), winc.as_millis(), binc.as_millis());
+    if let Some(moves) = movestogo {
+        command.push_str(&format!(" movestogo {moves}"));
+    }
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn go_sends_movestogo_under_a_repeating_control_alone() {
+        let (time, inc) = (Duration::from_millis(60_000), Duration::from_millis(500));
+        assert_eq!(go_command(time, time, inc, inc, None), "go wtime 60000 btime 60000 winc 500 binc 500");
+        assert_eq!(
+            go_command(time, time, Duration::ZERO, Duration::ZERO, Some(12)),
+            "go wtime 60000 btime 60000 winc 0 binc 0 movestogo 12"
+        );
+    }
 
     #[test]
     fn parse_info_score_reads_a_centipawn_score() {

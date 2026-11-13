@@ -111,16 +111,18 @@ impl ControlSpec {
         Ok(ControlSpec { control: Control::FixedDepth(depth), text: format!("depth {depth}") })
     }
 
-    /// A Fischer control, `<seconds>+<seconds>` (`TimeControl::parse_checked`), checked here so a typo is reported rather than left to a panic.
+    /// A clock: Fischer, `<seconds>+<seconds>`, or repeating, `<moves>/<seconds>` or
+    /// `<moves>/<seconds>+<seconds>` (`TimeControl::parse_checked`), checked here so a typo is
+    /// reported rather than left to a panic.
     pub fn time(value: &str) -> Result<ControlSpec, String> {
         super::clock::TimeControl::parse_checked(value)?;
         Ok(ControlSpec { control: Control::parse(value), text: value.to_string() })
     }
 
-    /// This control on a machine `factor` times slower than the reference: a Fischer control's base
-    /// and increment both times `factor`, to the millisecond, its text one `time` parses back
-    /// (`10+0.1` at 1.12 is `11.2+0.112`); a fixed depth unchanged, being the same on every machine.
-    /// A tune's clients play at it (`client`).
+    /// This control on a machine `factor` times slower than the reference: a clock's base and
+    /// increment both times `factor`, to the millisecond, a repeating control's move count kept, its
+    /// text one `time` parses back (`10+0.1` at 1.12 is `11.2+0.112`, `40/900` is `40/1008`); a
+    /// fixed depth unchanged, being the same on every machine. A tune's clients play at it (`client`).
     pub fn scaled(&self, factor: f64) -> ControlSpec {
         let Control::Fischer(time_control) = self.control else {
             return self.clone();
@@ -128,7 +130,12 @@ impl ControlSpec {
         let milliseconds = |duration: std::time::Duration| -> f64 {
             (duration.as_secs_f64() * factor * 1000.0).round() / 1000.0
         };
-        let text = format!("{}+{}", milliseconds(time_control.base), milliseconds(time_control.increment));
+        let (base, increment) = (milliseconds(time_control.base), milliseconds(time_control.increment));
+        let text = match time_control.moves {
+            None => format!("{base}+{increment}"),
+            Some(moves) if time_control.increment.is_zero() => format!("{moves}/{base}"),
+            Some(moves) => format!("{moves}/{base}+{increment}"),
+        };
         ControlSpec::time(&text).expect("a scaled control is a control")
     }
 }
@@ -213,6 +220,13 @@ mod tests {
     }
 
     #[test]
+    fn a_scaled_repeating_clock_keeps_its_move_count() {
+        assert_eq!(ControlSpec::time("40/900").unwrap().scaled(1.12).text, "40/1008");
+        assert_eq!(ControlSpec::time("40/60+0.5").unwrap().scaled(1.12).text, "40/67.2+0.56");
+        assert_eq!(ControlSpec::time("40/900").unwrap().scaled(1.0).text, "40/900");
+    }
+
+    #[test]
     fn win_threshold_is_strictly_more_than_half() {
         assert_eq!(win_threshold(12), 6.5);
         assert_eq!(win_threshold(2), 1.5);
@@ -263,6 +277,8 @@ mod tests {
         assert_eq!(ControlSpec::time("180+2").unwrap().text, "180+2");
         assert_eq!(ControlSpec::time("10+0.1").unwrap().text, "10+0.1");
         assert_eq!(ControlSpec::time("180+2.5").unwrap().text, "180+2.5", "a decimal increment");
+        assert_eq!(ControlSpec::time("40/900").unwrap().text, "40/900", "a repeating clock");
+        assert_eq!(ControlSpec::time("40/900+1").unwrap().text, "40/900+1");
         for text in ["3", "3+", "+2", "10s+0.1", "x+2"] {
             assert!(ControlSpec::time(text).is_err(), "{text:?}");
         }

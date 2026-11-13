@@ -352,8 +352,8 @@ impl TaskKind {
     }
 }
 
-/// How each move is searched: to a fixed depth, or under a clock, `base+inc` in seconds as arena's
-/// controls spell it.
+/// How each move is searched: to a fixed depth, or under a clock in seconds as arena's controls spell
+/// it, `base+inc`, `moves/base` or `moves/base+inc`; the clock's text is checked by the arena alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Limit {
     Depth(u32),
@@ -372,7 +372,7 @@ impl Limit {
         match text.split_once(' ') {
             Some(("depth", depth)) => depth.parse().map(Limit::Depth).map_err(|_| format!("limit: {depth:?} is not a depth")),
             Some(("clock", clock)) if !clock.is_empty() && !clock.contains(char::is_whitespace) => Ok(Limit::Clock(clock.to_string())),
-            _ => Err(format!("limit: {text:?} is neither `depth <d>` nor `clock <base+inc>`")),
+            _ => Err(format!("limit: {text:?} is neither `depth <d>` nor `clock <clock>`")),
         }
     }
 }

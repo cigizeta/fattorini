@@ -93,7 +93,7 @@ impl Player for InProcessPlayer {
         let own_stop = AtomicBool::new(false);
         let (depth, limit, stop) = match request.limit {
             MoveLimit::FixedDepth(depth) => (depth, None, stop_requested.as_ref()),
-            MoveLimit::Fischer { white_remaining, black_remaining, increment } => {
+            MoveLimit::Fischer { white_remaining, black_remaining, increment, moves_to_go } => {
                 let milliseconds = |duration: std::time::Duration| Some(duration.as_millis() as u64);
                 let limit = time_limit(
                     request.board,
@@ -101,7 +101,7 @@ impl Player for InProcessPlayer {
                     milliseconds(black_remaining),
                     milliseconds(increment),
                     milliseconds(increment),
-                    None,
+                    moves_to_go,
                     None,
                     false,
                     DEFAULT_MOVE_OVERHEAD_MS,
@@ -177,6 +177,7 @@ mod tests {
                 white_remaining: remaining,
                 black_remaining: remaining,
                 increment: Duration::from_millis(100),
+                moves_to_go: None,
             },
         };
         let stop = Arc::new(AtomicBool::new(false));

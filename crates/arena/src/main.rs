@@ -5,7 +5,7 @@
 //!   (`match_player.rs`), under one of the three decision rules -- a best of
 //!   `n` (`best_of.rs`, `MATCH_GAMES` by default, all n played with `--full`), the sequential
 //!   probability ratio test (`sprt.rs`), or which of the two is stronger (`duel.rs`) -- each with
-//!   exactly one of `--depth <1-9>` or `--time <base+inc>`.
+//!   exactly one of `--depth <1-9>` or `--time <clock>`.
 //! - `arena start|stop|status`: an arena, playing the smithy's self-play, round-robin, gate and tune
 //!   chores (`chores.rs`).
 //! - `arena snapshot <player>@<tuned|untuned>`: a build of the engine with that player embedded,
@@ -99,9 +99,9 @@ fn main() {
 }
 
 fn print_usage_and_exit() -> ! {
-    eprintln!("usage: arena match <champion> <challenger> [<n>]      (--depth <d> | --time <base+inc>) [--hash <MB>] [--full]");
-    eprintln!("       arena sprt  <champion> <challenger> <elo_d>    (--depth <d> | --time <base+inc>) [--hash <MB>]");
-    eprintln!("       arena duel  <champion> <challenger>            (--depth <d> | --time <base+inc>) [--hash <MB>]");
+    eprintln!("usage: arena match <champion> <challenger> [<n>]      (--depth <d> | --time <clock>) [--hash <MB>] [--full]");
+    eprintln!("       arena sprt  <champion> <challenger> <elo_d>    (--depth <d> | --time <clock>) [--hash <MB>]");
+    eprintln!("       arena duel  <champion> <challenger>            (--depth <d> | --time <clock>) [--hash <MB>]");
     eprintln!("       arena start | stop | status");
     eprintln!("       arena <tournament-id>");
     eprintln!("  match plays a best of n games, n even, {MATCH_GAMES} by default: the first side with more than n/2 points");
@@ -115,7 +115,8 @@ fn print_usage_and_exit() -> ! {
     eprintln!("        stopped: it idles on port 47823 until a smithy claims it, then serves that smithy alone, idle");
     eprintln!("        again once released; stop and status reach it from another terminal on this machine");
     eprintln!("  --depth <d>       a fixed depth from 1 to 9, one pair per logical core in parallel");
-    eprintln!("  --time <base+inc> a Fischer clock, seconds plus seconds a move (180+2, 10+0.1), half the logical cores");
+    eprintln!("  --time <clock>    a clock in seconds: Fischer, base+increment (180+2, 10+0.1), or repeating,");
+    eprintln!("                    moves/base or moves/base+increment (40/900, 40/60+0.5); half the logical cores");
     eprintln!("                    in pairs, each pinned to its own physical core");
     eprintln!("  --hash <MB>       each player's transposition table, 1 to 1024, 16 by default; all the tables");
     eprintln!("                    together must stay under half the machine's RAM");
@@ -141,19 +142,19 @@ struct Versus {
 }
 
 /// The arguments after `match`, `sprt` or `duel`: two players, champion then challenger, the rule's own value (`n` for `match`,
-/// optional, `elo_d` for `sprt`, nothing for `duel`), exactly one of `--depth <d>` or `--time <base+inc>`, and
+/// optional, `elo_d` for `sprt`, nothing for `duel`), exactly one of `--depth <d>` or `--time <clock>`, and
 /// optionally `--hash <MB>` and, for `match` alone, `--full`, in any order after the positional arguments.
 fn parse_versus_args(command: &str, args: &[String]) -> Result<Versus, String> {
     let usage = match command {
         "match" => {
-            "match takes a champion and a challenger, optionally an even n, one of --depth <d> or --time <base+inc>, and \
+            "match takes a champion and a challenger, optionally an even n, one of --depth <d> or --time <clock>, and \
              optionally --hash <MB> and --full"
         }
         "sprt" => {
-            "sprt takes a champion and a challenger, elo_d, one of --depth <d> or --time <base+inc>, and optionally --hash \
+            "sprt takes a champion and a challenger, elo_d, one of --depth <d> or --time <clock>, and optionally --hash \
              <MB>"
         }
-        _ => "duel takes a champion and a challenger, one of --depth <d> or --time <base+inc>, and optionally --hash <MB>",
+        _ => "duel takes a champion and a challenger, one of --depth <d> or --time <clock>, and optionally --hash <MB>",
     };
     // The positional arguments are those before the first flag: a player's name never starts with `--`.
     let first_flag = args.iter().position(|arg| arg.starts_with("--")).unwrap_or(args.len());

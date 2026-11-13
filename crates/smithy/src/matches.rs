@@ -125,7 +125,7 @@ pub struct Spec {
 
 impl Spec {
     /// The job's words after `--test`: kind, settings, challenger, champion, each a player
-    /// (`Side::text`), and the limit (`depth <d>` or `clock <base+inc>`).
+    /// (`Side::text`), and the limit (`depth <d>` or `clock <clock>`, the arena's notation).
     pub fn parse(words: &[String]) -> Result<Spec, String> {
         let [kind, settings, challenger, champion, limit] = words else {
             return Err(

@@ -428,8 +428,44 @@ const BOOKS = "books";
 // The New test form's choices, kept across its redraws.
 const testForm = {
   kind: "duel", pairs: "500", elo0: "0", elo1: "5", challenger: "", champion: "pesto",
-  challengerParameters: "untuned", championParameters: "untuned", limit: "depth", depth: "9", clock: "10+0.1",
+  challengerParameters: "untuned", championParameters: "untuned", limit: "depth", depth: "9",
+  // The clock, in labelled fields: no notation to remember (`clockText` writes it). Each kind keeps
+  // its own values, so switching back and forth loses nothing.
+  clockKind: "fischer", base: "10", increment: "0.1", moves: "40", periodBase: "900", periodIncrement: "0",
 };
+
+// The clocks the project plays most, one click each: the tune's and the gate duel's, the verdicts',
+// CCRL's 40/15. The fields stay editable.
+const CLOCK_PRESETS = [
+  { label: "10+0.1", clockKind: "fischer", base: "10", increment: "0.1" },
+  { label: "180+2", clockKind: "fischer", base: "180", increment: "2" },
+  { label: "40/15", clockKind: "repeating", moves: "40", periodBase: "900", periodIncrement: "0" },
+];
+
+// The clock's notation from the form's fields (arena's `TimeControl`: `<base>+<inc>`,
+// `<moves>/<base>` or `<moves>/<base>+<inc>`, in seconds), or why the fields are not a clock.
+function clockText() {
+  const f = testForm;
+  const seconds = (text, name, positive) => {
+    const value = Number(text.trim());
+    if (text.trim() === "" || !Number.isFinite(value) || (positive ? value <= 0 : value < 0)) {
+      return { error: `${name}: ${positive ? "more than 0" : "0 or more"} seconds` };
+    }
+    return { value: String(value) };
+  };
+  if (f.clockKind === "fischer") {
+    const base = seconds(f.base, "base", true);
+    const increment = seconds(f.increment, "increment", false);
+    if (base.error || increment.error) return { error: base.error || increment.error };
+    return { text: `${base.value}+${increment.value}` };
+  }
+  const moves = Number(f.moves.trim());
+  if (f.moves.trim() === "" || !Number.isInteger(moves) || moves < 1) return { error: "moves: a whole number, 1 or more" };
+  const base = seconds(f.periodBase, "time", true);
+  const increment = seconds(f.periodIncrement, "increment", false);
+  if (base.error || increment.error) return { error: base.error || increment.error };
+  return { text: increment.value === "0" ? `${moves}/${base.value}` : `${moves}/${base.value}+${increment.value}` };
+}
 
 const option = (value, label, selected) => `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
 
@@ -819,7 +855,7 @@ function sideRow(label, side) {
 function testWords() {
   const f = testForm;
   const settings = f.kind === "match" ? f.pairs.trim() : f.kind === "sprt" ? `${f.elo0.trim()},${f.elo1.trim()}` : "-";
-  const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${f.clock.trim()}`;
+  const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${clockText().text}`;
   // Each side a player, its parameters after its `@`: `tuned` or `untuned`.
   return ["--test", f.kind, settings, `${f.challenger}@${f.challengerParameters}`, `${f.champion}@${f.championParameters}`, limit];
 }
@@ -838,10 +874,20 @@ function testsScreen() {
     : f.kind === "sprt"
       ? `<div class="row"><label>Elo</label>elo0 <input data-field="elo0" size="5" value="${escape(f.elo0)}"> elo1 <input data-field="elo1" size="5" value="${escape(f.elo1)}"></div>`
       : `<div class="row"><label></label><span class="muted">arena's rule, per pair: won past 0.5 + 3.09 &times; &sigma; / &radic;P, drawn at 400 pairs (800 games)</span></div>`;
+  const number = (field, size) => `<input data-field="${field}" size="${size}" inputmode="decimal" value="${escape(f[field])}">`;
+  const clockFields = f.clockKind === "fischer"
+    ? `base ${number("base", 5)} s + increment ${number("increment", 4)} s`
+    : `${number("moves", 3)} moves in ${number("periodBase", 5)} s + increment ${number("periodIncrement", 4)} s`;
+  const presets = CLOCK_PRESETS.map((preset, index) => `<button class="plain" data-clock-preset="${index}">${escape(preset.label)}</button>`).join(" ");
   const limit = `<div class="row"><label>Search</label>`
     + `<select data-field="limit">${option("depth", "fixed depth", f.limit === "depth")}${option("clock", "clock", f.limit === "clock")}</select>`
-    + (f.limit === "depth" ? `<input data-field="depth" size="4" value="${escape(f.depth)}">` : `<input data-field="clock" size="8" value="${escape(f.clock)}"> <span class="muted">base+increment, in seconds</span>`)
-    + `</div>`;
+    + (f.limit === "depth" ? `<input data-field="depth" size="4" value="${escape(f.depth)}">` : "")
+    + `</div>`
+    + (f.limit === "clock"
+      ? `<div class="row"><label>Clock</label><select data-field="clockKind">${option("fischer", "Fischer", f.clockKind === "fischer")}`
+        + `${option("repeating", "repeating", f.clockKind === "repeating")}</select> ${clockFields}</div>`
+        + `<div class="row"><label></label>${presets}</div>`
+      : "");
   // As `Spec::mixed`: two different players, one tuned; one player against itself measures its tune.
   const mixed = f.challengerParameters !== f.championParameters && f.challenger !== f.champion
     ? `<div class="bad">mixed: one side tuned, the other not</div>` : "";
@@ -908,9 +954,27 @@ function bindTestForm(element) {
       drawConfig();
     };
   });
+  // A clock preset fills the clock's fields, and the form is redrawn with them.
+  element.querySelectorAll("[data-clock-preset]").forEach((preset) => {
+    preset.onclick = () => {
+      const { label, ...fields } = CLOCK_PRESETS[Number(preset.dataset.clockPreset)];
+      Object.assign(testForm, fields);
+      catalogDrawn = "";
+      drawConfig();
+    };
+  });
   const button = document.getElementById("startTest");
-  // A new test's number is known once it plays: its screen opens then (`draw`).
-  if (button) button.onclick = () => { pendingTest = true; start(testWords(), button); };
+  // A new test's number is known once it plays: its screen opens then (`draw`). A clock its fields
+  // do not make is refused here, beside the button: the smithy passes the clock's text on unread.
+  if (button) button.onclick = () => {
+    const clock = testForm.limit === "clock" ? clockText() : {};
+    if (clock.error) {
+      button.parentElement.querySelector(".said").textContent = clock.error;
+      return;
+    }
+    pendingTest = true;
+    start(testWords(), button);
+  };
   element.querySelectorAll("[data-resume-test]").forEach((resume) => {
     resume.dataset.screen = resume.dataset.resumeTest;
     resume.onclick = () => start(["--resume-test", resume.dataset.resumeTest], resume);
