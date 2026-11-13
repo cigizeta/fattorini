@@ -268,6 +268,14 @@ changes).
   the card redrawn by a poll losing its handler (`bindStop`). To reproduce before fixing; test 5's
   Stop had worked.
 
+- **A failed claim's reason, and a shorter wait** (2026-11-13, after a power cut): an arena restarted
+  and answering (checked with curl on loopback and the LAN) read "no arena answering" for minutes,
+  then was claimed with nothing changed, most likely at the next retry of a backoff grown to 5 min.
+  `claim_one` reports every `post` error as "no arena answering", an HTTP error code or a timeout
+  included, so the page could not say which. To do, after test 8 (it needs a smithy restart): the
+  error kept after "no arena answering"; `CLAIM_BACKOFF_CAP` down to about 1 min, or a retry when
+  the page is asked.
+
 - **The smithy's bench on an idle machine, as the arenas' is** (the developer, 2026-11-09): to
   design, after the current tune (it changes how a tune's games are timed). The tune of
   `lc0-psq-threats-screlu-g1-r1` showed it: the smithy benched its machine at 841,150 nodes/s per
