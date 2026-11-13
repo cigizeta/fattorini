@@ -734,8 +734,22 @@ function drawConfig() {
     button.onclick = () => start([button.dataset.source, current], button);
   });
   element.querySelectorAll("[data-book]").forEach((button) => {
-    const weights = button.parentElement.querySelector("select");
-    button.onclick = () => start(["--book", button.dataset.book, "--weights", weights.value], button);
+    const row = button.parentElement;
+    const weights = row.querySelector("select.weights");
+    const softmax = row.querySelector(".softmax");
+    if (softmax) weights.onchange = () => softmax.classList.toggle("hidden", weights.value !== "softmax");
+    button.onclick = () => {
+      const words = ["--book", button.dataset.book, "--weights", weights.value];
+      if (weights.value === "softmax") {
+        words.push("--temperature", row.querySelector(".temperature").value, "--scores", row.querySelector(".scoresFile").value);
+      }
+      start(words, button);
+    };
+  });
+  element.querySelectorAll("[data-score]").forEach((button) => {
+    const row = button.parentElement;
+    button.onclick = () => start(["--score-book", button.dataset.score,
+      `${row.querySelector(".scoreNetwork").value}@${row.querySelector(".scoreTuned").value}`, row.querySelector(".scoreDepth").value], button);
   });
 }
 
@@ -756,18 +770,58 @@ function booksScreen() {
   const sources = catalog.books.map((source) => {
     const fit = source.alpha === null ? `<span class="muted">not yet</span>` : `alpha ${number(source.alpha, 4)}`;
     const graph = source.graph === null ? `<span class="muted">not yet</span>` : `N = ${source.graph.n}, from ${whole(source.graph.games)} games`;
+    // A softmax book shows its first-gate report's two numbers beside it.
     const books = source.books.length === 0 ? `<span class="muted">none yet</span>`
-      : source.books.map((book) => escape(`n${book.n} ${book.weights}`)).join(", ");
+      : source.books.map((book) => escape(`n${book.n} ${book.weights}`)
+        + (book.bad_in_reach === null ? "" : `<div class="muted">bad moves within reach ${escape(book.bad_in_reach)}; `
+          + `the human book plays one ${escape(book.old_chance || "?")}</div>`)).join("<br>");
+    const complete = (scores) => scores.moves !== null && scores.rows >= scores.moves;
+    const scores = source.scores.length === 0 ? `<span class="muted">none yet</span>`
+      : source.scores.map((scores) => escape(`${scores.name}: ${whole(scores.rows)} of ${scores.moves === null ? "?" : whole(scores.moves)} moves`)).join("<br>");
+    const finished = source.scores.filter(complete);
+    const softmax = finished.length === 0 ? "" : `<span class="softmax hidden"><select class="scoresFile">`
+      + finished.map((scores, index) => option(scores.name, scores.name, index === 0)).join("")
+      + `</select> T <input class="temperature" type="number" min="1" step="1" value="20" size="4"> cp</span>`;
     const make = source.pgn === null
       ? `<div class="muted">its PGN is no longer on the remote: its books stay, but none can be made</div>`
       : token
-      ? `<div class="row"><select>${option("points", "points", true)}${option("counts", "counts", false)}</select>`
+      ? `<div class="row"><select class="weights">${option("points", "points", true)}${option("counts", "counts", false)}`
+        + (finished.length === 0 ? "" : option("softmax", "softmax", false)) + `</select>${softmax}`
         + `<button data-book="${escape(source.name)}"${state.slot.running ? " disabled" : ""}>Make book</button><span class="said bad"></span></div>`
       : "";
+    // Scoring takes the arenas, so any arena job holds it back; a graph first.
+    const networks = catalog.networks.filter((network) => network.name !== "pesto");
+    const score = source.graph === null || !token || networks.length === 0 ? ""
+      : `<div class="row"><select class="scoreNetwork">${networks.map((network, index) => option(network.name, network.name, index === networks.length - 1)).join("")}</select>`
+        + `<select class="scoreTuned">${option("tuned", "tuned", true)}${option("untuned", "untuned", false)}</select>`
+        + ` depth <input class="scoreDepth" type="number" min="1" max="30" step="1" value="20" size="3">`
+        + `<button data-score="${escape(source.name)}"${state.running ? " disabled" : ""}>Score book</button><span class="said bad"></span></div>`;
     return `<section><h2>${escape(source.name)}</h2><div class="muted">${escape(source.pgn || "no PGN")}</div>`
-      + table(["stage", "on the remote"], [["fit", { html: fit }], ["graph", { html: graph }], ["books", { html: books }]]) + make + `</section>`;
+      + table(["stage", "on the remote"], [["fit", { html: fit }], ["graph", { html: graph }], ["scores", { html: scores }], ["books", { html: books }]])
+      + score + make + `</section>`;
   }).join("");
-  return progress + sources;
+  return progress + `<section id="scoreProgress" class="hidden"></section>` + sources;
+}
+
+// A book's scoring, on the books' screen while it runs: its moves scored of the book's, its pace and
+// time left, and any arena refused; Stop stops the arena job, not the source slot.
+function drawScoreProgress() {
+  const section = document.getElementById("scoreProgress");
+  if (!section) return;
+  const shown = state.running && state.work && state.work.kind === "score";
+  section.classList.toggle("hidden", !shown);
+  if (!shown) return;
+  const work = state.work;
+  const rate = work.moves_per_second === null ? "" : `, ${number(work.moves_per_second, 1)} moves/s`;
+  const eta = work.eta_seconds === null ? "" : `, ETA about ${duration(work.eta_seconds)}`;
+  const line = `${whole(work.done)} of ${whole(work.total)} moves (${percent(work.done / Math.max(1, work.total))})${rate}${eta}`;
+  const rejected = work.refused.length === 0 ? "" : `<div class="bad">refused: ${work.refused.map(escape).join("; ")}</div>`;
+  const stopping = state.job_stopping;
+  const stop = token ? `<button id="stopScore"${stopping ? " disabled" : ""}>${stopping ? "Stopping" : "Stop"}</button>` : "";
+  redraw(section, `<div class="row"><h2>Scoring: ${escape(work.side)}, depth ${work.depth}</h2>${stop}</div><div>${escape(line)}</div>`
+    + bar(work.done, work.total) + rejected);
+  const button = document.getElementById("stopScore");
+  if (button) button.onclick = () => send("control/job/stop", "score");
 }
 
 // A book job, on the books' screen while it runs: its name with Stop (on this machine alone), then
@@ -1210,6 +1264,7 @@ function draw() {
   drawConfig();
   drawConvertProgress();
   drawBookProgress();
+  drawScoreProgress();
   syncView();
 }
 

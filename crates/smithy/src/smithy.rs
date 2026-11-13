@@ -33,7 +33,7 @@
 //! (`GenConfig::scale`, `scale.rs`) is a run like any other, on Drive, at `1/s` of its volumes and
 //! work, and trains on the CPU.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,7 +48,8 @@ use lan_http::{Listener, Reply, Request};
 use fattorini::pipeline::protocol::{
     self, entries_text, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, TaskKind, ALIVE_PATH, ARENA_PORT,
     CHORE_PATH, CHORE_TAG, CLAIM_PATH, CLAIM_POLL, HELLO_PATH, JOBS_PATH, LATE_AFTER, LOOPBACK, MACHINES_PATH, PESTO, RELEASE_AFTER,
-    RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
+    RELEASE_PATH, SCORE_FEN_TAG, SCORE_MOVE_TAG, SCORE_PARENT_TAG, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH,
+    TASK_PATH, ScoreRecord,
 };
 use fattorini::pipeline::preprocessing_config;
 use fattorini::pipeline::preprocessing_config::{lambdas_text, ArmLambda};
@@ -68,7 +69,7 @@ use super::matches;
 use super::rounds_display;
 use super::sprt::{Sprt, Verdict};
 use super::tune::{self, Tune};
-use super::{book, freeze, lc0, pesto, polyline, tasks};
+use super::{book, book_scores, freeze, lc0, pesto, polyline, tasks};
 
 use super::bucketed_train_stream::BucketedTrainStream;
 use super::grouped_test_set::GroupedTestSet;
@@ -670,6 +671,8 @@ enum Work {
     /// A tune (`Shared::tune`) of the player whose network is `network`, by name or `PESTO`:
     /// one pair per `k`, each with its own parameters.
     Tune { network: String },
+    /// A book's scoring (`Shared::score`): one task per book move, its record a row of the scores file.
+    Score,
 }
 
 // What the forge's sides play (the developer, 2026-11-08, reversing 2026-11-03's "the forge never
@@ -815,6 +818,8 @@ struct Shared {
     /// A test's limit and its two sides' parameters, which its pair chores carry; none for a forge's
     /// pairs, at the forge's depth with their `Work::Pairs::sides`.
     test: Option<TestDealing>,
+    /// The book's scoring `Work::Score` deals.
+    score: Option<ScoreDealing>,
     /// The running forge's depth (`GenConfig::depth`), scaled for a scaled run;
     /// `generation::SEARCH_DEPTH` without a forge.
     forge_depth: Option<u32>,
@@ -843,6 +848,77 @@ struct TestDealing {
     limit: Limit,
     parameters: [SearchParameters; 2],
     time_managements: [TimeManagement; 2],
+}
+
+/// A book's scoring as it is dealt: what every record must match (the network's player, depth,
+/// commit and bench node count, the scores file's header's), the moves still unscored when it
+/// started, each dealt by its index as a tune deals its `k`s (`Dealt::ks`), and its file.
+struct ScoreDealing {
+    source: String,
+    /// The side as the job names it, `<network>@tuned`.
+    side: String,
+    network: String,
+    parameters: SearchParameters,
+    depth: u32,
+    commit: String,
+    bench_nodes: u64,
+    moves: Vec<book::BookMove>,
+    /// The indices of `moves` free to deal: never dealt, or given back by a closed chore.
+    free: VecDeque<u32>,
+    done: Vec<bool>,
+    done_count: u64,
+    /// The book's moves, and those scored before this start.
+    total: u64,
+    before: u64,
+    file: book_scores::ScoresFile,
+    /// Records turned away, and the sessions refused for good, each with why.
+    rejected: u64,
+    refused: Vec<(String, String)>,
+    started: Instant,
+}
+
+/// How many book moves a score chore deals each arena worker, and tops it up by: each about a second
+/// at depth 20, so a chore lasts minutes and a stopped arena loses little.
+const SCORE_MOVES_PER_WORKER: usize = 16;
+
+impl ScoreDealing {
+    fn complete(&self) -> bool {
+        self.done_count == self.moves.len() as u64
+    }
+
+    /// Up to `count` free moves, as score entries of `player`, and their indices.
+    fn entries(&mut self, player: &Player, count: usize) -> (Vec<Entry>, Vec<u32>) {
+        let ks: Vec<u32> = std::iter::from_fn(|| self.free.pop_front()).take(count).collect();
+        let entries = ks
+            .iter()
+            .map(|&k| {
+                let book_move = &self.moves[k as usize];
+                Entry {
+                    players: vec![player.clone()],
+                    count: 1,
+                    tags: vec![
+                        (SCORE_PARENT_TAG.to_string(), format!("{:016x}", book_move.parent)),
+                        (SCORE_MOVE_TAG.to_string(), book_move.book_move.to_string()),
+                        (SCORE_FEN_TAG.to_string(), book_move.fen.clone()),
+                    ],
+                }
+            })
+            .collect();
+        (entries, ks)
+    }
+
+    /// Gives `ks` back to be dealt again, those not scored meanwhile.
+    fn give_back(&mut self, ks: &[u32]) {
+        for &k in ks {
+            if !self.done[k as usize] {
+                self.free.push_back(k);
+            }
+        }
+    }
+
+    fn player(&self) -> Player {
+        Player { network: self.network.clone(), parameters: Some(self.parameters), time_management: TimeManagement::Split }
+    }
 }
 
 /// What the status page shows of a phase that `Work` does not say: set by the phase as it starts,
@@ -923,6 +999,10 @@ impl Shared {
             (Work::Pairs { pairings, wanted, .. }, _) => {
                 WorkView::Pairs { played: self.pairs.iter().map(Vec::len).sum(), pairings: pairings.len(), wanted }
             }
+            (Work::Score, _) => match &self.score {
+                Some(score) => score_view(score),
+                None => WorkView::Idle,
+            },
             // A finished tune is idle, and still shown.
             (work @ (Work::Tune { .. } | Work::Idle), _) => match &self.tune {
                 Some(tune) => WorkView::Tune {
@@ -1019,6 +1099,7 @@ impl Shared {
                 u64::from(wanted).saturating_sub(done + self.outstanding(p))
             }
             (Work::Tune { .. }, None) => u64::from(self.tune.as_ref().is_some_and(Tune::has_k)) * u64::MAX,
+            (Work::Score, None) => self.score.as_ref().map_or(0, |score| score.free.len() as u64),
             _ => 0,
         }
     }
@@ -1074,15 +1155,126 @@ impl Shared {
         Some(chore)
     }
 
-    /// Ends chore `id`: nothing more of it is wanted, and its `k`s not yet arrived go back to the tune.
+    /// Ends chore `id`: nothing more of it is wanted, and its `k`s not yet arrived go back to the tune,
+    /// a score chore's moves to the scoring.
     fn close(&mut self, id: &str) {
         if let Some(dealt) = self.chores.get_mut(id) {
             dealt.closed = true;
             let ks = std::mem::take(&mut dealt.ks);
-            if let Some(tune) = self.tune.as_mut() {
+            if dealt.kind == TaskKind::Score {
+                if let Some(score) = self.score.as_mut().filter(|_| dealt.epoch == self.epoch) {
+                    score.give_back(&ks);
+                }
+            } else if let Some(tune) = self.tune.as_mut() {
                 tune.return_ks(&ks);
             }
         }
+    }
+
+    /// A book's scoring's chore: up to `SCORE_MOVES_PER_WORKER` free moves a worker, each its own
+    /// entry; `None` when none is free, or the session was refused.
+    fn deal_score(&mut self, session: &str, workers: usize) -> Option<Chore> {
+        let score = self.score.as_mut()?;
+        if score.refused.iter().any(|(refused, _)| refused == session) {
+            return None;
+        }
+        let player = score.player();
+        let (entries, ks) = score.entries(&player, SCORE_MOVES_PER_WORKER * workers.max(1));
+        if ks.is_empty() {
+            return None;
+        }
+        let depth = score.depth;
+        let id = self.next_chore_id();
+        let chore = Chore { id: id.clone(), kind: TaskKind::Score, limit: Limit::Depth(depth), adjudicate: false, reference_nps: None, entries };
+        let dealt = Dealt {
+            session: session.to_string(),
+            epoch: self.epoch,
+            kind: TaskKind::Score,
+            players: vec![player],
+            pairing: None,
+            matchups: Vec::new(),
+            dealt: ks.len() as u64,
+            arrived: 0,
+            closed: false,
+            ks,
+        };
+        self.chores.insert(id.clone(), dealt);
+        if let Some(session) = self.sessions.get_mut(session) {
+            session.chore = Some(id);
+        }
+        Some(chore)
+    }
+
+    /// Takes one score record, or says why not, as `take` a game's: checked against the scoring
+    /// (its move one its chore holds, the depth, the arena's commit and bench node count), then its
+    /// row appended. A record from an arena whose search differs refuses its session for good: its
+    /// chore closed, its moves dealt elsewhere, `STOP` sent.
+    fn take_score(&mut self, session: &str, record: ScoreRecord, workers: usize, now: Instant) -> Reply {
+        if record.session != session {
+            return Reply::error(400, "a score record of another session");
+        }
+        let Some(dealt) = self.chores.get(&record.chore).filter(|dealt| dealt.session == session && dealt.kind == TaskKind::Score) else {
+            return Reply::error(400, &format!("score chore {} was never dealt to {session}", record.chore));
+        };
+        let key = (record.chore.clone(), session.to_string(), record.seq.to_string());
+        if dealt.epoch != self.epoch || self.seen.contains(&key) {
+            return reply("OK", b"");
+        }
+        let Some(score) = self.score.as_mut() else {
+            return reply("OK", b"");
+        };
+        let held = dealt.ks.iter().copied().find(|&k| {
+            let book_move = &score.moves[k as usize];
+            format!("{:016x}", book_move.parent) == record.parent && book_move.book_move == record.book_move
+        });
+        let Some(k) = held else {
+            return Reply::error(400, &format!("chore {} holds no move {} of {}", record.chore, record.book_move, record.parent));
+        };
+        let machine = self.sessions.get(session).map_or("unknown".to_string(), |s| s.hello.machine.clone());
+        let mismatch = if record.commit != score.commit {
+            Some(format!("its commit {} is not the scoring's {}", record.commit, score.commit))
+        } else if record.bench_nodes != score.bench_nodes {
+            Some(format!("its bench searched {} nodes, the smithy's {}: another search", record.bench_nodes, score.bench_nodes))
+        } else if record.depth != score.depth || record.fen != score.moves[k as usize].fen {
+            Some(format!("it searched depth {} of {:?}, not what was dealt", record.depth, record.fen))
+        } else {
+            None
+        };
+        if let Some(why) = mismatch {
+            score.rejected += 1;
+            log::warn!("{machine}'s score records refused for this scoring: {why}");
+            score.refused.push((session.to_string(), format!("{machine}: {why}")));
+            self.close(&record.chore);
+            if let Some(s) = self.sessions.get_mut(session) {
+                s.chore = None;
+            }
+            return reply("STOP", b"");
+        }
+        self.seen.insert(key);
+        let book_move = &score.moves[k as usize];
+        let row = book_scores::Row {
+            parent: book_move.parent,
+            book_move: book_move.book_move,
+            child: book_move.child,
+            score: record.score,
+            depth: record.depth,
+            nodes: record.nodes,
+        };
+        if let Err(message) = score.file.append(&row) {
+            // The smithy's own disk failing: said, and the move dealt again.
+            log::warn!("a score not recorded: {message}");
+            score.free.push_back(k);
+        } else if !score.done[k as usize] {
+            score.done[k as usize] = true;
+            score.done_count += 1;
+        }
+        let dealt = self.chores.get_mut(&record.chore).expect("the chore is there");
+        dealt.arrived += 1;
+        dealt.ks.retain(|&held| held != k);
+        if let Some(s) = self.sessions.get_mut(session) {
+            s.took(now);
+        }
+        self.answer(&record.chore, workers)
     }
 
     /// A new chore for `session`, or `None` when the work wants nothing more.
@@ -1091,6 +1283,7 @@ impl Shared {
         let (kind, limit, players, pairing, count) = match self.work() {
             Work::Idle => return None,
             Work::Tune { network } => return self.deal_tune(session, workers, &network),
+            Work::Score => return self.deal_score(session, workers),
             Work::SelfPlay { teacher, parameters, .. } => {
                 if self.wanted(None) == 0 {
                     return None;
@@ -1213,6 +1406,7 @@ impl Shared {
             let complete = match (self.work(), pairing) {
                 (Work::Pairs { wanted, .. }, Some(p)) if !stale => self.pairs.get(p).map_or(0, Vec::len) as u64 >= u64::from(wanted),
                 (Work::Tune { .. }, _) if !stale => self.tune.as_ref().is_none_or(Tune::done),
+                (Work::Score, _) if !stale => self.score.as_ref().is_none_or(ScoreDealing::complete),
                 _ => true,
             };
             if !complete {
@@ -1232,6 +1426,14 @@ impl Shared {
         }
         if let Work::Tune { network } = self.work() {
             let (entries, ks) = self.tune_entries(&network, workers);
+            let dealt = self.chores.get_mut(id).expect("the chore is there");
+            dealt.dealt += ks.len() as u64;
+            dealt.ks.extend(ks);
+            return reply("ADD", entries_text(&entries).as_bytes());
+        }
+        if let (Work::Score, Some(score)) = (self.work(), self.score.as_mut()) {
+            let player = score.player();
+            let (entries, ks) = score.entries(&player, SCORE_MOVES_PER_WORKER * workers.max(1));
             let dealt = self.chores.get_mut(id).expect("the chore is there");
             dealt.dealt += ks.len() as u64;
             dealt.ks.extend(ks);
@@ -1287,6 +1489,12 @@ impl Shared {
         }) else {
             return reply("UNKNOWN", b"");
         };
+        // A score task sends its record, not a PGN.
+        match ScoreRecord::parse(text) {
+            Some(Ok(record)) => return self.take_score(session, record, workers, now),
+            Some(Err(message)) => return Reply::error(400, &format!("a malformed score record: {message}")),
+            None => {}
+        }
         let games = match tasks::read(text) {
             Ok(games) => games,
             Err(message) => return Reply::error(400, &format!("a task that is not whole legal games: {message}")),
@@ -1324,6 +1532,7 @@ impl Shared {
         let sides: Vec<[&str; 2]> = match dealt.kind {
             TaskKind::SelfPlay => vec![[names[0], names[0]]],
             TaskKind::Pair | TaskKind::Tournament | TaskKind::Spsa => vec![[names[0], names[1]], [names[1], names[0]]],
+            TaskKind::Score => return Reply::error(400, "a score task sent as games"),
         };
         for (game, [white, black]) in games.iter().zip(&sides) {
             if game.tag("White") != Some(white) || game.tag("Black") != Some(black) {
@@ -2326,8 +2535,9 @@ struct SourceSlot {
 enum SlotJob {
     /// `--convert lc0`.
     Convert,
-    /// `--book <source> [--weights counts]`: `weights` is `points` or `counts`.
-    Book { source: String, weights: String },
+    /// `--book <source> [--weights points|counts|softmax ...]`: `rest`, the words after the source,
+    /// as `book::parse_make_args` reads them.
+    Book { source: String, rest: Vec<String> },
 }
 
 impl SlotJob {
@@ -2335,10 +2545,7 @@ impl SlotJob {
     fn of(args: &[String]) -> Option<SlotJob> {
         match args {
             [mode, ..] if mode == CONVERT => Some(SlotJob::Convert),
-            [mode, source] if mode == BOOK => Some(SlotJob::Book { source: source.clone(), weights: "points".to_string() }),
-            [mode, source, flag, weights] if mode == BOOK && flag == "--weights" => {
-                Some(SlotJob::Book { source: source.clone(), weights: weights.clone() })
-            }
+            [mode, source, rest @ ..] if mode == BOOK => Some(SlotJob::Book { source: source.clone(), rest: rest.to_vec() }),
             _ => None,
         }
     }
@@ -2355,7 +2562,11 @@ impl SlotJob {
     fn name(&self) -> String {
         match self {
             SlotJob::Convert => "Lc0's conversion".to_string(),
-            SlotJob::Book { source, weights } => format!("the book of {source}, {weights}"),
+            SlotJob::Book { source, rest } => {
+                // Its words after `--weights` and their flags, `points` when unsaid.
+                let weights: Vec<&str> = rest.iter().map(String::as_str).filter(|word| !word.starts_with("--")).collect();
+                format!("the book of {source}, {}", if weights.is_empty() { "points".to_string() } else { weights.join(" ") })
+            }
         }
     }
 
@@ -2363,8 +2574,8 @@ impl SlotJob {
     fn child_args(&self) -> Vec<String> {
         match self {
             SlotJob::Convert => vec![lc0::CHILD_COMMAND.to_string()],
-            SlotJob::Book { source, weights } => {
-                vec![book::CHILD_COMMAND.to_string(), source.clone(), "--weights".to_string(), weights.clone()]
+            SlotJob::Book { source, rest } => {
+                [book::CHILD_COMMAND.to_string(), source.clone()].into_iter().chain(rest.iter().cloned()).collect()
             }
         }
     }
@@ -2678,6 +2889,42 @@ enum WorkView {
         /// Its time from its record (`pairs_eta`), its ETA toward `expected_games`.
         time: PlayTime,
     },
+    /// A book's scoring: the book's moves scored of all of them, those before this start among them;
+    /// its pace this start, in moves a second, and the time left at it; records refused and the
+    /// arenas refused for good, with why.
+    Score {
+        source: String,
+        side: String,
+        depth: u32,
+        done: u64,
+        total: u64,
+        before: u64,
+        elapsed_seconds: u64,
+        moves_per_second: Option<f64>,
+        eta_seconds: Option<u64>,
+        rejected: u64,
+        refused: Vec<String>,
+    },
+}
+
+/// A book's scoring as the page draws it.
+fn score_view(score: &ScoreDealing) -> WorkView {
+    let elapsed = score.started.elapsed().as_secs_f64();
+    let rate = (score.done_count > 0 && elapsed > 0.0).then(|| score.done_count as f64 / elapsed);
+    let left = score.moves.len() as u64 - score.done_count;
+    WorkView::Score {
+        source: score.source.clone(),
+        side: score.side.clone(),
+        depth: score.depth,
+        done: score.before + score.done_count,
+        total: score.total,
+        before: score.before,
+        elapsed_seconds: elapsed as u64,
+        moves_per_second: rate,
+        eta_seconds: rate.map(|rate| (left as f64 / rate) as u64),
+        rejected: score.rejected,
+        refused: score.refused.iter().map(|(_, why)| why.clone()).collect(),
+    }
 }
 
 #[derive(Serialize)]
@@ -2996,6 +3243,17 @@ impl Status {
             Work::Tune { .. } => match &shared.tune {
                 Some(tune) => format!("a tune of {}: {} of {} pairs", tune.player, progress::grouped(tune.k_done), progress::grouped(tune.pairs)),
                 None => "a tune".to_string(),
+            },
+            Work::Score => match &shared.score {
+                Some(score) => format!(
+                    "the scores of {}, {}, depth {}: {} of {} moves",
+                    score.source,
+                    score.side,
+                    score.depth,
+                    progress::grouped(score.before + score.done_count),
+                    progress::grouped(score.total)
+                ),
+                None => "a book's scoring".to_string(),
             },
         };
         text.push_str(&format!("dealing {work}\n"));
@@ -4246,19 +4504,19 @@ fn job_name(args: &[String]) -> Result<String, String> {
         [mode, player] if mode == "--tune" => Ok(format!("tune of {player}")),
         [mode, source] if mode == PLAY && source == PESTO => Ok("PeSTO's play".to_string()),
         [mode, source] if mode == CONVERT && source == "lc0" => Ok(SlotJob::Convert.name()),
-        [mode, source, rest @ ..] if mode == BOOK => {
-            book::check_source(source)?;
-            match rest {
-                [] => {}
-                [flag, weights] if flag == "--weights" && matches!(weights.as_str(), "points" | "counts") => {}
-                _ => return Err(format!("{BOOK} <source> takes --weights points|counts at most")),
-            }
+        [mode, rest @ ..] if mode == BOOK => {
+            book::parse_make_args(rest)?;
             Ok(SlotJob::of(args).expect("a book job's words, checked above").name())
+        }
+        [mode, source, side, depth] if mode == SCORE_BOOK => {
+            let (side, depth) = score_book_words(source, side, depth)?;
+            Ok(format!("the scores of {source}, {}, depth {depth}", side.text()))
         }
         [mode, words @ ..] if mode == TEST => Ok(format!("test: {}", matches::Spec::parse(words)?.name())),
         [mode, number] if mode == RESUME_TEST => Ok(format!("test {number}, resumed")),
         _ => Err(format!(
-            "a job is --forge <config> <run number or new>, --tune <player>, {TEST} <test>, {PLAY} {PESTO}, {CONVERT} lc0 or {BOOK} <source>"
+            "a job is --forge <config> <run number or new>, --tune <player>, {TEST} <test>, {PLAY} {PESTO}, {CONVERT} lc0, {BOOK} <source> \
+             or {SCORE_BOOK} <source> <network>@<tuned|untuned> <depth>"
         )),
     }
 }
@@ -4279,6 +4537,25 @@ const CONVERT: &str = "--convert";
 const BOOK: &str = "--book";
 /// The page's screen of the books, and the config a book job is of, so the page shows it there.
 const BOOKS_SCREEN: &str = "books";
+/// A book's scoring's word: every move of a source's book searched on the arenas into a scores file
+/// (`book_scores`), in the arena slot.
+const SCORE_BOOK: &str = "--score-book";
+
+/// A score job's words checked: a source with a graph's name, a side as a test's (its time
+/// management unsaid, a search to a depth plays none), a depth from 1 to `MAX_SCORE_DEPTH`.
+fn score_book_words(source: &str, side: &str, depth: &str) -> Result<(matches::Side, u32), String> {
+    book::check_source(source)?;
+    let side = matches::Side::parse(side)?;
+    if side.time_management != TimeManagement::Split {
+        return Err(format!("{SCORE_BOOK}: a search to a depth plays no clock, so {} names no time management", side.player));
+    }
+    let depth = depth.parse::<u32>().ok().filter(|depth| (1..=MAX_SCORE_DEPTH).contains(depth)).ok_or(format!("{SCORE_BOOK}: the depth is 1 to {MAX_SCORE_DEPTH}, not {depth:?}"))?;
+    Ok((side, depth))
+}
+
+/// The deepest scoring asked for: depth 20 costs about a second of one thread a move, and each
+/// depth more about half again.
+const MAX_SCORE_DEPTH: u32 = 30;
 
 /// The config the job `args` asks for is of: a forge's own; pesto for pesto's tune and its Play;
 /// lc0 for its Convert; the books' screen for a book job; for a network's tune, its run's config.
@@ -4288,7 +4565,7 @@ fn job_config(args: &[String]) -> Option<String> {
         [mode, player] if mode == "--tune" && player == PESTO => Some(PESTO.to_string()),
         [mode, player] if mode == "--tune" => players::parse_network_name(player).ok().map(|parsed| parsed.config),
         [mode, source] if mode == PLAY || mode == CONVERT => Some(source.clone()),
-        [mode, ..] if mode == BOOK => Some(BOOKS_SCREEN.to_string()),
+        [mode, ..] if mode == BOOK || mode == SCORE_BOOK => Some(BOOKS_SCREEN.to_string()),
         [mode, ..] if mode == TEST || mode == RESUME_TEST => Some(TESTS_SCREEN.to_string()),
         _ => None,
     }
@@ -4305,6 +4582,7 @@ fn run_job(status: &Status, args: &[String]) {
         Some("--forge") => "a forge",
         Some(PLAY) => "a source's corpus",
         Some(TEST | RESUME_TEST) => "a test",
+        Some(SCORE_BOOK) => "a book's scoring",
         _ => "a tune",
     };
     log::info!("job {name} ({kind}) started");
@@ -4383,6 +4661,7 @@ fn job(status: &Status, args: &[String]) -> Result<String, String> {
         [mode, source] if mode == PLAY && source == PESTO => play_pesto(status),
         [mode, words @ ..] if mode == TEST => test_job(status, words),
         [mode, number] if mode == RESUME_TEST => resume_test_job(status, number),
+        [mode, source, side, depth] if mode == SCORE_BOOK => score_book_job(status, source, side, depth),
         _ => Err(job_name(args).err().unwrap_or_else(|| format!("{} is no job of the arena slot", args.join(" ")))),
     }
 }
@@ -4551,6 +4830,121 @@ fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
         None => (PESTO.to_string(), None),
     };
     Ok(TestPlayer { name, parameters, network })
+}
+
+/// How often a scoring's file is copied to the remote, beside its end.
+const SCORES_MIRROR_EVERY: Duration = Duration::from_secs(5 * 60);
+
+/// `parameters` as one header value, `name=value` pairs joined by commas, as a chore's player writes
+/// them.
+fn parameters_text(parameters: &SearchParameters) -> String {
+    SearchParameters::NAMES.iter().zip(parameters.values()).map(|(name, value)| format!("{name}={value}")).collect::<Vec<_>>().join(",")
+}
+
+/// `--score-book <source> <side> <depth>`: every move of `source`'s book still without a score in
+/// its scores file searched on the arenas to `depth` by `side` (`book_scores`), each record checked
+/// and appended, the file copied to the remote every `SCORES_MIRROR_EVERY` and at the end. A build
+/// with uncommitted changes is refused: its scores could not name the code that made them.
+fn score_book_job(status: &Status, source: &str, side: &str, depth: &str) -> Result<String, String> {
+    let (side, depth) = score_book_words(source, side, depth)?;
+    remote::check_mounted().map_err(|error| error.to_string())?;
+    let commit = protocol::current_commit();
+    if commit == "unknown" || commit.contains("(modified)") {
+        return Err(format!("this build is {commit}: commit first, so the scores name the code that made them"));
+    }
+    let player = test_player(&side)?;
+    let (graph_header, moves) = book::book_moves(source)?;
+    let graph_value = |name: &str| graph_header.iter().find(|(held, _)| held == name).map_or(String::new(), |(_, value)| value.clone());
+    log::info!("benching {} at depth {}, one thread: every arena's search must count the same nodes", side.text(), fattorini::bench::BENCH_DEPTH);
+    let bench_nodes = fattorini::bench::bench_with(player.network.as_ref(), player.parameters, fattorini::bench::BENCH_DEPTH).0;
+    log::info!("bench: {bench_nodes} nodes");
+    let header: Vec<(String, String)> = [
+        ("source", source.to_string()),
+        ("graph_min_games", graph_value("min_games")),
+        ("graph_built", graph_value("built")),
+        ("book_moves", moves.len().to_string()),
+        ("network", player.name.clone()),
+        ("side", side.text()),
+        ("parameters", parameters_text(&player.parameters)),
+        ("commit", commit.clone()),
+        ("depth", depth.to_string()),
+        ("threads", "1".to_string()),
+        ("hash_mb", protocol::SCORE_HASH_MB.to_string()),
+        ("tablebases", "none".to_string()),
+        ("bench_nodes", bench_nodes.to_string()),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value))
+    .collect();
+    let path = format!("{}/{}", book::folder(source), book_scores::file_name(&side.player, side.tuned, depth));
+    // The remote's copy is the scoring so far, after a stop or on another machine.
+    let remote_copy = remote::remote_path(&path);
+    if !Path::new(&path).is_file() && Path::new(&remote_copy).is_file() {
+        remote::copy_replacing(&remote_copy, &path).map_err(|error| error.to_string())?;
+    }
+    let file = book_scores::ScoresFile::open(&path, &header)?;
+    let total = moves.len() as u64;
+    let pending: Vec<book::BookMove> = moves.into_iter().filter(|book_move| !file.scored.contains(&(book_move.parent, book_move.book_move))).collect();
+    let before = total - pending.len() as u64;
+    let mirror = || remote::copy_replacing(&path, &remote_copy).map_err(|error| error.to_string());
+    if pending.is_empty() {
+        mirror()?;
+        return Ok(format!("{path}: every one of the book's {} moves scored already", progress::grouped(total)));
+    }
+    begin(&status.shared, &format!("{}/chores.txt", book::folder(source)), None)?;
+    log::info!(
+        "scoring {source}'s book with {} at depth {depth}: {} of {} moves to go, into {path}",
+        side.text(),
+        progress::grouped(pending.len()),
+        progress::grouped(total)
+    );
+    {
+        let mut shared = status.lock();
+        shared.epoch += 1;
+        shared.score = Some(ScoreDealing {
+            source: source.to_string(),
+            side: side.text(),
+            network: player.name,
+            parameters: player.parameters,
+            depth,
+            commit,
+            bench_nodes,
+            free: (0..pending.len() as u32).collect(),
+            done: vec![false; pending.len()],
+            moves: pending,
+            done_count: 0,
+            total,
+            before,
+            file,
+            rejected: 0,
+            refused: Vec::new(),
+            started: Instant::now(),
+        });
+        shared.work = Some(Work::Score);
+    }
+    let mut mirrored = Instant::now();
+    let complete = loop {
+        let complete = status.lock().score.as_ref().is_some_and(ScoreDealing::complete);
+        if complete || status.job_stop.load(Ordering::SeqCst) {
+            break complete;
+        }
+        if mirrored.elapsed() >= SCORES_MIRROR_EVERY {
+            mirrored = Instant::now();
+            if let Err(message) = mirror() {
+                log::warn!("the scores not copied to {}: {message}", remote::this_root());
+            }
+        }
+        std::thread::sleep(POLL);
+    };
+    let done = {
+        let mut shared = status.lock();
+        shared.work = Some(Work::Idle);
+        shared.epoch += 1;
+        shared.score.as_ref().map_or(0, |score| score.before + score.done_count)
+    };
+    mirror()?;
+    let said = format!("{} of the book's {} moves scored, in {remote_copy}", progress::grouped(done), progress::grouped(total));
+    Ok(if complete { said } else { format!("stopped, {said}; start it again to go on") })
 }
 
 /// The time of day a test's log records, in UTC.
@@ -5414,7 +5808,20 @@ mod tests {
         assert_eq!(job_name(&words("--book elite")), Ok("the book of elite, points".to_string()));
         assert_eq!(job_name(&words("--book elite --weights counts")), Ok("the book of elite, counts".to_string()));
         assert_eq!(job_config(&words("--book elite")), Some(BOOKS_SCREEN.to_string()));
-        assert_eq!(SlotJob::of(&words("--book elite")), Some(SlotJob::Book { source: "elite".to_string(), weights: "points".to_string() }));
+        assert_eq!(SlotJob::of(&words("--book elite")), Some(SlotJob::Book { source: "elite".to_string(), rest: Vec::new() }));
+        assert_eq!(
+            job_name(&words("--book elite --weights softmax --temperature 20 --scores scores-n-tuned-d20.txt")),
+            Ok("the book of elite, softmax 20 scores-n-tuned-d20.txt".to_string())
+        );
+        assert_eq!(
+            job_name(&words("--score-book elite lc0-psq-threats-screlu-g1-r1@tuned 20")),
+            Ok("the scores of elite, lc0-psq-threats-screlu-g1-r1@tuned, depth 20".to_string())
+        );
+        assert_eq!(job_config(&words("--score-book elite n@tuned 20")), Some(BOOKS_SCREEN.to_string()));
+        assert_eq!(SlotJob::of(&words("--score-book elite n@tuned 20")), None, "the arena slot's");
+        for wrong in ["--score-book elite n@tuned", "--score-book elite n@tuned 0", "--score-book elite n@tuned@reckless 20", "--score-book a/b n@tuned 20"] {
+            assert!(job_name(&words(wrong)).is_err(), "{wrong}");
+        }
         assert_eq!(SlotJob::of(&words("--convert lc0")), Some(SlotJob::Convert));
         assert_eq!(SlotJob::of(&words("--play pesto")), None, "the arena slot's");
         assert_eq!(
@@ -5431,7 +5838,7 @@ mod tests {
         let slot = Arc::new(SourceSlot::default());
         slot.running.store(true, Ordering::SeqCst);
         *slot.job.lock().unwrap() = Some(SlotJob::Convert);
-        let refused = start_in_slot(&slot, SlotJob::Book { source: "elite".to_string(), weights: "points".to_string() });
+        let refused = start_in_slot(&slot, SlotJob::Book { source: "elite".to_string(), rest: Vec::new() });
         let text = String::from_utf8_lossy(&refused.body).into_owned();
         assert_eq!(refused.code, 409);
         assert!(text.contains("Lc0's conversion"), "{text}");

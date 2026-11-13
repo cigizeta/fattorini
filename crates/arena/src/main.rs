@@ -45,6 +45,7 @@ mod random_book;
 mod release;
 mod results_db;
 mod runner;
+mod score;
 mod self_play;
 mod snapshot;
 mod sprt;

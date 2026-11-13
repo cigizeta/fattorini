@@ -9,6 +9,8 @@
 //!   first plies, every move scored).
 //! - **Pair:** the chore's two players on one opening with both colours, the challenger White first,
 //!   no adjudication, as the gates play.
+//! - **Score:** no game and no opening drawn: one book move's position searched (`score.rs`), its
+//!   record sent in place of a PGN.
 //!
 //! Every worker plays the chore's tasks back to back and sends each as soon as it ends, as PGN, its
 //! identity in its tags; the smithy's answer to it tops the chore up, stops it or replaces it. When
@@ -34,9 +36,10 @@ use fattorini::bench::loaded_bench;
 use fattorini::nnue::Network;
 use lan_http::{self as http, Listener, Reply, Request};
 use fattorini::pipeline::protocol::{
-    self, parse_entries, task_body, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, TaskKind, ALIVE_PATH,
-    ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, LOOPBACK, PESTO, RELEASE_AFTER,
-    RELEASE_PATH, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH, TASK_PATH,
+    self, parse_entries, task_body, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, ScoreRecord, TaskKind,
+    ALIVE_PATH, ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, LOOPBACK, PESTO, RELEASE_AFTER,
+    RELEASE_PATH, SCORE_FEN_TAG, SCORE_MOVE_TAG, SCORE_PARENT_TAG, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH,
+    TASK_PATH,
 };
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
@@ -49,7 +52,7 @@ use super::runner::{self, Recording};
 use super::self_play::{play_game_pgn, TT_SIZE_MB};
 use fattorini::pipeline::spsa;
 
-use super::{ctrlc_handler, data_root as arena_data_root, machine, pairing};
+use super::{ctrlc_handler, data_root as arena_data_root, machine, pairing, score};
 
 const PREFIX: &str = "arena";
 
@@ -122,6 +125,7 @@ fn start() {
         networks: Mutex::new(HashMap::new()),
         waiting_for: Mutex::new(HashSet::new()),
         speeds: Mutex::new(HashMap::new()),
+        bench_nodes: Mutex::new(HashMap::new()),
         dealing: Mutex::new(Dealing::default()),
         stop,
     });
@@ -326,6 +330,9 @@ struct Arena {
     waiting_for: Mutex<HashSet<String>>,
     /// This machine's loaded speed with each network a tune has named, by name (`loaded_bench`).
     speeds: Mutex<HashMap<String, f64>>,
+    /// This machine's `bench` node count with each score player, by its text (`score::bench_nodes`),
+    /// sent with every score record so the smithy can tell a different search apart.
+    bench_nodes: Mutex<HashMap<String, u64>>,
     dealing: Mutex<Dealing>,
     stop: Arc<AtomicBool>,
 }
@@ -596,10 +603,17 @@ impl Arena {
                     std::thread::sleep(POLL);
                     continue;
                 }
-            let fen = self.book.random_fen(&mut reader, &mut rng);
             let played = match task.kind {
-                TaskKind::SelfPlay => self.game(&task, &fen, &tt, &mut rng),
-                TaskKind::Pair | TaskKind::Tournament | TaskKind::Spsa => self.pair(&task, worker, &fen),
+                // A score searches the position its entry names, never a UHO opening.
+                TaskKind::Score => self.score(&task),
+                TaskKind::SelfPlay => {
+                    let fen = self.book.random_fen(&mut reader, &mut rng);
+                    self.game(&task, &fen, &tt, &mut rng)
+                }
+                TaskKind::Pair | TaskKind::Tournament | TaskKind::Spsa => {
+                    let fen = self.book.random_fen(&mut reader, &mut rng);
+                    self.pair(&task, worker, &fen)
+                }
             };
             tt.clear();
             let pgn = match played {
@@ -665,6 +679,52 @@ impl Arena {
             return Ok(Played::Stopped);
         };
         Ok(Played::Pgn(with_tags(&pgn, &identity(task))))
+    }
+
+    /// One book move scored (`score.rs`): its record, sent in place of a PGN.
+    fn score(&self, task: &Task) -> Result<Played, String> {
+        let Limit::Depth(depth) = task.limit else {
+            return Err(format!("chore {}: a score is searched to a depth", task.chore));
+        };
+        let player = &task.players[0];
+        let network = match self.network(&task.store, &player.network)? {
+            Fetched::Ready(network) => network,
+            Fetched::Stopped => return Ok(Played::Stopped),
+            Fetched::Missing => return Ok(Played::Unavailable(player.network.clone())),
+        };
+        let tag = |name: &str| {
+            task.tags.iter().find(|(held, _)| held == name).map(|(_, value)| value.clone()).ok_or(format!("chore {}: a score without its {name} tag", task.chore))
+        };
+        let (parent, book_move, fen) = (tag(SCORE_PARENT_TAG)?, tag(SCORE_MOVE_TAG)?, tag(SCORE_FEN_TAG)?);
+        let book_move: u16 = book_move.parse().map_err(|_| format!("chore {}: book move {book_move:?} is no Polyglot move", task.chore))?;
+        let parameters = score::parameters_of(network.as_deref(), player.parameters);
+        let bench_nodes = {
+            // Held while benching, so the other workers wait and the bench runs on a quiet machine.
+            let mut counts = self.bench_nodes.lock().expect("the lock should not be poisoned");
+            *counts.entry(player.text()).or_insert_with(|| {
+                log::info!("benching {} at depth {}, one thread, for the score's check", player.network, fattorini::bench::BENCH_DEPTH);
+                let nodes = score::bench_nodes(network.as_deref(), parameters);
+                log::info!("bench: {nodes} nodes");
+                nodes
+            })
+        };
+        let Some(scored) = score::score_position(&fen, depth, network.as_deref(), parameters, &self.stop)? else {
+            return Ok(Played::Stopped);
+        };
+        let record = ScoreRecord {
+            chore: task.chore.clone(),
+            session: task.session.clone(),
+            seq: task.seq,
+            parent,
+            book_move,
+            fen,
+            score: scored.score,
+            depth: scored.depth,
+            nodes: scored.nodes,
+            commit: self.hello.commit.clone(),
+            bench_nodes,
+        };
+        Ok(Played::Pgn(record.text()))
     }
 
     /// One pair, both games' PGN with the task's tags.
@@ -830,7 +890,7 @@ impl Arena {
 
 /// What a worker's task came to.
 enum Played {
-    /// Its PGN, to send.
+    /// Its PGN, or a score's record, to send.
     Pgn(String),
     /// Stopped first: nothing to send.
     Stopped,
@@ -887,6 +947,9 @@ pub(crate) fn wait_for(path: &str, timeout: Duration, poll: Duration, stop: &Ato
 fn check(chore: &Chore) -> Result<(), String> {
     if chore.kind == TaskKind::SelfPlay && !matches!(chore.limit, Limit::Depth(_)) {
         return Err(format!("chore {}: self-play under a clock", chore.id));
+    }
+    if chore.kind == TaskKind::Score && !matches!(chore.limit, Limit::Depth(_)) {
+        return Err(format!("chore {}: a score under a clock", chore.id));
     }
     Ok(())
 }

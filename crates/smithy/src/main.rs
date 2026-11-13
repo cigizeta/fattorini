@@ -28,6 +28,7 @@ mod archive;
 mod arm_slice;
 mod batch;
 mod book;
+mod book_scores;
 mod candidates;
 mod checkpoint_store;
 mod export;

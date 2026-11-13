@@ -10,9 +10,13 @@
 //!   `graph.txt`. It depends on no network.
 //! - `write`, at `points` or `counts` weights: the graph's moves played at least N times (the
 //!   graph's own N), as the Polyglot book `book-n<N>-<weights>.bin` and its record
-//!   `book-n<N>-<weights>.txt`. No min-score
-//!   and no search: Fattorini's search, tried as a correction of the masters' shares, moved them by about
-//!   3 cp at the root, not worth a network and an hour per book.
+//!   `book-n<N>-<weights>.txt`. No min-score.
+//! - `write` at `softmax` weights, from a scores file beside the graph (`book_scores`), every book
+//!   move scored by Fattorini's own search on the arenas (the smithy's score job): each move weighs
+//!   `e^(score / T)` against its position's best, as `book-n<N>-softmax-t<T>-<scores>.bin`, its
+//!   record holding the first-gate report. Search tried earlier as a correction of the masters'
+//!   shares moved them about 3 cp at the root, where every move is sound; the Lichess problem is a
+//!   dubious move deeper in, which the report measures.
 //!
 //! **N from the database's size.** `N = max(3, ceil(10 * (G / 1,000,000)^alpha))`, G the games read.
 //! The anchor, 10 games at a million, is a fixed choice of how much a book move must weigh. `alpha` is
@@ -55,8 +59,10 @@ use fattorini::board::chess_move::Move;
 use fattorini::board::Board;
 use fattorini::polyglot::{book_bytes, polyglot_key, polyglot_move, scaled_weights, Entry};
 
+use fattorini::pipeline::protocol::BookScore;
+
 use pgn_replay::{try_resolve_san, STARTING_POSITION_FEN};
-use super::remote;
+use super::{book_scores, remote};
 
 /// The anchor of the rule for N: this many games at `ANCHOR_GAMES` games read.
 const ANCHOR_N: f64 = 10.0;
@@ -126,30 +132,52 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
 /// What the book job is asked for: a source, and the weights of the book it writes.
 #[derive(Debug, PartialEq)]
-struct MakeArgs {
+pub(crate) struct MakeArgs {
     source: String,
-    weights: Weights,
+    weights: BookWeights,
 }
 
-/// `<source>`, then `--weights points|counts` (`points` when absent), at most once.
-fn parse_make_args(args: &[String]) -> Result<MakeArgs, String> {
+/// A book's weights: human results (`Weights`), or a scores file's softmax at a temperature in
+/// centipawns (`book_scores`).
+#[derive(Debug, PartialEq)]
+enum BookWeights {
+    Human(Weights),
+    Softmax { temperature: f64, scores: String },
+}
+
+/// `<source>`, then `--weights points|counts|softmax` (`points` when absent), `softmax` with
+/// `--temperature <cp>` (positive) and `--scores <file>` (a scores file of the source's), each at
+/// most once.
+pub(crate) fn parse_make_args(args: &[String]) -> Result<MakeArgs, String> {
     let Some((source, rest)) = args.split_first() else {
         return Err(format!("{CHILD_COMMAND} takes a source's name first"));
     };
     check_source(source)?;
-    let mut weights = None;
+    let (mut weights, mut temperature, mut scores) = (None, None, None);
     for pair in rest.chunks(2) {
         let [flag, value] = pair else {
             return Err(format!("{} takes a value", pair[0]));
         };
         let repeated = match flag.as_str() {
             "--weights" => {
-                let w = match value.as_str() {
-                    "points" => Weights::Points,
-                    "counts" => Weights::Counts,
-                    _ => return Err(format!("--weights is points or counts, got {value:?}")),
-                };
-                weights.replace(w).is_some()
+                if !matches!(value.as_str(), "points" | "counts" | "softmax") {
+                    return Err(format!("--weights is points, counts or softmax, got {value:?}"));
+                }
+                weights.replace(value.clone()).is_some()
+            }
+            "--temperature" => {
+                let t = value
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|t| t.is_finite() && *t > 0.0)
+                    .ok_or(format!("--temperature is a positive number of centipawns, got {value:?}"))?;
+                temperature.replace(t).is_some()
+            }
+            "--scores" => {
+                if !book_scores::is_scores_file(value) {
+                    return Err(format!("--scores names a scores file, scores-...-d<depth>.txt, got {value:?}"));
+                }
+                scores.replace(value.clone()).is_some()
             }
             other => return Err(format!("unknown flag {other:?}")),
         };
@@ -157,7 +185,14 @@ fn parse_make_args(args: &[String]) -> Result<MakeArgs, String> {
             return Err(format!("{flag} given twice"));
         }
     }
-    Ok(MakeArgs { source: source.clone(), weights: weights.unwrap_or(Weights::Points) })
+    let weights = match (weights.as_deref().unwrap_or("points"), temperature, scores) {
+        ("softmax", Some(temperature), Some(scores)) => BookWeights::Softmax { temperature, scores },
+        ("softmax", _, _) => return Err("--weights softmax takes --temperature and --scores".to_string()),
+        ("counts", None, None) => BookWeights::Human(Weights::Counts),
+        (_, None, None) => BookWeights::Human(Weights::Points),
+        _ => return Err("--temperature and --scores go with --weights softmax alone".to_string()),
+    };
+    Ok(MakeArgs { source: source.clone(), weights })
 }
 
 /// A source as the page's Books screen lists it: its PGN's file name, and how far its stages have
@@ -171,6 +206,7 @@ pub(crate) struct SourceView {
     alpha: Option<f64>,
     graph: Option<GraphView>,
     books: Vec<WrittenView>,
+    scores: Vec<ScoresView>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -183,9 +219,61 @@ struct GraphView {
 #[derive(Debug, PartialEq, Serialize)]
 struct WrittenView {
     n: u32,
+    /// `points`, `counts`, or `softmax-t<T>-<scores stem>`.
     weights: String,
     /// Its `.bin` in the remote's tree, by its `data/...` path.
     path: String,
+    /// A softmax book's first-gate report, its two numbers as its record words them: the bad moves
+    /// within lichess-bot's reach, and the human book's chance of playing one there.
+    bad_in_reach: Option<String>,
+    old_chance: Option<String>,
+}
+
+/// A scores file of a source's, as the Books screen lists it: its name, the book's moves its header
+/// counts, and the rows it holds so far.
+#[derive(Debug, PartialEq, Serialize)]
+struct ScoresView {
+    name: String,
+    moves: Option<u64>,
+    rows: u64,
+}
+
+/// Each scores file's moves and rows by its remote path, with the size they were counted at: the
+/// Books screen is drawn often and a file is 10 MB or more, so one is read again only once it grew.
+static SCORES_COUNTED: Mutex<Option<HashMap<String, ScoresCount>>> = Mutex::new(None);
+
+/// A scores file's size when counted, the book's moves its header names, and its rows.
+type ScoresCount = (u64, Option<u64>, u64);
+
+/// The scores files in `source`'s folder on the remote, by name.
+fn scores_views(source: &str) -> Vec<ScoresView> {
+    let mut names: Vec<String> = std::fs::read_dir(remote::remote_path(&source_dir(source)))
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| book_scores::is_scores_file(name))
+        .collect();
+    names.sort();
+    let mut counted = SCORES_COUNTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let counted = counted.get_or_insert_with(HashMap::new);
+    names
+        .into_iter()
+        .map(|name| {
+            let path = remote::remote_path(&format!("{}/{name}", source_dir(source)));
+            let size = std::fs::metadata(&path).map_or(0, |metadata| metadata.len());
+            let (moves, rows) = match counted.get(&path) {
+                Some(&(at, moves, rows)) if at == size => (moves, rows),
+                _ => {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    let moves = text.lines().find_map(|line| line.strip_prefix("book_moves\t")).and_then(|value| value.parse().ok());
+                    let rows = text.lines().filter(|line| line.starts_with("row\t")).count() as u64;
+                    counted.insert(path, (size, moves, rows));
+                    (moves, rows)
+                }
+            };
+            ScoresView { name, moves, rows }
+        })
+        .collect()
 }
 
 /// Every source on the remote, by name: each folder of `data/books/` holding its PGN. None when the
@@ -221,18 +309,30 @@ fn source_view(source: &str) -> Option<SourceView> {
     if pgn.is_none() && books.is_empty() {
         return None;
     }
-    Some(SourceView { name: source.to_string(), pgn, alpha: read_alpha(source).ok(), graph, books })
+    let scores = scores_views(source);
+    Some(SourceView { name: source.to_string(), pgn, alpha: read_alpha(source).ok(), graph, books, scores })
 }
 
-/// The book whose record `file` is, in `source`'s folder: `book-n<N>-<weights>.txt`.
+/// The book whose record `file` is, in `source`'s folder: `book-n<N>-<weights>.txt`, a softmax book's
+/// with its report's two numbers read from the record.
 fn written_book(source: &str, file: &str) -> Option<WrittenView> {
     let stem = file.strip_prefix("book-n")?.strip_suffix(".txt")?;
     let (n, weights) = stem.split_once('-')?;
-    matches!(weights, "points" | "counts").then_some(())?;
+    let softmax = weights.starts_with("softmax-t");
+    (matches!(weights, "points" | "counts") || softmax).then_some(())?;
+    let (mut bad_in_reach, mut old_chance) = (None, None);
+    if softmax {
+        let record = std::fs::read_to_string(remote::remote_path(&format!("{}/{file}", source_dir(source)))).unwrap_or_default();
+        let value = |name: &str| record.lines().find_map(|line| line.strip_prefix(name)?.strip_prefix('\t')).map(str::to_string);
+        bad_in_reach = value("report_bad_moves_in_reach");
+        old_chance = value("report_old_book_chance_in_reach");
+    }
     Some(WrittenView {
         n: n.parse().ok()?,
         weights: weights.to_string(),
         path: format!("{}/book-n{n}-{weights}.bin", source_dir(source)),
+        bad_in_reach,
+        old_chance,
     })
 }
 
@@ -279,7 +379,10 @@ pub(crate) fn run(rest: &[String]) {
     } else {
         run_graph(source, &pgn);
     }
-    run_write(source, args.weights);
+    match &args.weights {
+        BookWeights::Human(weights) => run_write(source, *weights),
+        BookWeights::Softmax { temperature, scores } => run_write_softmax(source, *temperature, scores),
+    }
 }
 
 /// One pass's place, as the page shows it: `done` of `total` bytes of the PGN, `rate` in bytes a
@@ -1079,29 +1182,32 @@ fn graph_text(graph: &Graph, plies: &KeyMap<u32>, header: &[(&str, String)]) -> 
     text
 }
 
-/// `graph.txt` read back: what the book needs. The nodes are checked line by line but only counted.
+/// `graph.txt` read back: what the book needs. The nodes are checked line by line, counted, and their
+/// FENs kept, the positions a book's scoring searches.
 struct StoredGraph {
     header: Vec<(String, String)>,
     nodes: usize,
     /// Parent, move, child, results.
     edges: Vec<(u64, u16, u64, Results)>,
+    fens: HashMap<u64, String>,
 }
 
 /// The inverse of `graph_text`.
 fn parse_graph_text(text: &str) -> Result<StoredGraph, String> {
     let key = |field: &str| u64::from_str_radix(field, 16).map_err(|_| format!("not a key: {field:?}"));
-    let mut graph = StoredGraph { header: Vec::new(), nodes: 0, edges: Vec::new() };
+    let mut graph = StoredGraph { header: Vec::new(), nodes: 0, edges: Vec::new(), fens: HashMap::new() };
     for (index, line) in text.lines().enumerate() {
         let fields: Vec<&str> = line.split('\t').collect();
         let bad = || format!("graph line {}: {line:?}", index + 1);
         match fields.as_slice() {
-            ["node", node_key, games, leaf, _fen] => {
-                key(node_key)?;
+            ["node", node_key, games, leaf, fen] => {
+                let node_key = key(node_key)?;
                 games.parse::<u32>().map_err(|_| bad())?;
                 if !matches!(*leaf, "0" | "1") {
                     return Err(bad());
                 }
                 graph.nodes += 1;
+                graph.fens.insert(node_key, fen.to_string());
             }
             ["edge", parent, mv, child, wins, draws, losses] => {
                 let count = |field: &str| field.parse::<u32>().map_err(|_| bad());
@@ -1116,6 +1222,59 @@ fn parse_graph_text(text: &str) -> Result<StoredGraph, String> {
         }
     }
     Ok(graph)
+}
+
+/// `source`'s graph, read from the remote.
+fn read_graph(source: &str) -> Result<StoredGraph, String> {
+    let path = remote::remote_path(&graph_path(source));
+    let text = std::fs::read_to_string(&path).map_err(|error| format!("failed to read {path}: {error}"))?;
+    parse_graph_text(&text).map_err(|message| format!("{path}: {message}"))
+}
+
+/// The graph's own N, its `min_games` line.
+fn min_games_of(graph: &StoredGraph) -> Result<u32, String> {
+    graph
+        .header
+        .iter()
+        .find(|(name, _)| name == "min_games")
+        .and_then(|(_, value)| value.parse().ok())
+        .ok_or_else(|| "the graph has no min_games line".to_string())
+}
+
+/// A file's header, its `name<TAB>value` lines in order.
+pub(crate) type Header = Vec<(String, String)>;
+
+/// One move of a source's book as its scoring searches it: its position's key, its Polyglot move, the
+/// key and FEN of the position after it, and its games' results from the side that played it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BookMove {
+    pub parent: u64,
+    pub book_move: u16,
+    pub child: u64,
+    pub fen: String,
+    pub results: [u32; 3],
+}
+
+/// `source`'s graph header and its book's moves: every edge played at least the graph's N times,
+/// as every book of it keeps them, in the graph's order.
+pub(crate) fn book_moves(source: &str) -> Result<(Header, Vec<BookMove>), String> {
+    let graph = read_graph(source)?;
+    let min_games = min_games_of(&graph)?;
+    let moves = graph
+        .edges
+        .iter()
+        .filter(|edge| Weights::Counts.weight(edge.3) >= u64::from(min_games))
+        .map(|&(parent, book_move, child, results)| {
+            let fen = graph.fens.get(&child).cloned().ok_or_else(|| format!("{source}'s graph: an edge to {child:016x}, which is no node"))?;
+            Ok(BookMove { parent, book_move, child, fen, results })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((graph.header, moves))
+}
+
+/// A source's folder, for the scores files beside its graph.
+pub(crate) fn folder(source: &str) -> String {
+    source_dir(source)
 }
 
 /// What a book move weighs: the points it scored for the side that played it (2 a win, 1 a draw),
@@ -1217,15 +1376,8 @@ fn current_time() -> String {
 /// a remote record never describes a book that is not there yet. Skipped when that record is there
 /// already.
 fn run_write(source: &str, weights: Weights) {
-    let graph_path = remote::remote_path(&graph_path(source));
-    let graph_text = std::fs::read_to_string(&graph_path).unwrap_or_else(|error| fail(format!("failed to read {graph_path}: {error}")));
-    let graph = parse_graph_text(&graph_text).unwrap_or_else(|message| fail(format!("{graph_path}: {message}")));
-    let min_games: u32 = graph
-        .header
-        .iter()
-        .find(|(name, _)| name == "min_games")
-        .and_then(|(_, value)| value.parse().ok())
-        .unwrap_or_else(|| fail(format!("{graph_path}: no min_games line")));
+    let graph = read_graph(source).unwrap_or_else(|message| fail(message));
+    let min_games = min_games_of(&graph).unwrap_or_else(|message| fail(format!("{source}: {message}")));
     let stem = format!("{}/book-n{min_games}-{}", source_dir(source), weights.name());
     let (book_path, record_path) = (format!("{stem}.bin"), format!("{stem}.txt"));
     if std::path::Path::new(&remote::remote_path(&record_path)).is_file() {
@@ -1268,6 +1420,90 @@ fn run_write(source: &str, weights: Weights) {
     println!("moved the book to {} and its record beside it", remote::remote_path(&book_path));
 }
 
+/// The softmax write stage: the source's book, every move weighed by its score in `scores` (a scores
+/// file of the source's, by name, complete) at `temperature` centipawns (`book_scores`), as
+/// `book-n<N>-softmax-t<T>-<scores stem>.bin` and its record, which holds the graph's header, the
+/// scores file's, and the first-gate report. Skipped when that record is there already.
+fn run_write_softmax(source: &str, temperature: f64, scores: &str) {
+    let (graph_header, moves) = book_moves(source).unwrap_or_else(|message| fail(message));
+    let min_games = graph_header
+        .iter()
+        .find(|(name, _)| name == "min_games")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| fail(format!("{source}: the graph has no min_games line")));
+    let scores_path = remote::remote_path(&format!("{}/{scores}", source_dir(source)));
+    let scores_text = std::fs::read_to_string(&scores_path).unwrap_or_else(|error| fail(format!("failed to read {scores_path}: {error}")));
+    let stored = book_scores::parse(&scores_text).unwrap_or_else(|message| fail(format!("{scores_path}: {message}")));
+    let stem = format!("{}/book-n{min_games}-softmax-t{temperature}-{}", source_dir(source), book_scores::stem(scores));
+    let (book_path, record_path) = (format!("{stem}.bin"), format!("{stem}.txt"));
+    if std::path::Path::new(&remote::remote_path(&record_path)).is_file() {
+        println!("write: done before, {record_path} kept");
+        return;
+    }
+    let by_move: HashMap<(u64, u16), BookScore> = stored.rows.iter().map(|row| ((row.parent, row.book_move), row.score)).collect();
+    let mut judged = Vec::with_capacity(moves.len());
+    let mut missing = 0;
+    for book_move in &moves {
+        match by_move.get(&(book_move.parent, book_move.book_move)) {
+            Some(&score) => judged.push(book_scores::Judged {
+                parent: book_move.parent,
+                book_move: book_move.book_move,
+                cp: book_scores::mover_cp(score),
+                points: Weights::Points.weight(book_move.results),
+            }),
+            None => missing += 1,
+        }
+    }
+    if missing > 0 {
+        fail(format!("{scores_path} lacks {missing} of the book's {} moves: score the book to the end first", moves.len()));
+    }
+    let book = book_scores::softmax_entries(&judged, temperature);
+    let root = polyglot_key(&initial_board());
+    let edges: Vec<(u64, u64)> = moves.iter().map(|book_move| (book_move.parent, book_move.child)).collect();
+    let report = book_scores::report(&judged, &book_scores::plies_from(root, &edges));
+    let fens = read_graph(source).unwrap_or_else(|message| fail(message)).fens;
+    create_parent(&book_path);
+    write_atomically(&book_path, &book_bytes(&book.entries));
+    let mut record = String::new();
+    for (name, value) in &graph_header {
+        record.push_str(&format!("graph_{name}\t{value}\n"));
+    }
+    for (name, value) in &stored.header {
+        record.push_str(&format!("scores_{name}\t{value}\n"));
+    }
+    for (name, value) in [
+        ("weights", "softmax".to_string()),
+        ("temperature_cp", temperature.to_string()),
+        ("scores", scores.to_string()),
+        ("positions", book.positions.to_string()),
+        ("moves", book.entries.len().to_string()),
+        ("moves_weighing_0", book.zeros.to_string()),
+        ("written", current_time()),
+    ] {
+        record.push_str(&format!("{name}\t{value}\n"));
+    }
+    let lines = book_scores::report_lines(&report, &fens);
+    for (name, value) in &lines {
+        record.push_str(&format!("{name}\t{value}\n"));
+    }
+    write_atomically(&record_path, record.as_bytes());
+    println!(
+        "{} positions, {} moves at T = {temperature} cp; {} weighing 0 left out",
+        book.positions,
+        book.entries.len(),
+        book.zeros
+    );
+    for (name, value) in &lines {
+        println!("{name}\t{value}");
+    }
+    for path in [&book_path, &record_path] {
+        if let Err(error) = remote::move_up_replacing(path) {
+            fail(format!("{error}. The book stays in {}; make the book again to upload it", source_dir(source)));
+        }
+    }
+    println!("moved the book to {} and its record beside it", remote::remote_path(&book_path));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1301,11 +1537,23 @@ mod tests {
 
     #[test]
     fn a_book_job_takes_a_source_then_its_weights() {
-        assert_eq!(parse_make_args(&args(&["elite"])), Ok(MakeArgs { source: "elite".to_string(), weights: Weights::Points }));
+        let human = |source: &str, weights| MakeArgs { source: source.to_string(), weights: BookWeights::Human(weights) };
+        assert_eq!(parse_make_args(&args(&["elite"])), Ok(human("elite", Weights::Points)));
+        assert_eq!(parse_make_args(&args(&["s", "--weights", "counts"])), Ok(human("s", Weights::Counts)));
+        let scores = "scores-n-tuned-d20.txt";
         assert_eq!(
-            parse_make_args(&args(&["s", "--weights", "counts"])),
-            Ok(MakeArgs { source: "s".to_string(), weights: Weights::Counts })
+            parse_make_args(&args(&["s", "--weights", "softmax", "--temperature", "20", "--scores", scores])),
+            Ok(MakeArgs { source: "s".to_string(), weights: BookWeights::Softmax { temperature: 20.0, scores: scores.to_string() } })
         );
+        for list in [
+            &["s", "--weights", "softmax"][..],
+            &["s", "--weights", "softmax", "--temperature", "20"][..],
+            &["s", "--weights", "softmax", "--temperature", "0", "--scores", scores][..],
+            &["s", "--weights", "softmax", "--temperature", "20", "--scores", "graph.txt"][..],
+            &["s", "--temperature", "20", "--scores", scores][..],
+        ] {
+            assert!(parse_make_args(&args(list)).is_err(), "{list:?}");
+        }
         for list in [
             &[][..],
             &["--weights", "points"][..],
@@ -1332,8 +1580,16 @@ mod tests {
     fn a_written_book_is_read_from_its_record_s_name() {
         assert_eq!(
             written_book("twic", "book-n9-points.txt"),
-            Some(WrittenView { n: 9, weights: "points".to_string(), path: "data/books/twic/book-n9-points.bin".to_string() })
+            Some(WrittenView {
+                n: 9,
+                weights: "points".to_string(),
+                path: "data/books/twic/book-n9-points.bin".to_string(),
+                bad_in_reach: None,
+                old_chance: None,
+            })
         );
+        let softmax = written_book("twic", "book-n9-softmax-t20-n-tuned-d20.txt").unwrap();
+        assert_eq!((softmax.weights.as_str(), softmax.path.as_str()), ("softmax-t20-n-tuned-d20", "data/books/twic/book-n9-softmax-t20-n-tuned-d20.bin"));
         for other in ["book-n9-points.bin", "book-n9-results.txt", "book-nx-counts.txt", "graph.txt", "fit.txt"] {
             assert_eq!(written_book("twic", other), None, "{other}");
         }

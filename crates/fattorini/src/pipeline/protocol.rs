@@ -323,6 +323,11 @@ pub enum TaskKind {
     /// Pairs, as `Pair`'s, of one network at two parameter sets, each entry one `k` told apart by its
     /// tag: a tune's.
     Spsa,
+    /// One book move searched, no game played: each entry one move of an opening book, its
+    /// position after the move in its `SCORE_FEN_TAG`, searched to the chore's depth by its one
+    /// player on one thread, with a fresh table and no tablebases, so every arena returns the same
+    /// score; sent back as a `ScoreRecord`, not a PGN. A book's scoring.
+    Score,
 }
 
 impl TaskKind {
@@ -332,23 +337,132 @@ impl TaskKind {
             TaskKind::Pair => "pair",
             TaskKind::Tournament => "tournament",
             TaskKind::Spsa => "spsa",
+            TaskKind::Score => "score",
         }
     }
 
-    /// Its games' number, and its entries' players'.
+    /// Its games' number, and its entries' players': a score's one player plays no game, but its
+    /// entries hold one player as a game's do.
     pub fn games(self) -> usize {
         match self {
-            TaskKind::SelfPlay => 1,
+            TaskKind::SelfPlay | TaskKind::Score => 1,
             TaskKind::Pair | TaskKind::Tournament | TaskKind::Spsa => 2,
         }
     }
 
-    /// The unit its tasks are counted in, for a status: `game` or `pair`.
+    /// The unit its tasks are counted in, for a status: `game`, `pair` or `move`.
     pub fn task(self) -> &'static str {
         match self {
             TaskKind::SelfPlay => "game",
             TaskKind::Pair | TaskKind::Tournament | TaskKind::Spsa => "pair",
+            TaskKind::Score => "move",
         }
+    }
+}
+
+/// A score entry's tags: the book position's Polyglot key in hex, the book move's Polyglot code, and
+/// the position after the move, as FEN, the one the arena searches.
+pub const SCORE_PARENT_TAG: &str = "Parent";
+pub const SCORE_MOVE_TAG: &str = "BookMove";
+pub const SCORE_FEN_TAG: &str = "Position";
+
+/// Each score search's table, fresh, in MB: one figure for the arenas that search and the scores
+/// file's header that names it. Large enough that a depth-20 search of an opening position (about a
+/// million nodes) rarely replaces an entry it will want again.
+pub const SCORE_HASH_MB: usize = 64;
+
+/// What starts a score task's body after its session line, telling it from a PGN.
+pub const SCORE_RECORD_LINE: &str = "score_record\t1";
+
+/// A search's score, from the side that played the book move: centipawns, or a mate in that many
+/// moves, negative when that side is mated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BookScore {
+    Cp(i32),
+    Mate(i32),
+}
+
+impl BookScore {
+    pub fn text(self) -> String {
+        match self {
+            BookScore::Cp(cp) => format!("cp {cp}"),
+            BookScore::Mate(moves) => format!("mate {moves}"),
+        }
+    }
+
+    pub fn parse(text: &str) -> Result<BookScore, String> {
+        let bad = || format!("score: {text:?} is neither `cp <n>` nor `mate <n>`");
+        match text.split_once(' ') {
+            Some(("cp", cp)) => cp.parse().map(BookScore::Cp).map_err(|_| bad()),
+            Some(("mate", moves)) => match moves.parse() {
+                Ok(0) | Err(_) => Err(bad()),
+                Ok(moves) => Ok(BookScore::Mate(moves)),
+            },
+            _ => Err(bad()),
+        }
+    }
+}
+
+/// One score task's result: its identity (chore, session, seq, as a game's tags carry them), its
+/// entry's three tags back, the score from the side that played the move, the depth searched, the
+/// nodes, and what the smithy checks before taking it: the commit of the arena that searched it, and
+/// that arena's `bench` node count with the same player (`fattorini::bench::bench_with`, one thread,
+/// a fresh table each), identical on every machine whose search is the smithy's own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScoreRecord {
+    pub chore: String,
+    pub session: String,
+    pub seq: u64,
+    pub parent: String,
+    pub book_move: u16,
+    pub fen: String,
+    pub score: BookScore,
+    pub depth: u32,
+    pub nodes: u64,
+    pub commit: String,
+    pub bench_nodes: u64,
+}
+
+impl ScoreRecord {
+    pub fn text(&self) -> String {
+        format!(
+            "{SCORE_RECORD_LINE}\n{CHORE_TAG}\t{}\n{SESSION_TAG}\t{}\n{SEQ_TAG}\t{}\n{SCORE_PARENT_TAG}\t{}\n{SCORE_MOVE_TAG}\t{}\n\
+             {SCORE_FEN_TAG}\t{}\nscore\t{}\ndepth\t{}\nnodes\t{}\ncommit\t{}\nbench_nodes\t{}\n",
+            self.chore,
+            self.session,
+            self.seq,
+            self.parent,
+            self.book_move,
+            self.fen,
+            self.score.text(),
+            self.depth,
+            self.nodes,
+            self.commit,
+            self.bench_nodes
+        )
+    }
+
+    /// The inverse of `text`; `None` when `text` is no score record at all (a PGN), an error when it
+    /// is one, malformed.
+    pub fn parse(text: &str) -> Option<Result<ScoreRecord, String>> {
+        let rest = text.strip_prefix(SCORE_RECORD_LINE)?;
+        let map = fields(rest);
+        let what = "score record";
+        Some((|| {
+            Ok(ScoreRecord {
+                chore: field(&map, CHORE_TAG, what)?,
+                session: field(&map, SESSION_TAG, what)?,
+                seq: field(&map, SEQ_TAG, what)?,
+                parent: field(&map, SCORE_PARENT_TAG, what)?,
+                book_move: field(&map, SCORE_MOVE_TAG, what)?,
+                fen: field(&map, SCORE_FEN_TAG, what)?,
+                score: BookScore::parse(map.get("score").ok_or(format!("{what}: no score line"))?)?,
+                depth: field(&map, "depth", what)?,
+                nodes: field(&map, "nodes", what)?,
+                commit: field(&map, "commit", what)?,
+                bench_nodes: field(&map, "bench_nodes", what)?,
+            })
+        })())
     }
 }
 
@@ -475,7 +589,8 @@ impl Chore {
             "pair" => TaskKind::Pair,
             "tournament" => TaskKind::Tournament,
             "spsa" => TaskKind::Spsa,
-            other => return Err(format!("chore: kind {other:?} is none of self, pair, tournament and spsa")),
+            "score" => TaskKind::Score,
+            other => return Err(format!("chore: kind {other:?} is none of self, pair, tournament, spsa and score")),
         };
         let reference_nps = match map.get("reference") {
             None => None,
@@ -710,6 +825,48 @@ mod tests {
         for chore in chores {
             assert_eq!(Chore::parse(&chore.text()), Ok(chore.clone()));
             assert_eq!(parse_entries(&entries_text(&chore.entries)), Ok(chore.entries));
+        }
+    }
+
+    #[test]
+    fn a_score_chore_and_its_record_read_back() {
+        let chore = Chore {
+            id: "c000005".to_string(),
+            kind: TaskKind::Score,
+            limit: Limit::Depth(20),
+            adjudicate: false,
+            reference_nps: None,
+            entries: vec![Entry {
+                players: vec![Player { network: "aa".to_string(), parameters: None, time_management: TimeManagement::Split }],
+                count: 1,
+                tags: vec![
+                    (SCORE_PARENT_TAG.to_string(), "463b96181691fc9c".to_string()),
+                    (SCORE_MOVE_TAG.to_string(), "796".to_string()),
+                    (SCORE_FEN_TAG.to_string(), "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string()),
+                ],
+            }],
+        };
+        assert_eq!(Chore::parse(&chore.text()), Ok(chore));
+        let mut record = ScoreRecord {
+            chore: "c000005".to_string(),
+            session: "alpha-1".to_string(),
+            seq: 7,
+            parent: "463b96181691fc9c".to_string(),
+            book_move: 796,
+            fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string(),
+            score: BookScore::Cp(-23),
+            depth: 20,
+            nodes: 1_234_567,
+            commit: "abc".to_string(),
+            bench_nodes: 2_345_678,
+        };
+        assert_eq!(ScoreRecord::parse(&record.text()), Some(Ok(record.clone())));
+        record.score = BookScore::Mate(-3);
+        assert_eq!(ScoreRecord::parse(&record.text()), Some(Ok(record.clone())));
+        assert_eq!(ScoreRecord::parse("[Event \"e\"]\n"), None, "a PGN is no score record");
+        assert!(ScoreRecord::parse(&format!("{SCORE_RECORD_LINE}\nChore\tc1\n")).unwrap().is_err());
+        for bad in ["cp", "cp x", "mate 0", "pawns 3", ""] {
+            assert!(BookScore::parse(bad).is_err(), "{bad:?}");
         }
     }
 
