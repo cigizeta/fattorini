@@ -11,7 +11,8 @@ beyond the chess work goes on either page.
 **No rating, ever** (the developer, 2026-11-11): the page claims no strength, neither the
 estimate nor a CCRL or Lichess rating. Links to the rating lists and the Lichess account are
 fine; the numbers are theirs to show. To add once known: a link to the CCRL listing under External
-Links; the forum topic of the CCRL announcement (ccrl-announcement.md) under Forum Posts.
+Links. The release's announcement on TalkChess (ccrl-announcement.md), posted 2026-11-13, is
+already under Forum Posts.
 
 ## The draft
 
@@ -55,6 +56,7 @@ game result.
 * [[Killer Heuristic]], [[History Heuristic]]
 * [[Singular Extensions]]
 * [[Quiescence Search]]
+* [[Pondering]]
 * [[Syzygy Bases]], WDL and DTZ
 * Search parameters tuned by [[SPSA]] for each network, after it is trained
 
@@ -63,6 +65,7 @@ game result.
 * [[NNUE]]
 
 =Forum Posts=
+* [https://talkchess.com/viewtopic.php?p=999558#p999558 Fattorini 2026.11.0, a new UCI engine in Rust] by [[Calogero Zarba]], [[CCC]], November 13, 2026
 
 =External Links=
 * [https://github.com/cigizeta/fattorini Fattorini on GitHub]
@@ -110,6 +113,7 @@ author of the [[:Category:Open Source|open source]] chess engine [[Fattorini]].
   SCReLU, Lichess and Open Source Engines had no page, nor the Free Software Foundation page an
   AGPL section, so they are unlinked or retargeted as Black Marlin and Rustic do. Some engine pages
   were missing too, so check again once the wiki is fully back; relink Lichess if its page returns.
+  Not yet checked: `Pondering` and `CCC`.
 - Compare with a few recent engine pages for the wiki's current layout, then follow theirs.
 - No rating or strength figure anywhere on the page, now or later (decided above).
 - The author page: copy the categories of a recent programmer's page (`Category:Programmer` is
