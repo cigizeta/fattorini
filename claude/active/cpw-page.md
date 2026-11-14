@@ -19,14 +19,14 @@ Page title: `Fattorini`
 
 ```text
 '''Fattorini''',<br/>
-an [[Open Source Engines|open source chess engine]] by [[author]], written in [[Rust]] and licensed
-under the [[Free Software Foundation#AGPL|GNU AGPL v3]]. Fattorini is a [[UCI]] engine for
+an [[:Category:Open Source|open source chess engine]] by [[author]], written in [[Rust]] and licensed
+under the [[Free Software Foundation|GNU AGPL v3]]. Fattorini is a [[UCI]] engine for
 [[Windows]] x64, with an [[NNUE]] evaluation whose networks are trained on a limited compute
-budget. Its first release, 2026.11.0, was published on GitHub on November 11, 2026, as a single
+budget. Its first release, 2026.11.0, was published on GitHub in November 2026, as a single
 executable with the network embedded <ref>[https://github.com/cigizeta/fattorini/releases/tag/v2026.11.0 Release Fattorini 2026.11.0]</ref>.
-Fattorini plays on [[Lichess]] as ''fattorini-bot''.
-The engine is named after Antonio Fattorini, an Italian immigrant to Yorkshire who opened his own
-shop in Harrogate in 1831; in 1883 his family's business made the first chess clock <ref>[https://en.wikipedia.org/wiki/Fattorini_%26_Sons Fattorini & Sons from Wikipedia]</ref>.
+Fattorini plays on Lichess as ''fattorini-bot''.
+The engine is named after Antonio Fattorini, of a family of Italian immigrants to Yorkshire, who
+opened a shop in Harrogate in 1831; in 1883 the family firm made the first chess clock <ref>[https://en.wikipedia.org/wiki/Fattorini_%26_Sons Fattorini & Sons from Wikipedia]</ref>.
 
 =Features=
 ==Evaluation==
@@ -34,17 +34,14 @@ The first release's network, ''lc0-psq-threats-screlu'' generation 1, has 4,876 
 780 piece-square inputs (pieces on squares, castling rights, the en passant file) and 4,096
 simplified [[Attacks|threat]] inputs, one for each square pair where a piece of the side attacks
 an opponent's piece, without pins or x-rays. Each side's inputs feed 256 neurons, activated by
-[[SCReLU]], straight to the output, in integer arithmetic with [[AVX2]]. The piece-square part of
+SCReLU, straight to the output, in integer arithmetic with [[AVX2]]. The piece-square part of
 the accumulator is updated incrementally. The network was trained on positions from
 [[Leela Chess Zero]]'s test91 training data <ref>[https://github.com/cigizeta/fattorini Fattorini on GitHub], README</ref>.
 
 ==Training==
-Networks are trained one generation at a time: a teacher, at first the [[PeSTO]] evaluation, plays
-games against itself, its searches label the positions, and a new network replaces the teacher
-only if it beats it over the board. Along a second route, the first generation trains on Leela
-Chess Zero's published games. Each label blends the teacher's search score with the game result;
-the weight of the result, lambda, is not chosen but measured from the teacher's own games in ten
-stages of the game, as the inverse-noise weighting of the two.
+The first release's network is trained on positions from [[Leela Chess Zero]]'s self-play games,
+converted by Fattorini's own tools, each labelled with a dynamic blend of Leela's search score and the
+game result.
 
 ==Search==
 * [[Alpha-Beta]] with [[Iterative Deepening]] and [[Aspiration Windows]]
@@ -59,7 +56,7 @@ stages of the game, as the inverse-noise weighting of the two.
 * [[Singular Extensions]]
 * [[Quiescence Search]]
 * [[Syzygy Bases]], WDL and DTZ
-* Search parameters tuned by [[SPSA]] together with the network
+* Search parameters tuned by [[SPSA]] for each network, after it is trained
 
 =See also=
 * [[Leela Chess Zero]]
@@ -79,6 +76,8 @@ stages of the game, as the inverse-noise weighting of the two.
 [[Category:UCI]]
 [[Category:Open Source]]
 [[Category:Rust]]
+[[Category:X64]]
+[[Category:PC]]
 [[Category:Windows]]
 [[Category:NNUE]]
 ```
@@ -89,7 +88,9 @@ stages of the game, as the inverse-noise weighting of the two.
   person pages a full name, so no clash is expected (2026-11-11). Search the wiki for an existing
   `Fattorini` first; if there is one, a parenthesized qualifier such as `Fattorini (engine)`, as
   the wiki does for clashes, rather than a suffix.
-- Check each `[[...]]` link against the wiki's existing pages, and drop or rename any that do not
-  exist there (SCReLU, the AGPL anchor, the Rust category may not).
+- Links checked 2026-11-14, while the wiki showed itself as a temporary, read-only recovery:
+  SCReLU, Lichess and Open Source Engines had no page, nor the Free Software Foundation page an
+  AGPL section, so they are unlinked or retargeted as Black Marlin and Rustic do. Some engine pages
+  were missing too, so check again once the wiki is fully back; relink Lichess if its page returns.
 - Compare with a few recent engine pages for the wiki's current layout, then follow theirs.
 - No rating or strength figure anywhere on the page, now or later (decided above).
