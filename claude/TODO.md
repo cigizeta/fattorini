@@ -53,7 +53,8 @@ Also waiting: the CCRL forum account's activation.
    (smithy-bench.md, fixed 2026-11-13), so it played about 6.7+0.067, which is also why it took
    about 12 hours where the time tune of 2026-11-13, at a true 10+0.1, projects about a day (the
    developer, 2026-11-13: "it was the old search tune that was broken"). Its values still won test
-   4. A search tune again at the true control: to decide after the time tune. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
+   4. No second search tune for it at the true control (the developer, 2026-11-14): the next
+   search tune is a halfk network's. Its result is the network's `parameters.txt` on Drive (razoring 111, reverse futility
    64, futility 214, null move 185, delta 206, SEE prune 90, SEE 46, aspiration 8, history
    pruning -35, good quiet -128); the previous 16k tune's is kept in `tune-16k-old-defaults/`. Then,
    in this order (the developer, 2026-11-09):
