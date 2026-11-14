@@ -153,6 +153,10 @@ Also waiting: the CCRL forum account's activation.
   features, SCReLU, trained on Lc0's data. The likely main source of its strength, so said plainly.
 - **Credit Lc0's data only if an Lc0 network ships:** `about.hbs` and `RELEASE-NOTES.md` credit it
   whatever the network.
+- **A short UCI `id name` for the next release** (the developer, 2026-11-14): 2026.11.0 reports
+  `Fattorini 2026.11.0 lc0-psq-threats-screlu-g1-r1@tuned v2026.11.0 2026-11-11 08:20 UTC`, which
+  every tester's PGN carries as the player's name (seen in CCRL's "Cloaked In Red"). To be
+  `Fattorini 2026.11.0` alone, the network and build moved to an `info string` or `about`.
 - **CalVer, not SemVer:** implemented 2026-11-11 (calver.md), `2026.11.0`, the month enforced by
   `arena release`. Left: its tests run, then calver.md to `done/`.
 
