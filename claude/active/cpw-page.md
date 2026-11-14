@@ -4,9 +4,9 @@
 should not wait that long). To post once a wiki account is approved (TODO.md, item 6). Facts
 only, from the README and the release.
 
-The author's name is the developer's to fill in on the wiki, never in this file: `[author]` below.
-The author page beside it (the name, the GitHub profile, other public chess projects) is written
-by the developer on the wiki alone.
+The author's name and chess work are public, as in the LICENSE (the developer, 2026-11-14,
+reverting the earlier rule that kept them out of this file): both pages are drafted here. Nothing
+beyond the chess work goes on either page.
 
 **No rating, ever** (the developer, 2026-11-11): the page claims no strength, neither the
 estimate nor a CCRL or Lichess rating. Links to the rating lists and the Lichess account are
@@ -19,7 +19,7 @@ Page title: `Fattorini`
 
 ```text
 '''Fattorini''',<br/>
-an [[:Category:Open Source|open source chess engine]] by [[author]], written in [[Rust]] and licensed
+an [[:Category:Open Source|open source chess engine]] by [[Calogero Zarba]], written in [[Rust]] and licensed
 under the [[Free Software Foundation|GNU AGPL v3]]. Fattorini is a [[UCI]] engine for
 [[Windows]] x64, with an [[NNUE]] evaluation whose networks are trained on a limited compute
 budget. Its first release, 2026.11.0, was published on GitHub in November 2026, as a single
@@ -82,6 +82,24 @@ game result.
 [[Category:NNUE]]
 ```
 
+## The author page
+
+Page title: `Calogero Zarba`, linked from the wiki's People list in its alphabetical place.
+
+```text
+'''Calogero Zarba''',<br/>
+author of the [[:Category:Open Source|open source]] chess engine [[Fattorini]].
+
+=Chess Projects=
+* [[Fattorini]]
+
+=External Links=
+* [https://github.com/cigizeta cigizeta on GitHub]
+
+'''[[People|Up one Level]]'''
+[[Category:Programmer]]
+```
+
 ## Before posting
 
 - **The title:** `Fattorini`, as engine pages carry the bare name (no "Chess Engine" suffix) and
@@ -94,3 +112,5 @@ game result.
   were missing too, so check again once the wiki is fully back; relink Lichess if its page returns.
 - Compare with a few recent engine pages for the wiki's current layout, then follow theirs.
 - No rating or strength figure anywhere on the page, now or later (decided above).
+- The author page: copy the categories of a recent programmer's page (`Category:Programmer` is
+  unverified), and confirm the People list's title and place before adding the name there.
