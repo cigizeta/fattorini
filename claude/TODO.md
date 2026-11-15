@@ -263,6 +263,10 @@ changes).
 
 ## Search
 
+- **No TT cutoff at PV nodes** (the developer, 2026-11-15): designed, plan written
+  (pv-node-tt-cutoff.md). Waiting for the current time tune and the 180+2 and STC check duels; then
+  implemented, then a no-harm-check duel at STC, new against old. The ponder fallback it also asked
+  for was already in place (`ponder_move`).
 - **Optimize Lazy SMP** (the developer, 2026-11-11): in the release check, 8 threads did not crush 1
   (20 games at 10+0.1, too few to measure, release-checks.md). First measure, on an idle machine
   with enough physical cores: nodes/s at `Threads=1` against `8` (near 8 times is ideal; much less
