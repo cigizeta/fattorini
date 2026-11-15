@@ -1,8 +1,9 @@
 # No TT cutoff at PV nodes
 
-**Status:** design agreed (2026-11-15), waiting. Not to be implemented or measured until the
-current time tune and the 180+2 and STC check duels are over: a search change on the machines now
-would disturb them, and their results must be read against today's search.
+**Status:** design agreed (2026-11-15), to be implemented 2026-11-16. It waited for the time tune
+and its check duels, so that their results were read against the search of then: the tune and its
+STC duel are over (test 9), and the 180+2 duel was dropped (the developer, 2026-11-15). Its duel's
+sides are both `lc0-psq-threats-screlu-g1-r1@search-time-tuned`.
 
 ## Why
 

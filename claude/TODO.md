@@ -16,6 +16,24 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
+**Tomorrow, 2026-11-16 (the developer, 2026-11-15), in this order:**
+
+1. **The PV-node TT cutoff** (pv-node-tt-cutoff.md): implemented from its plan, tests and clippy,
+   then its no-harm-check duel at STC (10+0.1) from the page's tests screen, new against old, both
+   `lc0-psq-threats-screlu-g1-r1@search-time-tuned`. Every arena updated to the new commit first.
+2. **Lichess on `lc0-psq-threats-screlu-g1-r1@search-time-tuned`,** only after step 1's duel: a
+   new snapshot (`bin/arena snapshot lc0-psq-threats-screlu-g1-r1@search-time-tuned`) of the
+   commit with the fix if it is kept, of today's otherwise; lichess-bot pointed at it.
+3. **The halfk line starts** ("The halfk line" below, step 1: halfk-threats-screlu.md, its plan
+   halfk-threats-screlu-implementation.md).
+
+**The time tune: done and accepted, 2026-11-15.** 32,768 pairs at 10+0.1, its values in the
+network's `time-parameters.txt` on Drive (`hard_soft_ratio` 3.0 to 4.2, `hard_fraction` 0.728 to
+0.675, `nodes_a`, `multiplier_min`, `changes_a`/`b` down 9 to 16%, each a steady trend, not drift).
+Test 9, STC: `@search-time-tuned` 424.5 of 798 (53.2%, about +22 Elo) against `@search-tuned`,
+drawn by the duel's 3.09-sigma rule (about 2 sigma). **The 180+2 duel is dropped** (the developer,
+2026-11-15): its time costs more than it would tell.
+
 **Where things stand (2026-11-11).** **Fattorini 2026.11.0 is released** (item 4), published on
 GitHub on 2026-11-11. Next: the CCRL testers (item 5), then the wiki page (item 6). Done on
 2026-11-10: the CCRL Blitz estimate, about 3250 (ccrl-conditions.md); the root's tablebase score
@@ -31,8 +49,7 @@ the past week's games before trusting them (the 2612, the +1.59 in KQ vs KN). Ev
 updated to the commit before the next gate or tune.
 
 **Order (the developer, 2026-11-13):** `lc0-psq-threats-screlu-g1-r1`, search-tuned, is time-tuned
-now (implemented and verified 2026-11-13; next, every arena updated, then its time tune from the
-page) (time-management-spsa.md, its plan time-management-spsa-implementation.md, the suffixes of
+(done 2026-11-15, accepted: "Tomorrow" above) (time-management-spsa.md, its plan time-management-spsa-implementation.md, the suffixes of
 tuning-suffixes.md). Every later network: trained, then its search tuned, then its time.
 
 **In progress (2026-11-11): blitz time management** (blitz-time-management.md, its plan
@@ -264,8 +281,9 @@ changes).
 ## Search
 
 - **No TT cutoff at PV nodes** (the developer, 2026-11-15): designed, plan written
-  (pv-node-tt-cutoff.md). Waiting for the current time tune and the 180+2 and STC check duels; then
-  implemented, then a no-harm-check duel at STC, new against old. The ponder fallback it also asked
+  (pv-node-tt-cutoff.md). No longer waiting (2026-11-15: the time tune and its STC duel are
+  over, the 180+2 duel dropped): implemented on 2026-11-16, then a no-harm-check duel at STC, new
+  against old ("Tomorrow" above). The ponder fallback it also asked
   for was already in place (`ponder_move`).
 - **Optimize Lazy SMP** (the developer, 2026-11-11): in the release check, 8 threads did not crush 1
   (20 games at 10+0.1, too few to measure, release-checks.md). First measure, on an idle machine
@@ -285,6 +303,7 @@ changes).
   3+2's 1/90, so the clock goes through the same phases, and a few Elo needs 32k pairs or more. On
   every available arena, each idle: each game is its own comparison, both sides on one machine.
   Then a 180+2 duel of the tuned values against the untuned, for the depth 10+0.1 does not reach.
+  **Done 2026-11-15:** tuned, accepted on test 9 at STC, the 180+2 duel dropped ("Tomorrow" above).
   **Budgets** (the developer, 2026-11-11), fixed in games, not hours (as spsa.md, 2026-10-16):
   - **The search's SPSA: 32k pairs**, as the last tune, which found +24 Elo with about 10
     parameters; 64k only if the parameters' traces are still climbing at the end.
