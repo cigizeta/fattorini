@@ -43,6 +43,9 @@ time ever shows up without a ponder move, look at that separately.
 
 ## Measurement
 
-The change affects strength, not only the PV shown, so it ships only after an A/B match through
-`bin/arena` on one idle machine, both sides on it. Expected: neutral or slightly positive, since
-PV nodes are few.
+The change affects strength, not only the PV shown, so it ships only after a no-harm-check duel
+through `bin/arena`: new against old (the last commit), the same network on both sides, both on
+one idle machine. On a clock (STC), not at a fixed depth as `labelling-speed.md`'s harm checks
+were: here the tree itself grows, since PV nodes now search where they used to cut off, and a
+fixed depth would give the new side that extra search for free. Kept if the duel ends without
+showing harm. Expected: neutral or slightly positive, since PV nodes are few.
