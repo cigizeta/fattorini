@@ -1981,6 +1981,12 @@ impl<'a> Search<'a> {
         // does now. Every non-root node is completely unaffected: interior nodes never need to
         // report their own best move upward, only their score, so a bare cutoff there was
         // always correct and still is.
+        //
+        // `beta - alpha == 1` too: interior PV nodes do not cut off either, as Stockfish's
+        // `!PvNode`. A null window is how this search tells a non-PV node from a PV one. A cutoff
+        // there would cut the PV short (often to one move), skip the line below it so a
+        // repetition or fifty-move draw along it (path state the table does not hold) goes
+        // unseen, and let a hash collision land straight on the main line.
         let remaining = target_depth - ply;
         let color = board.side_to_move();
 
@@ -2000,6 +2006,7 @@ impl<'a> Search<'a> {
         let tt_entry = self.tt.probe(board.hash());
         if let Some(entry) = tt_entry
             && ply > 0
+            && beta - alpha == 1
             && entry.depth() >= remaining
         {
             let score = score_from_tt(entry.score(), ply);
@@ -2012,8 +2019,8 @@ impl<'a> Search<'a> {
         }
         let tt_move = tt_entry.map(|entry| entry.best_move());
 
-        // This node's one static evaluation, after the TT cutoffs above so a cutoff never pays for
-        // it. Every reader below takes it from here, and so does `quiescence` when this node is
+        // This node's one static evaluation, after the TT cutoffs above so a null-window node that
+        // cuts off never pays for it (a PV node takes no cutoff there). Every reader below takes it from here, and so does `quiescence` when this node is
         // handed to it whole (the leaf, a razored node): the same board at the same ply always
         // evaluates the same, so a second call would only cost time, and with a trained network
         // that time is most of a leaf. `Some` wherever a reader can use it: off check, either
@@ -6675,19 +6682,37 @@ mod tests {
         // does. Seeding `pv[1]` with unrelated garbage stands in for a stale write left behind
         // by some earlier, unrelated node that happened to share this same row during a real
         // search's traversal.
-        let (board, _) = Board::from_fen("4k3/8/8/8/8/8/5PPP/r5K1 w - - 0 1").unwrap();
+        // White's rook, so the position is not already mate: without the cutoff the node would
+        // search, find Ra8 mate and write a PV, so an empty row proves the cutoff happened.
+        let (board, _) = Board::from_fen("4k3/8/8/8/8/8/5PPP/R5K1 w - - 0 1").unwrap();
         let tt = TranspositionTable::new(1);
         // depth 2, matching `remaining = target_depth(3) - ply(1)` below exactly, so the probe's
         // `entry.depth() >= remaining` check passes and this resolves via the Exact-bound cutoff
-        // unconditionally, regardless of score.
+        // unconditionally, regardless of score. A null window, since only non-PV nodes cut off.
         tt.store(board.hash(), Move::new(Square::A1, Square::A8, None), 2, 0, Bound::Exact);
         let stop_signal = AtomicBool::new(false);
         let mut search = new_search(
             3, None, Vec::new(), vec![[None, None]; MAX_PLY as usize], [[0; 64]; 12], vec![0; CONTINUATION_HISTORY_LEN], &tt, &stop_signal,
         );
         search.pv.set(1, &[Move::new(Square::B1, Square::B8, None)]);
-        search.alpha_beta_with_buffer(&board, 1, 3, -INFINITY, INFINITY);
+        search.alpha_beta_with_buffer(&board, 1, 3, -1, 0);
         assert!(search.pv.line(1).is_empty());
+    }
+
+    #[test]
+    fn a_pv_node_below_the_root_searches_despite_a_deep_enough_exact_entry() {
+        // A deep enough exact entry with an open window: a PV node never returns from the table, so
+        // it searches and writes a real PV of its own (Ra8 mates), which a cutoff would have left
+        // empty. Not the cutoff test's position: there the black rook already mates White.
+        let (board, _) = Board::from_fen("4k3/8/8/8/8/8/5PPP/R5K1 w - - 0 1").unwrap();
+        let tt = TranspositionTable::new(1);
+        tt.store(board.hash(), Move::new(Square::A1, Square::A8, None), 2, 0, Bound::Exact);
+        let stop_signal = AtomicBool::new(false);
+        let mut search = new_search(
+            3, None, Vec::new(), vec![[None, None]; MAX_PLY as usize], [[0; 64]; 12], vec![0; CONTINUATION_HISTORY_LEN], &tt, &stop_signal,
+        );
+        search.alpha_beta_with_buffer(&board, 1, 3, -INFINITY, INFINITY);
+        assert!(!search.pv.line(1).is_empty());
     }
 
     #[test]
@@ -7910,14 +7935,15 @@ mod tests {
     /// switches were removed, `corr` and `blend` becoming the search's own code. Re-recorded when the
     /// defaults moved (2026-11-08: razoring and SEE pruning a pawn and a half, reverse futility a
     /// pawn, the aspiration window 10, the good-quiet threshold -140): 16,896 nodes in all against
-    /// 24,154, the same move in four positions of six.
+    /// 24,154, the same move in four positions of six. Re-recorded when PV nodes stopped taking TT
+    /// cutoffs (2026-11-16): a few nodes more or less per position, every score and move the same.
     const FIXED_SEARCH_EXPECTED: &[(u64, i32, &str)] = &[
         (807, 22, "Some(Move { from: G1, to: F3, promotion: None, kind: Quiet })"),
-        (4703, -37, "Some(Move { from: E2, to: A6, promotion: None, kind: Quiet })"),
-        (4616, 101, "Some(Move { from: F5, to: D3, promotion: None, kind: Quiet })"),
-        (4711, -51, "Some(Move { from: H2, to: H3, promotion: None, kind: Quiet })"),
-        (830, -80, "Some(Move { from: E4, to: D6, promotion: None, kind: Quiet })"),
-        (1229, 76, "Some(Move { from: B4, to: F4, promotion: None, kind: Quiet })"),
+        (4704, -37, "Some(Move { from: E2, to: A6, promotion: None, kind: Quiet })"),
+        (4620, 101, "Some(Move { from: F5, to: D3, promotion: None, kind: Quiet })"),
+        (4691, -51, "Some(Move { from: H2, to: H3, promotion: None, kind: Quiet })"),
+        (832, -80, "Some(Move { from: E4, to: D6, promotion: None, kind: Quiet })"),
+        (1231, 76, "Some(Move { from: B4, to: F4, promotion: None, kind: Quiet })"),
     ];
 
     #[test]

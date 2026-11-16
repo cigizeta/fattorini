@@ -1,6 +1,9 @@
 # No TT cutoff at PV nodes
 
-**Status:** design agreed (2026-11-15), to be implemented 2026-11-16. It waited for the time tune
+**Status:** implemented 2026-11-16 (the guard, the two comments, the null-window cutoff test moved
+to `-1, 0` and a PV-window test beside it, both on a position not already mate; the fixed-depth
+golden test re-recorded, a few nodes off, every score and move the same). Tests and clippy pass;
+the duel to run. It waited for the time tune
 and its check duels, so that their results were read against the search of then: the tune and its
 STC duel are over (test 9), and the 180+2 duel was dropped (the developer, 2026-11-15). Its duel's
 sides are both `lc0-psq-threats-screlu-g1-r1@search-time-tuned`.

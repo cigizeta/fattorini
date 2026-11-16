@@ -18,8 +18,8 @@ In this order:
 
 **Tomorrow, 2026-11-16 (the developer, 2026-11-15), in this order:**
 
-1. **The PV-node TT cutoff** (pv-node-tt-cutoff.md): implemented from its plan, tests and clippy,
-   then its no-harm-check duel at STC (10+0.1) from the page's tests screen, new against old, both
+1. **The PV-node TT cutoff** (pv-node-tt-cutoff.md): implemented 2026-11-16, tests and clippy
+   passing; left: no-harm-check duel at STC (10+0.1) from the page's tests screen, new against old, both
    `lc0-psq-threats-screlu-g1-r1@search-time-tuned`. Every arena updated to the new commit first.
 2. **Lichess on `lc0-psq-threats-screlu-g1-r1@search-time-tuned`,** only after step 1's duel: a
    new snapshot (`bin/arena snapshot lc0-psq-threats-screlu-g1-r1@search-time-tuned`) of the
@@ -52,18 +52,9 @@ updated to the commit before the next gate or tune.
 (done 2026-11-15, accepted: "Tomorrow" above) (time-management-spsa.md, its plan time-management-spsa-implementation.md, the suffixes of
 tuning-suffixes.md). Every later network: trained, then its search tuned, then its time.
 
-**In progress (2026-11-11): blitz time management** (blitz-time-management.md, its plan
-blitz-time-management-implementation.md). Two Lichess blitz games ended with a minute and half the
-clock unused; the new `Split` time management (a soft time, a hard maximum, the future increments
-counted) is implemented with `Classic` kept behind the temporary `TimeManagement` UCI option, all
-tests and clippy passing. lichess-bot's `move_overhead` went from 2000 to 500 ms the same day.
-The duel binary is copied to `data/duel-bin/fattorini-tm.exe` and registered twice in
-`data/engines.yaml` (`fattorini-split`, `fattorini-classic`). Split's first version lost at 10+0.1
-(S 0.4044 over 136 games, front-loading); redesigned the same day as v2
-(blitz-time-management-v2.md), whose 10+0.1 duel was drawn (S 0.5086 over 752 games, gate passed). **Next:** the 180+2
-duel on one idle machine, `bin/arena duel fattorini-split fattorini-classic --time 180+2`, up to
-about 12 to 15 hours, resumable; its verdict rule is in v2's decisions; record the results there.
-Also waiting: the CCRL forum account's activation.
+**Blitz time management (2026-11-11 to 11-13): superseded.** Split (blitz-time-management.md,
+blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced both it and Classic
+(reckless-only.md, above). Also waiting: the CCRL forum account's activation.
 
 1. **Tune the lc0 network** (`lc0-psq-threats-screlu-g1-r1`): done 2026-11-09, 32,768 pairs at
    10+0.1 in name only: **its clocks were scaled to about 0.67** by the smithy's low bench of then
@@ -91,11 +82,8 @@ Also waiting: the CCRL forum account's activation.
       `data/matches/stockfish-12-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-0859/`; Skill
       Level 13, a full match, Fattorini 205.5 to 194.5 (+154 -143 =103, 51.4%),
       `data/matches/stockfish-13-vs-lc0-psq-threats-screlu-g1-r1@tuned/20261110-0948/` (its
-      90-game scout had Fattorini at 43.3%, within the scout's noise). 13 beaten, so the bracket
-      moves up: **next, Skill Level 14** (`bin/arena match stockfish-14
-      lc0-psq-threats-screlu-g1-r1@tuned 400 --time 10+0.1 --hash 64 --full`), on an idle machine,
-      the Stockfish version noted for the table. The developer expects 14 to win clearly at 10+0.1
-      (2026-11-10). For the developer only, never the README: Stockfish 19's own skill formula
+      90-game scout had Fattorini at 43.3%, within the scout's noise). Skill Level 14 never played:
+      the item was dropped first. For the developer only, never the README: Stockfish 19's own skill formula
       puts 12 and 13 at about 2910 and 2965, so about 2940 on the scale where amanda-0002 had
       2795 (about level 10).
    4. **Lichess installation** with the tuned network (item 3): done 2026-11-10.
