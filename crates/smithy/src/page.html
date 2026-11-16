@@ -53,6 +53,9 @@
   .log td { white-space: normal; vertical-align: top; }
   .log td:nth-child(3), .log td:nth-child(7) { min-width: 18ch; text-align: left; }
   .log td:first-child { white-space: nowrap; }
+  /* A test's number right-aligned in a slot of its own, so 9 sits under 10's units and the buttons
+     after it stay in one column. */
+  .log .number { display: inline-block; min-width: 3ch; text-align: right; }
   tr:last-child td { border-bottom: none; }
   .bar { display: flex; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin: 4px 0 10px; }
   .bar > div { height: 100%; background: var(--accent); }
@@ -987,7 +990,7 @@ function testsScreen() {
     : "";
   const rows = [...catalog.tests].reverse().map((t) => [
     // A stopped test, still kept, resumes from its pairs, on this machine: first, where it is seen.
-    { html: `${t.number} <button class="plain" data-screen-open="${t.number}">View</button>`
+    { html: `<span class="number">${t.number}</span> <button class="plain" data-screen-open="${t.number}">View</button>`
       + `${token && t.verdict.startsWith("stopped") ? ` <button data-resume-test="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span>` : ""}` },
     t.ended,
     testTitle({ test: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion }),
