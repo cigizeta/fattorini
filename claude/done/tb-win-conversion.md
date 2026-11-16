@@ -1,7 +1,7 @@
 # Converting a tablebase win: the shortest DTZ at the root
 
-Status: designed and implemented 2026-11-16, to test. Left: the tests, a snapshot, then a won
-ending seen converted on Lichess.
+Status: done 2026-11-16, tests and clippy passing; seen on Lichess the same day
+(lichess.org/game/vqau3jif): KQ vs K after 122...h1=Q, mated on move 129.
 
 ## The problem
 
