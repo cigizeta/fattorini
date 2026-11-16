@@ -57,4 +57,6 @@ passant rows added (decision 7).
   share of zero products and of all-zero blocks of four (a product is zero when either lane is, so
   more zeros than the squares; whether skipping them pays in int8).
 - **Duels:** against step 2's winner, or step 1's if step 2 lost at 10+0.1 (Status), depth 9 then
-  10+0.1, both `@default`.
+  10+0.1, both `@default`. **Decided 2026-11-16:** step 2 drew both (tests 13 and 14), so against
+  `lc0-halfk-threats-screlu-hidden-g1-r1`, both untuned. The castling and en passant rows:
+  halfk-castling-en-passant-implementation.md.

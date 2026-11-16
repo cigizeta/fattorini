@@ -87,8 +87,10 @@ pub fn halfk_network_from(
     vs: &nn::VarStore, pairwise: bool, embedding_dim: i64, hidden_dims: &[i64], step: u64, learning_rate: f64,
 ) -> PsqNetwork {
     let head_input = if pairwise { embedding_dim } else { 2 * embedding_dim };
-    let (training, transform_bias, hidden, output) =
-        weights_from(vs, halfk::TRAINING_ROWS as i64, embedding_dim, head_input, hidden_dims, false);
+    // Pairwise is halfk_threats_pairwise_hidden, whose castling and en passant rows follow the
+    // factor rows in training and the threat rows in the engine (`halfk::CASTLING_ROW`).
+    let training_rows = if pairwise { halfk::TRAINING_ROWS_WITH_STATE } else { halfk::TRAINING_ROWS };
+    let (training, transform_bias, hidden, output) = weights_from(vs, training_rows as i64, embedding_dim, head_input, hidden_dims, false);
     let dim = embedding_dim as usize;
     let mut transform = training[..halfk::ROWS * dim].to_vec();
     for row in 0..halfk::HALFK_ROWS {
@@ -96,6 +98,9 @@ pub fn halfk_network_from(
         for (weight, shared) in transform[row * dim..(row + 1) * dim].iter_mut().zip(&training[factor..factor + dim]) {
             *weight += shared;
         }
+    }
+    if pairwise {
+        transform.extend_from_slice(&training[halfk::TRAINING_ROWS * dim..]);
     }
     PsqNetwork {
         embedding_dim: dim,
@@ -489,11 +494,7 @@ mod tests {
     /// The same position's value in pawns as `tch` computes it, through the exact path training
     /// uses: `extract_canonical`, `to_dense_batch`, `Network::pawns`.
     fn oracle_value(network: &Network, board: &Board) -> f32 {
-        let feature_set = match network {
-            Network::Psq(_) => FeatureSet::Psq,
-            Network::PsqThreats(_) => FeatureSet::PsqThreats,
-            Network::HalfKav2Hm(_) => FeatureSet::HalfKav2Hm,
-        };
+        let feature_set = network.feature_set();
         let record = CacheRecord::new(fattorini::features::extract_canonical(board), 0.0);
         let batch = to_dense_batch(&[record], feature_set);
         let output = tch::no_grad(|| network.pawns(&batch));
@@ -910,8 +911,8 @@ mod tests {
                 .unwrap()
                 .to_string();
             let vs = nn::VarStore::new(tch::Device::Cpu);
-            let oracle =
-                Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, pairwise, !pairwise, HeadShape::Plain, 32, hidden_dims);
+            let feature_set = if pairwise { FeatureSet::HalfKav2HmState } else { FeatureSet::HalfKav2Hm };
+            let oracle = Network::with_options(&vs.root(), feature_set, pairwise, !pairwise, HeadShape::Plain, 32, hidden_dims);
             // The piece rows start at zero; drawn here, so that a row of the wrong bucket, or a factor
             // folded into the wrong row, moves the value.
             tch::no_grad(|| {

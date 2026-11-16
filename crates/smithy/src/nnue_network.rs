@@ -107,7 +107,12 @@ impl Network {
         vs: &nn::Path, feature_set: FeatureSet, pairwise: bool, screlu: bool, head: HeadShape, embedding_dim: i64,
         value_head_hidden_dims: &[i64],
     ) -> Network {
-        let halfk = feature_set == FeatureSet::HalfKav2Hm;
+        let halfk = feature_set.halfk();
+        assert!(
+            (feature_set == FeatureSet::HalfKav2HmState) == (halfk && pairwise),
+            "halfk's castling and en passant rows are halfk_threats_pairwise_hidden's, and it has them: the engine \
+             reads them from a halfk pairwise network (tag 22) alone"
+        );
         let halfk_activation = match value_head_hidden_dims.len() {
             0 => screlu && !pairwise,
             2 => screlu != pairwise,
@@ -120,7 +125,7 @@ impl Network {
         );
         assert!(
             !screlu
-                || (matches!(feature_set, FeatureSet::PsqThreats | FeatureSet::HalfKav2Hm)
+                || ((feature_set == FeatureSet::PsqThreats || halfk)
                     && !pairwise
                     && head != HeadShape::Stack
                     && (value_head_hidden_dims.is_empty() || halfk || matches!(head, HeadShape::Kings | HeadShape::Hidden))),
@@ -131,7 +136,7 @@ impl Network {
             "a hidden-beside head is psq_threats screlu's or pairwise's, with one hidden layer"
         );
         assert!(
-            !pairwise || matches!(feature_set, FeatureSet::Psq | FeatureSet::PsqThreats | FeatureSet::HalfKav2Hm),
+            !pairwise || matches!(feature_set, FeatureSet::Psq | FeatureSet::PsqThreats) || halfk,
             "pairwise products exist for psq, psq_threats and halfk only, not {feature_set:?}"
         );
         // A screlu material, phase, count or kings head reads the squares instead.
@@ -151,12 +156,24 @@ impl Network {
             FeatureSet::PsqThreats => Network::PsqThreats(NetworkPsq::with_rows(
                 vs, psq_threats::ROWS, pairwise, screlu, head, embedding_dim, value_head_hidden_dims,
             )),
-            FeatureSet::HalfKav2Hm => {
-                let network =
-                    NetworkPsq::with_rows(vs, halfk::TRAINING_ROWS, pairwise, screlu, head, embedding_dim, value_head_hidden_dims);
-                network.start_factorised();
+            FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
+                let rows = if feature_set == FeatureSet::HalfKav2Hm { halfk::TRAINING_ROWS } else { halfk::TRAINING_ROWS_WITH_STATE };
+                let network = NetworkPsq::with_rows(vs, rows, pairwise, screlu, head, embedding_dim, value_head_hidden_dims);
+                network.start_factorised(rows);
                 Network::HalfKav2Hm(network)
             }
+        }
+    }
+
+    /// The feature set its batches are built under: a halfk pairwise network's has the castling and
+    /// en passant rows (`with_options`).
+    #[cfg(test)]
+    pub fn feature_set(&self) -> FeatureSet {
+        match self {
+            Network::Psq(_) => FeatureSet::Psq,
+            Network::PsqThreats(_) => FeatureSet::PsqThreats,
+            Network::HalfKav2Hm(network) if network.pairwise => FeatureSet::HalfKav2HmState,
+            Network::HalfKav2Hm(_) => FeatureSet::HalfKav2Hm,
         }
     }
 
@@ -219,7 +236,7 @@ impl Network {
         match (self, batch) {
             (Network::Psq(network), DenseBatch::Psq(batch))
             | (Network::PsqThreats(network), DenseBatch::PsqThreats(batch))
-            | (Network::HalfKav2Hm(network), DenseBatch::HalfKav2Hm(batch)) => {
+            | (Network::HalfKav2Hm(network), DenseBatch::HalfKav2Hm(batch) | DenseBatch::HalfKav2HmState(batch)) => {
                 let (own_dense, opponent_dense) = batch.dense();
                 network.pawns(&own_dense, &opponent_dense, batch.buckets())
             }
@@ -293,8 +310,10 @@ impl NetworkPsq {
     /// within a bound proportional to `1 / sqrt(rows)`, here over the training width; rescaled to
     /// psq_threats' width, a fresh halfk network starts as a fresh psq_threats one in distribution.
     /// Stockfish's choice: a rare king bucket keeps the factor's weights until its own data moves it.
-    fn start_factorised(&self) {
-        let scale = (halfk::TRAINING_ROWS as f64 / psq_threats::ROWS as f64).sqrt();
+    /// The castling and en passant rows of a network with them (`rows` its training width) are drawn
+    /// as the threat rows are.
+    fn start_factorised(&self, rows: usize) {
+        let scale = (rows as f64 / psq_threats::ROWS as f64).sqrt();
         tch::no_grad(|| {
             let mut weight = self.transform.ws.shallow_clone();
             let _ = weight.g_mul_scalar_(scale);
@@ -367,15 +386,22 @@ mod tests {
                 let label = Tensor::zeros([batch_size, 1], (tch::Kind::Float, tch::Device::Cpu));
                 DenseBatch::HalfKav2Hm(DenseBatchPsq::from_dense(&zeros, &zeros, label))
             }
+            FeatureSet::HalfKav2HmState => {
+                let zeros = Tensor::zeros([batch_size, halfk::TRAINING_ROWS_WITH_STATE as i64], (tch::Kind::Float, tch::Device::Cpu));
+                let label = Tensor::zeros([batch_size, 1], (tch::Kind::Float, tch::Device::Cpu));
+                DenseBatch::HalfKav2HmState(DenseBatchPsq::from_dense(&zeros, &zeros, label))
+            }
         }
     }
 
     #[test]
     fn forward_produces_the_expected_shape_for_every_feature_set() {
-        for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats, FeatureSet::HalfKav2Hm] {
+        for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats, FeatureSet::HalfKav2Hm, FeatureSet::HalfKav2HmState] {
             let vs = nn::VarStore::new(tch::Device::Cpu);
             let network = if feature_set == FeatureSet::HalfKav2Hm {
                 Network::with_options(&vs.root(), feature_set, false, true, HeadShape::Plain, 8, &[])
+            } else if feature_set == FeatureSet::HalfKav2HmState {
+                Network::with_options(&vs.root(), feature_set, true, false, HeadShape::Plain, 8, &[8, 4])
             } else {
                 Network::new(&vs.root(), feature_set, 8, &[4])
             };
@@ -395,10 +421,12 @@ mod tests {
             let width = match feature_set {
                 FeatureSet::Psq => psq::ROWS,
                 FeatureSet::PsqThreats => psq_threats::ROWS,
-                FeatureSet::HalfKav2Hm => unreachable!("halfk has its own forward test, `forward_produces_the_expected_shape_for_every_feature_set`"),
+                FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
+                    unreachable!("halfk has its own forward test, `forward_produces_the_expected_shape_for_every_feature_set`")
+                }
             };
             let batch = match feature_set {
-                FeatureSet::HalfKav2Hm => unreachable!(),
+                FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => unreachable!(),
                 FeatureSet::Psq => DenseBatch::Psq(DenseBatchPsq::from_dense(
                     &dense_row(&[0, 53, width - 1], width),
                     &Tensor::zeros([1, width as i64], (tch::Kind::Float, tch::Device::Cpu)),

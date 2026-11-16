@@ -129,6 +129,14 @@ its tests; the developer runs them and commits between steps.
   - Zero squares 73.4%, all-zero blocks of 4 30.2% (6.9% on the random network): a nonzero skip
     in int16 may pay after all; noted, not planned.
   - **Decided: int16** (the developer, 2026-11-16).
+- **Test 13 (depth 9)**, against `lc0-halfk-threats-screlu-g1-r2`, both untuned: 53.6% over 794
+  games (+291 -234 =269 for the hidden network), thresholds 45.9% and 54.1%:
+  drawn, curtailed at 400 pairs, leaning to the hidden network (about +25 Elo). Not lost, so step 3
+  goes ahead (halfk-threats-pairwise-hidden.md).
+- **Test 14 (10+0.1)**, the same pair: 51.2% over 754 games (+241 -223 =290 for the hidden
+  network), thresholds 46.2% and 53.8%: drawn, curtailed, about +8 Elo; the speed took about 17
+  of depth 9's 25. Better than psq's hidden layer a month earlier (the developer). Drawn, so step 3
+  is duelled against this network, `lc0-halfk-threats-screlu-hidden-g1-r1`.
 - **Removing int8:** in `nnue.rs`, `HiddenArithmetic`, `QuantizedHead::TwoHiddenI8`,
   `QuantizedRowsI8`, `two_hidden_i8_value`, the `u8` scratch and narrowing that only feed it, and
   their match arms; `quantize_with` and `from_psq_with`/`from_psq_through`'s arithmetic argument

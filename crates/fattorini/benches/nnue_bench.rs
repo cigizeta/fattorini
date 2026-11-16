@@ -1968,6 +1968,10 @@ fn main() {
                 let pairwise = arguments.iter().any(|argument| argument == "--pairwise");
                 network.pairwise = pairwise;
                 network.screlu = !pairwise;
+                if pairwise {
+                    // Tag 22's castling and en passant rows, after the threats.
+                    network.transform.extend(Xorshift(0xBF58476D1CE4E5B9).weights(halfk::STATE_ROWS * embedding_dim));
+                }
                 let mut rng = Xorshift(0x94D049BB133111EB);
                 let mut in_dim = if pairwise { embedding_dim } else { 2 * embedding_dim };
                 network.hidden = widths

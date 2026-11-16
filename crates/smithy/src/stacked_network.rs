@@ -94,7 +94,7 @@ impl StackedNetwork {
             })
             .collect();
         let activation = match feature_set {
-            FeatureSet::Psq | FeatureSet::PsqThreats | FeatureSet::HalfKav2Hm => Activation::ClippedRelu,
+            FeatureSet::Psq | FeatureSet::PsqThreats | FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => Activation::ClippedRelu,
         };
         StackedNetwork {
             feature_set, parameters, arms, hidden_layers: value_head_hidden_dims.len(), activation, pairwise, screlu, head,
@@ -716,8 +716,9 @@ mod tests {
         // variable; the transform's and hidden layers' biases inside their clips (0.25 and 0.5), the
         // hidden weights within 0.02 (16 inputs of at most 1 move a unit by at most 0.32), so every
         // unit passes gradient.
-        let feature_set = FeatureSet::HalfKav2Hm;
         for (pairwise, hidden) in [(false, &[][..]), (false, &[8, 4][..]), (true, &[8, 4][..])] {
+            // Pairwise is halfk_threats_pairwise_hidden's, with the castling and en passant rows.
+            let feature_set = if pairwise { FeatureSet::HalfKav2HmState } else { FeatureSet::HalfKav2Hm };
             let networks: Vec<(nn::VarStore, Network)> = (0..3)
                 .map(|arm| {
                     let vs = nn::VarStore::new(Device::Cpu);

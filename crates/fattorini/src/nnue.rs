@@ -165,7 +165,9 @@ pub const FEATURE_SET_HALFK_THREATS_SCRELU: u32 = 20;
 pub const FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN: u32 = 21;
 /// Halfk_threats_screlu_hidden with each perspective's lanes clipped and their two halves multiplied
 /// in place of the squares, as psq_threats_pairwise's: the head reads `embedding_dim` products. The
-/// body halfk_threats_screlu_hidden's, its first layer half as wide.
+/// body halfk_threats_screlu_hidden's, its first layer half as wide. Its transform also has psq's 12
+/// castling and en passant rows after the threats (`halfk::ROWS_WITH_STATE`), for MCTS, whose value
+/// head scores a leaf with no search beneath it; the two earlier halfk tags have none.
 pub const FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN: u32 = 22;
 
 /// The transform's row count and the head's input width (in multiples of `embedding_dim`) for each
@@ -188,7 +190,7 @@ fn shape_of(feature_set: u32) -> Option<(usize, usize)> {
         | FEATURE_SET_PSQ_THREATS_PAIRWISE_MATERIAL
         | FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN => Some((psq_threats::ROWS, 1)),
         FEATURE_SET_HALFK_THREATS_SCRELU | FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN => Some((halfk::ROWS, 2)),
-        FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN => Some((halfk::ROWS, 1)),
+        FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN => Some((halfk::ROWS_WITH_STATE, 1)),
         _ => None,
     }
 }
@@ -518,7 +520,9 @@ fn screlu_head(own: &[f32], opponent: &[f32], output: &Layer) -> f32 {
 impl PsqNetwork {
     /// The transform's row count.
     fn rows(&self) -> usize {
-        if self.halfk {
+        if self.halfk_state() {
+            halfk::ROWS_WITH_STATE
+        } else if self.halfk {
             halfk::ROWS
         } else if self.threats {
             psq_threats::ROWS
@@ -527,9 +531,15 @@ impl PsqNetwork {
         }
     }
 
+    /// Whether the transform has halfk's castling and en passant rows (`halfk::push_state_rows`):
+    /// a halfk pairwise network, tag 22, the one halfk kind written with them.
+    fn halfk_state(&self) -> bool {
+        self.halfk && self.pairwise
+    }
+
     /// `perspective`'s active piece-square rows of `board`.
     fn piece_square_active_rows(&self, board: &Board, perspective: Color) -> Vec<u16> {
-        piece_square_active_rows(self.halfk, board, perspective)
+        piece_square_active_rows(self.halfk, self.halfk_state(), board, perspective)
     }
 
     /// What the first head layer reads: both perspectives' accumulators, or their products.
@@ -939,10 +949,29 @@ impl PsqNetwork {
 /// castling rights and 1 en passant file (`psq::active_rows`). What bounds an accumulator lane.
 const MAX_ACTIVE_ROWS: usize = 37;
 
-/// `perspective`'s active piece-square rows of `board`: psq's, or halfk's piece rows.
-fn piece_square_active_rows(halfk: bool, board: &Board, perspective: Color) -> Vec<u16> {
+/// `perspective`'s active piece-square rows of `board`: psq's, or halfk's piece rows, then its
+/// castling and en passant rows if `state` (`halfk_state_rows`). Everything the incremental
+/// accumulator holds; the threats are added at evaluation.
+fn piece_square_active_rows(halfk: bool, state: bool, board: &Board, perspective: Color) -> Vec<u16> {
     let canonical = extract_canonical(board);
-    if halfk { halfk::piece_rows(&canonical, perspective) } else { psq::active_rows(&canonical, perspective) }
+    if !halfk {
+        return psq::active_rows(&canonical, perspective);
+    }
+    let mut rows = halfk::piece_rows(&canonical, perspective);
+    if state {
+        rows.extend(halfk_state_rows(board, perspective));
+    }
+    rows
+}
+
+/// `perspective`'s halfk castling and en passant rows of `board`, in the engine's layout, the file
+/// mirrored with its king (`halfk::push_state_rows`).
+fn halfk_state_rows(board: &Board, perspective: Color) -> Vec<u16> {
+    let (_, mirrored) = halfk_king(board, perspective);
+    let mut rows = Vec::with_capacity(5);
+    let file = board.en_passant_square().map(|square| square.file() as u8);
+    halfk::push_state_rows(board.castling_rights(), file, perspective, mirrored, halfk::CASTLING_ROW, &mut rows);
+    rows
 }
 
 /// Pushes `perspective`'s threat rows of `board` onto `rows`: psq_threats', or halfk's, after its
@@ -1028,6 +1057,8 @@ struct RefreshEntry {
     accumulator: Vec<i16>,
     /// Every piece bitboard the accumulator sums, by `color * 6 + piece_type`.
     pieces: [Bitboard; 12],
+    /// The castling and en passant rows it sums, for a network with them (`halfk_state_rows`).
+    state: Vec<u16>,
 }
 
 thread_local! {
@@ -1098,6 +1129,8 @@ pub struct QuantizedPsqNetwork {
     /// A halfk network (`PsqNetwork::halfk`): its piece rows halfk's, refreshed through the
     /// thread's `RefreshCache` when a king changes bucket or mirror.
     halfk: bool,
+    /// Whether its transform has halfk's castling and en passant rows (`PsqNetwork::halfk_state`).
+    halfk_state: bool,
     /// Which quantization this is, for the `RefreshCache`: its entries hold this network's sums.
     cache_id: CacheId,
     transform: Vec<i16>,
@@ -1273,7 +1306,9 @@ impl QuantizedPsqNetwork {
         let mut worst = 0.0f32;
         for lane in 0..dim {
             for group in 0..groups {
-                let rows = group * size..(group + 1) * size;
+                // A network's castling and en passant rows are active beside any bucket's.
+                let state = if network.halfk_state() { halfk::CASTLING_ROW..halfk::ROWS_WITH_STATE } else { 0..0 };
+                let rows = (group * size..(group + 1) * size).chain(state);
                 let mut column: Vec<f32> = rows.map(|row| network.transform[row * dim + lane].abs()).collect();
                 column.sort_by(|a, b| b.total_cmp(a));
                 let bound = network.transform_bias[lane].abs() + column[..MAX_ACTIVE_ROWS.min(column.len())].iter().sum::<f32>();
@@ -1367,6 +1402,7 @@ impl QuantizedPsqNetwork {
             pairwise: network.pairwise,
             screlu: network.screlu,
             halfk: network.halfk,
+            halfk_state: network.halfk_state(),
             cache_id: CacheId::next(),
             transform: to_i16(&network.transform),
             transform_bias: to_i16(&network.transform_bias),
@@ -1427,7 +1463,7 @@ impl QuantizedPsqNetwork {
     /// against.
     pub fn refresh(&self, board: &Board, perspective: Color) -> Vec<i32> {
         let dim = self.embedding_dim;
-        let mut rows = piece_square_active_rows(self.halfk, board, perspective);
+        let mut rows = piece_square_active_rows(self.halfk, self.halfk_state, board, perspective);
         if self.threats {
             push_threat_rows(self.halfk, board, perspective, &mut rows);
         }
@@ -1448,7 +1484,7 @@ impl QuantizedPsqNetwork {
     pub fn refresh_by_color(&self, board: &Board) -> [Vec<i16>; 2] {
         [Color::White, Color::Black].map(|perspective| {
             let mut accumulator = self.transform_bias.clone();
-            for row in piece_square_active_rows(self.halfk, board, perspective) {
+            for row in piece_square_active_rows(self.halfk, self.halfk_state, board, perspective) {
                 self.add_row(&mut accumulator, row as usize);
             }
             accumulator
@@ -1470,6 +1506,7 @@ impl QuantizedPsqNetwork {
                 cache.entries.resize_with(2 * 64, || RefreshEntry {
                     accumulator: self.transform_bias.clone(),
                     pieces: [Bitboard::EMPTY; 12],
+                    state: Vec::new(),
                 });
             }
             let RefreshCache { entries, added, removed, .. } = &mut *cache;
@@ -1490,6 +1527,12 @@ impl QuantizedPsqNetwork {
                     added.extend((now & changed).squares().map(&row));
                     entry.pieces[index] = now;
                 }
+            }
+            if self.halfk_state {
+                let state = halfk_state_rows(board, perspective);
+                removed.extend(entry.state.iter().filter(|row| !state.contains(row)).map(|&row| row as usize));
+                added.extend(state.iter().filter(|row| !entry.state.contains(row)).map(|&row| row as usize));
+                entry.state = state;
             }
             update_i16_avx2(accumulator, &entry.accumulator, &self.transform, added.as_slice(), removed.as_slice());
             entry.accumulator.copy_from_slice(accumulator);
@@ -1518,7 +1561,22 @@ impl QuantizedPsqNetwork {
                     refreshed[index] = true;
                 }
             }
-            ChangedRows::between_halfk(parent, child, kings)
+            let mut changes = ChangedRows::between_halfk(parent, child, kings);
+            // The castling and en passant rows, compared only when either changed. A perspective
+            // whose mirror changed was refreshed above, so its rows here go unread.
+            let state_changed = parent.castling_rights() != child.castling_rights() || parent.en_passant_square() != child.en_passant_square();
+            if self.halfk_state && state_changed {
+                for perspective in [Color::White, Color::Black] {
+                    let (before, after) = (halfk_state_rows(parent, perspective), halfk_state_rows(child, perspective));
+                    for &row in before.iter().filter(|row| !after.contains(row)) {
+                        changes.push(perspective, row as usize, false);
+                    }
+                    for &row in after.iter().filter(|row| !before.contains(row)) {
+                        changes.push(perspective, row as usize, true);
+                    }
+                }
+            }
+            changes
         } else {
             ChangedRows::between(parent, child)
         };
@@ -2030,8 +2088,9 @@ impl ChangedRows {
     }
 
     /// `between` for a halfk network: its piece rows alone, each perspective's in the bucket of its
-    /// king in `child` (`kings`, `halfk_king`). No castling or en passant rows: halfk has none. A
-    /// perspective whose king changed bucket is refreshed instead, and its rows here go unread.
+    /// king in `child` (`kings`, `halfk_king`). The castling and en passant rows of a network with
+    /// them are added by `update`. A perspective whose king changed bucket is refreshed instead, and
+    /// its rows here go unread.
     fn between_halfk(parent: &Board, child: &Board, kings: [(usize, bool); 2]) -> ChangedRows {
         let mut changes = ChangedRows::empty();
         for color in [Color::White, Color::Black] {
@@ -4192,6 +4251,12 @@ pub(crate) mod tests {
         let mut network = lively_halfk_network(embedding_dim);
         network.screlu = !pairwise;
         network.pairwise = pairwise;
+        if pairwise {
+            // The castling and en passant rows, distinct from every other row and large enough
+            // that a missing or misplaced one moves the value.
+            let state = (0..halfk::STATE_ROWS * embedding_dim).map(|index| ((index as f32 * 0.377).fract() - 0.5) * 0.2);
+            network.transform.extend(state);
+        }
         let mut next = 0.0f32;
         let mut weights = |count: usize, size: f32| -> Vec<f32> {
             (0..count)
@@ -4432,10 +4497,13 @@ pub(crate) mod tests {
             };
             let network = QuantizedPsqNetwork::quantize(&sample).unwrap();
             let (mut refreshes, mut mirror_flips) = (0, 0);
+            // For pairwise, whose network has the castling and en passant rows: how often each changed.
+            let (mut rights_changes, mut files_set) = (0, 0);
             let mut seed = 0x9E3779B97F4A7C15u64;
             for start in [
                 "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
                 "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             ] {
                 for _game in 0..4 {
                     let (mut board, _) = Board::from_fen(start).unwrap();
@@ -4457,6 +4525,8 @@ pub(crate) mod tests {
                             refreshes += (before != after) as usize;
                             mirror_flips += (before.1 != after.1) as usize;
                         }
+                        rights_changes += (board.castling_rights() != child.castling_rights()) as usize;
+                        files_set += child.en_passant_square().is_some() as usize;
                         network.update(&accumulators, &mut next, &board, &child);
                         assert_eq!(next, network.refresh_by_color(&child), "width {embedding_dim}, ply {ply}: {}", child.to_fen(1));
                         assert_eq!(network.evaluate_by_color_cp(&next, &child), network.evaluate(&child), "width {embedding_dim}, ply {ply}");
@@ -4466,7 +4536,24 @@ pub(crate) mod tests {
                 }
             }
             assert!(refreshes > 20 && mirror_flips > 0, "width {embedding_dim}: {refreshes} refreshes, {mirror_flips} mirror flips");
+            assert!(rights_changes > 0 && files_set > 0, "width {embedding_dim}: {rights_changes} rights changes, {files_set} en passant files");
+            assert_eq!(network.halfk_state, head == "pairwise", "only the pairwise kind has the state rows");
         }
+    }
+
+    #[test]
+    fn halfk_state_rows_reach_the_value_and_only_tag_22_has_them() {
+        // The same position with and without castling rights, and with and without an en passant
+        // file: the value must differ, so the rows are read. Tags 20 and 21 keep 26,624 rows.
+        let sample = lively_halfk_two_hidden_network(16, [8, 8], true);
+        assert_eq!(sample.transform.len(), halfk::ROWS_WITH_STATE * 16);
+        let network = QuantizedPsqNetwork::quantize(&sample).unwrap();
+        let value = |fen: &str| network.evaluate_pawns(&Board::from_fen(fen).unwrap().0);
+        assert_ne!(value("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"), value("r3k2r/8/8/8/8/8/8/R3K2R w - - 0 1"));
+        assert_ne!(value("4k3/8/8/3Pp3/8/8/8/4K3 w - e6 0 2"), value("4k3/8/8/3Pp3/8/8/8/4K3 w - - 0 2"));
+        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_SCRELU), Some((halfk::ROWS, 2)));
+        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN), Some((halfk::ROWS, 2)));
+        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN), Some((halfk::ROWS_WITH_STATE, 1)));
     }
 
     #[test]

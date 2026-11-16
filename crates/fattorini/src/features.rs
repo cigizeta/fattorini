@@ -626,6 +626,8 @@ pub mod halfk {
     use crate::board::square::Square;
     use crate::board::Board;
 
+    use crate::board::castling_rights::CastlingRights;
+
     use super::{board_from_canonical, king_square_of, oriented_square, psq_threats, unpack_canonical_piece, CanonicalPosition};
 
     /// Both perspectives' active rows. `own` is the side to move's, `opponent` the other side's,
@@ -658,6 +660,45 @@ pub mod halfk {
 
     /// The trainer's transform: the engine's rows, then the factor's, `27,328`.
     pub const TRAINING_ROWS: usize = ROWS + FACTOR_ROWS;
+
+    /// The castling and en passant rows, psq's 12 (`state_rows`), outside the buckets as the threat
+    /// rows are: in the engine right after the threats, so a network with them has
+    /// `ROWS_WITH_STATE` rows and one without keeps `ROWS`.
+    pub const STATE_ROWS: usize = 12;
+
+    /// The first of the four castling rows in the engine's layout.
+    pub const CASTLING_ROW: usize = ROWS;
+
+    /// The engine's transform with the state rows, `26,636`.
+    pub const ROWS_WITH_STATE: usize = ROWS + STATE_ROWS;
+
+    /// The trainer's transform with the state rows: `TRAINING_ROWS`, then the 12, `27,340`. After the
+    /// factor rows, so that those stay at `ROWS` for every halfk network.
+    pub const TRAINING_ROWS_WITH_STATE: usize = TRAINING_ROWS + STATE_ROWS;
+
+    /// `perspective`'s castling and en passant rows, from `base` (`CASTLING_ROW` in the engine,
+    /// `TRAINING_ROWS` in the trainer): its castling rights as psq's (own kingside, own queenside,
+    /// opponent kingside, opponent queenside), not mirrored, kingside meaning the king's rook side
+    /// whatever the mirror; then the en passant file, mirrored with the perspective's king as every
+    /// halfk square is, since it names a square of the board the rest of the network sees. One
+    /// function for the features, the engine's refresh and its update, so the three agree.
+    pub fn push_state_rows(rights: CastlingRights, en_passant_file: Option<u8>, perspective: Color, mirrored: bool, base: usize, rows: &mut Vec<u16>) {
+        let opponent = perspective.opposite();
+        let castling = [rights.kingside(perspective), rights.queenside(perspective), rights.kingside(opponent), rights.queenside(opponent)];
+        for (index, &active) in castling.iter().enumerate() {
+            if active {
+                rows.push((base + index) as u16);
+            }
+        }
+        if let Some(file) = en_passant_file {
+            rows.push(en_passant_row(file, mirrored, base) as u16);
+        }
+    }
+
+    /// The en passant row of `file` from `base`, mirrored with the perspective's king.
+    pub fn en_passant_row(file: u8, mirrored: bool, base: usize) -> usize {
+        base + 4 + (file as usize ^ if mirrored { 7 } else { 0 })
+    }
 
     /// The bucket of a king already oriented for its perspective, and whether that perspective is
     /// mirrored left-right (the king on files e to h).
@@ -725,6 +766,18 @@ pub mod halfk {
         }
     }
 
+    /// `expand` for a network with the state rows: each perspective's rows, then its castling and
+    /// en passant rows from `base` (`TRAINING_ROWS` in the trainer, `CASTLING_ROW` in the engine).
+    pub fn expand_with_state(canonical: &CanonicalPosition, base: usize) -> PositionFeatures {
+        let mut features = expand(canonical);
+        let side_to_move = canonical.side_to_move;
+        for (perspective, rows) in [(side_to_move, &mut features.own), (side_to_move.opposite(), &mut features.opponent)] {
+            let (_, mirrored) = king_bucket(oriented_square(king_square_of(canonical, perspective), perspective));
+            push_state_rows(canonical.castling_rights, canonical.en_passant_file, perspective, mirrored, base, rows);
+        }
+        features
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -740,6 +793,44 @@ pub mod halfk {
         fn features(fen: &str) -> PositionFeatures {
             let (board, _) = Board::from_fen(fen).unwrap();
             expand(&extract_canonical(&board))
+        }
+
+        fn state(fen: &str) -> PositionFeatures {
+            let (board, _) = Board::from_fen(fen).unwrap();
+            expand_with_state(&extract_canonical(&board), CASTLING_ROW)
+        }
+
+        fn state_of(rows: &[u16]) -> Vec<u16> {
+            sorted(rows.iter().copied().filter(|&row| row as usize >= CASTLING_ROW).collect())
+        }
+
+        #[test]
+        fn the_start_has_four_castling_rows_and_no_file() {
+            assert_eq!(ROWS_WITH_STATE, 26_636);
+            assert_eq!(TRAINING_ROWS_WITH_STATE, 27_340);
+            let features = state(STARTING_POSITION_FEN);
+            for rows in [&features.own, &features.opponent] {
+                let base = CASTLING_ROW as u16;
+                assert_eq!(state_of(rows), vec![base, base + 1, base + 2, base + 3]);
+            }
+        }
+
+        #[test]
+        fn rights_are_relative_to_the_perspective_and_never_mirrored() {
+            // White kept only kingside, Black only queenside; both kings on e: mirrored views.
+            let features = state("r3k2r/8/8/8/8/8/8/R3K2R w Kq - 0 1");
+            let base = CASTLING_ROW as u16;
+            assert_eq!(state_of(&features.own), vec![base, base + 3], "White: own kingside, opponent queenside");
+            assert_eq!(state_of(&features.opponent), vec![base + 1, base + 2], "Black: own queenside, opponent kingside");
+        }
+
+        #[test]
+        fn the_en_passant_file_mirrors_with_each_kings_side() {
+            // An f-file target. White's king on g1 (mirrored): f becomes c; Black's on b8 (not): f.
+            let features = state("1k6/8/8/4Pp2/8/8/8/6K1 w - f6 0 2");
+            let file_row = |file: usize| (CASTLING_ROW + 4 + file) as u16;
+            assert_eq!(state_of(&features.own), vec![file_row(2)], "White mirrored");
+            assert_eq!(state_of(&features.opponent), vec![file_row(5)], "Black not mirrored");
         }
 
         fn pieces(rows: &[u16]) -> Vec<u16> {

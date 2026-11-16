@@ -152,7 +152,7 @@ pub(crate) fn write_engine_network(config: &NetConfig, checkpoint_path: &str, ou
         }
         // The engine's own quantization first, so that a network whose folded rows do not fit
         // `i16` is refused here, by name, never written to be refused at load.
-        FeatureSet::HalfKav2Hm => {
+        FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let pairwise = config.architecture.pairwise();
             let network = export::halfk_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate);
@@ -188,7 +188,8 @@ pub(crate) fn feature_set_of(kind: &ArchitectureKind) -> FeatureSet {
         ArchitectureKind::HalfkThreatsScrelu => FeatureSet::HalfKav2Hm,
         // halfk's rows and batches; the hidden layers read no bucket.
         ArchitectureKind::HalfkThreatsScreluHidden => FeatureSet::HalfKav2Hm,
-        ArchitectureKind::HalfkThreatsPairwiseHidden => FeatureSet::HalfKav2Hm,
+        // halfk's rows plus psq's castling and en passant rows, for MCTS.
+        ArchitectureKind::HalfkThreatsPairwiseHidden => FeatureSet::HalfKav2HmState,
         // psq_threats' rows; the square the network's, the bucket the batches' third.
         ArchitectureKind::PsqThreatsScreluMaterial => FeatureSet::PsqThreats,
         // psq_threats' rows; the phase bucket is the fourth of the buckets its batches carry.
@@ -236,7 +237,7 @@ mod tests {
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScrelu), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScrelu), FeatureSet::HalfKav2Hm);
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScreluHidden), FeatureSet::HalfKav2Hm);
-        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseHidden), FeatureSet::HalfKav2Hm);
+        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseHidden), FeatureSet::HalfKav2HmState);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluMaterial), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluPhase), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluCount), FeatureSet::PsqThreats);

@@ -22,6 +22,8 @@ pub enum DenseBatch {
     PsqThreats(DenseBatchPsq),
     /// psq's shape at `halfk::TRAINING_ROWS` wide: halfk's rows, each piece row's factor row too.
     HalfKav2Hm(DenseBatchPsq),
+    /// At `halfk::TRAINING_ROWS_WITH_STATE` wide: halfk's, then its castling and en passant rows.
+    HalfKav2HmState(DenseBatchPsq),
 }
 
 impl DenseBatch {
@@ -32,18 +34,13 @@ impl DenseBatch {
     /// `Network`'s losses, the reference the stacked network is tested against.
     #[cfg(test)]
     pub fn label(&self, arm: usize) -> Tensor {
-        let labels = match self {
-            DenseBatch::Psq(batch) | DenseBatch::PsqThreats(batch) | DenseBatch::HalfKav2Hm(batch) => &batch.label,
-        };
-        labels.narrow(1, arm as i64, 1)
+        self.psq().label.narrow(1, arm as i64, 1)
     }
 
     /// `[batch, arms]`: every arm's labels, the matrix `label` takes one column of. The stacked
     /// network selects its arms' columns from it at once.
     pub fn labels(&self) -> &Tensor {
-        match self {
-            DenseBatch::Psq(batch) | DenseBatch::PsqThreats(batch) | DenseBatch::HalfKav2Hm(batch) => &batch.label,
-        }
+        &self.psq().label
     }
 
     pub fn feature_set(&self) -> FeatureSet {
@@ -51,13 +48,14 @@ impl DenseBatch {
             DenseBatch::Psq(_) => FeatureSet::Psq,
             DenseBatch::PsqThreats(_) => FeatureSet::PsqThreats,
             DenseBatch::HalfKav2Hm(_) => FeatureSet::HalfKav2Hm,
+            DenseBatch::HalfKav2HmState(_) => FeatureSet::HalfKav2HmState,
         }
     }
 
     /// The batch's active rows and buckets, whichever kind: every kind is psq's form.
     pub fn psq(&self) -> &DenseBatchPsq {
         match self {
-            DenseBatch::Psq(batch) | DenseBatch::PsqThreats(batch) | DenseBatch::HalfKav2Hm(batch) => batch,
+            DenseBatch::Psq(batch) | DenseBatch::PsqThreats(batch) | DenseBatch::HalfKav2Hm(batch) | DenseBatch::HalfKav2HmState(batch) => batch,
         }
     }
 
@@ -70,6 +68,7 @@ impl DenseBatch {
             DenseBatch::Psq(batch) => DenseBatch::Psq(batch.to_device(device)),
             DenseBatch::PsqThreats(batch) => DenseBatch::PsqThreats(batch.to_device(device)),
             DenseBatch::HalfKav2Hm(batch) => DenseBatch::HalfKav2Hm(batch.to_device(device)),
+            DenseBatch::HalfKav2HmState(batch) => DenseBatch::HalfKav2HmState(batch.to_device(device)),
         }
     }
 }
@@ -170,6 +169,8 @@ pub enum HostBatch {
     PsqThreats { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
     /// As psq's, at halfk's training width (`halfk_indices`).
     HalfKav2Hm { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
+    /// As halfk's, with the castling and en passant rows (`halfk_state_indices`).
+    HalfKav2HmState { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
 }
 
 /// Builds `records`' host-side vectors under `feature_set`: all the CPU work of a batch.
@@ -187,6 +188,10 @@ pub fn host_batch(records: &[CacheRecord], feature_set: FeatureSet) -> HostBatch
             let (own, opponent, label, buckets) = halfk_indices(records);
             HostBatch::HalfKav2Hm { rows: records.len(), own, opponent, label, buckets }
         }
+        FeatureSet::HalfKav2HmState => {
+            let (own, opponent, label, buckets) = halfk_state_indices(records);
+            HostBatch::HalfKav2HmState { rows: records.len(), own, opponent, label, buckets }
+        }
     }
 }
 
@@ -196,7 +201,8 @@ impl HostBatch {
         match self {
             HostBatch::Psq { own, opponent, label, buckets, .. }
             | HostBatch::PsqThreats { own, opponent, label, buckets, .. }
-            | HostBatch::HalfKav2Hm { own, opponent, label, buckets, .. } => {
+            | HostBatch::HalfKav2Hm { own, opponent, label, buckets, .. }
+            | HostBatch::HalfKav2HmState { own, opponent, label, buckets, .. } => {
                 (own.len() + opponent.len() + buckets.len()) * std::mem::size_of::<i32>() + label.len() * std::mem::size_of::<f32>()
             }
         }
@@ -215,6 +221,9 @@ pub fn upload(host: &HostBatch, device: Device) -> DenseBatch {
         }
         HostBatch::HalfKav2Hm { rows, own, opponent, label, buckets } => {
             DenseBatch::HalfKav2Hm(psq_on(*rows, halfk::TRAINING_ROWS, own, opponent, label, buckets, device))
+        }
+        HostBatch::HalfKav2HmState { rows, own, opponent, label, buckets } => {
+            DenseBatch::HalfKav2HmState(psq_on(*rows, halfk::TRAINING_ROWS_WITH_STATE, own, opponent, label, buckets, device))
         }
     }
 }
@@ -250,6 +259,16 @@ fn psq_threats_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>
 fn halfk_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
     active_indices(records, halfk::TRAINING_ROWS, |canonical| {
         let features = halfk::expand(canonical);
+        (with_factor_rows(features.own), with_factor_rows(features.opponent))
+    })
+}
+
+/// `halfk_indices` with the castling and en passant rows, after the factor rows
+/// (`halfk::TRAINING_ROWS_WITH_STATE`): what the export moves to the engine's `halfk::CASTLING_ROW`.
+fn halfk_state_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
+    active_indices(records, halfk::TRAINING_ROWS_WITH_STATE, |canonical| {
+        // The state rows are past `HALFK_ROWS`, so `with_factor_rows` gives them no factor row.
+        let features = halfk::expand_with_state(canonical, halfk::TRAINING_ROWS);
         (with_factor_rows(features.own), with_factor_rows(features.opponent))
     })
 }
@@ -557,7 +576,7 @@ mod tests {
         // Bag `row` is the own perspective of `row`, bag `rows + row` its opponent's; a position
         // with no threats and the first and last rows are covered by `varied_psq_records`.
         // Halfk's bags hold its rows, then every piece row's factor row.
-        for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats, FeatureSet::HalfKav2Hm] {
+        for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats, FeatureSet::HalfKav2Hm, FeatureSet::HalfKav2HmState] {
             let records = varied_psq_records();
             let batch = to_dense_batch(&records, feature_set);
             let batch = batch.psq();
@@ -576,8 +595,13 @@ mod tests {
                             let features = psq_threats::expand(&record.canonical);
                             (features.own, features.opponent)
                         }
-                        FeatureSet::HalfKav2Hm => {
-                            let features = halfk::expand(&record.canonical);
+                        FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
+                            // With the state rows, they come after the factor rows, none of their own.
+                            let features = if feature_set == FeatureSet::HalfKav2Hm {
+                                halfk::expand(&record.canonical)
+                            } else {
+                                halfk::expand_with_state(&record.canonical, halfk::TRAINING_ROWS)
+                            };
                             let with_factors = |rows: Vec<u16>| {
                                 let pieces: Vec<u16> = rows.iter().copied().filter(|&row| (row as usize) < halfk::HALFK_ROWS).collect();
                                 assert!(pieces.len() >= 2, "both kings at least");
