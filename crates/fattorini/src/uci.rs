@@ -1777,7 +1777,7 @@ mod tests {
     fn only_a_release_is_named_without_dev() {
         assert_eq!(engine_name(true), format!("Fattorini {}", env!("CARGO_PKG_VERSION")));
         assert_eq!(engine_name(false), format!("Fattorini {}-dev", env!("CARGO_PKG_VERSION")));
-        assert!(!RELEASE_BUILD, "tests never build a release");
+        const { assert!(!RELEASE_BUILD, "tests never build a release") };
     }
 
     #[test]

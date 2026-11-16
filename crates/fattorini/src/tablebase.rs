@@ -213,7 +213,7 @@ impl SyzygyTablebase {
     /// from zero; a mate in one is 1. Ranks, `cnt50` being the root's clock:
     ///
     /// - a win within the clock (`dtz + cnt50 <= 99`, no repetition since the last zeroing move):
-    ///   `MAX_DTZ`, every such move alike, so the search chooses among them by its own evaluation;
+    ///   `MAX_DTZ`, every such move alike;
     /// - a win the clock frustrates: `MAX_DTZ / 2 - (dtz + cnt50)`;
     /// - a loss within the clock (`-2 * dtz + cnt50 < 100`): `-MAX_DTZ`;
     /// - a loss the clock saves: `-MAX_DTZ / 2 + (-dtz + cnt50)`;
@@ -221,10 +221,22 @@ impl SyzygyTablebase {
     ///
     /// As the clock runs, fewer wins stay within it, so only moves that make progress keep the
     /// top rank: a won ending is converted under the fifty-move rule.
+    ///
+    /// Unlike Stockfish, a win within the clock also excludes the top-rank moves of a DTZ above the
+    /// shortest, so the search chooses only among the moves that make the most progress. Stockfish
+    /// can leave the choice to its search, whose evaluation knows how to drive a bare king to the
+    /// edge; Fattorini's network sees every such position alike, and its search, probing only
+    /// after zeroing moves, shuffled a KQ vs K ending until the clock ran out (Lichess, 2026-11-16).
     pub fn excluded_root_moves(&self, board: &Board, ancestors: &[u64]) -> Option<Vec<Move>> {
         let ranked = self.root_ranks(board, ancestors)?;
         let best = ranked.iter().map(|ranked| ranked.rank).max()?;
-        Some(ranked.iter().filter(|ranked| ranked.rank < best).map(|ranked| ranked.mv).collect())
+        let shortest = if best == MAX_DTZ {
+            ranked.iter().filter(|ranked| ranked.rank == best).map(|ranked| ranked.dtz).min()
+        } else {
+            None
+        };
+        let slower = |ranked: &RankedMove| shortest.is_some_and(|shortest| ranked.dtz > shortest);
+        Some(ranked.iter().filter(|ranked| ranked.rank < best || slower(ranked)).map(|ranked| ranked.mv).collect())
     }
 
     /// The result at `board` under the fifty-move rule, from its best root rank (`root_ranks`): a
@@ -297,11 +309,11 @@ impl SyzygyTablebase {
     }
 
     /// `root_result` and a best move by the same ranking, ranked once, for the replay's label of a
-    /// position the tables know: one of the moves of the best rank, the moves the search itself
-    /// chooses among in play (`excluded_root_moves`), so the label never prefers what play does not.
-    /// `preferred`, the game's own move, when it is one of them, the choice of a strong engine;
-    /// otherwise the first in generation order. No preference by DTZ, as in play: every win within
-    /// the clock is alike. Never a move that spoils a win or loses a draw.
+    /// position the tables know: one of the moves of the best rank. `preferred`, the game's own
+    /// move, when it is one of them, the choice of a strong engine; otherwise the first in
+    /// generation order. No preference by DTZ: every win within the clock is alike here, though
+    /// play keeps only the shortest (`excluded_root_moves`), so the training labels stay as they
+    /// were. Never a move that spoils a win or loses a draw.
     pub fn root_result_and_move(&self, board: &Board, ancestors: &[u64], preferred: Option<Move>) -> Option<(TbResult, Move)> {
         let (result, best) = self.root_result_and_best_moves(board, ancestors)?;
         let chosen = preferred.filter(|mv| best.iter().any(|&(candidate, _)| candidate == *mv)).unwrap_or(best[0].0);
@@ -311,8 +323,8 @@ impl SyzygyTablebase {
     /// `root_result` and every move of the best rank with its DTZ, from the mover's side (positive
     /// winning, 1 a mate in one, negative losing, 0 drawing), in generation order. For self-play,
     /// which plays a ranked root without a search: every win within the clock shares the best rank,
-    /// so it must break the tie by progress itself (Stockfish's `rankDTZ`), which play leaves to the
-    /// search. `None` where the root is not ranked, or has no legal move.
+    /// so it must break the tie by progress itself (Stockfish's `rankDTZ`), as play does through
+    /// `excluded_root_moves`. `None` where the root is not ranked, or has no legal move.
     pub fn root_result_and_best_moves(&self, board: &Board, ancestors: &[u64]) -> Option<(TbResult, Vec<(Move, i32)>)> {
         let ranked = self.root_ranks(board, ancestors)?;
         let best = ranked.iter().map(|ranked| ranked.rank).max()?;
@@ -463,14 +475,14 @@ mod tests {
     #[test]
     fn a_move_that_throws_the_win_away_is_excluded_and_the_winning_ones_kept() {
         // Black's king on a8, White's on b6: the queen mates on a7, b7, g8 or h8, and Qc7
-        // stalemates. Every winning move shares the top rank, the stalemate is excluded.
+        // stalemates. The stalemate is excluded, and so is every slower win: only the mates in one,
+        // the shortest DTZ, are kept.
         let Some(tables) = local_tables() else { return };
         let (board, _) = Board::from_fen("k7/7Q/1K6/8/8/8/8/8 w - - 0 1").unwrap();
-        let excluded = names(&tables.excluded_root_moves(&board, &[]).expect("KQ vs K is in the tables"));
-        assert!(excluded.contains(&"h7c7".to_string()), "the stalemate must be excluded: {excluded:?}");
-        assert!(!excluded.contains(&"h7h8".to_string()), "a mate must be kept: {excluded:?}");
-        let kept = legal_moves(&board, Color::White).len() - excluded.len();
-        assert!(kept > 1, "more than the mate wins within the clock at 0: {excluded:?}");
+        let excluded = tables.excluded_root_moves(&board, &[]).expect("KQ vs K is in the tables");
+        assert!(excluded.iter().any(|&mv| crate::uci::format_move(mv) == "h7c7"), "the stalemate must be excluded");
+        let kept: Vec<Move> = legal_moves(&board, Color::White).into_iter().filter(|mv| !excluded.contains(mv)).collect();
+        assert_eq!(names(&kept), ["h7a7", "h7b7", "h7g8", "h7h8"].map(String::from).to_vec());
     }
 
     #[test]
@@ -621,8 +633,8 @@ mod tests {
         assert_eq!(SyzygyTablebase::new().root_result(&board, &[]), None, "no tables at all");
     }
 
-    /// The replay's tablebase move: one of the moves play chooses among, the game's when it is one,
-    /// and never one that spoils a win or loses a draw.
+    /// The replay's tablebase move: one of the best rank, the game's when it is one, and never one
+    /// that spoils a win or loses a draw.
     #[test]
     fn the_root_move_is_one_play_would_choose_and_never_spoils_the_result() {
         let Some(tables) = local_tables() else { return };
@@ -632,13 +644,11 @@ mod tests {
             (result, crate::uci::format_move(mv))
         };
 
-        // Every win within the clock is alike, as in play: the game's winning move is kept, slower
-        // than a mate in one or not; its stalemate never is.
+        // Every win within the clock is alike for the label, though play keeps only the shortest:
+        // the game's winning move is kept, slower than a mate in one or not; its stalemate never is.
         let (won, _) = Board::from_fen("k7/7Q/1K6/8/8/8/8/8 w - - 0 1").unwrap();
-        let excluded = tables.excluded_root_moves(&won, &[]).unwrap();
-        let (result, mv) = chosen(&won, None);
+        let (result, _) = chosen(&won, None);
         assert_eq!(result, TbResult::Win);
-        assert!(!excluded.contains(&uci(&won, &mv)), "{mv} is not one of play's moves");
         assert_eq!(chosen(&won, Some(uci(&won, "h7h8"))).1, "h7h8", "the game's mate is kept");
         assert_eq!(chosen(&won, Some(uci(&won, "h7h6"))).1, "h7h6", "the game's slower win is kept too");
         assert_ne!(chosen(&won, Some(uci(&won, "h7c7"))).1, "h7c7", "the game's stalemate is not the label");
@@ -717,11 +727,15 @@ mod tests {
     #[test]
     fn the_engine_mates_with_queen_and_with_rook_within_the_fifty_move_rule() {
         // Far starts, kings apart, so no shallow search sees the mate from the first move: only the
-        // ranking keeps the conversion moving.
+        // ranking keeps the conversion moving, at the shortest DTZ, so the mate comes within the
+        // root's DTZ. The third is Lichess's KQ vs K after 58...Kc7 (2026-11-16), shuffled to a
+        // flag before the shortest DTZ was kept.
         let Some(tables) = local_tables() else { return };
-        for fen in ["8/8/8/4k3/8/8/8/1Q2K3 w - - 0 1", "8/8/8/4k3/8/8/8/R3K3 w - - 0 1"] {
-            let mate = plies_to_mate(&tables, fen, 6);
-            assert!(mate.is_some(), "{fen}: not mated within the fifty-move rule");
+        for fen in ["8/8/8/4k3/8/8/8/1Q2K3 w - - 0 1", "8/8/8/4k3/8/8/8/R3K3 w - - 0 1", "7Q/2k5/8/8/8/8/8/3K4 w - - 1 59"] {
+            let (board, _) = Board::from_fen(fen).unwrap();
+            let dtz = tables.inner.probe_dtz(&to_shakmaty(&board).unwrap()).unwrap().ignore_rounding().0;
+            let mate = plies_to_mate(&tables, fen, 6).unwrap_or_else(|| panic!("{fen}: not mated within the fifty-move rule"));
+            assert!(mate as i32 <= dtz, "{fen}: mated on ply {mate}, the root's DTZ {dtz}");
         }
     }
 
