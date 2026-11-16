@@ -309,6 +309,8 @@ function trainingProgress(lambdas, round) {
   const shape = lambdas.map((l) => l.last).find(Boolean);
   // A fresh run, no round recorded: its first round's pass alone.
   if (!shape) return roundLine(round);
+  // One arm: its length estimated from its stages. A grid keeps the patience rounds below.
+  if (lambdas.length === 1) return stageProgress(shape, round);
   const share = shape.stages * shape.patience;
   // Settled: a finished lambda's share and every stage it left behind, which no new best takes back,
   // its current one too once its patience has run out: the stage ends at the next switch. Waiting: its
@@ -333,6 +335,32 @@ function trainingProgress(lambdas, round) {
   const eta = done > 0 && done < total ? `, ETA about ${duration(Math.round(elapsed * (total - done) / done))}` : "";
   return `${roundLine(round)}<div>${whole(done)} of ${whole(total)} patience rounds (${percent(done / total)}), `
     + `elapsed ${duration(Math.round(elapsed))}${eta}</div>${bar(settled, total, done)}`;
+}
+
+// One arm's progress by its stages (the developer, 2026-11-16). The stages done took `stage_round`
+// rounds, so the run takes about `stages` times their average; never less than the minimum, the
+// current stage's patience left plus every later stage's whole patience, no round improving again.
+// Rounds left: the larger. In the first stage nothing has ended to average: the minimum alone, as a
+// bound, with no ETA and no bar. The pace: the latest round's.
+function stageProgress(r, round) {
+  const elapsed = `elapsed ${duration(Math.round(r.elapsed_seconds))}`;
+  if (r.finished) {
+    return `${roundLine(round)}<div>${whole(r.round)} of ${whole(r.round)} rounds (${percent(1)}), ${elapsed}</div>`
+      + bar(r.round, r.round, r.round);
+  }
+  const pace = r.train_seconds + r.test_seconds;
+  const stage = r.stage || 1;
+  // At the round of a switch the row is still the old stage's, its patience used up: that stage is
+  // done too, and the minimum is the later stages' alone.
+  const done = r.stage_round > 0 && r.stage_round === r.round ? stage : stage - 1;
+  const minimum = Math.max(0, r.patience - r.waiting) + (r.stages - stage) * r.patience;
+  const bound = `at least ${whole(minimum)} rounds left (${duration(Math.round(minimum * pace))})`;
+  if (done === 0) return `${roundLine(round)}<div>${whole(r.round)} rounds, ${elapsed}; ${bound}</div>`;
+  const estimate = Math.ceil(r.stages * r.stage_round / done) - r.round;
+  const left = Math.max(estimate, minimum);
+  const total = r.round + left;
+  return `${roundLine(round)}<div>${whole(r.round)} of about ${whole(total)} rounds (${percent(r.round / total)}), ${elapsed}, `
+    + `ETA about ${duration(Math.round(left * pace))}; ${bound}</div>${bar(r.round, total, r.round)}`;
 }
 
 // The round under way, as the text bar has it: its half, done of total, rate, and that half's ETA.

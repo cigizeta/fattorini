@@ -2837,6 +2837,9 @@ struct RoundRow {
     /// The round's rate, counted from 1, of `stages`; `None` for a rate the schedule does not name.
     stage: Option<usize>,
     stages: usize,
+    /// The round the current stage began at, its latest switch's; 0 in the first stage. The page's
+    /// estimate of a one-arm run's length.
+    stage_round: u64,
     /// Rounds without a new best, of `patience`.
     waiting: u64,
     patience: u64,
@@ -3067,6 +3070,7 @@ impl Status {
                     best_round: stages.best_step / per_round,
                     stage: schedule.rates.iter().position(|&rate| rate == record.learning_rate).map(|index| index + 1),
                     stages: schedule.stage_count,
+                    stage_round: stages.switch_step / per_round,
                     waiting: stages.rounds_without_improvement(record.step, per_round),
                     patience: schedule.patience_rounds,
                     finished: stages.finished,
