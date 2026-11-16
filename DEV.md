@@ -334,7 +334,8 @@ written straight to Drive, never locally:
 `config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
 embeds. `fattorini about` and a first `info string` say exactly what it is: the player, the
 commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`); its UCI name is only
-`Fattorini <version>`, since a rating list's PGNs carry that name whole. lichess-bot's
+`Fattorini <version>-dev`, since a rating list's PGNs carry that name whole, and only a release
+(below) drops the `-dev`. lichess-bot's
 `config.yml` names the snapshot it plays. A release on GitHub is built the same way.
 
 ## Releases

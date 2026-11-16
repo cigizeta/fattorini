@@ -114,6 +114,7 @@ fn release(name: &str, dry_run: bool) -> Result<(), String> {
         notices: Some(&notices),
         target_dir: RELEASE_TARGET_DIR,
         static_runtime: true,
+        release: true,
     };
     let built = snapshot::build_embedded(&build, &exe);
     files.remove();

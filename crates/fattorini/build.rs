@@ -5,10 +5,12 @@
 //! - `FATTORINI_SEARCH_PARAMETERS`: the `search-parameters.txt` it searches with;
 //! - `FATTORINI_TIME_PARAMETERS`: the `time-parameters.txt` it plans its clock with;
 //! - `FATTORINI_DESCRIPTION`: a line of text saying what it is, not a path;
-//! - `FATTORINI_NOTICES`: the third-party notices a release carries (`cargo-about`'s), a path.
+//! - `FATTORINI_NOTICES`: the third-party notices a release carries (`cargo-about`'s), a path;
+//! - `FATTORINI_RELEASE`: `1` for a release alone (`arena release`), passed on as
+//!   `FATTORINI_RELEASE_BUILD`: its UCI name has no `-dev`.
 //!
 //! Each unset (or empty) embeds nothing: the PeSTO evaluation, the untuned parameters of each kind, no
-//! description, no notices, the binary every development build is.
+//! description, no notices, not a release, the binary every development build is.
 
 use std::path::Path;
 
@@ -22,6 +24,9 @@ fn main() {
     let description = std::env::var("FATTORINI_DESCRIPTION").unwrap_or_default();
     std::fs::write(Path::new(&out_dir).join("embedded-description.txt"), description.trim())
         .expect("failed to write the embedded description");
+    println!("cargo:rerun-if-env-changed=FATTORINI_RELEASE");
+    let release = std::env::var("FATTORINI_RELEASE").is_ok_and(|value| value == "1");
+    println!("cargo:rustc-env=FATTORINI_RELEASE_BUILD={}", if release { "1" } else { "" });
 }
 
 /// Copies the file the variable `name` names to `target`, or writes `target` empty when it is unset.

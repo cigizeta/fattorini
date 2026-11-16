@@ -707,11 +707,11 @@ impl Engine {
         match command {
             UciCommand::Uci => {
                 vec![
-                    // Named by the workspace's version alone, which every crate inherits: a rating
-                    // list's PGNs carry the whole name as the player's (the developer, 2026-11-14),
-                    // so what the build embeds is said by the startup `info string` and `about`
-                    // instead, never here.
-                    format!("id name Fattorini {}", env!("CARGO_PKG_VERSION")),
+                    // Named by the workspace's version, `-dev` but in a release (`engine_name`): a
+                    // rating list's PGNs carry the whole name as the player's (the developer,
+                    // 2026-11-14), so what the build embeds is said by the startup `info string`
+                    // and `about` instead, never here.
+                    format!("id name {}", engine_name(RELEASE_BUILD)),
                     "id author Calogero Zarba".to_string(),
                     format!("option name Hash type spin default {DEFAULT_HASH_MB} min {HASH_MB_MIN} max {HASH_MB_MAX}"),
                     format!(
@@ -1224,6 +1224,17 @@ const EMBEDDED_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/emb
 /// The `time-parameters.txt` a build embeds (`FATTORINI_TIME_PARAMETERS`), empty for the untuned
 /// defaults.
 const EMBEDDED_TIME_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-time-parameters.txt"));
+
+/// Whether this build is a release (`FATTORINI_RELEASE`, set by `arena release` alone).
+const RELEASE_BUILD: bool = !env!("FATTORINI_RELEASE_BUILD").is_empty();
+
+/// The engine's name in `id name`: `Fattorini <version>` for a release, `Fattorini <version>-dev`
+/// for every other build (the developer, 2026-11-16), since the version only moves at a release and
+/// a later build would otherwise claim to be it.
+fn engine_name(release: bool) -> String {
+    let dev = if release { "" } else { "-dev" };
+    format!("Fattorini {}{dev}", env!("CARGO_PKG_VERSION"))
+}
 
 /// What the build is (`FATTORINI_DESCRIPTION`), one line, empty for a development build.
 const EMBEDDED_DESCRIPTION: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/embedded-description.txt"));
@@ -1741,7 +1752,7 @@ mod tests {
         assert_eq!(
             engine.handle(UciCommand::Uci),
             vec![
-                format!("id name Fattorini {}", env!("CARGO_PKG_VERSION")),
+                format!("id name Fattorini {}-dev", env!("CARGO_PKG_VERSION")),
                 "id author Calogero Zarba".to_string(),
                 "option name Hash type spin default 16 min 1 max 1024".to_string(),
                 "option name Threads type spin default 1 min 1 max 128".to_string(),
@@ -1759,7 +1770,14 @@ mod tests {
         let mut engine = Engine::new();
         engine.description = "pesto@untuned, commit abc".to_string();
         let replies = engine.handle(UciCommand::Uci);
-        assert_eq!(replies[0], format!("id name Fattorini {}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(replies[0], format!("id name Fattorini {}-dev", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn only_a_release_is_named_without_dev() {
+        assert_eq!(engine_name(true), format!("Fattorini {}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(engine_name(false), format!("Fattorini {}-dev", env!("CARGO_PKG_VERSION")));
+        assert!(!RELEASE_BUILD, "tests never build a release");
     }
 
     #[test]

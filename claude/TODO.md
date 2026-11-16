@@ -164,8 +164,9 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
   `Fattorini 2026.11.0 lc0-psq-threats-screlu-g1-r1@tuned v2026.11.0 2026-11-11 08:20 UTC`, which
   every tester's PGN carries as the player's name (seen in CCRL's "Cloaked In Red"). To be
   `Fattorini 2026.11.0` alone, the network and build moved to an `info string` or `about`.
-  **Done 2026-11-16:** `id name` is `Fattorini <version>` alone; the description stays in the
-  startup `info string` and `about`, both already there. Takes effect with the next snapshot or
+  **Done 2026-11-16:** `id name` is `Fattorini <version>` alone for a release, with `-dev` for
+  every other build (dev-name.md); the description stays in the startup `info string` and
+  `about`, both already there. Takes effect with the next snapshot or
   release (Lichess's snapshot of cb71819 still has the long name).
 - **CalVer, not SemVer:** implemented 2026-11-11 (calver.md), `2026.11.0`, the month enforced by
   `arena release`. Left: its tests run, then calver.md to `done/`.

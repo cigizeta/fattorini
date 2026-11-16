@@ -188,12 +188,14 @@ pub(crate) struct EmbeddedBuild<'a> {
     pub(crate) target_dir: &'a str,
     /// A release's: no Visual C++ Redistributable needed where it runs.
     pub(crate) static_runtime: bool,
+    /// A release's alone: its UCI name without `-dev` (`FATTORINI_RELEASE`).
+    pub(crate) release: bool,
 }
 
 impl<'a> EmbeddedBuild<'a> {
     /// A snapshot's or a match's build: in `EMBEDDED_TARGET_DIR`, no notices, the runtime dynamic.
     pub(crate) fn plain(network: Option<&'a str>, parameters: &'a ParameterFiles, description: &'a str) -> EmbeddedBuild<'a> {
-        EmbeddedBuild { network, parameters, description, notices: None, target_dir: EMBEDDED_TARGET_DIR, static_runtime: false }
+        EmbeddedBuild { network, parameters, description, notices: None, target_dir: EMBEDDED_TARGET_DIR, static_runtime: false, release: false }
     }
 }
 
@@ -225,6 +227,13 @@ pub(crate) fn build_embedded(build: &EmbeddedBuild, out: &str) -> Result<(), Str
         };
     }
     command.env("FATTORINI_DESCRIPTION", build.description);
+    // Removed, not left as inherited: a shell that happens to have it set never names a snapshot a
+    // release.
+    if build.release {
+        command.env("FATTORINI_RELEASE", "1");
+    } else {
+        command.env_remove("FATTORINI_RELEASE");
+    }
     if build.static_runtime {
         command.env("RUSTFLAGS", STATIC_RUSTFLAGS);
     }
