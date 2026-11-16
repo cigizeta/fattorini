@@ -441,12 +441,14 @@ function lossChart(curve, last) {
   if (rows.length === 0) return "";
   const [width, height, left, right, top, bottom] = [1000, 240, 56, 12, 12, 28];
   const first = rows[0][0], latest = rows[rows.length - 1][0];
-  const losses = rows.flatMap((c) => [c[1], c[2]]);
+  // The y range from the rounds after the first tenth alone, linear: the first rounds' steep drop
+  // would otherwise take the whole height. Their points above it run along the top edge.
+  const losses = rows.slice(Math.floor(rows.length / 10)).flatMap((c) => [c[1], c[2]]);
   let low = Math.min(...losses), high = Math.max(...losses);
   const pad = (high - low) * 0.05 || 0.001;
   low -= pad; high += pad;
   const x = (round) => left + (latest === first ? 0 : (round - first) / (latest - first)) * (width - left - right);
-  const y = (loss) => top + (high - loss) / (high - low) * (height - top - bottom);
+  const y = (loss) => top + (high - Math.min(loss, high)) / (high - low) * (height - top - bottom);
   const path = (index) => rows.map((c, i) => `${i ? "L" : "M"}${x(c[0]).toFixed(1)},${y(c[index]).toFixed(1)}`).join("");
   // Stage boundaries: the first round of each rate after the first.
   const stages = rows.filter((c, i) => i > 0 && c[3] !== rows[i - 1][3])
