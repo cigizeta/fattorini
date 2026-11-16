@@ -154,7 +154,7 @@ fn scale_of(path: &str) -> Option<u64> {
     config.get("scale")?.as_u64()
 }
 
-/// What a build embeds as its description (`fattorini about`, UCI's `id name`), each word said
+/// What a build embeds as its description (`fattorini about`, the startup `info string`), each word said
 /// once: the player and its suffix, the commit (`-dirty` when modified, as git says it), and when,
 /// as `pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`.
 pub(crate) fn describe(player: &str, commit: &str, taken: &str) -> String {

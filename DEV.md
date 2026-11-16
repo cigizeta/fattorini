@@ -332,8 +332,9 @@ written straight to Drive, never locally:
 `/g/My Drive/fattorini/data/snapshots/fattorini-<player>-<suffix>-<YYYYMMDD-HHMM>.exe`
 (UTC). A new snapshot replaces the older ones of the same player and suffix, so lichess-bot's
 `config.yml` must then name the new file. No smithy nor running arena is needed. The engine has no option choosing a network: it plays what it
-embeds. `fattorini about`, its UCI name and a first `info string` say exactly what it is: the
-player, the commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`). lichess-bot's
+embeds. `fattorini about` and a first `info string` say exactly what it is: the player, the
+commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`); its UCI name is only
+`Fattorini <version>`, since a rating list's PGNs carry that name whole. lichess-bot's
 `config.yml` names the snapshot it plays. A release on GitHub is built the same way.
 
 ## Releases

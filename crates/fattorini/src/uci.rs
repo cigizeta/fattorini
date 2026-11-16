@@ -583,7 +583,8 @@ pub struct Engine {
     /// The time parameters every clock is planned with: the embedded ones
     /// (`embedded_time_parameters`), no option setting them.
     time_parameters: TimeParameters,
-    /// What the build is (`embedded_description`), said in `id name`; empty for a development build.
+    /// What the build is (`embedded_description`), said by the startup `info string`, never in
+    /// `id name`; empty for a development build.
     description: String,
     /// Whether the next `go` pins this process to a core group (`core_pinning.rs`): set by `run`
     /// under `--lichess`, cleared by the first `go`, so the engine pins at most once. At a `go`,
@@ -706,13 +707,11 @@ impl Engine {
         match command {
             UciCommand::Uci => {
                 vec![
-                    // Named by the workspace's version, which every crate inherits, then by what the
-                    // build embeds, so a GUI and Lichess show which snapshot plays.
-                    if self.description.is_empty() {
-                        format!("id name Fattorini {}", env!("CARGO_PKG_VERSION"))
-                    } else {
-                        format!("id name Fattorini {} {}", env!("CARGO_PKG_VERSION"), self.description)
-                    },
+                    // Named by the workspace's version alone, which every crate inherits: a rating
+                    // list's PGNs carry the whole name as the player's (the developer, 2026-11-14),
+                    // so what the build embeds is said by the startup `info string` and `about`
+                    // instead, never here.
+                    format!("id name Fattorini {}", env!("CARGO_PKG_VERSION")),
                     "id author Calogero Zarba".to_string(),
                     format!("option name Hash type spin default {DEFAULT_HASH_MB} min {HASH_MB_MIN} max {HASH_MB_MAX}"),
                     format!(
@@ -1756,11 +1755,11 @@ mod tests {
     }
 
     #[test]
-    fn a_described_build_says_what_it_is_in_its_name() {
+    fn a_described_build_keeps_its_description_out_of_its_name() {
         let mut engine = Engine::new();
         engine.description = "pesto@untuned, commit abc".to_string();
         let replies = engine.handle(UciCommand::Uci);
-        assert_eq!(replies[0], format!("id name Fattorini {} pesto@untuned, commit abc", env!("CARGO_PKG_VERSION")));
+        assert_eq!(replies[0], format!("id name Fattorini {}", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
