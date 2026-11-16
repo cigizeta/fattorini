@@ -80,6 +80,15 @@ their layout: their networks are trained and must still load.
 - `nnue_bench --halfk --hidden --pairwise`: the new shape.
 - architectures.md, halfk-threats-pairwise-hidden.md's status.
 
+## Bench before training (2026-11-16)
+
+`nnue_bench --halfk --hidden --pairwise --width 256 --depth 9`, a random network, three runs: an
+evaluation 247, 250 and 268 ns (head alone, threats included, 197, 203 and 219 ns), against the
+trained step 2 network's 275 and 283 ns (head 235 and 241 ns) the same day: about 10% faster an
+evaluation, not the half the first layer's cost alone would suggest, the threats and the
+accumulator's activation being shared. Zero products 75.1%, all-zero blocks of 4 30.4%. The depth-9
+search does not compare: a random network's trees differ.
+
 ## After the code
 
 The bench before training (halfk-threats-pairwise-hidden.md): speed at depth 9 against
