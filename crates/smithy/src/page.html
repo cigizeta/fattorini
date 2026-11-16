@@ -442,13 +442,14 @@ function lossChart(curve, last) {
   const [width, height, left, right, top, bottom] = [1000, 240, 56, 12, 12, 28];
   const first = rows[0][0], latest = rows[rows.length - 1][0];
   // The y range from the rounds after the first tenth alone, linear: the first rounds' steep drop
-  // would otherwise take the whole height. Their points above it run along the top edge.
+  // would otherwise take the whole height. Their lines leave the plot through its top, cut there by
+  // a clip rectangle, not pinned to the edge, which would draw values that never were.
   const losses = rows.slice(Math.floor(rows.length / 10)).flatMap((c) => [c[1], c[2]]);
   let low = Math.min(...losses), high = Math.max(...losses);
   const pad = (high - low) * 0.05 || 0.001;
   low -= pad; high += pad;
   const x = (round) => left + (latest === first ? 0 : (round - first) / (latest - first)) * (width - left - right);
-  const y = (loss) => top + (high - Math.min(loss, high)) / (high - low) * (height - top - bottom);
+  const y = (loss) => top + (high - loss) / (high - low) * (height - top - bottom);
   const path = (index) => rows.map((c, i) => `${i ? "L" : "M"}${x(c[0]).toFixed(1)},${y(c[index]).toFixed(1)}`).join("");
   // Stage boundaries: the first round of each rate after the first.
   const stages = rows.filter((c, i) => i > 0 && c[3] !== rows[i - 1][3])
@@ -470,11 +471,12 @@ function lossChart(curve, last) {
     + `<line class="train" x1="${width - 100}" x2="${width - 80}" y1="${top + 6}" y2="${top + 6}"/>`
     + `<text x="${width - 74}" y="${top + 10}">train loss</text>`;
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="training and test loss by round">`
+    + `<defs><clipPath id="loss-plot"><rect x="${left}" y="${top}" width="${width - left - right}" height="${height - top - bottom}"/></clipPath></defs>`
     + stages
     + `<line class="axis" x1="${left}" x2="${left}" y1="${top}" y2="${height - bottom}"/>`
     + `<line class="axis" x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}"/>`
     + ticks + roundTicks
-    + `<path class="train" d="${path(1)}"/><path class="test" d="${path(2)}"/>`
+    + `<g clip-path="url(#loss-plot)"><path class="train" d="${path(1)}"/><path class="test" d="${path(2)}"/></g>`
     + best + legend + `</svg>`;
 }
 
