@@ -344,6 +344,11 @@ pub struct SearchParameters {
     /// and at 10s+0.1, both leaning to `-128` by about 20 Elo; `-140` since 2026-11-08, where the lc0
     /// network's tune settled, a little stricter still.
     pub good_quiet_threshold: i32,
+    /// Temporary, for one no-harm-check duel (2026-11-16): `true` restores the old behaviour, a TT
+    /// cutoff at PV nodes too, set by a test side's `+pvcut`. Not a tuned value: outside `NAMES`,
+    /// `values` and `from_values`, so never in a parameters file nor perturbed by SPSA, and always
+    /// `false` when read back from either. To be removed after the duel's verdict.
+    pub pv_tt_cutoff: bool,
 }
 
 impl SearchParameters {
@@ -359,6 +364,7 @@ impl SearchParameters {
         aspiration_delta: 10,
         history_pruning_multiplier: -35,
         good_quiet_threshold: -140,
+        pv_tt_cutoff: false,
     };
 
     /// The fields' names, in declaration order: the keys of a parameters file, and the order of
@@ -421,6 +427,7 @@ impl SearchParameters {
             aspiration_delta,
             history_pruning_multiplier,
             good_quiet_threshold,
+            pv_tt_cutoff: false,
         }
     }
 
@@ -2006,7 +2013,7 @@ impl<'a> Search<'a> {
         let tt_entry = self.tt.probe(board.hash());
         if let Some(entry) = tt_entry
             && ply > 0
-            && beta - alpha == 1
+            && (beta - alpha == 1 || self.parameters.pv_tt_cutoff)
             && entry.depth() >= remaining
         {
             let score = score_from_tt(entry.score(), ply);
@@ -6713,6 +6720,28 @@ mod tests {
         );
         search.alpha_beta_with_buffer(&board, 1, 3, -INFINITY, INFINITY);
         assert!(!search.pv.line(1).is_empty());
+    }
+
+    #[test]
+    fn the_pvcut_switch_restores_the_tt_cutoff_at_a_pv_node() {
+        // The previous test with `pv_tt_cutoff` on: the open-window node cuts off as it did before
+        // 2026-11-16, leaving its row empty.
+        let (board, _) = Board::from_fen("4k3/8/8/8/8/8/5PPP/R5K1 w - - 0 1").unwrap();
+        let tt = TranspositionTable::new(1);
+        tt.store(board.hash(), Move::new(Square::A1, Square::A8, None), 2, 0, Bound::Exact);
+        let stop_signal = AtomicBool::new(false);
+        let mut search = new_search(
+            3, None, Vec::new(), vec![[None, None]; MAX_PLY as usize], [[0; 64]; 12], vec![0; CONTINUATION_HISTORY_LEN], &tt, &stop_signal,
+        );
+        search.parameters.pv_tt_cutoff = true;
+        search.alpha_beta_with_buffer(&board, 1, 3, -INFINITY, INFINITY);
+        assert!(search.pv.line(1).is_empty());
+    }
+
+    #[test]
+    fn the_pvcut_switch_never_reaches_a_parameters_file() {
+        let switched = SearchParameters { pv_tt_cutoff: true, ..SearchParameters::DEFAULT };
+        assert_eq!(SearchParameters::from_values(switched.values()), SearchParameters::DEFAULT);
     }
 
     #[test]

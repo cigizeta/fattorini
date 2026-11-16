@@ -91,7 +91,14 @@ impl Kind {
 pub struct Side {
     pub player: String,
     pub tuning: TuningSuffix,
+    /// `+pvcut` after the suffix: the TT cutoff at PV nodes too, the search's behaviour before
+    /// 2026-11-16 (`SearchParameters::pv_tt_cutoff`). Temporary, for that change's no-harm-check
+    /// duel; the one switch a side takes.
+    pub pvcut: bool,
 }
+
+/// The one switch a side may name after its suffix, temporarily.
+const PVCUT_SWITCH: &str = "+pvcut";
 
 /// The time managements a side could name during the duels of 2026-11, as a third `@` field: read
 /// and dropped, so the tests logged then still read back.
@@ -100,7 +107,8 @@ const RETIRED_TIME_MANAGEMENTS: [&str; 3] = ["classic", "split", "reckless"];
 impl Side {
     /// As a player's name: `<network>@<suffix>`.
     pub fn text(&self) -> String {
-        format!("{}@{}", self.player, self.tuning.text())
+        let switch = if self.pvcut { PVCUT_SWITCH } else { "" };
+        format!("{}@{}{switch}", self.player, self.tuning.text())
     }
 
     /// `text` read back, a retired time management after it dropped. `@tuned` is no suffix any more:
@@ -111,13 +119,17 @@ impl Side {
         if player.is_empty() {
             return Err(wrong());
         }
+        let (suffix, pvcut) = match suffix.strip_suffix(PVCUT_SWITCH) {
+            Some(suffix) => (suffix, true),
+            None => (suffix, false),
+        };
         let tuning = match suffix.split_once('@') {
             None => suffix,
             Some((tuning, management)) if RETIRED_TIME_MANAGEMENTS.iter().any(|retired| retired.eq_ignore_ascii_case(management)) => tuning,
             Some(_) => return Err(wrong()),
         };
         let tuning = TuningSuffix::parse(tuning).ok_or_else(wrong)?;
-        Ok(Side { player: player.to_string(), tuning })
+        Ok(Side { player: player.to_string(), tuning, pvcut })
     }
 }
 
@@ -644,7 +656,7 @@ mod tests {
 
     #[test]
     fn a_side_s_retired_time_management_is_read_and_dropped() {
-        let side = Side { player: "aa".to_string(), tuning: TuningSuffix::SearchTuned };
+        let side = Side { player: "aa".to_string(), tuning: TuningSuffix::SearchTuned, pvcut: false };
         assert_eq!(Side::parse("aa@search-tuned@reckless").unwrap(), side);
         assert_eq!(Side::parse("aa@search-tuned@Classic").unwrap(), side, "read in any case");
         assert_eq!(Side::parse("aa@search-tuned@split").unwrap().text(), "aa@search-tuned", "never written");
@@ -662,7 +674,7 @@ mod tests {
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
         assert_eq!(
             spec.challenger,
-            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuning: TuningSuffix::SearchTuned }
+            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuning: TuningSuffix::SearchTuned, pvcut: false }
         );
         assert_eq!(
             (spec.challenger.text(), spec.champion.text()),
@@ -693,6 +705,20 @@ mod tests {
             assert!(Spec::parse(&words(wrong, "depth 9")).is_err(), "{wrong}");
         }
         assert!(Spec::parse(&words("duel - aa@untuned bb@untuned", "nodes 9")).is_err());
+    }
+
+    #[test]
+    fn a_side_s_pvcut_switch_reads_back() {
+        let side = Side::parse("aa@search-time-tuned+pvcut").unwrap();
+        assert_eq!(side, Side { player: "aa".to_string(), tuning: TuningSuffix::SearchTimeTuned, pvcut: true });
+        assert_eq!(side.text(), "aa@search-time-tuned+pvcut");
+        assert!(!Side::parse("aa@search-time-tuned").unwrap().pvcut);
+        for wrong in ["aa@search-tuned+pv", "aa@search-tuned+pvcut+pvcut", "aa@+pvcut"] {
+            assert!(Side::parse(wrong).is_err(), "{wrong:?}");
+        }
+        let spec = Spec::parse(&words("duel - aa@search-time-tuned aa@search-time-tuned+pvcut", "clock 10+0.1")).unwrap();
+        assert!(spec.champion.pvcut && !spec.challenger.pvcut);
+        assert!(!spec.mixed(), "one player, one tuning");
     }
 
     /// arena's duel's own cases: six pairs 2-0 the earliest win, an even duel (every pair 1-1)

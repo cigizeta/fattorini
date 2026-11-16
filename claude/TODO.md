@@ -19,8 +19,10 @@ In this order:
 **Tomorrow, 2026-11-16 (the developer, 2026-11-15), in this order:**
 
 1. **The PV-node TT cutoff** (pv-node-tt-cutoff.md): implemented 2026-11-16, tests and clippy
-   passing; left: no-harm-check duel at STC (10+0.1) from the page's tests screen, new against old, both
-   `lc0-psq-threats-screlu-g1-r1@search-time-tuned`. Every arena updated to the new commit first.
+   passing; left: its no-harm-check duel at STC (10+0.1), new against old, both
+   `lc0-psq-threats-screlu-g1-r1@search-time-tuned`. From the page, the old behaviour a
+   temporary `+pvcut` switch (pv-node-tt-cutoff-switch.md, implemented 2026-11-16, tests to run):
+   challenger `@search-time-tuned`, champion `@search-time-tuned+pvcut`.
 2. **Lichess on `lc0-psq-threats-screlu-g1-r1@search-time-tuned`,** only after step 1's duel: a
    new snapshot (`bin/arena snapshot lc0-psq-threats-screlu-g1-r1@search-time-tuned`) of the
    commit with the fix if it is kept, of today's otherwise; lichess-bot pointed at it.

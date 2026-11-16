@@ -520,11 +520,23 @@ pub struct Player {
 /// The prefix of a time parameter's key in a player's text.
 const TIME_KEY_PREFIX: &str = "tm.";
 
+/// The pair a player's text carries when `SearchParameters::pv_tt_cutoff` is on, a test side's
+/// `+pvcut`; absent when off. Temporary, as the field. An arena a build behind refuses it as an
+/// unknown parameter, so it never plays the other side unnoticed.
+const PVCUT_PAIR: &str = "pvcut=1";
+
 impl Player {
     pub fn text(&self) -> String {
         let mut pairs: Vec<String> = match &self.parameters {
             None => vec!["own".to_string()],
-            Some(parameters) => SearchParameters::NAMES.iter().zip(parameters.values()).map(|(name, value)| format!("{name}={value}")).collect(),
+            Some(parameters) => {
+                let mut pairs: Vec<String> =
+                    SearchParameters::NAMES.iter().zip(parameters.values()).map(|(name, value)| format!("{name}={value}")).collect();
+                if parameters.pv_tt_cutoff {
+                    pairs.push(PVCUT_PAIR.to_string());
+                }
+                pairs
+            }
         };
         if let Some(time) = &self.time {
             pairs.extend(TimeParameters::NAMES.iter().zip(time.values()).map(|(name, value)| format!("{TIME_KEY_PREFIX}{name}={value}")));
@@ -543,13 +555,19 @@ impl Player {
             Some((_, management)) => return Err(format!("player: {management:?} is no time management of the duels")),
         };
         let (time_pairs, search_pairs): (Vec<&str>, Vec<&str>) = parameters.split(',').partition(|pair| pair.starts_with(TIME_KEY_PREFIX));
+        let pvcut = search_pairs.contains(&PVCUT_PAIR);
+        let search_pairs: Vec<&str> = search_pairs.into_iter().filter(|&pair| pair != PVCUT_PAIR).collect();
         let lines = |pairs: &[&str]| -> String {
             pairs.iter().map(|pair| pair.trim_start_matches(TIME_KEY_PREFIX).replacen('=', "\t", 1)).collect::<Vec<_>>().join("\n")
         };
         let time = if time_pairs.is_empty() { None } else { Some(TimeParameters::parse_file_text("player", &lines(&time_pairs))?) };
         let parameters = match search_pairs.as_slice() {
-            ["own"] => None,
-            _ => Some(SearchParameters::parse_file_text("player", &lines(&search_pairs))?),
+            ["own"] if !pvcut => None,
+            ["own"] => return Err("player: pvcut needs its parameters in full, not own".to_string()),
+            _ => Some(SearchParameters {
+                pv_tt_cutoff: pvcut,
+                ..SearchParameters::parse_file_text("player", &lines(&search_pairs))?
+            }),
         };
         Ok(Player { network: network.to_string(), parameters, time })
     }
@@ -777,6 +795,21 @@ mod tests {
         assert_eq!(Hello::parse(&hello.text()), Ok(hello));
         let reply = HelloReply { session: "alpha-3".to_string(), token: "t0k3n".to_string(), store: "G:/My Drive/fattorini".to_string() };
         assert_eq!(HelloReply::parse(&reply.text()), Ok(reply));
+    }
+
+    #[test]
+    fn a_player_s_pvcut_reads_back_and_is_written_only_when_on() {
+        let on = Player {
+            network: PESTO.to_string(),
+            parameters: Some(SearchParameters { pv_tt_cutoff: true, razoring_margin: -7, ..SearchParameters::DEFAULT }),
+            time: Some(TimeParameters::DEFAULT),
+        };
+        assert!(on.text().contains(PVCUT_PAIR));
+        assert_eq!(Player::parse(&on.text()), Ok(on));
+        let off = Player { network: PESTO.to_string(), parameters: Some(SearchParameters::DEFAULT), time: None };
+        assert!(!off.text().contains("pvcut"));
+        assert_eq!(Player::parse(&off.text()), Ok(off));
+        assert!(Player::parse(&format!("{PESTO}\town,{PVCUT_PAIR}")).is_err(), "pvcut on a player's own parameters");
     }
 
     #[test]

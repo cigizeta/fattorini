@@ -4905,6 +4905,7 @@ fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
         (true, Tuning::Parameters(parameters)) => parameters,
         (true, Tuning::Untuned) => return Err(format!("{} has no search tune: it can only play @untuned", side.player)),
     };
+    let parameters = SearchParameters { pv_tt_cutoff: side.pvcut, ..parameters };
     let time = if side.tuning.time_tuned() {
         Some(player.own_time_tuning()?.ok_or_else(|| format!("{} has no time tune: no @search-time-tuned", side.player))?)
     } else {
@@ -4935,6 +4936,9 @@ fn parameters_text(parameters: &SearchParameters) -> String {
 /// with uncommitted changes is refused: its scores could not name the code that made them.
 fn score_book_job(status: &Status, source: &str, side: &str, depth: &str) -> Result<String, String> {
     let (side, depth) = score_book_words(source, side, depth)?;
+    if side.pvcut {
+        return Err(format!("{}: +pvcut is for a test's duel only, its scores file would be the plain side's", side.text()));
+    }
     remote::check_mounted().map_err(|error| error.to_string())?;
     let commit = protocol::current_commit();
     if commit == "unknown" || commit.contains("(modified)") {
