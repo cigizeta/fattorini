@@ -20,9 +20,10 @@ In this order:
 
 1. **The PV-node TT cutoff: kept, done 2026-11-16** (pv-node-tt-cutoff.md): test 10 drawn at
    10+0.1 (48.8%, about -8 Elo, within the noise), the temporary `+pvcut` switch then removed.
-2. **Lichess on `lc0-psq-threats-screlu-g1-r1@search-time-tuned`:** a new snapshot
-   (`bin/arena snapshot lc0-psq-threats-screlu-g1-r1@search-time-tuned`) of the commit removing
-   the switch; lichess-bot pointed at it.
+2. **Lichess on `lc0-psq-threats-screlu-g1-r1@search-time-tuned`: done 2026-11-16.** The snapshot
+   of cb71819 (the fix kept, the switch removed) plays since then, with the stricter, shorter book
+   and matchmaking on (below), PGNs to `data/lichess`. Five changes at once: a rating move is not
+   pinned on any one of them.
 3. **The halfk line starts** ("The halfk line" below, step 1: halfk-threats-screlu.md, its plan
    halfk-threats-screlu-implementation.md).
 
