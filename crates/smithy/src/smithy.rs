@@ -2301,7 +2301,7 @@ struct Status {
     /// The status page's address, the LAN's when there is one.
     page: String,
     /// Each lambda's latest round, by its `history.tsv`'s path, read again only when the file changes.
-    history: Mutex<HashMap<String, (std::time::SystemTime, Option<RoundRow>)>>,
+    history: Mutex<HashMap<String, ArmRounds>>,
     /// Lc0's Convert job or a book job, in their own slot beside the arena job's.
     slot: Arc<SourceSlot>,
     /// The arenas this smithy claims.
@@ -2992,10 +2992,17 @@ fn score_view(score: &ScoreDealing) -> WorkView {
     }
 }
 
+/// One arm's `history.tsv` as last read (`Status::arm_rounds`): the file's modification time, its
+/// latest row, and its curve (`LambdaView::curve`).
+type ArmRounds = (std::time::SystemTime, Option<RoundRow>, Vec<[f64; 4]>);
+
 #[derive(Serialize)]
 struct LambdaView {
     lambda: ArmLambda,
     last: Option<RoundRow>,
+    /// Every round as `[round, train loss, test loss, learning rate]`, for the page's loss chart: a
+    /// polyline arm's only, empty for a grid's constants, whose polls stay small.
+    curve: Vec<[f64; 4]>,
 }
 
 #[derive(Clone, Serialize)]
@@ -3047,18 +3054,25 @@ impl Status {
     }
 
     /// The latest round of the `history.tsv` at `path`, its stages replayed by `schedule` as
-    /// training replays them; `None` before its first. Cached by the file's modification time,
-    /// so a poll reads only the files that grew.
-    fn last_row(&self, path: &str, schedule: &Schedule) -> Option<RoundRow> {
-        let modified = std::fs::metadata(path).and_then(|meta| meta.modified()).ok()?;
+    /// training replays them, and every round's losses and rate (`LambdaView::curve`); `None` and
+    /// none before its first. Cached by the file's modification time, so a poll reads only the
+    /// files that grew.
+    fn arm_rounds(&self, path: &str, schedule: &Schedule) -> (Option<RoundRow>, Vec<[f64; 4]>) {
+        let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
+            return (None, Vec::new());
+        };
         let mut cache = self.history.lock().expect("the lock should not be poisoned");
-        if let Some((when, row)) = cache.get(path)
+        if let Some((when, row, curve)) = cache.get(path)
             && *when == modified {
-                return row.clone();
+                return (row.clone(), curve.clone());
             }
         let per_round = schedule.steps_per_round;
-        let elapsed_seconds: f64 =
-            super::history::read_all(path).iter().map(|record| record.train_duration_secs + record.test_duration_secs).sum();
+        let records = super::history::read_all(path);
+        let elapsed_seconds: f64 = records.iter().map(|record| record.train_duration_secs + record.test_duration_secs).sum();
+        let curve: Vec<[f64; 4]> = records
+            .iter()
+            .map(|record| [(record.step / per_round) as f64, record.train_loss, record.test_loss, record.learning_rate])
+            .collect();
         let row = lockstep::latest_round(path, per_round, schedule.warmup_rounds, schedule.patience_rounds, schedule.stage_count).map(
             |(record, stages)| {
                 RoundRow {
@@ -3080,8 +3094,8 @@ impl Status {
                 }
             },
         );
-        cache.insert(path.to_string(), (modified, row.clone()));
-        row
+        cache.insert(path.to_string(), (modified, row.clone(), Vec::clone(&curve)));
+        (row, curve)
     }
 
     /// The job as the status page draws it, the job controls' token given when `control` (the
@@ -3143,7 +3157,7 @@ impl Status {
                 // A new run's training, before its first round: every lambda listed as not started, so
                 // the box is drawn whole from the frozen test set's read on, as a resumed run's is.
                 let training = view.training.or_else(|| {
-                    (state.phase == Phase::Train).then(|| lambdas.iter().map(|&lambda| LambdaView { lambda, last: None }).collect())
+                    (state.phase == Phase::Train).then(|| lambdas.iter().map(|&lambda| LambdaView { lambda, last: None, curve: Vec::new() }).collect())
                 });
                 Some(ForgeView { round, training, ..view })
             }
@@ -3234,7 +3248,9 @@ impl Status {
             .iter()
             .map(|&lambda| {
                 let history = format!("{}/history.tsv", dirs.arm(generation, lambda));
-                LambdaView { lambda, last: self.last_row(&history, &files.schedule) }
+                let (last, curve) = self.arm_rounds(&history, &files.schedule);
+                let curve = if lambda == ArmLambda::Polyline { curve } else { Vec::new() };
+                LambdaView { lambda, last, curve }
             })
             .collect();
         let round_robin = match live {
@@ -6454,6 +6470,32 @@ mod tests {
             slot: Arc::new(SourceSlot::default()),
             claims: Claims::new(test_claim(), Vec::new()),
         }
+    }
+
+    #[test]
+    fn an_arms_rounds_give_its_latest_row_and_every_rounds_losses_and_rate() {
+        // Three rounds, the rate switching at the third: the curve has each, in order, and a file
+        // grown since is read again rather than served from the cache.
+        let dir = scratch("arm-rounds");
+        let path = format!("{dir}/history.tsv");
+        let schedule = Schedule { rates: vec![1e-3, 1e-4], stage_count: 2, steps_per_round: 10, warmup_rounds: 1, patience_rounds: 6 };
+        let record = |step: u64, rate: f64, train: f64, test: f64| super::super::history::EvalRecord {
+            step, learning_rate: rate, train_loss: train, test_loss: test, train_duration_secs: 1.0, test_duration_secs: 0.5,
+        };
+        let status = test_status(Arc::new(Mutex::new(Shared::default())));
+        let (last, curve) = status.arm_rounds(&path, &schedule);
+        assert!(last.is_none() && curve.is_empty(), "no file, nothing");
+        super::super::history::append(&path, &record(0, 1e-3, 0.0, 0.70));
+        super::super::history::append(&path, &record(10, 1e-3, 0.66, 0.65));
+        let (_, curve) = status.arm_rounds(&path, &schedule);
+        assert_eq!(curve, vec![[0.0, 0.0, 0.70, 1e-3], [1.0, 0.66, 0.65, 1e-3]]);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        super::super::history::append(&path, &record(20, 1e-4, 0.64, 0.63));
+        let (last, curve) = status.arm_rounds(&path, &schedule);
+        assert_eq!(curve.len(), 3, "the grown file read again");
+        assert_eq!(curve[2], [2.0, 0.64, 0.63, 1e-4]);
+        assert_eq!(last.expect("a round").round, 2);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn test_claim() -> Claim {
