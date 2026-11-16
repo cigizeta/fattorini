@@ -655,38 +655,6 @@ pub(crate) fn dots_i16_8_avx2(rows: &[i16], activations: &[i16]) -> [i32; 8] {
     reduce_8_epi32(sums)
 }
 
-/// `sum(inputs[i] * row[i])` for eight consecutive rows of a layer's row-major `i8` weights at once,
-/// over unsigned 8-bit inputs: `dots_i16_8_avx2` at twice the multiply-adds an instruction.
-/// `maddubs` adds two `u8 * i8` products into an `i16`, saturating; with inputs in `0..=127` a pair
-/// reaches at most `2 * 127 * 127 = 32,258`, so it never saturates, and the sums are exact. A
-/// multiple of 32 inputs.
-pub(crate) fn dots_u8_i8_8_avx2(rows: &[i8], inputs: &[u8]) -> [i32; 8] {
-    use std::arch::x86_64::{
-        __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16, _mm256_set1_epi16,
-        _mm256_setzero_si256,
-    };
-
-    let in_dim = inputs.len();
-    debug_assert_eq!(rows.len(), 8 * in_dim);
-    debug_assert_eq!(in_dim % 32, 0);
-    debug_assert!(inputs.iter().all(|&input| input <= 127));
-
-    let mut sums = [unsafe { _mm256_setzero_si256() }; 8];
-    let ones = unsafe { _mm256_set1_epi16(1) };
-    for chunk in 0..in_dim / 32 {
-        let offset = chunk * 32;
-        unsafe {
-            let input = _mm256_loadu_si256(inputs.as_ptr().add(offset) as *const __m256i);
-            for (row, sum) in sums.iter_mut().enumerate() {
-                let weight = _mm256_loadu_si256(rows.as_ptr().add(row * in_dim + offset) as *const __m256i);
-                let pairs = _mm256_maddubs_epi16(input, weight);
-                *sum = _mm256_add_epi32(*sum, _mm256_madd_epi16(pairs, ones));
-            }
-        }
-    }
-    reduce_8_epi32(sums)
-}
-
 /// Eight registers of `i32` lanes reduced to their eight sums, in order: the same reduction as
 /// `clipped_dot_products_8_avx2`'s, on `i32` lanes.
 fn reduce_8_epi32(sums: [std::arch::x86_64::__m256i; 8]) -> [i32; 8] {
@@ -972,21 +940,6 @@ mod tests {
             let sums = dots_i16_8_avx2(&rows, &activations);
             for row in 0..8 {
                 assert_eq!(sums[row], expected(&rows[row * 2 * half..(row + 1) * 2 * half]), "half {half}, row {row}");
-            }
-        }
-    }
-
-    #[test]
-    fn the_u8_i8_kernel_matches_scalar_arithmetic_exactly() {
-        // Inputs over the whole 0..=127 and weights over the whole i8 range, both extremes paired, so
-        // that a saturating pair or a sign mistake would show; 32, 64 and 512 inputs.
-        for in_dim in [32, 64, 512] {
-            let inputs: Vec<u8> = (0..in_dim).map(|i| if i % 7 == 0 { 127 } else { ((i * 37) % 128) as u8 }).collect();
-            let rows: Vec<i8> = (0..8 * in_dim).map(|i| if i % 5 == 0 { i8::MIN } else if i % 5 == 1 { i8::MAX } else { ((i * 7919) % 256) as u8 as i8 }).collect();
-            let sums = dots_u8_i8_8_avx2(&rows, &inputs);
-            for row in 0..8 {
-                let expected: i32 = inputs.iter().zip(&rows[row * in_dim..(row + 1) * in_dim]).map(|(&x, &w)| x as i32 * w as i32).sum();
-                assert_eq!(sums[row], expected, "in_dim {in_dim}, row {row}");
             }
         }
     }

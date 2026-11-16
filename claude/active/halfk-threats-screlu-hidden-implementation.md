@@ -120,6 +120,21 @@ its tests; the developer runs them and commits between steps.
   speeds, the developer chooses. The loser's code removed before the duels, so that the engine plays
   one arithmetic.
 - Duels against step 1's winner, depth 9 then 10+0.1, both `@default`.
+- **Measured 2026-11-16**, `lc0-halfk-threats-screlu-hidden-g1-r1` (best loss 0.617875, round 317
+  of 323; gate passed 32.5 of 34), over 193,329 positions of psq's untuned-against-tuned games:
+  - Gap to f32: int16 mean 1.07 cp, p99 6.17, max 20.42, 20 cp or more 0.0%; int8 mean 2.38 cp,
+    p99 23.06, max 94.92, 20 cp or more 1.5%. The random network's gap had hidden int8's tail.
+  - Speed, two runs each: an evaluation int16 275 and 283 ns, int8 267 and 266 ns (about 5%); a
+    node at depth 9 int16 0.91 and 0.94 us, int8 0.93 and 0.91 us, no difference.
+  - Zero squares 73.4%, all-zero blocks of 4 30.2% (6.9% on the random network): a nonzero skip
+    in int16 may pay after all; noted, not planned.
+  - **Decided: int16** (the developer, 2026-11-16).
+- **Removing int8:** in `nnue.rs`, `HiddenArithmetic`, `QuantizedHead::TwoHiddenI8`,
+  `QuantizedRowsI8`, `two_hidden_i8_value`, the `u8` scratch and narrowing that only feed it, and
+  their match arms; `quantize_with` and `from_psq_with`/`from_psq_through`'s arithmetic argument
+  folded into `quantize` and `from_psq`; the int8 test and the int8 half of the pairwise bounds
+  test. In `nnue_bench.rs`, `--int8`, its doc lines and the arithmetic print (always int16). No
+  behaviour change: the engine already loads int16.
 
 ## Commands for the developer
 

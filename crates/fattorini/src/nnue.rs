@@ -30,7 +30,7 @@ use crate::stack_buckets::{
 };
 use crate::simd::{
     activation_dot_i16_avx2, activations_i16_avx2, add_assign_avx2, add_assign_i16_avx2, add_rows_saturating_i16_avx2, clipped_copy_avx2,
-    clipped_dot_product_pair_avx2, clipped_dot_products_8_avx2, clipped_relu_avx2, dot_product_avx2, dot_products_8_avx2, dots_i16_8_avx2, dots_u8_i8_8_avx2,
+    clipped_dot_product_pair_avx2, clipped_dot_products_8_avx2, clipped_relu_avx2, dot_product_avx2, dot_products_8_avx2, dots_i16_8_avx2,
     hidden_values_avx2, pairwise_activations_i16_avx2, pairwise_dot_i16_avx2, screlu_activations_i16_avx2, screlu_dot2_i16_avx2,
     screlu_dot_i16_avx2, update_i16_avx2, whole_products_f32_avx2, Activation,
     DOT_PRODUCT_BLOCK,
@@ -1053,10 +1053,6 @@ thread_local! {
     /// A hidden layer beside the output's input, the whole products or squares (`whole_products`),
     /// per thread as `ACTIVATION_SCRATCH`.
     static WHOLE_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
-
-    /// An 8-bit first hidden layer's input, the squares narrowed to `u8` (`QuantizedHead::TwoHiddenI8`),
-    /// per thread as `ACTIVATION_SCRATCH`.
-    static U8_SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The output of a head with no hidden layer from its integer sum, the same arithmetic on every
@@ -1161,11 +1157,10 @@ enum QuantizedHead {
     /// A screlu network with two hidden layers (halfk's): the first quantized as `Hidden`'s over the
     /// squares, the second and the output in f32, being small; computed as a stack's one set
     /// (`stack_head_value`).
+    /// In 16 bits, not Reckless's 8: on the trained halfk hidden network (2026-11-16) 8 bits were 5%
+    /// faster an evaluation, no faster a node, but 23 cp p99 and 95 cp max from f32, against 6 and
+    /// 20 in 16 bits.
     TwoHidden { first: QuantizedRows, second: Layer, output: Layer },
-    /// `TwoHidden` with its first layer in 8 bits, Reckless's: the squares as `u8`, the weights `i8`
-    /// per row (`QuantizedRowsI8`). Built only on request (`HiddenArithmetic::Int8`), to measure its
-    /// speed and its distance from f32 against `TwoHidden`'s before one of the two is kept.
-    TwoHiddenI8 { first: QuantizedRowsI8, second: Layer, output: Layer },
     /// Material sets (`PsqNetwork::material`): each bucket's output quantized as `Output`'s, on its
     /// own scale, so a bucket's evaluation is a plain pairwise one with that bucket's weights.
     Material { weights: Vec<Vec<i16>>, scales: Vec<f32>, biases: Vec<f32> },
@@ -1221,73 +1216,6 @@ impl QuantizedRows {
     }
 }
 
-/// A first hidden layer quantized to 8 bits: `i8` weights, row `r` on `scales[r]` (its largest weight
-/// at 127), `denominators[r]` as `QuantizedRows`', and the f32 biases.
-#[derive(Debug, Clone, PartialEq)]
-struct QuantizedRowsI8 {
-    weight: Vec<i8>,
-    scales: Vec<f32>,
-    denominators: Vec<f32>,
-    biases: Vec<f32>,
-}
-
-impl QuantizedRowsI8 {
-    fn quantize(layer: &Layer, input_one: f32) -> Result<QuantizedRowsI8, String> {
-        if layer.out_dim > MAX_HIDDEN_OUTPUTS {
-            return Err(format!("a first hidden layer of {} outputs, beyond the {MAX_HIDDEN_OUTPUTS} the head holds", layer.out_dim));
-        }
-        let mut weight = Vec::with_capacity(layer.weight.len());
-        let mut scales = Vec::with_capacity(layer.out_dim);
-        for row in layer.weight.chunks(layer.in_dim) {
-            let largest = row.iter().fold(0.0f32, |most, weight| most.max(weight.abs()));
-            let scale = if largest > 0.0 { i8::MAX as f32 / largest } else { 1.0 };
-            weight.extend(row.iter().map(|weight| (weight * scale).round() as i8));
-            scales.push(scale);
-        }
-        let denominators = scales.iter().map(|&scale| input_one * scale).collect();
-        Ok(QuantizedRowsI8 { weight, scales, denominators, biases: layer.bias.clone() })
-    }
-}
-
-/// The arithmetic of a two-hidden head's first layer (`QuantizedHead::TwoHidden`): `Int16`, the
-/// default, or `Int8`, Reckless's, built to be measured against it. Every other head ignores it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HiddenArithmetic {
-    Int16,
-    Int8,
-}
-
-/// An 8-bit two-hidden head's value from its `u8` squares: the first layer's integer sums, eight rows
-/// at a time where 32 inputs a block and its outputs allow, their values, bit for bit the same
-/// either way (`hidden_values_avx2`), then `second_layer_and_output`.
-fn two_hidden_i8_value(squares: &[u8], vectorized: bool, first: &QuantizedRowsI8, second: &Layer, output: &Layer) -> f32 {
-    let in_dim = squares.len();
-    let out_dim = first.biases.len();
-    let vectorized = vectorized && in_dim.is_multiple_of(32) && out_dim.is_multiple_of(8);
-    let mut sums = [0i32; MAX_HIDDEN_OUTPUTS];
-    let sums = &mut sums[..out_dim];
-    for (group, group_sums) in sums.chunks_mut(8).enumerate() {
-        if vectorized {
-            group_sums.copy_from_slice(&dots_u8_i8_8_avx2(&first.weight[group * 8 * in_dim..(group + 1) * 8 * in_dim], squares));
-        } else {
-            for (index, sum) in group_sums.iter_mut().enumerate() {
-                let row = &first.weight[(group * 8 + index) * in_dim..(group * 8 + index + 1) * in_dim];
-                *sum = squares.iter().zip(row).map(|(&square, &weight)| square as i32 * weight as i32).sum();
-            }
-        }
-    }
-    let mut values = [0.0f32; MAX_HIDDEN_OUTPUTS];
-    let values = &mut values[..out_dim];
-    if vectorized {
-        hidden_values_avx2(sums, &first.denominators, &first.biases, values);
-    } else {
-        for row in 0..out_dim {
-            values[row] = hidden_value(first.biases[row], sums[row], first.scales[row], PRODUCT_ONE);
-        }
-    }
-    second_layer_and_output(values, second, output)
-}
-
 /// A head's second hidden layer and its output in f32, from the first layer's clipped `values`.
 /// Eight rows at a time where its shape allows, one reduction per eight outputs instead of a
 /// horizontal sum per output: the values are already in [0, 1], so the kernel's clamp of its input
@@ -1339,11 +1267,6 @@ impl QuantizedPsqNetwork {
     /// its own king's bucket, so a lane's worst case is the worst over the buckets of each one's
     /// largest rows, far tighter than the largest over all 22,528.
     pub fn quantize(network: &PsqNetwork) -> Result<QuantizedPsqNetwork, String> {
-        QuantizedPsqNetwork::quantize_with(network, HiddenArithmetic::Int16)
-    }
-
-    /// `quantize`, a two-hidden head's first layer in `arithmetic`.
-    pub fn quantize_with(network: &PsqNetwork, arithmetic: HiddenArithmetic) -> Result<QuantizedPsqNetwork, String> {
         let dim = network.embedding_dim;
         // Each group's rows start at `group * size`: halfk's buckets, or psq's rows as one group.
         let (groups, size) = if network.halfk { (halfk::BUCKETS, halfk::FACTOR_ROWS) } else { (1, psq::ROWS) };
@@ -1416,11 +1339,6 @@ impl QuantizedPsqNetwork {
                 QuantizedHead::Output { weight, scale, bias }
             }
             // Halfk's, over the squares or the products alike; psq pairwise's two layers are `Hidden`.
-            [first, second] if network.halfk && arithmetic == HiddenArithmetic::Int8 => QuantizedHead::TwoHiddenI8 {
-                first: QuantizedRowsI8::quantize(first, input_one)?,
-                second: second.clone(),
-                output: network.output.clone(),
-            },
             [first, second] if network.halfk => QuantizedHead::TwoHidden {
                 first: QuantizedRows::quantize(first, input_one)?,
                 second: second.clone(),
@@ -1718,8 +1636,7 @@ impl QuantizedPsqNetwork {
             | QuantizedHead::Material { .. }
             | QuantizedHead::Kings { .. }
             | QuantizedHead::HiddenBeside { .. }
-            | QuantizedHead::TwoHidden { .. }
-            | QuantizedHead::TwoHiddenI8 { .. } => {
+            | QuantizedHead::TwoHidden { .. } => {
                 panic!("a stack, material, kings, hidden-beside or two-hidden head reads products or squares")
             }
         }
@@ -1770,20 +1687,6 @@ impl QuantizedPsqNetwork {
                 let mut squares = scratch.borrow_mut();
                 self.screlu_squares(own, opponent, vectorized, &mut squares);
                 self.stack_head_value(&squares, vectorized && own.len().is_multiple_of(16), first, second, output)
-            });
-        }
-        // The same in 8 bits: the squares, already in `0..=127`, narrowed to `u8` once, then the
-        // first layer eight rows at a time where 32 inputs a block allow, the rest as `TwoHidden`'s.
-        if let QuantizedHead::TwoHiddenI8 { first, second, output } = &self.head {
-            return ACTIVATION_SCRATCH.with(|scratch| {
-                let mut squares = scratch.borrow_mut();
-                self.screlu_squares(own, opponent, vectorized, &mut squares);
-                U8_SCRATCH.with(|scratch| {
-                    let mut narrow = scratch.borrow_mut();
-                    narrow.clear();
-                    narrow.extend(squares.iter().map(|&square| square as u8));
-                    two_hidden_i8_value(&narrow, vectorized, first, second, output)
-                })
             });
         }
         // A taper reads both sets, `buckets`' third place being the phase that blends them.
@@ -1926,12 +1829,6 @@ impl QuantizedPsqNetwork {
                 }
                 // Halfk's two hidden layers, over the products as over a screlu network's squares.
                 QuantizedHead::TwoHidden { first, second, output } => self.stack_head_value(products, vectorized, first, second, output),
-                QuantizedHead::TwoHiddenI8 { first, second, output } => U8_SCRATCH.with(|scratch| {
-                    let mut narrow = scratch.borrow_mut();
-                    narrow.clear();
-                    narrow.extend(products.iter().map(|&product| product as u8));
-                    two_hidden_i8_value(&narrow, vectorized, first, second, output)
-                }),
                 QuantizedHead::Kings { .. } => panic!("a kings head reads squares, not pairwise products"),
             }
         })
@@ -2385,17 +2282,12 @@ pub enum Network {
 impl Network {
     /// A psq network, quantized for the engine, its pawn scale measured.
     pub fn from_psq(network: PsqNetwork) -> Result<Network, String> {
-        Network::from_psq_with(network, HiddenArithmetic::Int16)
+        Network::from_psq_through(network, &crate::labels::LOGISTIC)
     }
 
-    /// `from_psq`, a two-hidden head's first layer in `arithmetic` (`QuantizedPsqNetwork::quantize_with`).
-    pub fn from_psq_with(network: PsqNetwork, arithmetic: HiddenArithmetic) -> Result<Network, String> {
-        Network::from_psq_through(network, arithmetic, &crate::labels::LOGISTIC)
-    }
-
-    /// `from_psq_with` for a network trained under `curve`, its pawn measured through it.
-    fn from_psq_through(network: PsqNetwork, arithmetic: HiddenArithmetic, curve: &crate::labels::Curve) -> Result<Network, String> {
-        let mut quantized = QuantizedPsqNetwork::quantize_with(&network, arithmetic)?;
+    /// `from_psq` for a network trained under `curve`, its pawn measured through it.
+    fn from_psq_through(network: PsqNetwork, curve: &crate::labels::Curve) -> Result<Network, String> {
+        let mut quantized = QuantizedPsqNetwork::quantize(&network)?;
         let pawn_percent = measure_label_percent_through(|board| quantized.evaluate(board), curve);
         quantized.pawn_percent = pawn_percent;
         Ok(Network::Psq(network, quantized))
@@ -2616,7 +2508,7 @@ impl Network {
             halfk,
         };
         network.validate().map_err(|problem| format!("{path}: {problem}"))?;
-        Network::from_psq_through(network, HiddenArithmetic::Int16, &curve_of_version(version)).map_err(|problem| format!("{path}: {problem}"))
+        Network::from_psq_through(network, &curve_of_version(version)).map_err(|problem| format!("{path}: {problem}"))
     }
 }
 
@@ -4380,30 +4272,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_int8_halfk_hidden_head_stays_close_to_f32_and_its_paths_agree() {
-        // The first layer in 8 bits, Reckless's: built only on request, the rest as int16's. Looser
-        // than int16's bound, each weight rounding to 1/254 of its row's largest instead of
-        // 1/65534; the vectorized evaluation (32 lanes, 64 squares, the kernel) equal to the scalar
-        // one exactly, and 24 lanes (48 squares, not a multiple of 32) the scalar loop both ways.
-        for (embedding_dim, widths) in [(32, [16, 32]), (24, [8, 8])] {
-            let network = lively_halfk_hidden_network(embedding_dim, widths);
-            let int8 = QuantizedPsqNetwork::quantize_with(&network, HiddenArithmetic::Int8).expect("a small sample network quantizes");
-            assert!(matches!(int8.head, QuantizedHead::TwoHiddenI8 { .. }));
-            assert!(matches!(QuantizedPsqNetwork::quantize(&network).unwrap().head, QuantizedHead::TwoHidden { .. }), "int16 the default");
-            for fen in [
-                "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
-                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
-            ] {
-                let (board, _) = Board::from_fen(fen).unwrap();
-                let (exact, approximate) = (network.evaluate_pawns(&board), int8.evaluate_pawns(&board));
-                assert!((exact - approximate).abs() <= 0.03, "width {embedding_dim}, {fen}: {approximate} against {exact}");
-                assert_eq!(int8.evaluate(&board), centipawns(approximate), "width {embedding_dim}, {fen}");
-            }
-        }
-    }
-
-    #[test]
     fn a_halfk_pairwise_hidden_network_survives_a_write_and_a_load_as_its_own_kind() {
         let path = temp_path("halfk-pairwise-round-trip");
         let network = lively_halfk_two_hidden_network(16, [8, 4], true);
@@ -4451,24 +4319,22 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_quantized_halfk_pairwise_network_stays_close_to_f32_in_both_arithmetics() {
-        // Step 2's bounds, int16 then int8, over the products: 32 lanes (16 products a perspective)
-        // take the kernels, 24 the scalar loops, and each `evaluate` agrees with its own pawns.
+    fn a_quantized_halfk_pairwise_network_stays_close_to_f32() {
+        // Step 2's int16 bound over the products: 32 lanes (16 products a perspective) take the
+        // kernels, 24 the scalar loops, and each `evaluate` agrees with its own pawns.
         for (embedding_dim, widths) in [(32, [16, 32]), (24, [8, 8])] {
             let network = lively_halfk_two_hidden_network(embedding_dim, widths, true);
-            for (arithmetic, bound) in [(HiddenArithmetic::Int16, 0.02), (HiddenArithmetic::Int8, 0.03)] {
-                let quantized = QuantizedPsqNetwork::quantize_with(&network, arithmetic).expect("a small sample network quantizes");
-                for fen in [
-                    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
-                    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                    "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
-                ] {
-                    let (board, _) = Board::from_fen(fen).unwrap();
-                    let (exact, approximate) = (network.evaluate_pawns(&board), quantized.evaluate_pawns(&board));
-                    let what = format!("{arithmetic:?}, width {embedding_dim}, {fen}");
-                    assert!((exact - approximate).abs() <= bound, "{what}: {approximate} against {exact}");
-                    assert_eq!(quantized.evaluate(&board), centipawns(approximate), "{what}");
-                }
+            let quantized = QuantizedPsqNetwork::quantize(&network).expect("a small sample network quantizes");
+            for fen in [
+                "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
+            ] {
+                let (board, _) = Board::from_fen(fen).unwrap();
+                let (exact, approximate) = (network.evaluate_pawns(&board), quantized.evaluate_pawns(&board));
+                let what = format!("width {embedding_dim}, {fen}");
+                assert!((exact - approximate).abs() <= 0.02, "{what}: {approximate} against {exact}");
+                assert_eq!(quantized.evaluate(&board), centipawns(approximate), "{what}");
             }
         }
     }

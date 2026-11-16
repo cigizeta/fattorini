@@ -78,13 +78,11 @@
 //!
 //! `--hidden` with `--halfk` makes it a halfk_threats_screlu_hidden one: two hidden layers in place of
 //! the output, 16 and 32 unless `--head` says otherwise, the output reading the second alone; it also
-//! prints the share of zero squares, what skipping them in the first layer could save. `--int8` runs
-//! that first layer in 8 bits instead of 16 (`HiddenArithmetic`), for a random network or a loaded
-//! one, and with `--quantization` measures its distance from f32 the same way:
+//! prints the share of zero squares, what skipping them in the first layer could save. The first
+//! layer is int16; int8 was measured and dropped (2026-11-16: 23 cp p99 from f32 on the trained
+//! network, against 6, for no speed a node):
 //!
 //! `cargo bench --bench nnue_bench -- --halfk --hidden --width 256 --depth 9`
-//!
-//! `cargo bench --bench nnue_bench -- --halfk --hidden --int8 --width 256 --depth 9`
 //!
 //! `--pairwise` with `--halfk --hidden` makes it a halfk_threats_pairwise_hidden one: each
 //! perspective's halves multiplied in place of the squares, the first layer reading half as many:
@@ -243,7 +241,7 @@ use fattorini::search::MATE_SCORE;
 use fattorini::features::{halfk, psq, psq_threats};
 use fattorini::movegen::legal::legal_moves;
 use fattorini::board::color::Color;
-use fattorini::nnue::{HiddenArithmetic, Layer, Network, PsqNetwork, QuantizedPsqNetwork, StackLayers};
+use fattorini::nnue::{Layer, Network, PsqNetwork, QuantizedPsqNetwork, StackLayers};
 use fattorini::stack_buckets::{COUNT_BUCKETS, MATERIAL_BUCKETS, OUR_KING_BUCKETS, PHASE_BUCKETS, TAPER_SETS, THEIR_KING_BUCKETS};
 use fattorini::search::choose_best_move;
 use fattorini::tablebase::SyzygyTablebase;
@@ -2003,14 +2001,6 @@ fn main() {
                 .unwrap_or_else(|problem| panic!("{problem}"))
         }
     };
-    // `--int8`: a two-hidden head's first layer quantized to 8 bits instead (`HiddenArithmetic`), the
-    // network otherwise the same, loaded or random. Every other head ignores it.
-    let network = if arguments.iter().any(|argument| argument == "--int8") {
-        let Network::Psq(psq_network, _) = network;
-        Network::from_psq_with(psq_network, HiddenArithmetic::Int8).unwrap_or_else(|problem| panic!("{problem}"))
-    } else {
-        network
-    };
     let source = format!(
         "{} (pawn scale {}%)",
         path.as_deref().unwrap_or("a randomly generated network"),
@@ -2112,8 +2102,6 @@ fn main() {
     let one_bucket = arguments.iter().any(|argument| argument == "--one-bucket");
     let per_evaluation = time_psq(psq_network, quantized, &boards, one_bucket);
     if psq_network.halfk && psq_network.hidden.len() == 2 {
-        let arithmetic = if arguments.iter().any(|argument| argument == "--int8") { "int8" } else { "int16" };
-        println!("  first hidden layer in {arithmetic}");
         zero_squares(quantized, &boards, psq_network.pairwise);
     }
 
