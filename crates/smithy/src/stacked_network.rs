@@ -18,7 +18,7 @@ use tch::{nn, Device, Kind, Reduction, Tensor};
 use super::batch::{DenseBatch, DenseBatchPsq};
 use super::feature_set::FeatureSet;
 use super::net_config::Architecture;
-use super::nnue_network::{pairwise_products, Network, FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND};
+use super::nnue_network::{pairwise_products, Network, FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND, TRANSFORM_BOUNDS};
 use fattorini::labels::S_PAWNS;
 use super::stack_head::{hidden_output_input, kings_output_input, kings_stage_input, stacked_stage_forward, taper, their_own_frame, HeadShape, TAPER_PHASE_COLUMN};
 use super::value_head::Activation;
@@ -121,13 +121,15 @@ impl StackedNetwork {
         self.arms = keep.len() as i64;
     }
 
-    /// `Network::weight_bounds`, which holds for every arm alike.
+    /// `Network::weight_bounds`, which holds for every arm alike: the transform always
+    /// (`TRANSFORM_BOUNDS`), so no network can be refused by the engine's quantization.
     pub fn weight_bounds(&self) -> Vec<(&'static str, f64)> {
+        let mut bounds = TRANSFORM_BOUNDS.to_vec();
         let psq = matches!(self.feature_set, FeatureSet::Psq | FeatureSet::PsqThreats);
         if psq && self.hidden_layers > 0 && !self.head.bucketed() {
-            return vec![(FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND)];
+            bounds.push((FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND));
         }
-        Vec::new()
+        bounds
     }
 
     fn parameter(&self, name: &str) -> &Tensor {
@@ -472,7 +474,7 @@ mod tests {
                 close(&test.get(arm as i64), &network.test_loss(&batch, column), &format!("{what} test"));
             }
             close(&pawns, &stack.dense_pawns(psq_batch(&batch)), &format!("{feature_set:?} stack sparse against dense"));
-            assert!(stack.weight_bounds().is_empty(), "{feature_set:?}: a stack's weights are not bounded");
+            assert_eq!(stack.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "{feature_set:?}: a stack's transform alone is bounded");
         }
     }
 
@@ -506,7 +508,7 @@ mod tests {
             close(&test.get(arm as i64), &network.test_loss(&batch, 2 - arm), &format!("{what} test"));
         }
         close(&pawns, &stack.dense_pawns(psq_batch(&batch)), "material sparse against dense");
-        assert!(stack.weight_bounds().is_empty(), "a material head's weights are not bounded");
+        assert_eq!(stack.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "a material head's transform alone is bounded");
 
         stack.training_losses(&batch, &columns).sum(Kind::Float).backward();
         for (arm, (vs, network)) in networks.iter().enumerate() {
@@ -552,7 +554,7 @@ mod tests {
             close(&test.get(arm as i64), &network.test_loss(&batch, 2 - arm), &format!("{what} test"));
         }
         close(&pawns, &stack.dense_pawns(psq_batch(&batch)), "screlu material sparse against dense");
-        assert!(stack.weight_bounds().is_empty(), "a material head's weights are not bounded");
+        assert_eq!(stack.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "a material head's transform alone is bounded");
 
         stack.training_losses(&batch, &columns).sum(Kind::Float).backward();
         for (arm, (vs, network)) in networks.iter().enumerate() {
@@ -593,7 +595,7 @@ mod tests {
             close(&test.get(arm as i64), &network.test_loss(&batch, 2 - arm), &format!("{what} test"));
         }
         close(&pawns, &stack.dense_pawns(psq_batch(&batch)), "screlu taper sparse against dense");
-        assert!(stack.weight_bounds().is_empty(), "a taper's weights are not bounded");
+        assert_eq!(stack.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "a taper's transform alone is bounded");
 
         stack.training_losses(&batch, &columns).sum(Kind::Float).backward();
         for (arm, (vs, network)) in networks.iter().enumerate() {
@@ -645,7 +647,7 @@ mod tests {
             close(&test.get(arm as i64), &network.test_loss(&batch, 2 - arm), &format!("{what} test"));
         }
         close(&pawns, &stack.dense_pawns(psq_batch(&batch)), "screlu kings sparse against dense");
-        assert!(stack.weight_bounds().is_empty(), "a kings head's weights are not bounded");
+        assert_eq!(stack.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "a kings head's transform alone is bounded");
 
         stack.training_losses(&batch, &columns).sum(Kind::Float).backward();
         for (arm, (vs, network)) in networks.iter().enumerate() {
@@ -690,7 +692,7 @@ mod tests {
                 close(&test.get(arm as i64), &network.test_loss(&batch, 2 - arm), &format!("{what} test"));
             }
             close(&pawns, &stack.dense_pawns(psq_batch(&batch)), &format!("{kind} hidden sparse against dense"));
-            assert!(stack.weight_bounds().is_empty(), "a {kind} hidden head's weights are not bounded");
+            assert_eq!(stack.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "a {kind} hidden head's transform alone is bounded");
 
             stack.training_losses(&batch, &columns).sum(Kind::Float).backward();
             for (arm, (vs, network)) in networks.iter().enumerate() {
@@ -755,7 +757,7 @@ mod tests {
                 close(&pawns.get(arm as i64), &network.pawns(&batch).view([-1]), &format!("halfk {hidden:?} arm {arm} pawns"));
             }
             close(&pawns, &stack.dense_pawns(psq_batch(&batch)), &format!("halfk {hidden:?} sparse against dense"));
-            assert!(stack.weight_bounds().is_empty(), "a halfk network's weights are not bounded");
+            assert_eq!(stack.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "a halfk network's transform alone is bounded");
 
             stack.training_losses(&batch, &columns).sum(Kind::Float).backward();
             for (arm, (vs, network)) in networks.iter().enumerate() {

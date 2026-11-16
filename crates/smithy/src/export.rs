@@ -990,6 +990,33 @@ mod tests {
         panic!("ten random networks in a row answered every position alike");
     }
 
+    /// A halfk network whose every transform parameter is `value`, folded as the export folds it
+    /// (each real row plus its factor row, so every lane at `value + 37 * 2 * value` in the worst
+    /// case), then quantized as the engine does at load.
+    fn quantize_halfk_at(value: f64) -> Result<(), String> {
+        let vs = nn::VarStore::new(tch::Device::Cpu);
+        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, false, true, HeadShape::Plain, 8, &[]);
+        tch::no_grad(|| {
+            for name in ["transform.weight", "transform.bias"] {
+                let _ = vs.variables()[name].shallow_clone().fill_(value);
+            }
+        });
+        let network = halfk_network_from(&vs, false, 8, &[], 0, 0.0);
+        fattorini::nnue::QuantizedPsqNetwork::quantize(&network).map(|_| ())
+    }
+
+    #[test]
+    fn a_transform_at_its_training_bound_always_quantizes() {
+        use super::super::nnue_network::TRANSFORM_BOUND;
+        // halfk is the worst case of every architecture (its folded rows are two parameters each):
+        // at the bound, positive or negative, the engine must accept it.
+        for value in [TRANSFORM_BOUND, -TRANSFORM_BOUND] {
+            quantize_halfk_at(value).unwrap_or_else(|message| panic!("refused at {value}: {message}"));
+        }
+        // The check can fail: a little past the margin the bound leaves, the same network is refused.
+        assert!(quantize_halfk_at(1.8).is_err(), "1.8 should overflow i16 when folded");
+    }
+
     #[test]
     fn the_agreement_test_would_actually_notice_a_scrambled_transform() {
         // A test that only ever passes proves nothing, so this checks the check: skipping the

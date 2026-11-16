@@ -44,6 +44,18 @@ pub const FIRST_HIDDEN_WEIGHT_BOUND: f64 = 127.0 / 64.0;
 /// The name `VarStore` files a psq network's first hidden layer weights under.
 pub const FIRST_HIDDEN_WEIGHT: &str = "value_head.hidden0.weight";
 
+/// The bound every NNUE network's transform, weights and bias, is kept within in training, so that
+/// the engine's quantization (`QuantizedPsqNetwork::quantize`) can never refuse it (the developer,
+/// 2026-11-16: safety by construction). The engine refuses when a lane's bias plus its 37 largest
+/// rows within one group exceeds `32,767 / 255`, about 128.5, at the strictest scale. halfk is the
+/// worst case: an exported row is its trained row plus its factor row, so a lane reaches at most
+/// `B + 37 * 2B = 75B`, which fits for `B` up to about 1.71. Trained weights stay far below it, so
+/// the bound guarantees without regularising.
+pub const TRANSFORM_BOUND: f64 = 1.5;
+
+/// The names `VarStore` files every NNUE network's transform under, and their bound.
+pub const TRANSFORM_BOUNDS: [(&str, f64); 2] = [("transform.weight", TRANSFORM_BOUND), ("transform.bias", TRANSFORM_BOUND)];
+
 /// Fattorini's own eval network, one variant per feature set (there is no bypass, no
 /// piece-square-table term, and no MoE mixture any more).
 pub enum Network {
@@ -162,15 +174,17 @@ impl Network {
     /// apart would not bound their sum. Nor halfk's: the engine quantizes its first hidden layer on
     /// one scale per row, which fits any range. `StackedNetwork::weight_bounds` is tested to agree
     /// with it.
+    /// Every network's transform is bounded too (`TRANSFORM_BOUNDS`), first.
     #[cfg(test)]
     pub fn weight_bounds(&self) -> Vec<(&'static str, f64)> {
-        match self {
-            Network::Psq(network) | Network::PsqThreats(network) => match &network.head {
-                Head::Plain(value_head) if value_head.has_hidden_layer() => vec![(FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND)],
-                _ => Vec::new(),
-            },
-            Network::HalfKav2Hm(_) => Vec::new(),
+        let mut bounds = TRANSFORM_BOUNDS.to_vec();
+        if let Network::Psq(network) | Network::PsqThreats(network) = self
+            && let Head::Plain(value_head) = &network.head
+            && value_head.has_hidden_layer()
+        {
+            bounds.push((FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND));
         }
+        bounds
     }
 
     /// The loss one training step descends, for every kind: `bce_loss` on the pawns, against arm
@@ -570,7 +584,7 @@ mod tests {
         let vs = nn::VarStore::new(tch::Device::Cpu);
         let network = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, false, true, HeadShape::Plain, 8, &[8, 4]);
         assert!(vs.variables().contains_key(FIRST_HIDDEN_WEIGHT));
-        assert!(network.weight_bounds().is_empty(), "the engine quantizes each row on its own scale");
+        assert_eq!(network.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "the engine quantizes each hidden row on its own scale");
     }
 
     #[test]
@@ -579,11 +593,16 @@ mod tests {
             let vs = nn::VarStore::new(tch::Device::Cpu);
             let network = Network::new(&vs.root(), feature_set, 8, &[4, 4]);
             let bounds = network.weight_bounds();
-            assert_eq!(bounds, vec![(FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND)]);
+            let mut expected = TRANSFORM_BOUNDS.to_vec();
+            expected.push((FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND));
+            assert_eq!(bounds, expected);
             assert!(vs.variables().contains_key(FIRST_HIDDEN_WEIGHT), "the name tch registers it under");
+            for (name, _) in TRANSFORM_BOUNDS {
+                assert!(vs.variables().contains_key(name), "{name}: the name tch registers it under");
+            }
 
             let vs = nn::VarStore::new(tch::Device::Cpu);
-            assert!(Network::new(&vs.root(), feature_set, 8, &[]).weight_bounds().is_empty(), "no hidden layer");
+            assert_eq!(Network::new(&vs.root(), feature_set, 8, &[]).weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "no hidden layer");
         }
     }
 

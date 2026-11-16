@@ -25,7 +25,11 @@ In this order:
    and matchmaking on (below), PGNs to `data/lichess`. Five changes at once: a rating move is not
    pinned on any one of them.
 3. **The halfk line starts** ("The halfk line" below, step 1: halfk-threats-screlu.md, its plan
-   halfk-threats-screlu-implementation.md).
+   halfk-threats-screlu-implementation.md). **Started 2026-11-16:** `lc0-halfk-threats-screlu`,
+   run 1, on the lambda polyline, no scaled run first (the developer); stopped in its round 2 the
+   same day to restart with the transform bounded in training (transform-bound.md: no network can
+   be refused by the engine's quantization any more). Then: its gate against PeSTO, its duels against
+   `lc0-psq-threats-screlu-g1-r1`, both `@untuned`, at depth 9 then 10+0.1.
 
 **The time tune: done and accepted, 2026-11-15.** 32,768 pairs at 10+0.1, its values in the
 network's `time-parameters.txt` on Drive (`hard_soft_ratio` 3.0 to 4.2, `hard_fraction` 0.728 to
