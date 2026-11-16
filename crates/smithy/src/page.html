@@ -451,8 +451,9 @@ function lossChart(curve, last) {
   const x = (round) => left + (latest === first ? 0 : (round - first) / (latest - first)) * (width - left - right);
   const y = (loss) => top + (high - loss) / (high - low) * (height - top - bottom);
   const path = (index) => rows.map((c, i) => `${i ? "L" : "M"}${x(c[0]).toFixed(1)},${y(c[index]).toFixed(1)}`).join("");
-  // Stage boundaries: the first round of each rate after the first.
-  const stages = rows.filter((c, i) => i > 0 && c[3] !== rows[i - 1][3])
+  // Stage boundaries: the last round of each rate before a switch. A round's losses are measured
+  // after it trains, so the first round at the new rate already shows its drop, which starts here.
+  const stages = rows.filter((c, i) => i + 1 < rows.length && c[3] !== rows[i + 1][3])
     .map((c) => `<line class="stage" x1="${x(c[0]).toFixed(1)}" x2="${x(c[0]).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const loss = low + f * (high - low);

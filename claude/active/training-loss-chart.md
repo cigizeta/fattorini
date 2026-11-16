@@ -31,8 +31,10 @@ test loss, best loss, round, stage, patience. With one arm, lambda says `polylin
      y now scales to the rounds after the first tenth alone, linear, the plot clipped as a
      window: earlier lines leave it through its top, never pinned to the edge (the developer). A log of the gap above the lowest loss was weighed and not taken: its shape
      moves with every new best.
-   - **Stage boundaries:** a faint vertical line at the first round of each learning rate after
-     the first (where the curve's rate changes), the drops they explain.
+   - **Stage boundaries:** a faint vertical line at the last round of each learning rate before a
+     switch, where the drop begins: a round's losses are measured after it trains, so the new
+     rate's first round already shows its effect (the developer, 2026-11-16, after seeing the line
+     one round late).
    - **Best round:** a dot on the test line at `last.best_round`.
    - Colors as tokens on `:root`, a dark variant beside the page's own.
 4. **Nothing before round 1:** no chart until a trained round exists.
