@@ -1,12 +1,13 @@
 # The Lc0 route, halfk_threats_pairwise_hidden (2026-11-02, the halfk line's third step):
 # lc0-halfk-threats-screlu-hidden with each perspective's clipped lanes split in two halves multiplied
 # in place of the squares, the head reading 256 products instead of 512 squares. Generation 1 trains
-# on Lc0's labels, direct blend, nine lambdas; its winner is duelled against
-# lc0-halfk-threats-screlu-hidden's, only if that one won or drew its own duel. Differs from
-# lc0-halfk-threats-screlu-hidden by its kind alone.
+# on Lc0's labels, direct blend, one arm at the lambda polyline (2026-11-16, replacing nine
+# lambdas); its winner is duelled against lc0-halfk-threats-screlu-hidden's, only if that one won or
+# drew its own duel. Differs from lc0-halfk-threats-screlu-hidden by its kind alone.
 
-# The forge. Generation 1's grid: 0.01 to 0.09.
-grid_center: 0.05
+# The forge. Lambda by progress: each generation trains one arm, each position labelled at the
+# polyline measured on its corpus.
+lambda: polyline
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
 # gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
 training_positions: 1073741824

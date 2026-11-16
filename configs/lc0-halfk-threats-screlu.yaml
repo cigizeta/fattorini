@@ -1,12 +1,13 @@
 # The Lc0 route, halfk_threats_screlu (2026-11-02, the halfk line's first step): lc0-psq-threats-screlu
 # with psq's rows replaced by halfk's, Stockfish's HalfKAv2_hm, its 32 king buckets trained factorised.
-# Generation 1 trains on Lc0's labels, direct blend, nine lambdas; its winner is gated against PeSTO,
-# as a sanity check, once, then duelled against the psq_threats_screlu trained on the same corpus.
-# Differs from lc0-psq-threats-screlu by its kind alone. Lc0's corpus is the one the forges read,
-# data/lc0 (1.2B positions with visit counts, since 2026-11-02).
+# Generation 1 trains on Lc0's labels, direct blend, one arm at the lambda polyline (2026-11-16,
+# replacing nine lambdas centred at 0.05, as lc0-psq-threats-screlu on 2026-11-04); it is gated
+# against PeSTO, as a sanity check, once, then duelled against the psq_threats_screlu trained on the
+# same corpus. Differs from lc0-psq-threats-screlu by its kind alone.
 
-# The forge. Generation 1's grid: 0.01 to 0.09.
-grid_center: 0.05
+# The forge. Lambda by progress: each generation trains one arm, each position labelled at the
+# polyline measured on its corpus.
+lambda: polyline
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
 # gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
 training_positions: 1073741824

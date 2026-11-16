@@ -175,7 +175,11 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
 
 - **Atan support and lockstep training of several arms:** deprecated by the 2026-11-05 verdict
   (training-corrections.md), kept "for now". Old networks play from a build of the archive, not
-  from the new binaries. To remove, after checking nothing still needs them.
+  from the new binaries. To remove, after checking nothing still needs them. **The grid to go soon
+  (the developer, 2026-11-16):** no config uses it since that day (the four halfk configs moved to
+  `lambda: polyline`, before the halfk line's first run), so `grid_center`, the lockstep arms and
+  the per-lambda candidates (`<config>-g<g>-l<lambda>-r<n>`) can go; a design note first, saying
+  what still reads old runs' candidates (arena players, the tests form, freeze).
 - **The Tests form's network select, with the lambda grid** (the developer, 2026-11-08): once a
   generation trains the polyline's one arm alone, "winner (lpolyline)" chooses among one, so the
   select goes when the grid goes, not before.

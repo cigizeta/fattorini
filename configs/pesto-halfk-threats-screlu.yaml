@@ -1,12 +1,13 @@
 # The PeSTO route, halfk_threats_screlu (2026-11-02, the identity line): Stockfish's HalfKAv2_hm with
 # psq_threats' threats and SCReLU, its 32 king buckets trained factorised, as lc0-halfk-threats-screlu.
 # Generation 1 trains on PeSTO's corpus (pesto.yaml), gated against PeSTO; from generation 2 on, each
-# generation plays its training set with the previous winner, trains 9 lambdas to convergence, picks
-# one by round robin and gates it against its teacher. Trained after lc0-halfk-threats-screlu.
+# generation plays its training set with the previous winner, trains its one polyline arm to
+# convergence and gates it against its teacher. Trained after lc0-halfk-threats-screlu.
 
-# The forge. Generation 1's grid: 0.91 to 0.99, the game result carrying the label, PeSTO's score a
-# small correction; later generations centre on the previous winner.
-grid_center: 0.95
+# The forge. Lambda by progress (2026-11-16, as pesto-psq-threats-screlu since 2026-11-04): each
+# generation trains one arm, each position labelled at the polyline measured on its corpus, straight
+# to the gate. The grid it replaces centred generation 1 on 0.95.
+lambda: polyline
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
 # gate ends the run. Generation 1's are pesto.yaml's.
 training_positions: 1073741824
