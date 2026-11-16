@@ -5152,6 +5152,8 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
     }
     let verdict = match (&judged.verdict, stopped) {
         (Some(verdict), _) => verdict.clone(),
+        // A duel's status is its bounds alone, named here as its column names them on the page.
+        (None, _) if spec.kind == matches::Kind::Duel => format!("stopped: thresholds {}", judged.status),
         (None, _) => format!("stopped: {}", judged.status),
     };
     matches::put(dir, &test_record(spec, number, &started, judged.games, judged.challenger_points, verdict.clone()))?;

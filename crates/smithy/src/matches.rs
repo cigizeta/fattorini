@@ -364,11 +364,8 @@ fn judge_duel(pairs: &[i32]) -> Judged {
         pairs: counted,
         games,
         challenger_points,
-        status: format!(
-            "thresholds {:.1}% and {:.1}%",
-            100.0 * (1.0 - threshold),
-            100.0 * threshold
-        ),
+        // Shown under the column "thresholds" (the developer, 2026-11-16), so the bounds alone.
+        status: format!("[{:.1}%, {:.1}%]", 100.0 * (1.0 - threshold), 100.0 * threshold),
         gauge: Gauge { value: score, lower: 1.0 - threshold, upper: threshold, left: "champion wins", right: "challenger wins" },
         expected_games: Some(if verdict.is_some() { games } else { 2 * duel_projection(score, sigma, side.count) }),
         verdict,
