@@ -1,7 +1,9 @@
 # Combine MCTS with NNUE: psq_threats_mcts design
 
 This document is for psq_threats_mcts only (see `architectures.md`).
-The transformer track is not covered here.
+The transformer track is not covered here. **2026-11-16 (the developer):** the network MCTS is to be
+tried with is now the halfk line's, from halfk_threats_pairwise_hidden on, which gains psq's 12
+castling and en passant rows for it (halfk-threats-pairwise-hidden.md, decision 7).
 
 ## Goal
 

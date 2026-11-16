@@ -6,12 +6,13 @@ unless step 2 (halfk-threats-screlu-hidden.md) loses its depth-9 duel against st
 developer, 2026-11-16, replacing "only if step 2 wins or draws": pairwise halves the first hidden
 layer's cost, so a step 2 lost at 10+0.1 alone, to its speed, is the case it is for). Duelled
 against step 2's winner if step 2 won or drew at 10+0.1, otherwise against step 1's. Step 3
-of the halfk line: step 2's network with SCReLU replaced by pairwise products, nothing else changed.
+of the halfk line: step 2's network with SCReLU replaced by pairwise products, and castling and en
+passant rows added (decision 7).
 
 ## The network
 
 ```
-(26,624 -> 256) x 2, each lane clipped; the first 128 lanes times the last 128: 256 values
+(26,636 -> 256) x 2, each lane clipped; the first 128 lanes times the last 128: 256 values
 256 -> 16, clipped to [0, 1]
  16 -> 32, clipped to [0, 1]
  32 -> 1
@@ -32,6 +33,16 @@ of the halfk line: step 2's network with SCReLU replaced by pairwise products, n
 5. **No weight bound**, as step 2: the engine quantizes the first hidden layer one scale per row.
 6. **Starting weights as step 2's:** the transform factorised as halfk's start, the head drawn
    fresh.
+7. **Castling and en passant rows added** (the developer, 2026-11-16): psq's 12, 4 castling rights
+   relative to the perspective and 8 en passant files, outside the king buckets as the threat rows
+   are (26,624 + 12 rows in the engine). Halfk had dropped them, as Stockfish's; no duel could
+   measure them under alpha-beta, but this network is the one planned for MCTS (mcts-nnue.md),
+   where the value head scores a leaf with no search beneath it, the policy ranks castling and en
+   passant moves, and Lc0's labels were searched knowing both. So step 3 differs from step 2 in
+   two ways, pairwise and these rows; its duel measures them together. Their code is new work for
+   the implementation plan: the rows in `halfk`, the engine's incremental updates on castling, king
+   and rook moves and en passant squares, the trainer's batches; tag 22's shape changes, no
+   network having been trained under it.
 
 ## For the implementation plan
 
