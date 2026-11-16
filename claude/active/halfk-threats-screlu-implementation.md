@@ -5,7 +5,11 @@ Status: written 2026-11-02. **2026-11-16:** the halfk configs moved from the lam
 differs from `lc0-psq-threats-screlu` by its kind alone; the design's lambdas 0.01 to 0.09 and 0.91
 to 0.99 (decision 11) are superseded by the polyline. Left: step 7's scaled run, then the full run.
 The same day the transform became bounded in training (transform-bound.md), so the export's
-refusal (decision 7) is unreachable; the first full run, stopped in its round 2, was abandoned and run 2 started fresh under the bound. Step 0 done the same day: tests and clippy passing, the bench's nodes
+refusal (decision 7) is unreachable; the first full run, stopped in its round 2, was abandoned and run 2 started fresh under the bound.
+Run 2's test loss beat `lc0-psq-threats-screlu` run 1's best (0.624558, round 173) by round 232
+(0.623598), still falling. **No tune for this network (the developer, 2026-11-16):** it is duelled
+`@untuned` against psq's `@untuned` only, as a test of the halfk features; the tune is kept for
+the pairwise with hidden layers. Step 0 done the same day: tests and clippy passing, the bench's nodes
 unchanged (3,684,206 before and after; the 3,117,647 of 2026-10-28 predates `corr` and `blend`).
 Step 1 written the same day, to test. As built: `psq_threats::push_threat_rows_from` (first row and
 mirror) beside the unchanged `push_threat_rows`; `halfk::piece_row` takes the unmirrored oriented

@@ -390,8 +390,7 @@ refused, saying which to run first.
 
 The forge uses the tunes too. A generation's self-play plays its teacher's tune, and PeSTO's Play
 plays PeSTO's: either is refused, saying so, while that tune is missing. Gates and round robins play
-the default parameters on both sides, so they judge the networks alone, except PeSTO, which plays
-its tune wherever it is a side.
+the default parameters on both sides, PeSTO included, so they judge the evaluations alone.
 
 Under a clock the smithy benches its own machine at the start, and every arena scales its clock to
 its speed against that one. The result goes to the network's `search-parameters.txt`. A forge run's

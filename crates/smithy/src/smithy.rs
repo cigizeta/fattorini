@@ -679,8 +679,10 @@ enum Work {
 // What the forge's sides play (the developer, 2026-11-08, reversing 2026-11-03's "the forge never
 // plays a tune"): the tune cannot be escaped, every network that ships being tuned, so it is used.
 // Self-play plays its teacher's tune, the gate and round robin the defaults so they judge the network
-// alone, except PeSTO, which plays its tune wherever it is a side. The tune at depth 9 cost no
-// quality: the lc0 network's against the defaults drew at depth 9, leaning to the tune.
+// alone. PeSTO plays its tune in its own play, and the defaults in a gate, untuned against untuned
+// (the developer, 2026-11-16: PeSTO is not tuned yet, and a gate is a sanity check). The tune at
+// depth 9 cost no quality: the lc0 network's against the defaults drew at depth 9, leaning to the
+// tune.
 
 /// `player`'s finished search tune, its `search-parameters.txt` (PeSTO's in its tuning folder); `None` while it has
 /// none, a tune under way included, which writes it only at its end.
@@ -711,11 +713,6 @@ fn teacher_player(run: &str, generation: u32, source: Option<Source>) -> Option<
     } else {
         None
     }
-}
-
-/// What a forge's gate or round robin side plays: PeSTO its tune, every network the defaults.
-fn side_parameters(player: &str, needed_by: &str) -> Result<SearchParameters, String> {
-    if player == PESTO { required_tune(PESTO, needed_by) } else { Ok(SearchParameters::DEFAULT) }
 }
 
 /// A tune's `k`s per arena worker in a chore and in each top-up: each `k` is played at theta as it
@@ -3888,9 +3885,9 @@ impl Run<'_> {
     fn gate(&self, state: &GenState, winner: ArmLambda) -> Result<(Ended, bool, f64), String> {
         let challenger = self.candidate(state, winner)?;
         let teacher = self.teacher(state.generation)?;
-        // The challenger the defaults, untuned yet; the teacher the defaults too, so the gate judges
-        // the networks alone, or PeSTO's tune when PeSTO teaches.
-        let sides = [SearchParameters::DEFAULT, side_parameters(&teacher, &format!("generation {}'s gate plays", state.generation))?];
+        // Both sides the defaults, PeSTO too, untuned against untuned: the gate judges the
+        // evaluations alone.
+        let sides = [SearchParameters::DEFAULT, SearchParameters::DEFAULT];
         log::info!("gate: lambda {winner} against {teacher}, SPRT at {} Elo", self.config.gate_elo_d());
         let started = Instant::now();
         let elo_d = self.config.gate_elo_d();
@@ -6411,8 +6408,6 @@ mod tests {
         assert_eq!(teacher_player("pesto-psq-r2", 3, Some(Source::Pesto)).as_deref(), Some("pesto-psq-g2-r2"));
         assert_eq!(teacher_player("pesto-psq-r2", 1, Some(Source::Pesto)).as_deref(), Some(PESTO), "PeSTO taught a PeSTO run's first");
         assert_eq!(teacher_player("lc0-psq-r1", 1, Some(Source::Lc0)), None, "Lc0 is no Fattorini player: the defaults");
-        // A network side of a gate or round robin plays the defaults, needing no tune.
-        assert_eq!(side_parameters("lc0-psq-g1-r1", "a test"), Ok(SearchParameters::DEFAULT));
     }
 
     #[test]

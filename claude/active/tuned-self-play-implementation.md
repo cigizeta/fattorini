@@ -31,6 +31,8 @@ seven decisions are in tuned-self-play.md.
 - `Work::Pairs` gains `sides`, the two sides' parameters for a gate or round robin (a test keeps its
   own, `Shared::test`). A round robin: the defaults on both sides. A gate: the challenger the
   defaults; the teacher the defaults, or PeSTO's tune when PeSTO is the teacher (decision 3).
+  **Superseded 2026-11-16 (the developer):** a gate is untuned against untuned, PeSTO too; PeSTO
+  is not tuned yet, and a gate is a sanity check.
 - The test that pinned the old values goes; tests check that self-play deals its `parameters`, a
   gate its `sides`, a round robin the defaults, and which player taught a generation
   (`teacher_player`).
