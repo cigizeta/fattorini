@@ -365,6 +365,10 @@ cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), 
    `bench`.
 6. Read the draft on GitHub, then publish it there. A candidate that proves broken: delete its draft
    and tag the next candidate, never moving a tag anyone has seen.
+7. Once published, the version moved on at once to the month's next (`2026.11.0` released, then
+   `2026.11.1`), so every later build, named `Fattorini <version>-dev`, never reads as a build from
+   before the release (the developer, 2026-11-16). A next release in a later month sets that month's
+   `.0` in step 1, the moved-on version never released, which CalVer allows.
 
 ## Tuning search and time parameters
 

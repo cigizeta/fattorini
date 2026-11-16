@@ -9,6 +9,10 @@ Since `id name` lost the build's description (2026-11-16), every build said `Fat
 the release, and every snapshot after it, though they play other code (the version only moves at a
 release). PGNs and GUIs record the name alone, never the startup `info string`.
 
+**Then the version moved on (the developer, 2026-11-16):** `2026.11.0` to `2026.11.1`, so a build
+after a release says `2026.11.1-dev`, not `2026.11.0-dev`, which reads as a build from before it;
+DEV.md's releases gain a step 7 doing so after every release.
+
 ## Decisions
 
 1. A release (`arena release`) is named `Fattorini <version>`, as now.
