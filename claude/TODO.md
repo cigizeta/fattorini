@@ -103,7 +103,8 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
    six weeks of mixed engines, the rating still rising when it retired. **Probably beaten, not yet
    settled:** `fattorini-bot` at 2612.8 in blitz on 2026-11-11 (RD 109, just past provisional; +18
    over the last 12 games), better than 99.9% of Lichess's blitz players (Lichess's own figure),
-   its day including a draw against a 2819. Compare again once its RD is near Rotor's 51.
+   its day including a draw against a 2819. Compare again once its RD is near Rotor's 51. Matchmaking on from 2026-11-16 (the developer), so
+   the RD falls faster: rated bot challenges at 3+2 to 5+3, within 300 points, after 5 idle minutes.
 4. **The first release: done 2026-11-11.** Fattorini 2026.11.0, `lc0-psq-threats-screlu-g1-r1@tuned`,
    published on GitHub with `fattorini-v2026.11.0.exe`. Candidate `v2026.11.0-rc.1` checked
    (`about`) and its draft deleted, then `v2026.11.0` tagged on the same squashed commit of `main`;
@@ -349,8 +350,10 @@ changes).
   here rather than a ready-made one such as Cerebellum (the developer, 2026-11-11), for Lichess
   alone: CCRL testers use their own books, and the arena's matches keep the UHO book. Seen on Lichess:
   the human OTB book (LumbrasGigaBase 2400+) sometimes leaves the bot worse out of the opening;
-  meanwhile lichess-bot's `min_weight` raised to 10 and `max_depth` lowered to 12, from the next
-  session, to see whether that alone helps.
+  meanwhile lichess-bot's `min_weight` raised from 1 to 10 (a book move needs 10% of its position's
+  weight) and `max_depth` lowered from 20 to 8 full moves (the developer, 2026-11-16; planned as 12
+  but never applied until then), to see whether that alone helps. Its book path moved to the
+  `fattorini` tree and its `pgn_directory` to `data/lichess` the same day, both stale.
 
 ## After chess settles
 
