@@ -9,7 +9,10 @@ refusal (decision 7) is unreachable; the first full run, stopped in its round 2,
 Run 2's test loss beat `lc0-psq-threats-screlu` run 1's best (0.624558, round 173) by round 232
 (0.623598), still falling. **No tune for this network (the developer, 2026-11-16):** it is duelled
 `@untuned` against psq's `@untuned` only, as a test of the halfk features; the tune is kept for
-the pairwise with hidden layers. Step 0 done the same day: tests and clippy passing, the bench's nodes
+the pairwise with hidden layers. Run 2 ended at its best 0.623490 (round 265); its gate, PeSTO
+untuned since the same day, passed at 94.4% (36 games). **Test 11, depth 9: halfk won**, 54.7%
+over 658 games (champion psq +203 -265 =190), about +33 Elo, the evaluation alone. Next: the same
+duel at 10+0.1. Step 0 done the same day: tests and clippy passing, the bench's nodes
 unchanged (3,684,206 before and after; the 3,117,647 of 2026-10-28 predates `corr` and `blend`).
 Step 1 written the same day, to test. As built: `psq_threats::push_threat_rows_from` (first row and
 mirror) beside the unchanged `push_threat_rows`; `halfk::piece_row` takes the unmirrored oriented
