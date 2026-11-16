@@ -2,7 +2,10 @@
 
 Status: designed 2026-11-02, decisions by the developer; implemented the same day, ahead of step 2's
 duel (the developer, "we can implement"; halfk-threats-pairwise-hidden-implementation.md), trained
-only if step 2 (halfk-threats-screlu-hidden.md) wins or draws its duel against step 1's winner. Step 3
+unless step 2 (halfk-threats-screlu-hidden.md) loses its depth-9 duel against step 1's winner (the
+developer, 2026-11-16, replacing "only if step 2 wins or draws": pairwise halves the first hidden
+layer's cost, so a step 2 lost at 10+0.1 alone, to its speed, is the case it is for). Duelled
+against step 2's winner if step 2 won or drew at 10+0.1, otherwise against step 1's. Step 3
 of the halfk line: step 2's network with SCReLU replaced by pairwise products, nothing else changed.
 
 ## The network
@@ -42,4 +45,5 @@ of the halfk line: step 2's network with SCReLU replaced by pairwise products, n
 - **The bench before training**, as step 2's: speed at depth 9 against step 2's winner, and the
   share of zero products and of all-zero blocks of four (a product is zero when either lane is, so
   more zeros than the squares; whether skipping them pays in int8).
-- **Duels:** against step 2's winner, depth 9 then 10+0.1, both `@default`.
+- **Duels:** against step 2's winner, or step 1's if step 2 lost at 10+0.1 (Status), depth 9 then
+  10+0.1, both `@default`.
