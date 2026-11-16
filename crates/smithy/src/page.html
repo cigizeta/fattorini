@@ -349,12 +349,14 @@ function stageProgress(r, round) {
       + bar(r.round, r.round, r.round);
   }
   const pace = r.train_seconds + r.test_seconds;
+  // Round 0 only tests, so its seconds are no round's pace: no time until a round has trained.
+  const time = (rounds) => (r.train_seconds > 0 ? ` (${duration(Math.round(rounds * pace))})` : "");
   const stage = r.stage || 1;
   // At the round of a switch the row is still the old stage's, its patience used up: that stage is
   // done too, and the minimum is the later stages' alone.
   const done = r.stage_round > 0 && r.stage_round === r.round ? stage : stage - 1;
   const minimum = Math.max(0, r.patience - r.waiting) + (r.stages - stage) * r.patience;
-  const bound = `at least ${whole(minimum)} rounds left (${duration(Math.round(minimum * pace))})`;
+  const bound = `at least ${whole(minimum)} rounds left${time(minimum)}`;
   if (done === 0) return `${roundLine(round)}<div>${whole(r.round)} rounds, ${elapsed}; ${bound}</div>`;
   const estimate = Math.ceil(r.stages * r.stage_round / done) - r.round;
   const left = Math.max(estimate, minimum);
