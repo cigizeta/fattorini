@@ -18,14 +18,11 @@ In this order:
 
 **Tomorrow, 2026-11-16 (the developer, 2026-11-15), in this order:**
 
-1. **The PV-node TT cutoff** (pv-node-tt-cutoff.md): implemented 2026-11-16, tests and clippy
-   passing; left: its no-harm-check duel at STC (10+0.1), new against old, both
-   `lc0-psq-threats-screlu-g1-r1@search-time-tuned`. From the page, the old behaviour a
-   temporary `+pvcut` switch (pv-node-tt-cutoff-switch.md, implemented 2026-11-16, tests to run):
-   challenger `@search-time-tuned`, champion `@search-time-tuned+pvcut`.
-2. **Lichess on `lc0-psq-threats-screlu-g1-r1@search-time-tuned`,** only after step 1's duel: a
-   new snapshot (`bin/arena snapshot lc0-psq-threats-screlu-g1-r1@search-time-tuned`) of the
-   commit with the fix if it is kept, of today's otherwise; lichess-bot pointed at it.
+1. **The PV-node TT cutoff: kept, done 2026-11-16** (pv-node-tt-cutoff.md): test 10 drawn at
+   10+0.1 (48.8%, about -8 Elo, within the noise), the temporary `+pvcut` switch then removed.
+2. **Lichess on `lc0-psq-threats-screlu-g1-r1@search-time-tuned`:** a new snapshot
+   (`bin/arena snapshot lc0-psq-threats-screlu-g1-r1@search-time-tuned`) of the commit removing
+   the switch; lichess-bot pointed at it.
 3. **The halfk line starts** ("The halfk line" below, step 1: halfk-threats-screlu.md, its plan
    halfk-threats-screlu-implementation.md).
 
@@ -270,11 +267,6 @@ changes).
 
 ## Search
 
-- **No TT cutoff at PV nodes** (the developer, 2026-11-15): designed, plan written
-  (pv-node-tt-cutoff.md). No longer waiting (2026-11-15: the time tune and its STC duel are
-  over, the 180+2 duel dropped): implemented on 2026-11-16, then a no-harm-check duel at STC, new
-  against old ("Tomorrow" above). The ponder fallback it also asked
-  for was already in place (`ponder_move`).
 - **Optimize Lazy SMP** (the developer, 2026-11-11): in the release check, 8 threads did not crush 1
   (20 games at 10+0.1, too few to measure, release-checks.md). First measure, on an idle machine
   with enough physical cores: nodes/s at `Threads=1` against `8` (near 8 times is ideal; much less

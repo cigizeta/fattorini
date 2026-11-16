@@ -1,6 +1,13 @@
 # No TT cutoff at PV nodes
 
-**Status:** implemented 2026-11-16 (the guard, the two comments, the null-window cutoff test moved
+**Status: kept, done 2026-11-16.** Test 10, 10+0.1, both `lc0-psq-threats-screlu-g1-r1@search-time-tuned`,
+the old behaviour through the temporary `+pvcut` switch (pv-node-tt-cutoff-switch.md): drawn,
+curtailed at 760 games; the change 370.5 of 760 (48.8%, about -8 Elo, 95% roughly -26 to +10),
++203 -184 =373 from the old side's. No harm shown, so kept by the rule below (the developer,
+2026-11-16), the switch then removed. The lean is noted: at longer controls the cost of searching PV
+nodes should weigh less and the gains (the PV, repetitions along it, collisions) more.
+
+Implemented 2026-11-16 (the guard, the two comments, the null-window cutoff test moved
 to `-1, 0` and a PV-window test beside it, both on a position not already mate; the fixed-depth
 golden test re-recorded, a few nodes off, every score and move the same). Tests and clippy pass;
 the duel to run. It waited for the time tune

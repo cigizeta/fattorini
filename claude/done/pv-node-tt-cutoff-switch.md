@@ -1,6 +1,11 @@
 # The PV-node TT cutoff as a temporary switch
 
-**Status:** agreed and implemented 2026-11-16 (the developer: "No need for UCI"); tests and clippy
+**Status: done and removed, 2026-11-16.** Test 10 played (pv-node-tt-cutoff.md: drawn, the change
+kept); the switch then removed from the search, the chores, the smithy and the page, `+pvcut`
+refused from then on as `+blend` is. Test 10's own record no longer parses, accepted (the developer,
+2026-11-16: it ages out of the kept tests by itself).
+
+Agreed and implemented 2026-11-16 (the developer: "No need for UCI"); tests and clippy
 to run, then the duel. Where it differs from the steps below: the page's tests never pass through
 `match_player`, so the arena's command line was left alone (it refuses `+pvcut` as an unknown
 suffix); the switch reaches the arenas in the chore's player text instead, as a `pvcut=1` pair
