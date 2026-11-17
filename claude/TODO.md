@@ -264,6 +264,14 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
    update twice as wide: a bench of each, then the two duelled at depth 9 and 10+0.1, and the
    winner against screlu-hidden at 256, which tells whether width 512 pays at all. **Screlu-hidden
    first** (the developer, 2026-11-17): `configs/lc0-halfk-threats-screlu-hidden-512.yaml`.
+   **The theory, set before the result** (the developer, 2026-11-17): at width 256 pairwise is in
+   effect 128 per perspective, too few; at 512 it is 256, which may hold; Stockfish uses pairwise
+   only at widths in the thousands. Supported by the psq line too (SCReLU beat pairwise at 256,
+   55.4%). Against it: the transform itself is not halved, only the head's inputs, which its first
+   layer compresses to 16 anyway; a product is dead whenever either of its lanes is, at any width;
+   and wider networks want more data than Lc0's 1.2B positions. **The prediction,** pairwise against
+   screlu-hidden, both at 512, depth 9: clearly better than test 15's -30 Elo (drawn or won), the
+   theory holds; about -30 Elo again, it fails, and the cause lies in pairwise itself.
    psq-threats-screlu-512.md has the psq line's notes on width 512.
 
 ## Speed (the developer, 2026-11-09)
