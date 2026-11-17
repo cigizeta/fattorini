@@ -83,8 +83,19 @@ shelved: this is the standard technique, not one of them.
      games run beside the training or after it.
 4. **Replay:** the rate a function of the step alone, so a resume needs nothing from `history.tsv`:
    simpler than today's replay.
-5. **Config:** `learning_rate` becomes a start and an end (`[3.0e-3, 3.0e-5]`), `epochs: 4` is new,
-   `patience_rounds` goes. `warmup_rounds` stays.
+5. **Config: the config decides the strategy** (the developer, 2026-11-17), and new configs are
+   created for the budget, the old ones left as they are:
+   - `schedule: patience`, the default when absent, so every existing config reads as before: the
+     rate list, `patience_rounds`, the rollback, the lowest-loss candidate. Deprecated.
+   - `schedule: budget`: `epochs: 4`, `learning_rate` a start and an end (`[3.0e-3, 3.0e-5]`),
+     the geometric decay, the quarter-epoch candidates from epoch 2 and their round robin;
+     `patience_rounds` refused.
+   - One switch for both the rate and the candidate, not two: the pairs belong together (a budget
+     has no single best round by loss to roll back to; patience has no fixed checkpoints), and four
+     combinations would be four paths to keep. `warmup_rounds` common to both.
+   - New configs, as `lc0-halfk-threats-screlu-hidden-budget.yaml` and its 512 twin, each a copy of
+     its patience config differing by the schedule alone, so each pair compares the schedules on one
+     network. The `-budget` suffix confirmed (the developer, 2026-11-17).
 6. **The page:** the stage and patience columns go; progress and the ETA read rounds done against the
    budget's rounds.
 
