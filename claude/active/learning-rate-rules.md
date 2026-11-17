@@ -1,6 +1,7 @@
 # Learning-rate rules: every idea so far
 
-**Status:** discussion (the developer, 2026-11-17), no plan yet, no code. Every rule considered for
+**Status: shelved 2026-11-17** (the developer): today's schedule stays; schedule-free and every
+other idea here are too experimental, to be tried only much later. Was: discussion, no plan, no code. Every rule considered for
 when to lower the learning rate, with what decided each. Supersedes sign-driven-rate.md, folded in
 here. gentle-rate-steps.md stays the note of its own experiment, its config already written.
 

@@ -1,6 +1,7 @@
 # Gentle rate steps
 
-**Status:** config written 2026-11-17 (`configs/lc0-halfk-threats-pairwise-hidden-gentle.yaml`), not
+**Status: shelved 2026-11-17** (the developer): today's schedule stays, see learning-rate-rules.md;
+kept for later, its config with it. Was: config written 2026-11-17 (`configs/lc0-halfk-threats-pairwise-hidden-gentle.yaml`), not
 yet run. No code change. **Tried on pairwise hidden only if it turns out the best network** of the
 halfk line (the developer, 2026-11-17): the schedule is measured on the architecture that will ship.
 

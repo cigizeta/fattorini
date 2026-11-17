@@ -212,6 +212,11 @@ Each to confirm the first time it happens:
   exist, so on an incomplete corpus a scaled generation 1 trains on almost nothing. Proposed: 1/s of
   the full corpus's size, capped at what exists. Not decided (the developer, 2026-11-04).
 - **Continuous training** (continuous-training.md): designed, not planned.
+- **Another learning-rate rule, much later** (the developer, 2026-11-17): today's schedule stays.
+  Schedule-free AdamW, gentle rate steps, a sign-driven rule and a slope test were discussed and
+  shelved as too experimental, kept for later (learning-rate-rules.md, gentle-rate-steps.md). Why
+  they came up: in `lc0-halfk-threats-screlu` run 2 each rate kept training long after its gains
+  had become small (3e-3 for 57 rounds), noise renewing its best.
 
 ## When self-play comes back
 
@@ -247,14 +252,15 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
    the first hidden layer's cost, so a step 2 lost at 10+0.1 alone, to its speed, is the case it is
    for. Against step 2's winner if step 2 won or drew at 10+0.1, otherwise against step 1's.
    **Run 1 trained 2026-11-17:** best test loss 0.61901 at step 1089536 (round 266), its gate
-   against PeSTO passed (89.3% over 44 games). Next: its duels against
-   `lc0-halfk-threats-screlu-hidden-g1-r1`, both `@untuned`, at depth 9 then 10+0.1.
-4. **Gentle rate steps, if pairwise wins the line** (gentle-rate-steps.md, the developer,
-   2026-11-17): `lc0-halfk-threats-pairwise-hidden-gentle`, the same network with 14 rates from
-   3e-3 to 3e-5 in steps of about 0.7 and patience 3, no code change, against pairwise's run 1:
-   best test loss and rounds, then a depth-9 duel. Why: in `lc0-halfk-threats-screlu` run 2, each
-   rate kept training long after its gains had become small (3e-3 for 57 rounds), noise renewing
-   its best. Schedule-free AdamW set aside as too new to trust first.
+   against PeSTO passed (89.3% over 44 games). **Lost at depth 9** to
+   `lc0-halfk-threats-screlu-hidden-g1-r1`, both `@untuned`: test 15, 326 of 718 (45.4%, +212 -278
+   =228). 10+0.1 not yet played.
+4. **Pairwise at transform width 512** (the developer, 2026-11-17): `embedding_dim` 512, so the head
+   reads 512 products per position, as many as screlu-hidden's 512 squares at width 256; Stockfish's
+   pattern, pairwise paid for by a wider transform. Every accumulator update twice as wide, so
+   likely slower than screlu-hidden: a bench, then duels against screlu-hidden at depth 9 and
+   10+0.1. Decided after test 16 (pairwise at 256, 10+0.1): its next step if it wins, its rescue if
+   it loses. psq-threats-screlu-512.md has the psq line's notes on width 512.
 
 ## Speed (the developer, 2026-11-09)
 
