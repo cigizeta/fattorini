@@ -1,7 +1,10 @@
 # A fixed budget and a falling schedule
 
 **Status:** decided 2026-11-17 (the developer), design below; implementation plan to follow, no code
-yet. Replaces the patience rule of `stages.rs`. The rules shelved in learning-rate-rules.md stay
+yet. Replaces the patience rule of `stages.rs` for new configs. **The old implementations are not
+dropped, only deprecated** (the developer, 2026-11-17): patience, the stages and the rollback, and
+choosing the candidate by the lowest test loss, stay selectable per config, as the grid did beside
+the polyline. The rules shelved in learning-rate-rules.md stay
 shelved: this is the standard technique, not one of them.
 
 ## The decision (the developer, 2026-11-17)
@@ -30,19 +33,57 @@ shelved: this is the standard technique, not one of them.
 
 ## Design
 
-1. **The budget in positions:** `passes: 4` in the config, times the training set's size, read from
-   the corpus (not a round count, so a corpus of another size keeps the same meaning), rounded up to
-   whole rounds.
+1. **The budget in epochs** (the developer: think in epochs): `epochs: 4` in the config, an epoch one
+   pass over the training set, its size read from the corpus (not a round count, so a corpus of
+   another size keeps the same meaning), rounded up to whole rounds.
 2. **The shape: geometric decay** (decided 2026-11-17, the developer: the most intuitive): after the warmup round, from 3e-3 to 3e-5,
    the same range as today's five rates, falling by the same factor every step; about 0.983 a round
    over 270 rounds. Equal time per decade of rate, as today's log-spaced rates intended, and like
    nnue-pytorch's per-epoch factor. The alternatives: cosine (more time at the high rates, a fast
    drop at the end) or bullet's steps (the five rates, each a fixed share of the budget).
-3. **The candidate:** the checkpoint with the lowest test loss, as today. With the rate falling to the
-   end it is usually one of the last; nothing in the gate, export or duel changes.
+3. **The candidate: chosen by games, among checkpoints** (decided 2026-11-17), never by the lowest
+   test loss: the minimum picks the luckiest round late in a run (checkpoints differ by about the
+   5e-5 jitter), the test set both choosing and scoring it; loss is a coarse proxy for strength; and
+   a minimum lets each run stop at a different, noise-chosen round, undoing the budget. The test loss
+   is reported, never used to choose. (Briefly decided the same day: the final network; replaced
+   on reading how Stockfish chooses.)
+
+   **Stockfish's way** (nnue-pytorch's `run_games.py`, read 2026-11-17 from a mirror, not the
+   official file): every saved checkpoint a candidate; each plays a gauntlet against a fixed
+   reference, master Stockfish, at 4+0.04, 200 games a round, a 3-move book; ordo rates them, anchored
+   to master; each round plays the 3 with the highest `rating + 1.5 * error`, a UCB-style bandit, so
+   untried nets are tried early and promising ones keep collecting games; an endless loop beside the
+   training, the best read from ordo's ranking. What follows (a Fishtest SPRT) not verified.
+
+   **Ours:**
+   - **Replaced the same day by a round robin** (the developer: simpler): the candidates the
+     checkpoints at **every quarter epoch from epoch 2 to 4: 2, 2.25, 2.5, ..., 3.75, 4, nine**
+     (an epoch one pass over the training set; none before half the budget; every epoch's end among
+     them, where every position has been seen equally often). Generous on purpose for the first
+     runs (the developer: no reason to be Scrooge at first): the first round robin shows how
+     strength grows over the last two epochs, and fewer candidates may follow. A round robin among
+     them at **depth 9** (checkpoints of one network search alike, so depth measures what differs,
+     the evaluation), about 2,000 games a candidate: 36 pairings of 125 pairs, 9,000 games, about
+     15 minutes. The most points win, then the gate and the duels. The existing round robin, so it must survive the grid's removal (TODO.md,
+     "Code to clean up"). The bandit below kept as the record of what was weighed.
+   - **No reference: the candidates play each other** (the developer, 2026-11-17). An external
+     reference, the previous experiment's winner, was proposed and dropped: experiments vary, which
+     is the previous one is not always clear, and the very first has none. So the choice within a run
+     is self-contained, the same for every run, its first included; comparisons between runs stay
+     what they are, the gate and the duels, their opponents chosen by hand. The bandit picks pairs,
+     ordo rates them unanchored: the ratings only rank the run's own checkpoints, all the choice
+     needs.
+   - **The bandit:** UCB-style allocation as Stockfish's, pairs instead of singles, and **a stop**,
+     which its loop lacks: a fixed game budget.
+   - **The winner: the most-played network,** as MCTS's robust child, not the highest rating: a
+     high rating on few games may be luck; the bandit's repeated returns confirm a lead. Then the
+     gate and the duels as now.
+   - **Open:** which checkpoints are candidates (Stockfish: every one saved; ours to choose, with
+     the save period), the game budget, the control (depth 9 or a short clock), and whether the
+     games run beside the training or after it.
 4. **Replay:** the rate a function of the step alone, so a resume needs nothing from `history.tsv`:
    simpler than today's replay.
-5. **Config:** `learning_rate` becomes a start and an end (`[3.0e-3, 3.0e-5]`), `passes: 4` is new,
+5. **Config:** `learning_rate` becomes a start and an end (`[3.0e-3, 3.0e-5]`), `epochs: 4` is new,
    `patience_rounds` goes. `warmup_rounds` stays.
 6. **The page:** the stage and patience columns go; progress and the ETA read rounds done against the
    budget's rounds.

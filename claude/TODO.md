@@ -214,7 +214,9 @@ Each to confirm the first time it happens:
 - **Continuous training** (continuous-training.md): designed, not planned.
 - **A fixed budget and a falling schedule** (fixed-budget-schedule.md, decided 2026-11-17): 4 passes
   over the training set (about 270 rounds), the rate falling with the step from 3e-3 to 3e-5,
-  patience and the rollback dropped, the decay geometric. Next: the implementation plan.
+  the decay geometric; the candidate chosen by a depth-9 round robin among the checkpoints at every
+  quarter epoch from 2 to 4 (nine). Patience, the rollback and the lowest-loss candidate kept,
+  deprecated, selectable per config. Next: the implementation plan.
 - **Another learning-rate rule, much later** (the developer, 2026-11-17): the fixed budget above
   replaces patience; the adaptive rules stay shelved.
   Schedule-free AdamW, gentle rate steps, a sign-driven rule and a slope test were discussed and
