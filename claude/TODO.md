@@ -238,6 +238,10 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
    **Done 2026-11-16:** `lc0-halfk-threats-screlu-g1-r2` won at depth 9 (test 11, 54.7%) and leaned
    to halfk at 10+0.1, drawn (test 12, 52.7%): it is step 2's opponent. Not tuned (the developer).
 2. `halfk_threats_screlu_hidden` against step 1's winner (halfk-threats-screlu-hidden.md).
+   **Done 2026-11-16:** `lc0-halfk-threats-screlu-hidden-g1-r1` drew both duels against
+   `lc0-halfk-threats-screlu-g1-r2`, leaning its way: depth 9, test 13, 425.5 of 794 (53.6%);
+   10+0.1, test 14, 386 of 754 (51.2%). Not lost at depth 9, so step 3 runs; drawn at 10+0.1, so
+   against it.
 3. `halfk_threats_pairwise_hidden` (halfk-threats-pairwise-hidden.md), **unless step 2 loses at
    depth 9** (the developer, 2026-11-16, replacing "only if step 2 wins or draws"): pairwise halves
    the first hidden layer's cost, so a step 2 lost at 10+0.1 alone, to its speed, is the case it is
