@@ -126,7 +126,9 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
    **Announced on TalkChess 2026-11-13** meanwhile, in "New engine releases 2026 H2", asking the
    CCRL testers to include it; to watch for replies and test results. **Activation asked
    2026-11-17**, still pending then: TalkChess refuses private messages to an account with few
-   posts, so the request to Graham Banks is a public reply in the same thread.
+   posts, so the request to Graham Banks is a public reply in the same thread. **Activated
+   2026-11-17**, but no CCRL topic needed (the developer, 2026-11-17): the TalkChess announcement
+   was enough, and the engine is already competing. Left: watch for its results and rating.
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08), **next after the TalkChess post
    (the developer, 2026-11-13):** facts, politely, no claims. Drafted 2026-11-11 in
    cpw-page.md, not waiting for CCRL (the developer, 2026-11-11), claiming no rating ever; a wiki
