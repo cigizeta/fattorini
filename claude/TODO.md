@@ -110,7 +110,8 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
    six weeks of mixed engines, the rating still rising when it retired. **Probably beaten, not yet
    settled:** `fattorini-bot` at 2612.8 in blitz on 2026-11-11 (RD 109, just past provisional; +18
    over the last 12 games), better than 99.9% of Lichess's blitz players (Lichess's own figure),
-   its day including a draw against a 2819. Compare again once its RD is near Rotor's 51. Matchmaking on from 2026-11-16 (the developer), so
+   its day including a draw against a 2819. **Settled 2026-11-17: Rotor is beaten,** `fattorini-bot`
+   at 2608.7 in blitz with RD 45 (+4 over the last 12 games), about 214 points over Rotor's 2395. Matchmaking on from 2026-11-16 (the developer), so
    the RD falls faster: rated bot challenges at 3+2 to 5+3, within 300 points, after 5 idle minutes.
 4. **The first release: done 2026-11-11.** Fattorini 2026.11.0, `lc0-psq-threats-screlu-g1-r1@tuned`,
    published on GitHub with `fattorini-v2026.11.0.exe`. Candidate `v2026.11.0-rc.1` checked
@@ -123,11 +124,14 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
    name as the board prefers; waiting for the administrators' activation, then the first two posts
    are approved before they appear. The post drafted, ready to paste: ccrl-announcement.md.
    **Announced on TalkChess 2026-11-13** meanwhile, in "New engine releases 2026 H2", asking the
-   CCRL testers to include it; to watch for replies and test results.
+   CCRL testers to include it; to watch for replies and test results. **Activation asked
+   2026-11-17**, still pending then: TalkChess refuses private messages to an account with few
+   posts, so the request to Graham Banks is a public reply in the same thread.
 6. **A Chess Programming Wiki page** (the developer, 2026-11-08), **next after the TalkChess post
    (the developer, 2026-11-13):** facts, politely, no claims. Drafted 2026-11-11 in
    cpw-page.md, not waiting for CCRL (the developer, 2026-11-11), claiming no rating ever; a wiki
-   account next. As planned: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
+   account next. **Blocked 2026-11-17:** the wiki is a temporary read-only recovery, editing to
+   return later; the draft waits. As planned: facts only (author, first release, AGPLv3, Rust, UCI; the NNUE and how
    it is trained on a limited compute budget; links to the repository, releases and ratings).
    Claude drafts it from the README and `claude/` for the developer to edit; an account is needed.
    Beside it, a minimal author page: the developer's name and GitHub profile, filled in by the
