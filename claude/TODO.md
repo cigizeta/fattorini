@@ -76,7 +76,7 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
       the previous 16k tune hand-rounded), test 4: won by the new tune, 53.5% over 712 games at
       10+0.1, about +24 Elo. It ships. The duel against the previous tune itself is dropped: the
       defaults already were it, near enough.
-   2. **Move Overhead: done** (move-overhead.md), default 20 ms; its measurement is under "Before
+   2. **Move Overhead: done** (move-overhead.md), default 20 ms, 100 ms since Reckless's time management (2026-11-13); its measurement is under "Before
       the release or CCRL".
    3. **Dropped (the developer, 2026-11-11):** Stockfish's Skill Level is a handicap, not an
       anchor; the release claims the CCRL Blitz estimate from the three anchors (ccrl-conditions.md).
@@ -149,18 +149,14 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
   Designed, plan written: root-tablebase-score.md.
 - **The 8-thread, repeating-control and Move Overhead checks: passed 2026-11-11**
   (release-checks.md), cutechess-cli smoke tests on the dry run's `.exe`, no failure of any kind.
-- **Clock safety at default settings, not blocking the release** (the checks saw no forfeit): no margin for lag is subtracted, on the
-  assumption that the GUI hands over a reduced clock, which is lichess-bot's setting, not a tester's.
-  - `MAX_CLOCK_FRACTION` is relative: at 20 ms left it allows 10 ms, while lag does not shrink.
-  - `(alpha + 1/M) * T` always exceeds an even share of the time left. Rough estimate: moves using
-    their full target reach the last move of a 900 s control with about 3 s, about 0.4 s at 120 s.
-    Log the clock left at moves 38 to 40.
-  - `CHECK_INTERVAL`'s 10 ms rests on an old 99,000 nodes/second figure: re-measure with a network.
-    Neither `go`'s arrival nor writing `bestmove` is counted.
-  - Whether depth 1 always finishes on a near-empty clock (`movetime 0` still returns a real move),
-    and what it costs.
-  - Candidate fix, not decided: a fixed reserve subtracted from `T`, a smaller `alpha` under
-    `movestogo`. Run the check through a GUI with no margin of its own.
+- **Clock safety at default settings: answered on `bartolomeo` (2026-11-17)** by Reckless's time
+  management (reckless-only.md): a fixed 100 ms `Move Overhead` by default, kept back once from the
+  clock, and `EXTRA_MARGIN_MS`, 15 ms, from both bounds. Classic's concerns (no lag margin,
+  `MAX_CLOCK_FRACTION`, `(alpha + 1/M) * T`) went with it. The released 2026.11.0, the build the
+  CCRL testers have, is still Classic with 20 ms: the margin reaches them with the next release.
+  `CHECK_INTERVAL`, 1024 nodes, re-checked the same day: at most 0.4 ms at today's speed, 10 ms
+  only below about 100k nodes/s, so it stays. Left, unchecked: whether depth 1 always finishes on
+  a near-empty clock, and what it costs.
 - **README at the release** (readme-for-humans.md): Strength, the network named: the CCRL Blitz
   estimate alone, no Stockfish (the developer, 2026-11-11), with its full methodology (the developer,
   2026-11-10): the Stockfish 10 bench and S, the scaled control (1'+0.5"), the 10 games at once

@@ -263,12 +263,13 @@ const FIFTY_MOVE_HALFMOVES: u8 = 100;
 /// `check_time` throttles it (a countdown counter there; a plain node-count modulo here, since
 /// nothing here needs Stockfish's extra nodes-as-time-control mode) -- reading a wall clock on
 /// every single node would be needless overhead when only the periodic reads spaced this far
-/// apart are actually needed to keep the deadline honest. `1024`: at the roughly 99,000
-/// nodes/second measured in the iterative-deepening timing investigation, that's about a 10ms
-/// window between checks -- small next to the move overhead and margin every bound keeps back
-/// (`DEFAULT_MOVE_OVERHEAD_MS`, `EXTRA_MARGIN_MS`), and a negligible number of actual clock reads
-/// per second either way. A
-/// placeholder like every other constant here, not a tuned value.
+/// apart are actually needed to keep the deadline honest. `1024`: the search overshoots a deadline
+/// by at most the time of 1024 nodes, which must stay small next to `EXTRA_MARGIN_MS` (15 ms), the
+/// margin meant to absorb it (`DEFAULT_MOVE_OVERHEAD_MS` is for lag outside the engine). About
+/// 0.4 ms at the 2.46M nodes/second of a psq-threats network on one thread (2026-11-13), 1 ms at
+/// 1M, 10 ms only below about 100k: costlier networks, as halfk ones, and slower machines stay far
+/// above that. A clock read costs tens of nanoseconds, so a smaller interval would cost nothing
+/// measurable either, but it buys nothing needed. Not a tuned value.
 const CHECK_INTERVAL: u64 = 1024;
 
 /// Two pawns, per ply of remaining depth: the default of three of the six margins in
