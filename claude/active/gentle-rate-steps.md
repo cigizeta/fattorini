@@ -22,6 +22,8 @@ Considered and set aside, for now:
   threshold had no trustworthy reference. A slope relative to the stage's first rounds is noisy; one
   relative to the previous cut's drop is the candidate if this note's rule is not enough.
 
+Every rule considered, this one among them: learning-rate-rules.md.
+
 ## The rule tried
 
 The existing rule, other numbers: rates from 3e-3 to 3e-5 in steps of about 0.7 (14 rates instead
