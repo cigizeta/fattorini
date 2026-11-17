@@ -242,6 +242,13 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
    depth 9** (the developer, 2026-11-16, replacing "only if step 2 wins or draws"): pairwise halves
    the first hidden layer's cost, so a step 2 lost at 10+0.1 alone, to its speed, is the case it is
    for. Against step 2's winner if step 2 won or drew at 10+0.1, otherwise against step 1's.
+   **Run 1 training on 2026-11-17** (round 194 of about 244 then).
+4. **Gentle rate steps, if pairwise wins the line** (gentle-rate-steps.md, the developer,
+   2026-11-17): `lc0-halfk-threats-pairwise-hidden-gentle`, the same network with 14 rates from
+   3e-3 to 3e-5 in steps of about 0.7 and patience 3, no code change, against pairwise's run 1:
+   best test loss and rounds, then a depth-9 duel. Why: in `lc0-halfk-threats-screlu` run 2, each
+   rate kept training long after its gains had become small (3e-3 for 57 rounds), noise renewing
+   its best. Schedule-free AdamW set aside as too new to trust first.
 
 ## Speed (the developer, 2026-11-09)
 
