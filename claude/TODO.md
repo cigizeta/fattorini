@@ -218,7 +218,7 @@ Each to confirm the first time it happens:
   the full corpus's size, capped at what exists. Not decided (the developer, 2026-11-04).
 - **Continuous training** (continuous-training.md): designed, not planned.
 - **A fixed budget and a falling schedule** (fixed-budget-schedule.md, decided 2026-11-17): 4 passes
-  over the training set (about 270 rounds), the rate falling with the step from 3e-3 to 3e-5,
+  over the training set (about 270 rounds), the rate falling with the step from 1e-3 to 1e-5,
   the decay geometric; the candidate chosen by a depth-9 round robin among the checkpoints at every
   quarter epoch from 2 to 4 (nine). Patience, the rollback and the lowest-loss candidate kept,
   deprecated, selectable per config. Plan written 2026-11-17

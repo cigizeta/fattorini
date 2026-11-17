@@ -36,9 +36,9 @@ shelved: this is the standard technique, not one of them.
 1. **The budget in epochs** (the developer: think in epochs): `epochs: 4` in the config, an epoch one
    pass over the training set, its size read from the corpus (not a round count, so a corpus of
    another size keeps the same meaning), rounded up to whole rounds.
-2. **The shape: geometric decay** (decided 2026-11-17, the developer: the most intuitive): after the warmup round, from 3e-3 to 3e-5,
-   the same range as today's five rates, falling by the same factor every step; about 0.983 a round
-   over 270 rounds. Equal time per decade of rate, as today's log-spaced rates intended, and like
+2. **The shape: geometric decay** (decided 2026-11-17, the developer: the most intuitive): after the warmup round, **from 1e-3 to 1e-5**
+   (decided the same day: 3e-3 too high, see the implementation plan), a hundredfold range as
+   today's, falling by the same factor every step; about 0.984 a round over 280 rounds. Equal time per decade of rate, as today's log-spaced rates intended, and like
    nnue-pytorch's per-epoch factor. The alternatives: cosine (more time at the high rates, a fast
    drop at the end) or bullet's steps (the five rates, each a fixed share of the budget).
 3. **The candidate: chosen by games, among checkpoints** (decided 2026-11-17), never by the lowest
@@ -87,7 +87,7 @@ shelved: this is the standard technique, not one of them.
    created for the budget, the old ones left as they are:
    - `schedule: patience`, the default when absent, so every existing config reads as before: the
      rate list, `patience_rounds`, the rollback, the lowest-loss candidate. Deprecated.
-   - `schedule: budget`: `epochs: 4`, `learning_rate` a start and an end (`[3.0e-3, 3.0e-5]`),
+   - `schedule: budget`: `epochs: 4`, `learning_rate` a start and an end (`[1.0e-3, 1.0e-5]`),
      the geometric decay, the quarter-epoch candidates from epoch 2 and their round robin;
      `patience_rounds` refused.
    - One switch for both the rate and the candidate, not two: the pairs belong together (a budget

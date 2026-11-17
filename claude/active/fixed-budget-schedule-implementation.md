@@ -73,8 +73,13 @@
   (deprecated). The exact `page.html` changes to settle on reading it.
 - **Configs:** `configs/lc0-halfk-threats-screlu-hidden-budget.yaml` and
   `configs/lc0-halfk-threats-screlu-hidden-512-budget.yaml`, each its patience config with
-  `schedule: budget`, `epochs: 4`, `learning_rate: [3.0e-3, 3.0e-5]`, no `patience_rounds`, its
-  header saying it differs by the schedule alone.
+  `schedule: budget`, `epochs: 4`, `learning_rate: [1.0e-3, 1.0e-5]`, no `patience_rounds`, its
+  header saying it differs by the schedule alone. **From 1e-3 to 1e-5** (the developer, 2026-11-17):
+  3e-3 was too high (the 512 run's loss rose after 9 rounds at it; at 256 every switch to 1e-3 gained
+  about 0.002 at once), and bullet starts at 1e-3, nnue-pytorch at 8.75e-4; a hundredfold range, as
+  bullet's example and our old one. The end untested below 3e-5, where every patience run still
+  gained: the round robin's candidates span about 1e-4 (epoch 2) to 1e-5 (epoch 4), so it shows
+  whether the low end pays; if epoch 3 (about 3e-5) beats epoch 4, the next configs end at 3e-5.
 
 ## Steps
 
