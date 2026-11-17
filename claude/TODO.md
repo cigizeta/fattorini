@@ -254,13 +254,17 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
    **Run 1 trained 2026-11-17:** best test loss 0.61901 at step 1089536 (round 266), its gate
    against PeSTO passed (89.3% over 44 games). **Lost at depth 9** to
    `lc0-halfk-threats-screlu-hidden-g1-r1`, both `@untuned`: test 15, 326 of 718 (45.4%, +212 -278
-   =228). 10+0.1 not yet played.
-4. **Pairwise at transform width 512** (the developer, 2026-11-17): `embedding_dim` 512, so the head
-   reads 512 products per position, as many as screlu-hidden's 512 squares at width 256; Stockfish's
-   pattern, pairwise paid for by a wider transform. Every accumulator update twice as wide, so
-   likely slower than screlu-hidden: a bench, then duels against screlu-hidden at depth 9 and
-   10+0.1. Decided after test 16 (pairwise at 256, 10+0.1): its next step if it wins, its rescue if
-   it loses. psq-threats-screlu-512.md has the psq line's notes on width 512.
+   =228). **Lost at 10+0.1 too:** test 16, 265.5 of 578 (45.9%, +139 -186 =253). Its speed did not
+   make up for its evaluation: screlu-hidden at 256 is the halfk line's best.
+4. **Screlu-hidden and pairwise, both at transform width 512** (the developer, 2026-11-17):
+   `embedding_dim` 512 for both, to be fair: pairwise at 512 against screlu-hidden at 256 would mix
+   the width into the verdict. At 256, pairwise lost at depth 9 (test 15), structurally it seems:
+   its head reads half as many inputs (256 products against 512 squares), and a product is dead
+   whenever either of its lanes is. Each network twice as costly to train and every accumulator
+   update twice as wide: a bench of each, then the two duelled at depth 9 and 10+0.1, and the
+   winner against screlu-hidden at 256, which tells whether width 512 pays at all. **Screlu-hidden
+   first** (the developer, 2026-11-17): `configs/lc0-halfk-threats-screlu-hidden-512.yaml`.
+   psq-threats-screlu-512.md has the psq line's notes on width 512.
 
 ## Speed (the developer, 2026-11-09)
 
