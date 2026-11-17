@@ -246,7 +246,9 @@ Lc0's labels, one stage, each step one change from the previous winner, duelled 
    depth 9** (the developer, 2026-11-16, replacing "only if step 2 wins or draws"): pairwise halves
    the first hidden layer's cost, so a step 2 lost at 10+0.1 alone, to its speed, is the case it is
    for. Against step 2's winner if step 2 won or drew at 10+0.1, otherwise against step 1's.
-   **Run 1 training on 2026-11-17** (round 194 of about 244 then).
+   **Run 1 trained 2026-11-17:** best test loss 0.61901 at step 1089536 (round 266), its gate
+   against PeSTO passed (89.3% over 44 games). Next: its duels against
+   `lc0-halfk-threats-screlu-hidden-g1-r1`, both `@untuned`, at depth 9 then 10+0.1.
 4. **Gentle rate steps, if pairwise wins the line** (gentle-rate-steps.md, the developer,
    2026-11-17): `lc0-halfk-threats-pairwise-hidden-gentle`, the same network with 14 rates from
    3e-3 to 3e-5 in steps of about 0.7 and patience 3, no code change, against pairwise's run 1:
