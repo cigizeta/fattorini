@@ -212,7 +212,11 @@ Each to confirm the first time it happens:
   exist, so on an incomplete corpus a scaled generation 1 trains on almost nothing. Proposed: 1/s of
   the full corpus's size, capped at what exists. Not decided (the developer, 2026-11-04).
 - **Continuous training** (continuous-training.md): designed, not planned.
-- **Another learning-rate rule, much later** (the developer, 2026-11-17): today's schedule stays.
+- **A fixed budget and a falling schedule** (fixed-budget-schedule.md, decided 2026-11-17): 4 passes
+  over the training set (about 270 rounds), the rate falling with the step from 3e-3 to 3e-5,
+  patience and the rollback dropped, the decay geometric. Next: the implementation plan.
+- **Another learning-rate rule, much later** (the developer, 2026-11-17): the fixed budget above
+  replaces patience; the adaptive rules stay shelved.
   Schedule-free AdamW, gentle rate steps, a sign-driven rule and a slope test were discussed and
   shelved as too experimental, kept for later (learning-rate-rules.md, gentle-rate-steps.md). Why
   they came up: in `lc0-halfk-threats-screlu` run 2 each rate kept training long after its gains
