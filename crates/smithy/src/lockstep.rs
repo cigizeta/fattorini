@@ -1081,7 +1081,7 @@ mod tests {
     }
 
     /// The server's training of a transformer, as `Run::train` wires it: two lambdas in lockstep,
-    /// stacked, with dropout, its stream the scattered buckets grouped by piece count, each lambda to its stop with
+    /// stacked, its stream the scattered buckets grouped by piece count, each lambda to its stop with
     /// its own history and its `candidate.txt` alone, since the engine cannot run it.
     #[test]
     fn a_transformers_lambdas_train_in_lockstep_to_their_stops() {
@@ -1090,7 +1090,7 @@ mod tests {
             "transformer",
             "labels: lc0\n\
              architecture:\n  kind: transformer\n  embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\n  num_layers: 2\n  \
-             num_heads: 2\n  feedforward_dim: 16\n  dropout: 0.1\n\
+             num_heads: 2\n  feedforward_dim: 16\n\
              label:\n  lambda: [0.70, 0.80]\n\
              training:\n  attention: full\n  learning_rate: [1.0e-2, 1.0e-3]\n  training_batch_size: 8\n  test_batch_size: 8\n  \
              steps_per_round: 2\n  warmup_rounds: 0\n  patience_rounds: 1\n",

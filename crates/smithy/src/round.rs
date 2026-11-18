@@ -43,8 +43,8 @@ use super::train_stream::{BatchSource, TrainStream};
 pub struct Trainee<'a, B> {
     pub optimizer: &'a mut AdamW,
     /// `train` is `true` during the training half and `false` during the test pass, for architectures
-    /// whose forward pass has training-only behaviour (the transformer's dropout) to gate on; ignored
-    /// entirely by architectures that have none (NNUE).
+    /// whose forward pass has training-only behaviour to gate on; ignored by every architecture
+    /// today, none having any.
     pub loss: Box<dyn Fn(&B, bool) -> Tensor + 'a>,
     pub on_backup: Box<dyn FnMut(&AdamW, &[u64], u64, f64, f64) + 'a>,
 }

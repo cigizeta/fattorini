@@ -3935,9 +3935,13 @@ impl Run<'_> {
             if Path::new(&candidate).is_file() {
                 publish(&candidate)?;
             }
-            // A budget's candidates, every quarter epoch's, all of them the round robin's.
+            // A budget's candidates, every quarter epoch's, all of them the round robin's. A
+            // transformer's are recorded without networks (`export_budget_candidates`): none to publish.
             for candidate in candidates::read_budget_candidates(&lambda_dir(lambda)).unwrap_or_default() {
-                publish(&candidates::budget_candidate_path(&lambda_dir(lambda), &candidate.epoch))?;
+                let path = candidates::budget_candidate_path(&lambda_dir(lambda), &candidate.epoch);
+                if Path::new(&path).is_file() {
+                    publish(&path)?;
+                }
             }
         }
         Ok(Ended::Done)

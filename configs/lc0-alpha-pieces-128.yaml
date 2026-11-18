@@ -1,0 +1,40 @@
+# lc0-alpha-pieces at width 128 (2026-11-18): the same transformer, corpus, labels, budget and test
+# set, the width doubled, to see whether a wider transformer gains on test loss. About 0.9M
+# parameters against 0.27M, about 3 to 4 times the cost a position. Differs from lc0-alpha-pieces by
+# its shape alone; compared with it, and with the scaled NNUE baselines, at the same scale.
+
+# The forge, as lc0-alpha-pieces'.
+lambda: polyline
+training_positions: 1073741824
+test_positions: 4194304
+round_robin_pairs: 400
+gate_elo_d: 35
+tune:
+  length: default
+  control: 10+0.1
+
+labels: lc0
+
+# Width 128, 4 layers, 4 heads of 32 (Lc0's head size), the feed-forward part 4 times the width,
+# pre-norm, no dropout, and a value head reading [CLS] through one hidden layer of 32.
+architecture:
+  kind: transformer
+  embedding_dim: 128
+  num_layers: 4
+  num_heads: 4
+  feedforward_dim: 512
+  value_head:
+    hidden_dim: [32]
+
+training:
+  attention: full
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  # lc0-alpha-pieces' schedule, 3e-4 down to 1e-5: at width 64 it beat 3e-6 as the end (test loss
+  # 0.6534 against 0.6584 scaled at 1/1024). A wider network may want a lower start; measured if
+  # this one's loss jumps.
+  schedule: budget
+  epochs: 4
+  learning_rate: [3.0e-4, 1.0e-5]
+  warmup_rounds: 1

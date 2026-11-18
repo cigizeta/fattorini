@@ -35,10 +35,16 @@ const KNIGHT_TOKENS: usize = 64;
 /// and becomes one of the tokens above instead).
 const PAWN_TOKENS: usize = 48 + 8;
 
-/// The whole vocabulary's size -- `1 + 256 + 64 + 64 + 64 + 64 + 56 = 569`, matching
-/// the transformer design's own settled total exactly.
-pub const VOCAB_SIZE: usize =
-    CLS_TOKENS + KING_TOKENS + QUEEN_TOKENS + ROOK_TOKENS + BISHOP_TOKENS + KNIGHT_TOKENS + PAWN_TOKENS;
+/// One side's tokens: `256 + 64 + 64 + 64 + 64 + 56 = 568`.
+const SIDE_TOKENS: usize = KING_TOKENS + QUEEN_TOKENS + ROOK_TOKENS + BISHOP_TOKENS + KNIGHT_TOKENS + PAWN_TOKENS;
+
+/// The whole vocabulary's size: `[CLS]`, then the side to move's own block, then the opponent's,
+/// `1 + 2 * 568 = 1137`. Every piece token says whose piece it is: the order alone (own pieces
+/// first, the opponent's after its king) left the network to find the boundary by comparing
+/// positions, which in practice it did not, its loss stuck at a constant prediction (2026-11-18).
+/// The own block's 8 en-passant pawn tokens are never used: only the opponent's pawn can be
+/// captured en passant. Kept so the two blocks share one layout.
+pub const VOCAB_SIZE: usize = CLS_TOKENS + 2 * SIDE_TOKENS;
 
 /// `[CLS]` sits at vocabulary index `0` -- both the very first block and, not by coincidence, the
 /// very first token of every sequence (see `token_sequence` below).
@@ -57,15 +63,19 @@ const BISHOP_OFFSET: usize = ROOK_OFFSET + ROOK_TOKENS;
 const KNIGHT_OFFSET: usize = BISHOP_OFFSET + BISHOP_TOKENS;
 const PAWN_OFFSET: usize = KNIGHT_OFFSET + KNIGHT_TOKENS;
 
+/// What the opponent's block adds to every offset above, which are the own block's.
+const OPPONENT_SHIFT: usize = SIDE_TOKENS;
+
 /// Whether `vocabulary_index` (a value `token_sequence` produced, not a raw `CanonicalPosition`
 /// field) names a King token -- kings-only attention's own mask (the transformer design's
 /// Attention section: "zeroes out every pair that doesn't include a king row or column") needs
 /// exactly this per-position check, and only this crate's own vocabulary layout can answer it, so
-/// it lives here rather than the batch-assembly code re-deriving `KING_OFFSET..QUEEN_OFFSET` for
-/// itself. True for *either* side's king (own or opponent) -- the check is purely "is this a king
-/// token at all", not which one.
+/// it lives here rather than the batch-assembly code re-deriving the king blocks for itself. True
+/// for *either* side's king (own or opponent) -- the check is purely "is this a king token at
+/// all", not which one.
 pub fn is_king_token(vocabulary_index: usize) -> bool {
     (KING_OFFSET..QUEEN_OFFSET).contains(&vocabulary_index)
+        || (KING_OFFSET + OPPONENT_SHIFT..QUEEN_OFFSET + OPPONENT_SHIFT).contains(&vocabulary_index)
 }
 
 /// `square`'s index in file-major order (`a1=0, a2=1, ..., a8=7, b1=8, ..., h8=63`) -- the
@@ -181,7 +191,11 @@ fn king_token(canonical: &CanonicalPosition, color: Color) -> usize {
 /// star only when `color` is not `canonical.side_to_move` (this is the opponent's own block, from
 /// whichever side_block call is building it) and its file matches -- never on `side_to_move`'s own
 /// pawns, which can never be the captured pawn.
+///
+/// The side to move's tokens come from the own block, the other side's from the opponent block
+/// (`OPPONENT_SHIFT` added to every one), so every token says whose piece it is.
 fn side_block(canonical: &CanonicalPosition, color: Color) -> Vec<usize> {
+    let shift = if color == canonical.side_to_move { 0 } else { OPPONENT_SHIFT };
     let mut tokens = vec![king_token(canonical, color)];
 
     for &square in &oriented_squares_of(canonical, color, PieceType::Queen) {
@@ -203,7 +217,7 @@ fn side_block(canonical: &CanonicalPosition, color: Color) -> Vec<usize> {
         tokens.push(PAWN_OFFSET + pawn_token_index(square, en_passant_star));
     }
 
-    tokens
+    tokens.iter().map(|&token| token + shift).collect()
 }
 
 /// The full token sequence for `canonical`, as vocabulary indices ready for an embedding lookup --
@@ -315,8 +329,22 @@ mod tests {
 
         let black = side_block(&canonical, Color::Black);
         let white = side_block(&canonical, Color::White);
-        assert!(black.contains(&(PAWN_OFFSET + pawn_token_index(Square::D5, true))));
+        assert!(black.contains(&(OPPONENT_SHIFT + PAWN_OFFSET + pawn_token_index(Square::D5, true))));
         assert!(white.contains(&(PAWN_OFFSET + pawn_token_index(Square::E5, false))));
+    }
+
+    #[test]
+    fn the_same_piece_on_the_same_square_is_another_token_for_each_side() {
+        // A white queen on d4, White to move, then the colours swapped and Black to move: the
+        // oriented square is d4 both times, so only the side tells the two apart.
+        let ours = extract_canonical(&Board::from_fen("4k3/8/8/8/3Q4/8/8/4K3 w - - 0 1").unwrap().0);
+        let theirs = extract_canonical(&Board::from_fen("4k3/8/8/8/3Q4/8/8/4K3 b - - 0 1").unwrap().0);
+        let own_queen = token_sequence(&ours)[2];
+        assert_eq!(own_queen, QUEEN_OFFSET + plain_square_token_index(Square::D4));
+        // Black to move: Black's king, then White's king and queen, the queen mirrored to d5.
+        let opponent_queen = token_sequence(&theirs)[3];
+        assert_eq!(opponent_queen, OPPONENT_SHIFT + QUEEN_OFFSET + plain_square_token_index(Square::D5));
+        assert_ne!(own_queen, opponent_queen);
     }
 
     #[test]
@@ -350,11 +378,16 @@ mod tests {
         assert!(is_king_token(KING_OFFSET + KING_TOKENS - 1));
         assert!(!is_king_token(QUEEN_OFFSET));
         assert!(!is_king_token(PAWN_OFFSET + PAWN_TOKENS - 1));
+        assert!(is_king_token(OPPONENT_SHIFT + KING_OFFSET));
+        assert!(is_king_token(OPPONENT_SHIFT + KING_OFFSET + KING_TOKENS - 1));
+        assert!(!is_king_token(OPPONENT_SHIFT + QUEEN_OFFSET));
+        assert!(!is_king_token(VOCAB_SIZE - 1));
     }
 
     #[test]
-    fn vocab_size_matches_the_settled_design_doc_total() {
-        assert_eq!(VOCAB_SIZE, 569);
+    fn vocab_size_is_cls_and_two_sides() {
+        assert_eq!(SIDE_TOKENS, 568);
+        assert_eq!(VOCAB_SIZE, 1137);
     }
 
     #[test]
@@ -366,7 +399,8 @@ mod tests {
         assert_eq!(BISHOP_OFFSET, ROOK_OFFSET + ROOK_TOKENS);
         assert_eq!(KNIGHT_OFFSET, BISHOP_OFFSET + BISHOP_TOKENS);
         assert_eq!(PAWN_OFFSET, KNIGHT_OFFSET + KNIGHT_TOKENS);
-        assert_eq!(PAWN_OFFSET + PAWN_TOKENS, VOCAB_SIZE);
+        assert_eq!(PAWN_OFFSET + PAWN_TOKENS, CLS_TOKENS + SIDE_TOKENS);
+        assert_eq!(PAWN_OFFSET + PAWN_TOKENS + OPPONENT_SHIFT, VOCAB_SIZE);
     }
 
     #[test]

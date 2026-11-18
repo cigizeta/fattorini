@@ -20,16 +20,15 @@ tune:
 
 labels: lc0
 
-# A small shape to start (width 64, 4 layers): [CLS] and one token per piece, 4 heads, the
-# feed-forward part 4 times the width, dropout while training only, and a value head reading [CLS]
-# through one hidden layer of 32.
+# A small shape to start (width 64, 4 layers): [CLS] and one token per piece, each telling its side,
+# 4 heads, pre-norm blocks, the feed-forward part 4 times the width, no dropout, and a value head
+# reading [CLS] through one hidden layer of 32.
 architecture:
   kind: transformer
   embedding_dim: 64
   num_layers: 4
   num_heads: 4
   feedforward_dim: 256
-  dropout: 0.1
   value_head:
     hidden_dim: [32]
 
@@ -39,9 +38,13 @@ training:
   training_batch_size: 4096
   test_batch_size: 16384
   steps_per_round: 4096
-  # The budgeted NNUEs' schedule: 4 passes, the rate falling geometrically from 1e-3 to 1e-5. A pass
-  # is the full batches of one piece count, a count's partial batch dropped each epoch.
+  # The budgeted NNUEs' schedule, 4 passes, the rate falling geometrically, but from 3e-4, not 1e-3
+  # (2026-11-18): trained alone on the scaled buckets, the transformer's loss jumped at 1e-3 and
+  # fell steadily at 3e-4 (0.6762 against 0.6833 after 400 batches of 1024). Down to 1e-5, not 3e-6:
+  # scaled at 1/1024, 1e-5 ended at test loss 0.6534, 3e-6 at 0.6584, behind from the start, since a
+  # geometric fall to a lower end lowers the rate throughout. A pass is the full batches of one piece
+  # count, a count's partial batch dropped each epoch.
   schedule: budget
   epochs: 4
-  learning_rate: [1.0e-3, 1.0e-5]
+  learning_rate: [3.0e-4, 1.0e-5]
   warmup_rounds: 1

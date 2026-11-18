@@ -1,7 +1,15 @@
-//! Step 4 (the transformer plan's Plan): the Fattorini Transformer's own model --
-//! see the transformer design's "Shared transformer encoder" and "Value head" sections for the
-//! settled design this implements. Its own standalone type, not a `network::Network` variant
-//! (design point H): nothing here is reached through `FeatureSet`/`DenseBatch` at all.
+//! The Fattorini Transformer's own model: token plus positional embeddings, `num_layers` pre-norm
+//! blocks, a final LayerNorm on `[CLS]`, and the value head reading it. Its own standalone type, not
+//! a `network::Network` variant: nothing here is reached through `FeatureSet`/`DenseBatch` at all.
+//!
+//! **Pre-norm, GPT-2's initialisation, no dropout (2026-11-18).** The first version was post-norm
+//! BERT, `LayerNorm(x + sublayer(x))`, with libtorch's default initialisation (token embeddings of
+//! spread 1) and dropout 0.1. Trained alone on Lc0's data it barely moved from a constant
+//! prediction, and not at all with its dropout, where the NNUEs learned at once from the same
+//! positions; on a toy batch with a sharp signal it learned. A post-norm stack trains poorly from
+//! scratch: the norm after every residual weakens the gradient through it. So each block is
+//! `x + attention(LayerNorm(x))`, then `x + feed_forward(LayerNorm(x))`; every embedding and linear
+//! weight starts from a normal of spread `INIT_STDEV`, every bias at 0; and nothing is dropped.
 //!
 //! The binary only builds it, for the parameters `StackedTransformer` stacks and a fresh run starts
 //! from; its forward passes are the stack's test reference and inference's future entry point, so
@@ -18,55 +26,54 @@ use super::value_head::{Activation, ValueHead};
 
 /// `1` `[CLS]` + up to `2` kings + up to `cache::MAX_NON_KING_PIECES` non-king pieces = `33`, the
 /// longest sequence `transformer_vocab::token_sequence` can ever produce (the opening position,
-/// all `32` pieces on the board) -- the learned positional embedding table's own fixed width. Not
-/// imported from `length_cache::MAX_PIECE_COUNT` (that module is about cache-file bucketing, a
-/// different concern) -- derived directly from the one constant both actually share.
+/// all `32` pieces on the board) -- the learned positional embedding table's own fixed width.
 pub const MAX_SEQUENCE_LENGTH: usize = 1 + 2 + super::cache::MAX_NON_KING_PIECES;
 
-/// Token embedding (a real lookup table, indexed by arbitrary vocabulary indices) plus learned
-/// positional embedding (the transformer design: "learned, not fixed/sinusoidal") -- added
-/// together, the standard BERT-style input to the first transformer block.
+/// GPT-2's spread for every embedding and linear weight.
+pub const INIT_STDEV: f64 = 0.02;
+
+fn normal() -> nn::Init {
+    nn::Init::Randn { mean: 0.0, stdev: INIT_STDEV }
+}
+
+/// A linear layer's configuration: weights from `normal`, biases 0.
+pub fn linear_config() -> nn::LinearConfig {
+    nn::LinearConfig { ws_init: normal(), bs_init: Some(nn::Init::Const(0.0)), bias: true }
+}
+
+fn linear(vs: nn::Path, input: i64, output: i64) -> nn::Linear {
+    nn::linear(vs, input, output, linear_config())
+}
+
+/// Token embedding plus learned positional embedding, added together: the first block's input.
 pub struct Embeddings {
     token_embedding: nn::Embedding,
     /// `[MAX_SEQUENCE_LENGTH, embedding_dim]`, a plain learnable parameter rather than a second
     /// `nn::Embedding`: every real sequence's positions are always the contiguous prefix
-    /// `0..seq_len` (nothing is ever offset partway into this table), so a lookup-by-arbitrary-
-    /// index table would be solving a problem this input never actually has.
+    /// `0..seq_len`, so a lookup by arbitrary index would solve a problem this input never has.
     positional_embedding: Tensor,
 }
 
 impl Embeddings {
     pub fn new(vs: &nn::Path, vocab_size: i64, embedding_dim: i64) -> Embeddings {
-        let token_embedding = nn::embedding(vs / "token_embedding", vocab_size, embedding_dim, Default::default());
-        let positional_embedding = vs.var(
-            "positional_embedding",
-            &[MAX_SEQUENCE_LENGTH as i64, embedding_dim],
-            nn::Init::Randn { mean: 0., stdev: 0.02 },
-        );
+        let config = nn::EmbeddingConfig { ws_init: normal(), ..Default::default() };
+        let token_embedding = nn::embedding(vs / "token_embedding", vocab_size, embedding_dim, config);
+        let positional_embedding = vs.var("positional_embedding", &[MAX_SEQUENCE_LENGTH as i64, embedding_dim], normal());
         Embeddings { token_embedding, positional_embedding }
     }
 
-    /// `tokens`: `[batch, seq_len]`, `Kind::Int64` vocabulary indices (`transformer_batch::
-    /// TransformerBatch::tokens`). Returns `[batch, seq_len, embedding_dim]`. `seq_len` is read
-    /// directly off `tokens`' own shape, never passed separately -- there is no other value it
-    /// could legitimately be. `dropout`/`train`: standard BERT embedding dropout, applied right
-    /// after summing the token and positional embeddings -- a no-op whenever `train` is `false`
-    /// (`Tensor::dropout`'s own eval-mode behavior), so a play-time/eval forward pass never needs
-    /// a separate code path to skip it.
-    pub fn forward(&self, tokens: &Tensor, dropout: f64, train: bool) -> Tensor {
+    /// `tokens`: `[batch, seq_len]`, `Kind::Int64` vocabulary indices. Returns `[batch, seq_len,
+    /// embedding_dim]`.
+    pub fn forward(&self, tokens: &Tensor) -> Tensor {
         let (_batch, seq_len) = tokens.size2().unwrap();
-        let token_embedded = tokens.apply(&self.token_embedding);
         let positions = self.positional_embedding.narrow(0, 0, seq_len).unsqueeze(0);
-        (token_embedded + positions).dropout(dropout, train)
+        tokens.apply(&self.token_embedding) + positions
     }
 }
 
-/// Multi-head self-attention, shared unchanged between full and kings-only attention (design
-/// point C of the transformer design's Attention section) -- what differs between the two is only the
-/// `attention_mask` passed into `forward`, never this struct or its weights. Built on `Tensor::
-/// scaled_dot_product_attention` (the built-in ATen op) rather than hand-rolled matmul/softmax,
-/// per design point C: this is standard, generically-documented ML machinery, not specific to Fattorini
-/// logic CLAUDE.md rule 3 requires hand-deriving.
+/// Multi-head self-attention, shared unchanged between full and kings-only attention: what differs
+/// between the two is only the `attention_mask` passed into `forward`. Built on `Tensor::
+/// scaled_dot_product_attention`.
 pub struct SelfAttention {
     qkv: nn::Linear,
     proj: nn::Linear,
@@ -79,47 +86,28 @@ impl SelfAttention {
             embedding_dim % num_heads, 0,
             "embedding_dim ({embedding_dim}) must divide evenly across num_heads ({num_heads})"
         );
-        let qkv = nn::linear(vs / "qkv", embedding_dim, embedding_dim * 3, Default::default());
-        let proj = nn::linear(vs / "proj", embedding_dim, embedding_dim, Default::default());
+        let qkv = linear(vs / "qkv", embedding_dim, embedding_dim * 3);
+        let proj = linear(vs / "proj", embedding_dim, embedding_dim);
         SelfAttention { qkv, proj, num_heads }
     }
 
-    /// `hidden`: `[batch, seq_len, embedding_dim]`. `attention_mask`: `transformer_batch::
-    /// TransformerBatch::attention_mask`'s own `Option<&Tensor>` directly -- `None` for full
-    /// attention (every pair allowed, nothing to restrict), `Some([batch, 1, seq_len, seq_len]
-    /// Bool)` for kings-only, broadcasting over the heads axis below. Returns `[batch, seq_len,
-    /// embedding_dim]`, the same shape `hidden` came in as (a transformer block's own residual
-    /// connection needs this to add cleanly back onto its input). `dropout`/`train`: BERT's own
-    /// two attention dropouts -- on the attention *probabilities* themselves (`scaled_dot_
-    /// product_attention`'s own `dropout_p`, only nonzero while training: this op has no eval-mode
-    /// awareness of its own, unlike `Tensor::dropout`, so the caller must gate it) and again on
-    /// the output projection, before it's handed back to the block's own residual add.
-    pub fn forward(&self, hidden: &Tensor, attention_mask: Option<&Tensor>, dropout: f64, train: bool) -> Tensor {
+    /// `hidden`: `[batch, seq_len, embedding_dim]`. `attention_mask`: `None` for full attention,
+    /// `Some([batch, 1, seq_len, seq_len] Bool)` for kings-only, broadcasting over the heads.
+    /// Returns `[batch, seq_len, embedding_dim]`.
+    pub fn forward(&self, hidden: &Tensor, attention_mask: Option<&Tensor>) -> Tensor {
         let (batch, seq_len, embedding_dim) = hidden.size3().unwrap();
         let head_dim = embedding_dim / self.num_heads;
-
-        // One projection producing Q, K, and V together, then split apart -- same shape as
-        // `vision::dinov2::Attention::forward`'s own `qkv` layer, adapted from its 4D (image
-        // patch) case to our 3D (token sequence) one: `[batch, seq, 3, heads, head_dim]`,
-        // permuted so the `3` (query/key/value) axis comes first and can be indexed off directly.
+        // One projection producing Q, K and V together, `[batch, seq, 3, heads, head_dim]`, permuted
+        // so the `3` axis comes first.
         let qkv = hidden.apply(&self.qkv).reshape([batch, seq_len, 3, self.num_heads, head_dim]).permute([2, 0, 3, 1, 4]);
-        let query = qkv.get(0);
-        let key = qkv.get(1);
-        let value = qkv.get(2);
-
-        let attention_dropout_p = if train { dropout } else { 0.0 };
-        let attended = Tensor::scaled_dot_product_attention(
-            &query, &key, &value, attention_mask, attention_dropout_p, false, None, false,
-        );
-        attended.transpose(1, 2).reshape([batch, seq_len, embedding_dim]).apply(&self.proj).dropout(dropout, train)
+        let (query, key, value) = (qkv.get(0), qkv.get(1), qkv.get(2));
+        let attended = Tensor::scaled_dot_product_attention(&query, &key, &value, attention_mask, 0.0, false, None, false);
+        attended.transpose(1, 2).reshape([batch, seq_len, embedding_dim]).apply(&self.proj)
     }
 }
 
-/// The position-wise feed-forward sublayer every transformer block has alongside self-attention --
-/// the transformer design's "BERT-like" setup: two linear layers with a GELU in between, widening
-/// to `feedforward_dim` and back down to `embedding_dim`, applied identically and independently to
-/// every sequence position (nothing here mixes information across positions -- that's attention's
-/// own job, not this sublayer's).
+/// Two linear layers with a GELU between, widening to `feedforward_dim` and back, applied to every
+/// position independently.
 pub struct FeedForward {
     fc1: nn::Linear,
     fc2: nn::Linear,
@@ -127,25 +115,18 @@ pub struct FeedForward {
 
 impl FeedForward {
     pub fn new(vs: &nn::Path, embedding_dim: i64, feedforward_dim: i64) -> FeedForward {
-        let fc1 = nn::linear(vs / "fc1", embedding_dim, feedforward_dim, Default::default());
-        let fc2 = nn::linear(vs / "fc2", feedforward_dim, embedding_dim, Default::default());
+        let fc1 = linear(vs / "fc1", embedding_dim, feedforward_dim);
+        let fc2 = linear(vs / "fc2", feedforward_dim, embedding_dim);
         FeedForward { fc1, fc2 }
     }
 
-    /// `hidden`: `[batch, seq_len, embedding_dim]`, unchanged in and out. `dropout`/`train`:
-    /// applied once, right after `fc2`, before the block's own residual add -- same placement and
-    /// eval-mode-is-a-no-op behavior as `SelfAttention::forward`'s own output dropout.
-    pub fn forward(&self, hidden: &Tensor, dropout: f64, train: bool) -> Tensor {
-        hidden.apply(&self.fc1).gelu("none").apply(&self.fc2).dropout(dropout, train)
+    pub fn forward(&self, hidden: &Tensor) -> Tensor {
+        hidden.apply(&self.fc1).gelu("none").apply(&self.fc2)
     }
 }
 
-/// One full transformer block: self-attention then feed-forward, each wrapped in its own residual
-/// connection and followed by `LayerNorm` -- classic (post-norm) BERT, `LayerNorm(x +
-/// Sublayer(x))` for each of the two sublayers in turn, not the pre-norm ordering newer
-/// architectures (GPT-2 onward, `vision::dinov2::Block`'s own `x + Sublayer(LayerNorm(x))`) use
-/// instead. The transformer design calls for "standard BERT-like encoding" specifically, and
-/// original BERT is post-norm, so that's what this is.
+/// One pre-norm block: `x + attention(norm1(x))`, then `x + feed_forward(norm2(x))`. The residual
+/// path carries the input through untouched, so the gradient reaches every block undiminished.
 pub struct TransformerBlock {
     attention: SelfAttention,
     norm1: nn::LayerNorm,
@@ -162,71 +143,56 @@ impl TransformerBlock {
         TransformerBlock { attention, norm1, feed_forward, norm2 }
     }
 
-    /// `hidden`: `[batch, seq_len, embedding_dim]`, unchanged in and out -- `attention_mask` is
-    /// passed straight through to `SelfAttention::forward` unchanged, this block has no opinion
-    /// of its own about it. `dropout`/`train` are passed to both sublayers identically -- one
-    /// dropout rate for the whole block, matching `net.yaml`'s own single `architecture.dropout`
-    /// field (no per-sublayer rate is exposed to configure separately).
-    pub fn forward(&self, hidden: &Tensor, attention_mask: Option<&Tensor>, dropout: f64, train: bool) -> Tensor {
-        let attended = self.attention.forward(hidden, attention_mask, dropout, train);
-        let hidden = (hidden + attended).apply(&self.norm1);
-        let fed_forward = self.feed_forward.forward(&hidden, dropout, train);
-        (&hidden + fed_forward).apply(&self.norm2)
+    /// `hidden`: `[batch, seq_len, embedding_dim]`, unchanged in shape.
+    pub fn forward(&self, hidden: &Tensor, attention_mask: Option<&Tensor>) -> Tensor {
+        let hidden = hidden + self.attention.forward(&hidden.apply(&self.norm1), attention_mask);
+        &hidden + self.feed_forward.forward(&hidden.apply(&self.norm2))
     }
 }
 
-/// The whole model: embeddings, `architecture.num_layers` transformer blocks in sequence, then the
-/// value head reading `[CLS]`'s own final hidden state -- everything the transformer design's
-/// "Shared transformer encoder" and "Value head" sections settle, assembled. Shared unchanged
-/// between full and kings-only attention (design point A): both are this exact same struct, with
-/// the same weights shape, trained as two separate runs -- only `TransformerBatch::
-/// attention_mask` (built differently upstream, by `transformer_batch::to_transformer_batch`,
-/// depending on `net.yaml`'s own `training.attention`) ever differs between the two.
+/// The whole model: embeddings, `architecture.num_layers` blocks, a final LayerNorm on `[CLS]`, and
+/// the value head reading it. The same for full and kings-only attention: only the batch's
+/// `attention_mask` differs.
 pub struct TransformerNetwork {
     embeddings: Embeddings,
     blocks: Vec<TransformerBlock>,
+    /// A pre-norm stack's residual stream is never normalised by its blocks: this is what the value
+    /// head reads it through.
+    final_norm: nn::LayerNorm,
     value_head: ValueHead,
-    dropout: f64,
 }
 
 impl TransformerNetwork {
-    /// Panics if `architecture.kind` isn't `Transformer` -- `main.rs` only ever calls this once
-    /// `architecture.kind` has already been matched to route here in the first place, so this is
-    /// an assertion against a caller bug (CLAUDE.md rule 4), never a real code path.
+    /// Panics if `architecture.kind` isn't `Transformer`: a caller bug.
     pub fn new(vs: &nn::Path, architecture: &Architecture) -> TransformerNetwork {
-        let ArchitectureKind::Transformer { num_layers, num_heads, feedforward_dim, dropout } = &architecture.kind
-        else {
+        let ArchitectureKind::Transformer { num_layers, num_heads, feedforward_dim } = &architecture.kind else {
             panic!("TransformerNetwork::new requires architecture.kind to be transformer");
         };
         let embedding_dim = architecture.embedding_dim();
         let embeddings = Embeddings::new(&(vs / "embeddings"), VOCAB_SIZE as i64, embedding_dim);
-        let mut blocks = Vec::with_capacity(*num_layers as usize);
-        for i in 0..*num_layers {
-            blocks.push(TransformerBlock::new(&(vs / format!("block{i}")), embedding_dim, *num_heads, *feedforward_dim));
-        }
-        let value_head =
-            ValueHead::new(&(vs / "value_head"), embedding_dim, architecture.value_head_hidden_dim(), Activation::Relu);
-        TransformerNetwork { embeddings, blocks, value_head, dropout: *dropout }
+        let blocks = (0..*num_layers)
+            .map(|i| TransformerBlock::new(&(vs / format!("block{i}")), embedding_dim, *num_heads, *feedforward_dim))
+            .collect();
+        let final_norm = nn::layer_norm(vs / "final_norm", vec![embedding_dim], Default::default());
+        let value_head = ValueHead::with_config(
+            &(vs / "value_head"),
+            embedding_dim,
+            architecture.value_head_hidden_dim(),
+            Activation::Relu,
+            linear_config,
+        );
+        TransformerNetwork { embeddings, blocks, final_norm, value_head }
     }
 
-    /// `batch.tokens`/`batch.attention_mask` flow straight through every block in turn; the final
-    /// hidden state's own `[CLS]` row (sequence position `0`, `Tensor::select`) is what the value
-    /// head actually reads -- every other position's final representation is computed (attention
-    /// needs the whole sequence to produce even `[CLS]`'s own row correctly) but never read
-    /// directly by anything downstream of this function. Returns `[batch, 1]`, a raw, unbounded
-    /// value (`ValueHead::forward`'s own doc comment) -- no sigmoid, no further conversion needed
-    /// by callers. `train` gates every dropout call transitively (`Embeddings`/
-    /// `SelfAttention`/`FeedForward`'s own `forward` methods) -- `false` for play/eval, `true`
-    /// only while actually training.
-    ///
-    /// Training runs `StackedTransformer`, every lambda at once; this one-network forward is the
-    /// reference it is tested against, and what inference will run.
-    pub fn forward(&self, batch: &TransformerBatch, train: bool) -> Tensor {
-        let mut hidden = self.embeddings.forward(&batch.tokens, self.dropout, train);
+    /// `[batch, 1]`, the evaluation in pawns, raw and unbounded. Training runs `StackedTransformer`,
+    /// every lambda at once; this one-network forward is the reference it is tested against, and
+    /// what inference will run.
+    pub fn forward(&self, batch: &TransformerBatch) -> Tensor {
+        let mut hidden = self.embeddings.forward(&batch.tokens);
         for block in &self.blocks {
-            hidden = block.forward(&hidden, batch.attention_mask.as_ref(), self.dropout, train);
+            hidden = block.forward(&hidden, batch.attention_mask.as_ref());
         }
-        let cls = hidden.select(1, 0);
+        let cls = hidden.select(1, 0).apply(&self.final_norm);
         self.value_head.forward(&cls)
     }
 }
@@ -241,21 +207,18 @@ mod tests {
         let embeddings = Embeddings::new(&vs.root(), 100, 16);
 
         let tokens = Tensor::from_slice(&[1i64, 2, 3, 4, 5, 6]).view([2, 3]);
-        let output = embeddings.forward(&tokens, 0.0, false);
+        let output = embeddings.forward(&tokens);
 
         assert_eq!(output.size(), [2, 3, 16]);
     }
 
     #[test]
     fn forward_gives_the_same_token_at_different_positions_different_embeddings() {
-        // Token `7` appearing at sequence position `0` in one row and position `1` in another
-        // must come out different -- if positional information were silently dropped, both rows
-        // would be identical (same token embedding, same missing positional term).
         let vs = nn::VarStore::new(tch::Device::Cpu);
         let embeddings = Embeddings::new(&vs.root(), 100, 16);
 
         let tokens = Tensor::from_slice(&[7i64, 1, 1, 7]).view([2, 2]);
-        let output = embeddings.forward(&tokens, 0.0, false);
+        let output = embeddings.forward(&tokens);
 
         let token_7_at_position_0 = output.get(0).get(0);
         let token_7_at_position_1 = output.get(1).get(1);
@@ -268,7 +231,7 @@ mod tests {
         let embeddings = Embeddings::new(&vs.root(), 100, 16);
 
         let tokens = Tensor::from_slice(&[3i64, 9, 3, 1]).view([2, 2]);
-        let output = embeddings.forward(&tokens, 0.0, false);
+        let output = embeddings.forward(&tokens);
 
         let first_row_position_0 = output.get(0).get(0);
         let second_row_position_0 = output.get(1).get(0);
@@ -276,22 +239,21 @@ mod tests {
     }
 
     #[test]
-    fn forward_dropout_is_a_no_op_when_not_training_but_randomizes_when_training() {
+    fn every_weight_starts_small_every_bias_at_zero_every_norm_at_identity() {
         let vs = nn::VarStore::new(tch::Device::Cpu);
-        let embeddings = Embeddings::new(&vs.root(), 100, 16);
-        let tokens = Tensor::from_slice(&[1i64, 2, 3, 4]).view([1, 4]);
-
-        // train = false: dropout must be inert, so two calls with the very same input are
-        // identical -- if this weren't true, `train`'s own eval-mode gating would be broken.
-        let first = embeddings.forward(&tokens, 0.9, false);
-        let second = embeddings.forward(&tokens, 0.9, false);
-        assert!(first.allclose(&second, 1e-6, 1e-6, false));
-
-        // train = true with a high dropout rate: two calls must differ (each draws its own random
-        // dropout mask) -- otherwise `dropout` would be silently ignored even while training.
-        let third = embeddings.forward(&tokens, 0.9, true);
-        let fourth = embeddings.forward(&tokens, 0.9, true);
-        assert!(!third.allclose(&fourth, 1e-6, 1e-6, false));
+        let _ = TransformerNetwork::new(&vs.root(), &sample_architecture());
+        for (name, value) in vs.variables() {
+            if name.contains("norm") {
+                let expected = if name.ends_with("weight") { 1.0 } else { 0.0 };
+                assert!(value.allclose(&value.full_like(expected), 0.0, 0.0, false), "{name}");
+            } else if name.ends_with("bias") {
+                assert_eq!(value.abs().max().double_value(&[]), 0.0, "{name}");
+            } else if value.numel() >= 64 {
+                // Too few values in a smaller one for its sample spread to say much.
+                let spread = value.std(true).double_value(&[]);
+                assert!((0.01..0.03).contains(&spread), "{name}: spread {spread}");
+            }
+        }
     }
 
     #[test]
@@ -300,7 +262,7 @@ mod tests {
         let attention = SelfAttention::new(&vs.root(), 16, 4);
 
         let hidden = Tensor::randn([2, 5, 16], (tch::Kind::Float, tch::Device::Cpu));
-        let output = attention.forward(&hidden, None, 0.0, false);
+        let output = attention.forward(&hidden, None);
 
         assert_eq!(output.size(), [2, 5, 16]);
     }
@@ -312,40 +274,25 @@ mod tests {
         SelfAttention::new(&vs.root(), 15, 4);
     }
 
-    #[test]
-    fn self_attention_mask_actually_changes_the_output() {
-        // An identity-only mask (every position may attend only itself) restricts information
-        // flow far more than no mask at all (every position attends everywhere) -- the two must
-        // produce different outputs, or the mask argument would be silently doing nothing.
-        let vs = nn::VarStore::new(tch::Device::Cpu);
-        let attention = SelfAttention::new(&vs.root(), 16, 4);
-        let hidden = Tensor::randn([1, 4, 16], (tch::Kind::Float, tch::Device::Cpu));
-
-        let seq_len = 4usize;
-        let mut identity_mask = vec![false; seq_len * seq_len];
+    /// An identity-only mask (every position attends only itself) against none at all: the outputs
+    /// must differ, or the mask would be silently doing nothing.
+    fn identity_mask(seq_len: usize) -> Tensor {
+        let mut mask = vec![false; seq_len * seq_len];
         for i in 0..seq_len {
-            identity_mask[i * seq_len + i] = true;
+            mask[i * seq_len + i] = true;
         }
-        let mask = Tensor::from_slice(&identity_mask).view([1, 1, seq_len as i64, seq_len as i64]);
-
-        let masked_output = attention.forward(&hidden, Some(&mask), 0.0, false);
-        let full_output = attention.forward(&hidden, None, 0.0, false);
-        assert!(!masked_output.allclose(&full_output, 1e-6, 1e-6, false));
+        Tensor::from_slice(&mask).view([1, 1, seq_len as i64, seq_len as i64])
     }
 
     #[test]
-    fn self_attention_dropout_is_a_no_op_when_not_training_but_randomizes_when_training() {
+    fn self_attention_mask_actually_changes_the_output() {
         let vs = nn::VarStore::new(tch::Device::Cpu);
         let attention = SelfAttention::new(&vs.root(), 16, 4);
         let hidden = Tensor::randn([1, 4, 16], (tch::Kind::Float, tch::Device::Cpu));
 
-        let first = attention.forward(&hidden, None, 0.9, false);
-        let second = attention.forward(&hidden, None, 0.9, false);
-        assert!(first.allclose(&second, 1e-6, 1e-6, false));
-
-        let third = attention.forward(&hidden, None, 0.9, true);
-        let fourth = attention.forward(&hidden, None, 0.9, true);
-        assert!(!third.allclose(&fourth, 1e-6, 1e-6, false));
+        let masked_output = attention.forward(&hidden, Some(&identity_mask(4)));
+        let full_output = attention.forward(&hidden, None);
+        assert!(!masked_output.allclose(&full_output, 1e-6, 1e-6, false));
     }
 
     #[test]
@@ -354,26 +301,10 @@ mod tests {
         let feed_forward = FeedForward::new(&vs.root(), 16, 64);
 
         let hidden = Tensor::randn([2, 5, 16], (tch::Kind::Float, tch::Device::Cpu));
-        let output = feed_forward.forward(&hidden, 0.0, false);
+        let output = feed_forward.forward(&hidden);
 
-        // In and out at embedding_dim (16), not feedforward_dim (64) -- the widen-then-narrow
-        // shape must round back to the block's own width.
+        // In and out at embedding_dim (16), not feedforward_dim (64).
         assert_eq!(output.size(), [2, 5, 16]);
-    }
-
-    #[test]
-    fn feed_forward_dropout_is_a_no_op_when_not_training_but_randomizes_when_training() {
-        let vs = nn::VarStore::new(tch::Device::Cpu);
-        let feed_forward = FeedForward::new(&vs.root(), 16, 64);
-        let hidden = Tensor::randn([2, 5, 16], (tch::Kind::Float, tch::Device::Cpu));
-
-        let first = feed_forward.forward(&hidden, 0.9, false);
-        let second = feed_forward.forward(&hidden, 0.9, false);
-        assert!(first.allclose(&second, 1e-6, 1e-6, false));
-
-        let third = feed_forward.forward(&hidden, 0.9, true);
-        let fourth = feed_forward.forward(&hidden, 0.9, true);
-        assert!(!third.allclose(&fourth, 1e-6, 1e-6, false));
     }
 
     #[test]
@@ -382,7 +313,7 @@ mod tests {
         let block = TransformerBlock::new(&vs.root(), 16, 4, 64);
 
         let hidden = Tensor::randn([2, 5, 16], (tch::Kind::Float, tch::Device::Cpu));
-        let output = block.forward(&hidden, None, 0.0, false);
+        let output = block.forward(&hidden, None);
 
         assert_eq!(output.size(), [2, 5, 16]);
     }
@@ -393,15 +324,8 @@ mod tests {
         let block = TransformerBlock::new(&vs.root(), 16, 4, 64);
         let hidden = Tensor::randn([1, 4, 16], (tch::Kind::Float, tch::Device::Cpu));
 
-        let seq_len = 4usize;
-        let mut identity_mask = vec![false; seq_len * seq_len];
-        for i in 0..seq_len {
-            identity_mask[i * seq_len + i] = true;
-        }
-        let mask = Tensor::from_slice(&identity_mask).view([1, 1, seq_len as i64, seq_len as i64]);
-
-        let masked_output = block.forward(&hidden, Some(&mask), 0.0, false);
-        let full_output = block.forward(&hidden, None, 0.0, false);
+        let masked_output = block.forward(&hidden, Some(&identity_mask(4)));
+        let full_output = block.forward(&hidden, None);
         assert!(!masked_output.allclose(&full_output, 1e-6, 1e-6, false));
     }
 
@@ -410,18 +334,16 @@ mod tests {
             embedding_dim: Some(16),
             value_head: Some(super::super::net_config::ValueHeadConfig { hidden_dim: vec![8, 8] }),
             king_buckets: None,
-            kind: super::super::net_config::ArchitectureKind::Transformer {
-                num_layers: 2, num_heads: 4, feedforward_dim: 32, dropout: 0.0,
-            },
+            kind: super::super::net_config::ArchitectureKind::Transformer { num_layers: 2, num_heads: 4, feedforward_dim: 32 },
         }
     }
 
     fn sample_batch(attention: super::super::net_config::Attention) -> TransformerBatch {
         use super::super::cache::CacheRecord;
-        use fattorini::features::CanonicalPosition;
         use fattorini::board::castling_rights::CastlingRights;
         use fattorini::board::color::Color;
         use fattorini::board::square::Square;
+        use fattorini::features::CanonicalPosition;
 
         let record = |label: f32| {
             let canonical = CanonicalPosition {
@@ -444,7 +366,7 @@ mod tests {
         let network = TransformerNetwork::new(&vs.root(), &sample_architecture());
         let batch = sample_batch(super::super::net_config::Attention::Full);
 
-        let output = network.forward(&batch, false);
+        let output = network.forward(&batch);
 
         assert_eq!(output.size(), [2, 1]);
         let values: Vec<f32> = output.reshape([2]).try_into().unwrap();
@@ -485,7 +407,7 @@ mod tests {
         let network = TransformerNetwork::new(&vs.root(), &sample_architecture());
         let alone: Vec<f64> = positions
             .iter()
-            .map(|position| network.forward(&to_transformer_batch(std::slice::from_ref(position), Attention::Full), false).double_value(&[0, 0]))
+            .map(|position| network.forward(&to_transformer_batch(std::slice::from_ref(position), Attention::Full)).double_value(&[0, 0]))
             .collect();
 
         let sequences: Vec<Tensor> =
@@ -510,7 +432,7 @@ mod tests {
         let mask = real.view([lengths.len() as i64, 1, 1, longest]).expand([lengths.len() as i64, 1, longest, longest], false);
         let padded = TransformerBatch { tokens, attention_mask: Some(mask), labels: Tensor::zeros([3, 1], (tch::Kind::Float, tch::Device::Cpu)) };
 
-        let together = network.forward(&padded, false);
+        let together = network.forward(&padded);
 
         for (row, &value) in alone.iter().enumerate() {
             let padded_value = together.double_value(&[row as i64, 0]);
@@ -524,7 +446,7 @@ mod tests {
         let network = TransformerNetwork::new(&vs.root(), &sample_architecture());
         let batch = sample_batch(super::super::net_config::Attention::KingsOnly);
 
-        let output = network.forward(&batch, false);
+        let output = network.forward(&batch);
 
         assert_eq!(output.size(), [2, 1]);
         let values: Vec<f32> = output.reshape([2]).try_into().unwrap();

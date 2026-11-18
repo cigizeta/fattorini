@@ -81,9 +81,42 @@ The `n_g` need one pass over the buckets: measured once and kept beside them, as
    undecided), `candidates::export_budget_candidates` recording the candidates' test losses in
    `candidates.txt` without writing engine networks.
 
+   **Sides in the vocabulary** (the developer, 2026-11-18, found by step 8's first run): the
+   scaled run stayed at test loss ln 2, a constant prediction, while the scaled NNUEs fell to about
+   0.65 on the same share. Its tokens did not say whose piece each was. `transformer_vocab.rs` now
+   has an own and an opponent block, 1137 tokens (rotor-transformer.md, Vocabulary).
+
 8. **Seen working:** `cargo test -p smithy`; then a scaled smoke run of the config on the training
    machine, end to end: its piece counts measured, its rounds, a stop and a resume (the log's
    replay line, the loss continuing), its test loss on the page.
+
+## Step 8, seen (2026-11-18)
+
+Scaled runs of `lc0-alpha-pieces` at 1/1024 on a CPU, 1.98M training positions, 484 rounds of 4
+steps of 4096, about 4 to 5 minutes each:
+
+- **r1:** the old vocabulary and network: stuck at test loss ln 2 (a constant prediction).
+- **r2:** sides in the vocabulary: still ln 2. Ended in error: training published every budget
+  candidate's `.nnue`, which a transformer has none of; fixed (only existing files published).
+- **Diagnosis:** a toy batch (a queen up for one side or the other) trained at once; the real
+  buckets, trained alone without the round loop, barely moved (0.6930 to 0.6900 at best in 400
+  batches of 1024; flat with dropout 0.1). Hence pre-norm, 0.02 initialisation and no dropout
+  (rotor-transformer.md); in the same harness then 0.6762 at rate 3e-4, 0.6833 at 1e-3, which
+  jumped. The budget's start set to 3e-4.
+- **r3:** pre-norm, rate 3e-4 to 1e-5: test loss 0.6534 at the end (best 0.6530), against the
+  scaled NNUE baselines' 0.6507 and 0.6536 under the same budget: level. Behind early (by 0.014 at
+  step 200), the gap closing until the rate fell below about 3e-5. Ended cleanly, no round robin.
+- **r4:** the same, down to 3e-6 (a fall of 100, as the NNUEs'; Lc0's own transformers fall about
+  67, in steps, Chessformer's appendix): test loss 0.6584 at the end, behind r3 from step 200 on
+  (by 0.003 to 0.005): a geometric fall to a lower end lowers the rate throughout, and at this scale
+  the middle of the run matters more than the end. Back to 1e-5. A rate held high for longer, as
+  Lc0's step schedule, may beat r3: the budget has no step schedule yet.
+- **Width 128** (`configs/lc0-alpha-pieces-128.yaml`): r3's schedule, width doubled. Next.
+
+Lc0's settings, for reference (Chessformer, ICLR 2026, appendix A.2): Nadam, its 191M network at
+2e-3, then 3e-4 at 4.49M steps and 3e-5 at 5.47M of 6M; its small ablations (width 256, 8 layers,
+batch 2048) at a constant 5e-4 for 1.4M steps. Its earlier transformers were post-norm with DeepNet
+initialisation (Lc0's blog, 2024-02).
 
 ## Then, the experiment (transformer-on-buckets.md)
 

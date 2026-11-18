@@ -9,7 +9,7 @@
 //! alike), not two
 //! disjoint schemas picked by argument shape: `architecture.kind` is the one tag a reader (or
 //! `main.rs`) checks to know both which concrete network this file describes and which of
-//! `Architecture`'s own further fields (`num_layers`/`num_heads`/`feedforward_dim`/`dropout`) are
+//! `Architecture`'s own further fields (`num_layers`/`num_heads`/`feedforward_dim`) are
 //! even present. Fields genuinely shared by every kind (`embedding_dim`, `value_head`, and every
 //! `training` field) sit at the common level instead of being duplicated once per kind. See
 //! `examples/net_transformer.yaml`/`net_psq.yaml` for worked examples.
@@ -262,7 +262,8 @@ pub enum ArchitectureKind {
     /// every product through the hidden layer, detached, then one output over its values clipped and
     /// squared and every product (psq-threats-pairwise-hidden.md). Same data as psq_threats.
     PsqThreatsPairwiseHidden,
-    Transformer { num_layers: i64, num_heads: i64, feedforward_dim: i64, dropout: f64 },
+    /// Pre-norm blocks, no dropout (2026-11-18): post-norm with dropout barely learned from Lc0's data.
+    Transformer { num_layers: i64, num_heads: i64, feedforward_dim: i64 },
 }
 
 /// Everything about *how* the model trains, as opposed to its shape. `attention` is the one field
@@ -536,11 +537,10 @@ mod tests {
         assert_eq!(config.architecture.embedding_dim(), 256);
         assert_eq!(config.architecture.value_head_hidden_dim(), &[128, 64]);
         match config.architecture.kind {
-            ArchitectureKind::Transformer { num_layers, num_heads, feedforward_dim, dropout } => {
+            ArchitectureKind::Transformer { num_layers, num_heads, feedforward_dim } => {
                 assert_eq!(num_layers, 6);
                 assert_eq!(num_heads, 8);
                 assert_eq!(feedforward_dim, 1024);
-                assert_eq!(dropout, 0.1);
             }
             _ => panic!("expected architecture.kind to be Transformer"),
         }
@@ -577,8 +577,8 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: transformer\n  embedding_dim: 8\n  \
-             value_head:\n    hidden_dim: [4]\n  num_layers: 1\n  num_heads: 1\n  feedforward_dim: 8\n  \
-             dropout: 0.0\ntraining:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  \
+             value_head:\n    hidden_dim: [4]\n  num_layers: 1\n  num_heads: 1\n  feedforward_dim: 8\n\
+             training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  \
              steps_per_round: 1\n  warmup_rounds: 0\n  patience_rounds: 1\n",
         )
         .expect("failed to write the fixture file");
@@ -647,7 +647,7 @@ mod tests {
             &path,
             "architecture:\n  kind: transformer\n  \
              embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\n  num_layers: 1\n  num_heads: 1\n  \
-             feedforward_dim: 8\n  dropout: 0.0\ntraining:\n  attention: full\n  shuffle_buffer: 16\n  \
+             feedforward_dim: 8\ntraining:\n  attention: full\n  shuffle_buffer: 16\n  \
              learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
              warmup_rounds: 0\n  patience_rounds: 1\n",
         )
@@ -666,7 +666,7 @@ mod tests {
             &path,
             format!(
                 "{head}architecture:\n  kind: transformer\n  embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\n  \
-                 num_layers: 1\n  num_heads: 1\n  feedforward_dim: 8\n  dropout: 0.1\ntraining:\n  attention: full\n  \
+                 num_layers: 1\n  num_heads: 1\n  feedforward_dim: 8\ntraining:\n  attention: full\n  \
                  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n\
                  {schedule}"
             ),
@@ -681,11 +681,11 @@ mod tests {
     }
 
     #[test]
-    fn load_accepts_a_transformer_stepping_down_rates_with_dropout() {
+    fn load_accepts_a_transformer_stepping_down_rates() {
         let path = transformer_fixture("lockstep", "");
         let config = load(path.to_str().unwrap());
         assert_eq!(config.training.learning_rate, vec![0.1, 0.01]);
-        assert!(matches!(config.architecture.kind, ArchitectureKind::Transformer { dropout, .. } if dropout == 0.1));
+        assert!(matches!(config.architecture.kind, ArchitectureKind::Transformer { num_layers: 1, .. }));
     }
 
     #[test]

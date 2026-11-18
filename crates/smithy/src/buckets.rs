@@ -258,6 +258,7 @@ pub(crate) struct PieceCounts {
 
 impl PieceCounts {
     /// The records with `pieces` pieces beside the kings.
+    #[cfg(test)]
     pub(crate) fn of(&self, pieces: usize) -> u64 {
         self.counts[pieces]
     }
@@ -590,8 +591,6 @@ pub(crate) struct BucketStream {
     receiver: Option<Receiver<Vec<CacheRecord>>>,
     loader: Option<JoinHandle<()>>,
     current: std::vec::IntoIter<CacheRecord>,
-    /// Every committed record once: an epoch.
-    total: u64,
 }
 
 /// An epoch's bucket order and the seed of each bucket's permutation.
@@ -666,12 +665,7 @@ impl BucketStream {
                 start = 0;
             }
         });
-        Ok(BucketStream { receiver: Some(receiver), loader: Some(loader), current: Vec::new().into_iter(), total })
-    }
-
-    /// The records of an epoch: every committed record once.
-    pub fn records_per_epoch(&self) -> u64 {
-        self.total
+        Ok(BucketStream { receiver: Some(receiver), loader: Some(loader), current: Vec::new().into_iter() })
     }
 
     /// The next record, running on into the next bucket and the next epoch.
@@ -830,7 +824,6 @@ mod tests {
         prepare(&buckets, &files, 2, &AtomicBool::new(false), &quiet).unwrap();
         let mut batched = open(&buckets, &[0.5], 7);
         let mut single = open(&buckets, &[0.5], 7);
-        assert_eq!(single.records_per_epoch(), 40);
         // 100 records from 7 in: past the end of the first epoch and into the third.
         let batches: Vec<_> = (0..10).flat_map(|_| batched.next_batch(10)).map(|record| key(&record)).collect();
         let records: Vec<_> = (0..100).map(|_| key(&single.next_record())).collect();

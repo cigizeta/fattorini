@@ -41,13 +41,21 @@ impl ValueHead {
     /// layers of different widths and removes the redundancy). Empty is allowed: the output layer
     /// then reads `embedding_dim` directly.
     pub fn new(vs: &nn::Path, embedding_dim: i64, hidden_dims: &[i64], activation: Activation) -> ValueHead {
+        Self::with_config(vs, embedding_dim, hidden_dims, activation, Default::default)
+    }
+
+    /// `new` with every layer built from `config`: the transformer's, every weight from a normal of
+    /// a small spread and every bias 0, where the NNUEs keep libtorch's defaults.
+    pub fn with_config(
+        vs: &nn::Path, embedding_dim: i64, hidden_dims: &[i64], activation: Activation, config: impl Fn() -> nn::LinearConfig,
+    ) -> ValueHead {
         let mut hidden_layers = Vec::with_capacity(hidden_dims.len());
         let mut input_dim = embedding_dim;
         for (i, &hidden_dim) in hidden_dims.iter().enumerate() {
-            hidden_layers.push(nn::linear(vs / format!("hidden{i}"), input_dim, hidden_dim, Default::default()));
+            hidden_layers.push(nn::linear(vs / format!("hidden{i}"), input_dim, hidden_dim, config()));
             input_dim = hidden_dim;
         }
-        let output = nn::linear(vs / "output", input_dim, 1, Default::default());
+        let output = nn::linear(vs / "output", input_dim, 1, config());
         ValueHead { hidden_layers, output, activation }
     }
 

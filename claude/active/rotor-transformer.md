@@ -43,6 +43,23 @@ to be pinned down at implementation time rather than now.
 
 ## Shared transformer encoder
 
+**Revised 2026-11-18 (the developer): pre-norm, 0.02 initialisation, no dropout.** With the
+vocabulary telling sides, the transformer still barely learned on Lc0's data: trained alone on the
+real scaled buckets (no round loop), its held-out loss went from 0.6930, a constant prediction's,
+to 0.6900 at best in 400 steps of 1024, and not at all with dropout 0.1, where the NNUEs reach about
+0.675 on as many positions; on a toy batch with a sharp signal it learned at once. So:
+
+- **Pre-norm blocks:** `x + attention(LayerNorm(x))`, then `x + feed_forward(LayerNorm(x))`, and
+  one final LayerNorm on `[CLS]` before the value head. Post-norm (BERT's, chosen below) trains
+  poorly from scratch: the norm after each residual weakens the gradient through the stack.
+- **Initialisation:** every embedding (token, positional) and every linear weight (attention,
+  feed-forward, value head) from a normal of standard deviation 0.02, biases 0, norms weight 1
+  and bias 0, as GPT-2.
+- **No dropout:** the field and its code removed. It fights overfitting, not today's problem; it
+  comes back as a design change if the full corpus overfits.
+
+Where the text below says post-norm, BERT-like blocks or dropout, this revision replaces it.
+
 **Piece-centric only**, settled directly by the developer -- a square-centric variant (`L = 64`,
 one token per square) was considered and dropped in favor of this one.
 
@@ -102,6 +119,16 @@ LayerNorm, GELU). Exact hyperparameters (embedding dimension, layer/head counts,
 width, dropout) are left to implementation time.
 
 ## Vocabulary
+
+**Revised 2026-11-18 (the developer): every piece token says whose piece it is.** The vocabulary
+below had one token per piece type and square for both sides, the side left to the order (own
+block first, the opponent's starting at its king). In principle the network could find the
+boundary by comparing positions; in practice it did not: the first run on Lc0's data
+(transformer-on-buckets.md) stayed at a constant prediction, test loss ln 2, while the NNUEs
+learned on the same data. Now the side to move's pieces take tokens from an own block and the
+other side's from an opponent block, the same layout of 568 each: `1 + 2 * 568 = 1137` tokens.
+The own block's 8 en-passant pawn tokens are never used. The per-piece-type policy head is
+unaffected: it reads the side to move's tokens only. The enumeration below is one side's block.
 
 Every distinct token this transformer's input sequence can contain, enumerated one by one -- not
 via a formula, matching this project's own policy-head precedent below.
