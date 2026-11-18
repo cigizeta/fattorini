@@ -124,7 +124,7 @@ impl ControlSpec {
     /// text one `time` parses back (`10+0.1` at 1.12 is `11.2+0.112`, `40/900` is `40/1008`); a
     /// fixed depth unchanged, being the same on every machine. A tune's clients play at it (`client`).
     pub fn scaled(&self, factor: f64) -> ControlSpec {
-        let Control::Fischer(time_control) = self.control else {
+        let Control::Clock(time_control) = self.control else {
             return self.clone();
         };
         let milliseconds = |duration: std::time::Duration| -> f64 {
@@ -212,7 +212,7 @@ mod tests {
     fn a_scaled_clock_scales_base_and_increment_and_a_depth_stays() {
         let scaled = ControlSpec::time("10+0.1").unwrap().scaled(1.12);
         assert_eq!(scaled.text, "11.2+0.112");
-        let Control::Fischer(time_control) = scaled.control else { panic!("a clock stays a clock") };
+        let Control::Clock(time_control) = scaled.control else { panic!("a clock stays a clock") };
         assert_eq!((time_control.base.as_secs_f64() * 1000.0).round(), 11_200.0);
         assert_eq!((time_control.increment.as_secs_f64() * 1000.0).round(), 112.0);
         assert_eq!(ControlSpec::time("10+0.1").unwrap().scaled(1.0).text, "10+0.1");

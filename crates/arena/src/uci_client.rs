@@ -240,7 +240,7 @@ impl Player for UciPlayer {
     fn choose_move(&mut self, request: &MoveRequest, stop_requested: &Arc<AtomicBool>) -> Result<MoveOutcome, Fault> {
         self.client.set_position(request.starting_fen, request.moves_uci)?;
         match request.limit {
-            MoveLimit::Fischer { white_remaining, black_remaining, increment, moves_to_go } => {
+            MoveLimit::Clock { white_remaining, black_remaining, increment, moves_to_go } => {
                 self.client.go(white_remaining, black_remaining, increment, increment, moves_to_go)?;
             }
             MoveLimit::FixedDepth(depth) => self.client.go_depth(depth)?,

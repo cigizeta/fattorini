@@ -49,7 +49,8 @@ pub enum MoveOutcome {
     Interrupted,
 }
 
-/// How a match limits each search: a real Fischer clock, or a fixed depth with no clock at all.
+/// How a match limits each search: a real clock, Fischer or repeating, or a fixed depth with no clock
+/// at all.
 ///
 /// The gate needs the second one. Both sides of an evaluation A/B must search to the identical
 /// depth, so that the only difference between them is the evaluation function -- under a clock the
@@ -57,13 +58,13 @@ pub enum MoveOutcome {
 /// not the question. See the network gate design.
 #[derive(Debug, Clone, Copy)]
 pub enum Control {
-    Fischer(TimeControl),
+    Clock(TimeControl),
     FixedDepth(u32),
 }
 
 impl Control {
-    /// Parses `match.base_time_control`/`tiebreak_time_control`: `"180+2"` stays Fischer and goes to
-    /// `TimeControl::parse` unchanged, `"depth 9"` becomes `FixedDepth(9)`. One extra grammar on
+    /// Parses `match.base_time_control`/`tiebreak_time_control`: `"180+2"` or `"40/900"` is a clock and
+    /// goes to `TimeControl::parse` unchanged, `"depth 9"` becomes `FixedDepth(9)`. One extra grammar on
     /// the field that already exists, rather than a second config concept beside it.
     pub fn parse(text: &str) -> Control {
         if let Some(depth_text) = text.trim().strip_prefix("depth ") {
@@ -74,14 +75,14 @@ impl Control {
             assert!(depth >= 1, "invalid control {text:?}: depth must be at least 1");
             return Control::FixedDepth(depth);
         }
-        Control::Fischer(TimeControl::parse(text))
+        Control::Clock(TimeControl::parse(text))
     }
 
     /// The per-side starting clock, or `None` under a fixed depth -- `play_one_game` builds its two
     /// `Clock`s from this and skips clock handling entirely when there is none.
     pub fn time_control(&self) -> Option<TimeControl> {
         match self {
-            Control::Fischer(time_control) => Some(*time_control),
+            Control::Clock(time_control) => Some(*time_control),
             Control::FixedDepth(_) => None,
         }
     }
@@ -110,12 +111,11 @@ pub struct MoveRequest<'a> {
 /// needs the *live* readings of both clocks, which `Control` cannot carry because it is a config
 /// value shared by every game of the match.
 ///
-/// `Fischer` covers every clock, repeating ones included: `moves_to_go` is the side to move's own
-/// count of moves before its next base (`Clock::moves_to_go`), UCI's `movestogo`, `None` under
-/// Fischer proper.
+/// `Clock` covers every clock, Fischer and repeating: `moves_to_go` is the side to move's own count of
+/// moves before its next base (`Clock::moves_to_go`), UCI's `movestogo`, `None` under Fischer.
 #[derive(Debug, Clone, Copy)]
 pub enum MoveLimit {
-    Fischer { white_remaining: Duration, black_remaining: Duration, increment: Duration, moves_to_go: Option<u32> },
+    Clock { white_remaining: Duration, black_remaining: Duration, increment: Duration, moves_to_go: Option<u32> },
     FixedDepth(u32),
 }
 
@@ -130,7 +130,7 @@ impl MoveLimit {
     /// The mover's own wall-clock allowance, which is what a subprocess is timed against.
     pub fn budget(&self, side_to_move: Color) -> Duration {
         match self {
-            MoveLimit::Fischer { white_remaining, black_remaining, .. } => {
+            MoveLimit::Clock { white_remaining, black_remaining, .. } => {
                 if side_to_move == Color::White {
                     *white_remaining
                 } else {
@@ -164,11 +164,11 @@ mod tests {
     #[test]
     fn parse_reads_a_fischer_control_exactly_as_before() {
         match Control::parse("180+2") {
-            Control::Fischer(time_control) => {
+            Control::Clock(time_control) => {
                 assert_eq!(time_control.base, Duration::from_secs(180));
                 assert_eq!(time_control.increment, Duration::from_secs(2));
             }
-            Control::FixedDepth(depth) => panic!("expected Fischer, got depth {depth}"),
+            Control::FixedDepth(depth) => panic!("expected a Fischer clock, got depth {depth}"),
         }
     }
 
@@ -176,14 +176,14 @@ mod tests {
     fn parse_reads_a_fixed_depth_control() {
         match Control::parse("depth 9") {
             Control::FixedDepth(depth) => assert_eq!(depth, 9),
-            Control::Fischer(_) => panic!("expected a fixed depth"),
+            Control::Clock(_) => panic!("expected a fixed depth"),
         }
     }
 
     #[test]
     fn parse_reads_a_repeating_control_as_a_clock() {
         match Control::parse("40/900") {
-            Control::Fischer(time_control) => assert_eq!(time_control.moves, Some(40)),
+            Control::Clock(time_control) => assert_eq!(time_control.moves, Some(40)),
             Control::FixedDepth(depth) => panic!("expected a clock, got depth {depth}"),
         }
     }
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn a_fischer_limit_budgets_the_mover_s_own_remaining_time() {
-        let limit = MoveLimit::Fischer {
+        let limit = MoveLimit::Clock {
             white_remaining: Duration::from_secs(30),
             black_remaining: Duration::from_secs(20),
             increment: Duration::from_secs(2),

@@ -258,9 +258,9 @@ pub fn play_one_game(
         }
 
         let limit = match control {
-            Control::Fischer(time_control) => MoveLimit::Fischer {
-                white_remaining: white_clock.expect("a Fischer control builds both clocks").remaining(),
-                black_remaining: black_clock.expect("a Fischer control builds both clocks").remaining(),
+            Control::Clock(time_control) => MoveLimit::Clock {
+                white_remaining: white_clock.expect("a clock control builds both clocks").remaining(),
+                black_remaining: black_clock.expect("a clock control builds both clocks").remaining(),
                 increment: time_control.increment,
                 moves_to_go: if side_to_move == Color::White { white_clock } else { black_clock }
                     .and_then(|clock| clock.moves_to_go()),

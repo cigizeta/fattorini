@@ -193,9 +193,6 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
 - **The Tests form's network select, with the lambda grid** (the developer, 2026-11-08): once a
   generation trains the polyline's one arm alone, "winner (lpolyline)" chooses among one, so the
   select goes when the grid goes, not before.
-- **`Control::Fischer` and `MoveLimit::Fischer` renamed `Clock`** (the developer, 2026-11-13,
-  cosmetic): since arena-repeating-controls.md they cover repeating clocks too. 13 uses in 6 files
-  of the arena.
 
 ## Written, not yet seen working for real
 

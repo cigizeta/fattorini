@@ -236,7 +236,7 @@ impl Run<'_> {
         let logical = std::thread::available_parallelism().map_or(1, |cores| cores.get());
         match control {
             Control::FixedDepth(_) => Placement { threads: logical, pin_to: None },
-            Control::Fischer(_) => clock_placement(cpu_topology::physical_core_cpus(), logical),
+            Control::Clock(_) => clock_placement(cpu_topology::physical_core_cpus(), logical),
         }
     }
 }
