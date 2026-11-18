@@ -147,11 +147,10 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
 
 ## Before the release or CCRL
 
-- **The tablebase score at the root** (the developer, 2026-11-10, to fix): in KQ vs KN with tables,
-  `fattorini-bot` reported +1.59. Search probes only after a zeroing move (`tablebase.rs`
-  `should_probe`), so with the capture beyond the horizon every leaf is the network's; the root's
-  DTZ ranking keeps play correct (`excluded_root_moves`) but never sets the reported score.
-  Designed, plan written: root-tablebase-score.md.
+- **The tablebase score at the root: implemented 2026-11-10** (root-tablebase-score.md), every test
+  passing, on Lichess since 2026-11-11. The bug: in KQ vs KN with tables, `fattorini-bot` reported
+  +1.59, since the root's DTZ ranking never set the reported score. Left: its step 5, the score seen
+  right in a Lichess tablebase ending; then the doc goes to `done/`.
 - **The 8-thread, repeating-control and Move Overhead checks: passed 2026-11-11**
   (release-checks.md), cutechess-cli smoke tests on the dry run's `.exe`, no failure of any kind.
 - **Clock safety at default settings: answered on `bartolomeo` (2026-11-17)** by Reckless's time
