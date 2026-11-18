@@ -3,8 +3,21 @@
 **Status:** plan, 2026-11-18, approved (the tags, not a `VERSION` 3: the developer). Steps 1 to 4
 committed (the engine); steps 5 to 8 written (the smithy, the census, the two configs), the old
 32-bucket constants now test-only. `run_config.txt` freezes the architecture's `Debug` text, so
-`Architecture`'s `Debug` writes `king_buckets` only when set: runs begun before it resume. Step 9
-next. `PsqNetwork` keeps `halfk: bool` with `king_layout` beside it (fewer
+`Architecture`'s `Debug` writes `king_buckets` only when set: runs begun before it resume.
+
+**Step 9 (2026-11-18):**
+- **The bench, 32 against 8**, `--halfk --hidden --width 256 --depth 9`, three runs each: no
+  difference per evaluation (about 285 ns a node's network either way) nor per search node (about
+  0.6 us); parameters 6.8 M against 2.5 M. Its positions are middlegames, where kings rarely move
+  and the refresh cache already makes a refresh cheap. The layout is a question of strength, not
+  speed: a wider 8-bucket network costs what a 32-bucket one of that width does.
+- **A scaled run of the 8**, end to end: trained, its round robin, `candidate.nnue` exported and
+  loaded by the gate's engine, 40 games.
+- **Found on the way:** the page read `history.tsv` while the trainer appended (five rounds a
+  second, scaled), panicked on a half-written line under its cache's lock, and the poisoned lock
+  took the loopback listener down. Fixed: the page reads whole lines alone outside the lock, and
+  `lan-http` answers a panicking handler with a 500.
+- **The census by layout:** to run. `PsqNetwork` keeps `halfk: bool` with `king_layout` beside it (fewer
 edits than an `Option`); `QuantizedPsqNetwork::halfk` is the `Option<Layout>`. The design: halfk-king-buckets.md.
 
 ## What the code is today
