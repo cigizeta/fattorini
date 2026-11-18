@@ -411,6 +411,11 @@ changes).
   `mimalloc` and one `loaded_bench`, the fastest of five runs; the two benches now agree within 2%.
   This item goes once that doc is in `done/`.
 
+- **The GPU's idle 12 to 15% in training** (2026-11-18, `-hidden-512`, one network, batch 4096): busy
+  85 to 88% steadily, no dips, so the feed is not starving it; the gap is between kernels. A profile
+  of one training step (a CUDA kernel timeline) to say whether it is a per-step sync or a host to
+  device copy not overlapped with compute: if so, a cheap fix worth a few percent. Not urgent; the
+  larger lever is the batch of 8192 (under "To design").
 - **Lc0's Convert, if it runs again:** skip a slow tar only while another worker downloads at normal
   speed (a stall reads as slowness today), and stop retrying a tar skipped N times.
 - **The scatter, faster:** only Drive's download bounds it; a wired line or a local copy helps a
