@@ -113,8 +113,9 @@ const LOW_WATER_PER_WORKER: u64 = 2;
 const CLAIM_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The longest wait between two claims of a machine that keeps failing them: its waits double from
-/// `CLAIM_POLL` up to this.
-const CLAIM_BACKOFF_CAP: Duration = Duration::from_secs(5 * 60);
+/// `CLAIM_POLL` up to this. A minute, not five: an arena restarted after a power cut once waited out
+/// most of a five-minute wait, answering all along (2026-11-13), while a claim costs one LAN request.
+const CLAIM_BACKOFF_CAP: Duration = Duration::from_secs(60);
 
 /// Self-play games are appended, as they arrive, to an open file per directory, closed into a
 /// segment (`.pgn.zst` and its `.meta`, as the readers take them) at this many positions, and when
@@ -2358,6 +2359,19 @@ struct Claims {
     backoff: Mutex<HashMap<String, Backoff>>,
 }
 
+/// Why a claim's request failed, from `Claims::post`'s error `message` for the claim at `url`: an
+/// arena that answered with an HTTP error says so, its code and body; one that did not answer, the
+/// transport's reason (refused, timed out), the URL dropped, the page naming the target already.
+/// Once every such failure read "no arena answering", an HTTP error and a timeout alike (2026-11-13,
+/// after a power cut, an arena answering curl read so for minutes).
+fn claim_failure(message: &str, url: &str) -> String {
+    if message.starts_with("HTTP ") {
+        return format!("the arena answered {message}");
+    }
+    let reason = message.strip_prefix(url).and_then(|rest| rest.strip_prefix(": ")).unwrap_or(message);
+    format!("no arena answering: {reason}")
+}
+
 /// A target's failing claims, retried after waits that double (`CLAIM_BACKOFF_CAP`).
 struct Backoff {
     failure: String,
@@ -2517,7 +2531,7 @@ impl Claims {
             // The holder by its standing, `Claim::standing`.
             Ok((word, body)) if word == "CLAIMED" => self.failed(target, format!("held by {}", body.trim()), now),
             Ok((word, _)) => self.failed(target, format!("answered {word}, which this build does not know"), now),
-            Err(_) => self.failed(target, "no arena answering".to_string(), now),
+            Err(message) => self.failed(target, claim_failure(&message, &lan_http::url(target, self.port, CLAIM_PATH)), now),
         }
     }
 
@@ -2560,7 +2574,7 @@ impl Claims {
                     let note = notes.get(target).cloned().unwrap_or_else(|| "not tried yet".to_string());
                     let retry = backoff.get(target).map_or(String::new(), |backoff| {
                         let wait = backoff.next.saturating_duration_since(now).as_secs();
-                        format!("; tried again in {wait} s, waits doubling up to {} min", CLAIM_BACKOFF_CAP.as_secs() / 60)
+                        format!("; tried again in {wait} s, waits doubling up to {} s", CLAIM_BACKOFF_CAP.as_secs())
                     });
                     MachineView {
                         target: target.clone(),
@@ -6843,7 +6857,9 @@ mod tests {
         assert!(claims.held().is_empty(), "silent, lost");
         assert!(claims.views(now)[0].state.starts_with("gamma silent for 61 s: lost"), "{}", claims.views(now)[0].state);
         claims.round(&shared, now);
-        assert_eq!(claims.views(now)[0].state, "no arena answering; tried again in 10 s, waits doubling up to 5 min");
+        let state = &claims.views(now)[0].state;
+        assert!(state.starts_with("no arena answering: "), "the transport's reason kept: {state}");
+        assert!(state.ends_with("; tried again in 10 s, waits doubling up to 60 s"), "{state}");
     }
 
     #[test]
@@ -6874,6 +6890,14 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_claim_says_whether_the_arena_answered_and_why_not() {
+        let url = "http://gamma:47823/claim";
+        assert_eq!(claim_failure("HTTP 500: busy", url), "the arena answered HTTP 500: busy");
+        assert_eq!(claim_failure(&format!("{url}: Connection Failed: Connect error: refused"), url), "no arena answering: Connection Failed: Connect error: refused");
+        assert_eq!(claim_failure("timed out", url), "no arena answering: timed out", "a message without the URL kept whole");
+    }
+
+    #[test]
     fn a_machine_failing_its_claims_is_tried_again_after_waits_doubling_up_to_the_cap() {
         let claims = Claims::new(test_claim(), vec!["gamma".to_string()]);
         let now = Instant::now();
@@ -6885,10 +6909,10 @@ mod tests {
         for _ in 0..10 {
             claims.failed("gamma", "no arena answering".to_string(), now);
         }
-        assert_eq!(wait(&claims), 300, "up to the cap");
+        assert_eq!(wait(&claims), 60, "up to the cap");
         claims.failed("gamma", "held by the smithy on alpha".to_string(), now);
         assert_eq!(wait(&claims), 10, "another failure starts again");
-        assert!(claims.views(now)[0].state.ends_with("tried again in 10 s, waits doubling up to 5 min"));
+        assert!(claims.views(now)[0].state.ends_with("tried again in 10 s, waits doubling up to 60 s"));
 
         // Not tried before its time: a round then sends nothing, so nothing new is said.
         let shared = Mutex::new(Shared::default());

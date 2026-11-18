@@ -376,9 +376,9 @@ changes).
   and answering (checked with curl on loopback and the LAN) read "no arena answering" for minutes,
   then was claimed with nothing changed, most likely at the next retry of a backoff grown to 5 min.
   `claim_one` reports every `post` error as "no arena answering", an HTTP error code or a timeout
-  included, so the page could not say which. To do, after test 8 (it needs a smithy restart): the
-  error kept after "no arena answering"; `CLAIM_BACKOFF_CAP` down to about 1 min, or a retry when
-  the page is asked.
+  included, so the page could not say which. **Written 2026-11-18:** an HTTP error reads "the arena
+  answered HTTP <code>: <body>", no answer "no arena answering: <the transport's reason>", and
+  `CLAIM_BACKOFF_CAP` is 1 min. To see working on the next failed claim, then this item goes.
 
 - **The smithy's bench on an idle machine, as the arenas' is** (the developer, 2026-11-09): to
   design, after the current tune (it changes how a tune's games are timed). The tune of
