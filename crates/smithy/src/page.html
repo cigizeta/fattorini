@@ -1422,13 +1422,15 @@ function bytes(value) {
 const CONVERT_CONNECTIONS = 2;
 
 // One place of Lc0's Convert, worded as the training's round: `{what} {tar}: {done} of {total}
-// ({percent}), {rate}, ETA about {eta}`; `of max` for the cap, which the run stops short of.
+// ({percent}), {rate}, ETA about {eta}`; `of max` for the cap, which the run stops short of. A tar's
+// counts are bytes; the cap's are training positions.
 function convertLine(what, line) {
-  const rate = line.rate === null ? "" : `, ${bytes(Math.round(line.rate))}/s`;
+  const count = line.tar ? bytes : (n) => `${whole(n)} positions`;
+  const rate = line.rate === null ? "" : `, ${count(Math.round(line.rate))}/s`;
   const eta = line.eta_seconds === null ? "" : `, ETA about ${duration(Math.round(line.eta_seconds))}`;
   const tar = line.tar ? ` ${line.tar}` : "";
   const of = line.tar ? "of" : "of max";
-  return `<div>${escape(`${what}${tar}: ${bytes(line.done)} ${of} ${bytes(line.total)} (${percent(line.done / Math.max(1, line.total))})${rate}${eta}`)}</div>`;
+  return `<div>${escape(`${what}${tar}: ${count(line.done)} ${of} ${count(line.total)} (${percent(line.done / Math.max(1, line.total))})${rate}${eta}`)}</div>`;
 }
 
 // Lc0's Convert in its Corpus section, while it runs, in fixed places so the page keeps its height:

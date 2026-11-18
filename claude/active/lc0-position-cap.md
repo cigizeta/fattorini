@@ -1,6 +1,17 @@
 # Lc0's cap in training positions
 
-**Status:** design and plan, 2026-11-18, approved; no code.
+**Status:** written, 2026-11-18, steps 1 to 4; step 5's Convert waits for the order below.
+
+## The order (complete.txt)
+
+A complete corpus is never extended: while `data/lc0/complete.txt` is on the remote the Convert
+says done, and while it is not, no full run trains on Lc0 (new or resumed). The code may go live
+any time: training does not read the cap. Then:
+
+1. The budget validation run, and any Lc0 run still going, finish on today's 1.2 billion.
+2. `complete.txt` deleted by hand on the remote; the Convert started from the page.
+3. At the cap the Convert writes `complete.txt` again, and Lc0 runs may start. Scaled runs train
+   meanwhile, so the king buckets' code is smoke-tested then.
 
 ## Why
 

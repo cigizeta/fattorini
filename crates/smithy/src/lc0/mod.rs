@@ -10,8 +10,9 @@
 //! its start, next time.
 //!
 //! **Whole tars only.** Tars are taken in date order from `configs/lc0.yaml`'s `from`. Before one is
-//! downloaded, its output is predicted from its listed size and the largest ratio of PGN bytes to tar
-//! bytes seen so far; if that would take the corpus past `cap_bytes`, the run stops there, and raising
+//! downloaded, its training positions are predicted from its listed size and the largest ratio of
+//! positions to tar bytes seen so far; if that would take `train/` past `cap_positions` (training sees
+//! positions, not bytes; the test tars do not count), the run stops there, and raising
 //! the cap later resumes with that same tar. A started tar always finishes, so a low prediction
 //! overshoots by its error on one tar. The first tar has nothing to predict from and always converts.
 //! A corpus always has a training tar too: while none is in `train/`, the next tar goes there whatever
@@ -100,7 +101,8 @@ struct Lc0Config {
     prefix: String,
     /// The first tar's date, `YYYYMMDD-HHMM`.
     from: String,
-    cap_bytes: u64,
+    /// The training positions `train/` stops at, the test tars not counted.
+    cap_positions: u64,
     /// The tars allowed in staging at once, downloaded or downloading but not yet converted.
     staging_bytes: u64,
     test: TestConfig,
@@ -270,7 +272,7 @@ struct Shared {
 }
 
 impl Shared {
-    /// The predicted output of the tars approved and not yet converted.
+    /// The predicted training positions of the tars approved and not yet converted.
     fn ahead(&self) -> u64 {
         self.slots[self.converting..self.next_approve]
             .iter()
@@ -344,7 +346,7 @@ impl Flow {
 }
 
 /// The counts behind the child's `Lc0Live`: each worker writes its own download's place, the
-/// converter the conversion's and the cap's, the bytes the cap rule counts.
+/// converter the conversion's and the cap's, the training positions the cap rule counts.
 struct Board {
     downloads: [Option<Flow>; CONNECTIONS],
     conversion: Option<Flow>,
@@ -454,8 +456,7 @@ pub(crate) fn run(rest: &[String]) {
     .unwrap_or_else(|error| fail(format!("failed to install the Ctrl+C handler: {error}")));
 
     let rows = read_rows();
-    let used: u64 = rows.iter().map(|row| row.pgn_bytes).sum();
-    board().cap = Some(Flow::new("", used, config.cap_bytes));
+    board().cap = Some(Flow::new("", train_positions(&rows), config.cap_positions));
     let given_up = read_given_up();
     if !given_up.is_empty() {
         println!(
@@ -485,8 +486,8 @@ pub(crate) fn run(rest: &[String]) {
     // resumes its own `.tmp`s alone.
     for worker in 0..CONNECTIONS {
         let (pipeline, pending) = (Arc::clone(&pipeline), Arc::clone(&pending));
-        let (url, prefix, cap_bytes, staging_bytes) = (config.url.clone(), config.prefix.clone(), config.cap_bytes, config.staging_bytes);
-        std::thread::spawn(move || fetch_tars(worker, &pipeline, &pending, &url, &prefix, cap_bytes, staging_bytes));
+        let (url, prefix, cap_positions, staging_bytes) = (config.url.clone(), config.prefix.clone(), config.cap_positions, config.staging_bytes);
+        std::thread::spawn(move || fetch_tars(worker, &pipeline, &pending, &url, &prefix, cap_positions, staging_bytes));
     }
 
     // The converter takes the tars in date order: the earliest are the test set.
@@ -498,14 +499,14 @@ pub(crate) fn run(rest: &[String]) {
         let tar_bytes = shared.slots[index].tar_bytes().expect("a claimed tar has its size");
         let mut dir = "none";
         if tar_bytes != EMPTY_TAR_BYTES {
-            match decide(&shared.rows, tar_bytes, config.cap_bytes, config.test.games) {
+            match decide(&shared.rows, tar_bytes, config.cap_positions, config.test.games) {
                 Decision::Stop { used, predicted } => {
                     let mut shared = shared;
                     shared.stopped = true;
                     wake.notify_all();
                     println!(
-                        "stopping before {stem}: data/lc0 holds {used} bytes, and its predicted {predicted} would pass the cap of {}",
-                        config.cap_bytes
+                        "stopping before {stem}: data/lc0 holds {used} training positions, and its predicted {predicted} would pass the cap of {}",
+                        config.cap_positions
                     );
                     write_complete(&shared.rows);
                     // The tars downloaded ahead on their predicted outputs are never converted: a
@@ -540,10 +541,11 @@ pub(crate) fn run(rest: &[String]) {
         }
         drop(shared);
 
-        let used_before: u64 = locked(lock).rows.iter().map(|row| row.pgn_bytes).sum();
-        let row = convert_tar(&config, &table, stem, dir, tar_bytes, &mut invariance_printed, |pgn_bytes| {
-            if let Some(cap) = board().cap.as_mut() {
-                cap.done = used_before + pgn_bytes;
+        let used_before = train_positions(&locked(lock).rows);
+        let row = convert_tar(&config, &table, stem, dir, tar_bytes, &mut invariance_printed, |positions| {
+            // A test tar's positions do not count towards the cap.
+            if let Some(cap) = board().cap.as_mut().filter(|_| dir == "train") {
+                cap.done = used_before + positions;
             }
         });
         let line = format!(
@@ -555,10 +557,11 @@ pub(crate) fn run(rest: &[String]) {
         shared.staged_bytes -= tar_bytes;
         shared.converting = index + 1;
         wake.notify_all();
-        // The bytes the cap rule counts (`passes_cap`), this tar's included: 100% is where the run stops.
-        let used: u64 = shared.rows.iter().map(|row| row.pgn_bytes).sum();
+        // The training positions the cap rule counts (`passes_cap`), this tar's included: 100% is where
+        // the run stops.
+        let used = train_positions(&shared.rows);
         drop(shared);
-        println!("{line} ({:.1}% of the cap)", 100.0 * used as f64 / config.cap_bytes as f64);
+        println!("{line} ({:.1}% of the cap)", 100.0 * used as f64 / config.cap_positions as f64);
     }
     if skipped.is_empty() {
         println!("every tar from {} on is converted", config.from);
@@ -632,7 +635,7 @@ fn locked(lock: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
 /// One download worker, number `worker` on the board: takes the next tar in date order, reads its
 /// size, waits for its turn to be approved, downloads it, and takes the next, until every tar is
 /// taken or the converter stops.
-fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str, prefix: &str, cap_bytes: u64, staging_bytes: u64) {
+fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str, prefix: &str, cap_positions: u64, staging_bytes: u64) {
     let (lock, wake) = &**pipeline;
     loop {
         let index = {
@@ -657,7 +660,7 @@ fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str,
             .wait_while(shared, |shared| {
                 let turn = shared.next_approve == index;
                 !shared.stopped
-                    && !(turn && (!fetch || may_fetch(&shared.rows, shared.ahead(), shared.staged_bytes, tar_bytes, cap_bytes, staging_bytes)))
+                    && !(turn && (!fetch || may_fetch(&shared.rows, shared.ahead(), shared.staged_bytes, tar_bytes, cap_positions, staging_bytes)))
             })
             .expect("a worker panicked");
         if shared.stopped {
@@ -694,19 +697,24 @@ fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str,
     }
 }
 
-/// Whether a tar of `tar_bytes` may be downloaded now: its predicted output fits under `cap_bytes`
-/// beside `rows` and the `ahead` predicted for the approved tars before it, and staging, holding
+/// Whether a tar of `tar_bytes` may be downloaded now: its predicted training positions fit under
+/// `cap_positions` beside `rows` and the `ahead` predicted for the approved tars before it, and staging, holding
 /// `staged_bytes`, has room for it within `staging_bytes`. An empty staging always has room, so a
 /// tar larger than `staging_bytes` cannot stall the run. With no training tar yet and none approved
 /// before it, it is the one `decide` sends to `train` whatever the cap, and may be fetched.
-fn may_fetch(rows: &[TarRow], ahead: u64, staged_bytes: u64, tar_bytes: u64, cap_bytes: u64, staging_bytes: u64) -> bool {
-    let fits = !passes_cap(rows, ahead, tar_bytes, cap_bytes) || (ahead == 0 && !has_train(rows));
+fn may_fetch(rows: &[TarRow], ahead: u64, staged_bytes: u64, tar_bytes: u64, cap_positions: u64, staging_bytes: u64) -> bool {
+    let fits = !passes_cap(rows, ahead, tar_bytes, cap_positions) || (ahead == 0 && !has_train(rows));
     fits && (staged_bytes == 0 || staged_bytes + tar_bytes <= staging_bytes)
 }
 
 /// Whether a tar has gone to `train`.
 fn has_train(rows: &[TarRow]) -> bool {
     rows.iter().any(|row| row.dir == "train")
+}
+
+/// The positions in `train`, what the cap counts.
+fn train_positions(rows: &[TarRow]) -> u64 {
+    rows.iter().filter(|row| row.dir == "train").map(|row| row.positions).sum()
 }
 
 /// Deletes every file in staging ending in `.{extension}`, and whether none is left: `tmp` for the
@@ -768,9 +776,19 @@ fn load_config(path: &str) -> Lc0Config {
 /// scaled: a scaled run reads a share of it.
 fn read_config(path: &str) -> Result<Lc0Config, String> {
     let text = fs::read_to_string(path).map_err(|error| format!("failed to read {path}: {error}"))?;
-    let config: Lc0Config = serde_yaml::from_str(&text).map_err(|error| format!("{path}: {error}"))?;
-    if config.segment == 0 || config.test.games == 0 || config.staging_bytes == 0 || config.test_positions == 0 || !config.url.ends_with('/') {
-        return Err(format!("{path}: segment, test.games, test_positions and staging_bytes must be positive, and url must end with /"));
+    check_config(serde_yaml::from_str(&text).map_err(|error| format!("{path}: {error}"))?).map_err(|message| format!("{path}: {message}"))
+}
+
+/// `config` if its counts are positive and its url ends with `/`.
+fn check_config(config: Lc0Config) -> Result<Lc0Config, String> {
+    if config.cap_positions == 0
+        || config.segment == 0
+        || config.test.games == 0
+        || config.staging_bytes == 0
+        || config.test_positions == 0
+        || !config.url.ends_with('/')
+    {
+        return Err("cap_positions, segment, test.games, test_positions and staging_bytes must be positive, and url must end with /".to_string());
     }
     Ok(config)
 }
@@ -808,13 +826,13 @@ fn summary_line(rows: &[TarRow], staged: Option<usize>, complete: bool) -> Strin
     }
 }
 
-/// The corpus's bytes the cap rule counts, and the cap, as `tars.tsv` has them: the page's corpus line
-/// and bar while no Convert runs, so a finished corpus still shows how much of the cap it filled.
-/// `None` when either cannot be read; `summary` says why.
-pub(crate) fn cap_bytes() -> Option<(u64, u64)> {
+/// The corpus's training positions the cap rule counts, and the cap, as `tars.tsv` has them: the
+/// page's corpus line and bar while no Convert runs, so a finished corpus still shows how much of the
+/// cap it filled. `None` when either cannot be read; `summary` says why.
+pub(crate) fn cap_positions() -> Option<(u64, u64)> {
     let config = read_config(CONFIG_PATH).ok()?;
     let rows = remote_rows().ok()?;
-    Some((rows.iter().map(|row| row.pgn_bytes).sum(), config.cap_bytes))
+    Some((train_positions(&rows), config.cap_positions))
 }
 
 /// `tars.tsv`'s rows on the remote, none before the first tar is done.
@@ -840,12 +858,12 @@ fn staged_tars() -> usize {
 /// training tar (the developer, 2026-10-23): the first tar always converts, into `test`, and while no
 /// tar is in `train` the next goes there whatever the cap, so a small cap (a dev Convert's, scaled)
 /// cannot end with nothing to train on.
-fn decide(rows: &[TarRow], tar_bytes: u64, cap_bytes: u64, test_games: u64) -> Decision {
-    if passes_cap(rows, 0, tar_bytes, cap_bytes) {
+fn decide(rows: &[TarRow], tar_bytes: u64, cap_positions: u64, test_games: u64) -> Decision {
+    if passes_cap(rows, 0, tar_bytes, cap_positions) {
         if !has_train(rows) {
             return Decision::Convert { dir: "train" };
         }
-        let used: u64 = rows.iter().map(|row| row.pgn_bytes).sum();
+        let used = train_positions(rows);
         let predicted = predicted(rows, tar_bytes).expect("a tar passes the cap only by a prediction");
         return Decision::Stop { used, predicted };
     }
@@ -853,22 +871,23 @@ fn decide(rows: &[TarRow], tar_bytes: u64, cap_bytes: u64, test_games: u64) -> D
     Decision::Convert { dir: if games_in_test < test_games { "test" } else { "train" } }
 }
 
-/// A tar's predicted PGN bytes: its size times the largest ratio of PGN bytes to tar bytes in
-/// `rows`; `None` before any tar with games is converted.
+/// A tar's predicted positions: its size times the largest ratio of positions to tar bytes in
+/// `rows`, test tars' too; `None` before any tar with games is converted.
 fn predicted(rows: &[TarRow], tar_bytes: u64) -> Option<u64> {
     let ratio = rows
         .iter()
         .filter(|row| row.tar_bytes > 0 && row.games > 0)
-        .map(|row| row.pgn_bytes as f64 / row.tar_bytes as f64)
+        .map(|row| row.positions as f64 / row.tar_bytes as f64)
         .fold(None, |largest: Option<f64>, ratio| Some(largest.map_or(ratio, |largest| largest.max(ratio))));
     ratio.map(|ratio| (tar_bytes as f64 * ratio).ceil() as u64)
 }
 
-/// Whether a tar of `tar_bytes` would take `data/lc0` past `cap_bytes`, beside what `rows` hold and
-/// `ahead` more bytes predicted for the tars before it. Never with nothing to predict from.
-fn passes_cap(rows: &[TarRow], ahead: u64, tar_bytes: u64, cap_bytes: u64) -> bool {
-    let used: u64 = rows.iter().map(|row| row.pgn_bytes).sum();
-    predicted(rows, tar_bytes).is_some_and(|predicted| used + ahead + predicted > cap_bytes)
+/// Whether a tar of `tar_bytes` would take `train/` past `cap_positions`, beside the training
+/// positions `rows` hold and `ahead` more predicted for the tars before it. Never with nothing to
+/// predict from.
+fn passes_cap(rows: &[TarRow], ahead: u64, tar_bytes: u64, cap_positions: u64) -> bool {
+    let used = train_positions(rows);
+    predicted(rows, tar_bytes).is_some_and(|predicted| used + ahead + predicted > cap_positions)
 }
 
 /// The tars of the listing from `from` on, by name, which is date order.
@@ -1046,7 +1065,7 @@ fn remove_tmp(tmp_path: &str) {
 }
 
 /// Converts and uploads one tar, already downloaded to staging, and returns its row; `sealed` is
-/// told the tar's PGN bytes so far at each segment sealed, for the cap's place on the board.
+/// told the tar's positions so far at each segment sealed, for the cap's place on the board.
 fn convert_tar(
     config: &Lc0Config, table: &[moves::IndexedMove], stem: &str, dir: &'static str, tar_bytes: u64,
     invariance_printed: &mut bool, sealed: impl Fn(u64),
@@ -1084,12 +1103,12 @@ fn convert_tar(
         segment.positions += converted.positions;
         if segment.positions >= config.segment {
             seal_and_upload(&local_dir, &remote_dir, &format!("{stem}-{:02}", row.segments), &mut segment, &mut row);
-            sealed(row.pgn_bytes);
+            sealed(row.positions);
         }
     }
     if segment.games > 0 {
         seal_and_upload(&local_dir, &remote_dir, &format!("{stem}-{:02}", row.segments), &mut segment, &mut row);
-        sealed(row.pgn_bytes);
+        sealed(row.positions);
     }
     board().conversion = None;
     fs::remove_file(&tar_path).unwrap_or_else(|error| fail(format!("failed to remove {tar_path}: {error}")));
@@ -1207,8 +1226,9 @@ fn append_row(rows: &mut Vec<TarRow>, row: TarRow) {
 mod tests {
     use super::*;
 
-    fn row(dir: &str, tar_bytes: u64, pgn_bytes: u64, games: u64) -> TarRow {
-        TarRow { tar: "t".to_string(), dir: dir.to_string(), tar_bytes, pgn_bytes, games, skipped: 3, positions: 0, segments: 1 }
+    /// A row of `positions`, written as as many PGN bytes: the cap reads the positions alone.
+    fn row(dir: &str, tar_bytes: u64, positions: u64, games: u64) -> TarRow {
+        TarRow { tar: "t".to_string(), dir: dir.to_string(), tar_bytes, pgn_bytes: positions, games, skipped: 3, positions, segments: 1 }
     }
 
     #[test]
@@ -1304,20 +1324,41 @@ mod tests {
 
     #[test]
     fn a_tar_predicted_past_the_cap_stops_the_run_before_its_download() {
-        // A ratio of 0.1 and 0.2: the larger predicts.
+        // A ratio of 0.1 and 0.2: the larger predicts; 200 training positions used.
         let rows = [row("test", 1000, 100, 65_536), row("train", 1000, 200, 10)];
-        assert_eq!(decide(&rows, 1000, 500, 65_536), Decision::Convert { dir: "train" });
-        assert_eq!(decide(&rows, 1001, 500, 65_536), Decision::Stop { used: 300, predicted: 201 });
+        assert_eq!(decide(&rows, 1000, 400, 65_536), Decision::Convert { dir: "train" });
+        assert_eq!(decide(&rows, 1001, 400, 65_536), Decision::Stop { used: 200, predicted: 201 });
+    }
+
+    #[test]
+    fn the_test_tars_positions_do_not_count_towards_the_cap() {
+        // A ratio of 1: a tar of 100 predicts 100, beside the 100 training positions.
+        let rows = [row("test", 1000, 1000, 65_536), row("train", 1000, 100, 10)];
+        assert_eq!(decide(&rows, 100, 200, 65_536), Decision::Convert { dir: "train" });
+        assert!(passes_cap(&rows, 0, 101, 200));
+    }
+
+    #[test]
+    fn a_config_with_the_old_byte_cap_is_refused() {
+        let config = |cap: &str| {
+            format!(
+                "url: https://x/\nprefix: p-\nfrom: 20260101-0017\n{cap}\nstaging_bytes: 1\ntest:\n  games: 1\nsegment: 1\ntest_positions: 1\n"
+            )
+        };
+        let read = |text: String| serde_yaml::from_str::<Lc0Config>(&text).map_err(|error| error.to_string()).and_then(check_config);
+        assert!(read(config("cap_positions: 4294967296")).is_ok());
+        assert!(read(config("cap_bytes: 25769803776")).is_err(), "a stale key is refused, not ignored");
+        assert!(read(config("cap_positions: 0")).is_err());
     }
 
     #[test]
     fn a_corpus_always_gets_a_training_tar_whatever_the_cap() {
-        // The test tar alone fills the cap, its test set short or not: the next tar still trains.
+        // The next tar alone passes the cap, the test set short or not: it still trains.
         for test_games in [10, 65_536] {
             let rows = [row("test", 1000, 300, test_games)];
-            assert_eq!(decide(&rows, 1000, 300, 65_536), Decision::Convert { dir: "train" });
-            assert!(may_fetch(&rows, 0, 0, 1000, 300, 3000), "fetched for it");
-            assert!(!may_fetch(&rows, 1, 0, 1000, 300, 3000), "but not a second one, behind it");
+            assert_eq!(decide(&rows, 1000, 299, 65_536), Decision::Convert { dir: "train" });
+            assert!(may_fetch(&rows, 0, 0, 1000, 299, 3000), "fetched for it");
+            assert!(!may_fetch(&rows, 1, 0, 1000, 299, 3000), "but not a second one, behind it");
         }
         let rows = [row("test", 1000, 300, 65_536), row("train", 1000, 300, 10)];
         assert!(matches!(decide(&rows, 1000, 300, 65_536), Decision::Stop { .. }), "once it has one, the cap holds");
@@ -1325,21 +1366,21 @@ mod tests {
 
     #[test]
     fn a_tar_is_fetched_ahead_only_if_it_fits_beside_the_tars_before_it() {
-        // Ratio 0.1, 300 bytes used: a tar of 1000 predicts 100.
+        // Ratio 0.1, no training position yet: a tar of 1000 predicts 100.
         let rows = [row("test", 1000, 100, 10), row("test", 2000, 200, 10)];
-        assert!(!passes_cap(&rows, 0, 1000, 400));
-        assert!(passes_cap(&rows, 1, 1000, 400), "one byte more ahead in the queue tips it over");
+        assert!(!passes_cap(&rows, 0, 1000, 100));
+        assert!(passes_cap(&rows, 1, 1000, 100), "one position more ahead in the queue tips it over");
         assert!(!passes_cap(&[], u64::MAX / 2, 1000, 0), "nothing to predict from: never past the cap");
     }
 
     #[test]
     fn a_tar_is_downloaded_only_within_the_cap_and_staging() {
-        // Ratio 0.1, 300 bytes used: a tar of 1000 predicts 100.
-        let rows = [row("test", 1000, 100, 10), row("test", 2000, 200, 10)];
-        assert!(may_fetch(&rows, 0, 2000, 1000, 400, 3000));
-        assert!(!may_fetch(&rows, 1, 2000, 1000, 400, 3000), "past the cap");
-        assert!(!may_fetch(&rows, 0, 2001, 1000, 400, 3000), "past staging");
-        assert!(may_fetch(&rows, 0, 0, 5000, 400 + 500, 3000), "an empty staging takes even a tar larger than it");
+        // Ratio 0.1, 100 training positions used: a tar of 1000 predicts 100.
+        let rows = [row("test", 1000, 100, 10), row("train", 2000, 100, 10)];
+        assert!(may_fetch(&rows, 0, 2000, 1000, 200, 3000));
+        assert!(!may_fetch(&rows, 1, 2000, 1000, 200, 3000), "past the cap");
+        assert!(!may_fetch(&rows, 0, 2001, 1000, 200, 3000), "past staging");
+        assert!(may_fetch(&rows, 0, 0, 5000, 100 + 500, 3000), "an empty staging takes even a tar larger than it");
     }
 
     #[test]

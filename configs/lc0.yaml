@@ -12,13 +12,11 @@ prefix: training-run2-test91-
 # order until the cap.
 from: 20260101-0000
 
-# 24 GiB (the developer, 2026-10-31, from 32 GiB on 2026-10-29): each comment carries every legal
-# move's visit counts, about 4.4 times the bytes a position, so the corpus grows past the old 5 GB's
-# games. At about 21.5 bytes a position, about
-# 1.2 billion positions: every tar of the old corpus (about 1.0 billion, about 20.5 GiB here) and a
-# fifth more. The corpus, test and train together, is never taken past this, but by one tar's
-# misprediction.
-cap_bytes: 25769803776
+# 4 x 1024^3 training positions (the developer, 2026-11-18, from a cap of 24 GiB, about 1.2 billion
+# positions): the halfk line's data, its minimum. Training sees positions, not bytes, so the cap
+# counts them, in train/ alone: the test tars are not counted. At about 21.5 bytes a position, about
+# 86 GiB on Drive. train/ is never taken past this, but by one tar's misprediction.
+cap_positions: 4294967296
 
 # Tars downloaded but not yet converted, on the converting machine's local disk. Downloads pause while staging holds this much, unless it holds nothing.
 staging_bytes: 100000000000

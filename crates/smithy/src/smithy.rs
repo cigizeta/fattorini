@@ -2033,7 +2033,8 @@ struct SourceEntry {
     complete: bool,
     /// One line on its corpus: what it holds, or what it is to hold.
     summary: String,
-    /// Lc0's bytes the cap counts and the cap (`lc0::cap_bytes`), `[done, total]`; none for pesto.
+    /// Lc0's training positions the cap counts and the cap (`lc0::cap_positions`), `[done, total]`;
+    /// none for pesto.
     cap: Option<(u64, u64)>,
 }
 
@@ -2159,7 +2160,7 @@ fn catalog() -> Catalog {
         })
         .collect();
     let sources = vec![
-        SourceEntry { name: Source::Lc0.name(), complete: lc0::is_complete(), summary: lc0::summary(), cap: lc0::cap_bytes() },
+        SourceEntry { name: Source::Lc0.name(), complete: lc0::is_complete(), summary: lc0::summary(), cap: lc0::cap_positions() },
         SourceEntry { name: Source::Pesto.name(), complete: Source::Pesto.is_complete(), summary: pesto::summary(), cap: None },
     ];
     let runs: Vec<(String, Vec<u32>, Vec<u32>)> = configs
