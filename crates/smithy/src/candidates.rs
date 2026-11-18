@@ -7,6 +7,7 @@ use std::process;
 use fattorini::nnue::QuantizedPsqNetwork;
 use fattorini::pipeline::{generation, preprocessing_config};
 
+use crate::budget::{self, Budget};
 use crate::feature_set::FeatureSet;
 use crate::net_config::{ArchitectureKind, NetConfig};
 use crate::stack_head::HeadShape;
@@ -221,9 +222,121 @@ pub(crate) fn export_best(config: &NetConfig, run_dir: &str, lambda: preprocessi
     (line, best.test_loss)
 }
 
+/// One candidate of a budgeted run (`budget.rs`): a checkpoint at a quarter epoch, as `candidates.txt`
+/// lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BudgetCandidate {
+    /// The epoch as its file names it, `2.00`, `2.25`, ...
+    pub(crate) epoch: String,
+    pub(crate) step: u64,
+    pub(crate) test_loss: f64,
+}
+
+/// A budgeted run's list of its candidates, written last by `export_budget_candidates`: its presence
+/// marks the training done, as `candidate.txt`'s does under patience.
+pub(crate) fn budget_record_path(run_dir: &str) -> String {
+    format!("{run_dir}/candidates.txt")
+}
+
+/// The engine network of a budgeted run's candidate at `epoch` (`budget::epoch_label`).
+pub(crate) fn budget_candidate_path(run_dir: &str, epoch: &str) -> String {
+    format!("{run_dir}/candidates/epoch-{epoch}.nnue")
+}
+
+/// Ends a budgeted run's training: every candidate's checkpoint exported to
+/// `candidates/epoch-<e>.nnue`, each staged and renamed, then `candidates.txt` listing them,
+/// `epoch<TAB>step<TAB>test_loss` a line. No `candidate.nnue`: the round robin among these chooses it
+/// (`export_budget_winner`). Doing it again after a crash rewrites the same files. The line saying so.
+pub(crate) fn export_budget_candidates(config: &NetConfig, run_dir: &str, plan: &Budget) -> String {
+    let history_path = format!("{run_dir}/history.tsv");
+    let records = history::read_all(&history_path);
+    let checkpoints_dir = format!("{run_dir}/checkpoints");
+    std::fs::create_dir_all(format!("{run_dir}/candidates"))
+        .unwrap_or_else(|error| panic!("failed to create {run_dir}/candidates: {error}"));
+    let mut candidates = Vec::new();
+    for (epoch, step) in plan.candidates() {
+        let Some(record) = records.iter().find(|record| record.step == step) else {
+            log::error!("{history_path} records no round at step {step}, the candidate of epoch {epoch}. Stop and look at the run.");
+            process::exit(1);
+        };
+        let epoch = budget::epoch_label(epoch);
+        let output_path = budget_candidate_path(run_dir, &epoch);
+        let staging_path = format!("{output_path}.partial");
+        let checkpoint_path = checkpoint_store::checkpoint_path(&checkpoints_dir, step);
+        write_engine_network(config, &checkpoint_path, &staging_path, step, record.learning_rate);
+        std::fs::rename(&staging_path, &output_path)
+            .unwrap_or_else(|error| panic!("failed to rename {staging_path} to {output_path}: {error}"));
+        candidates.push(BudgetCandidate { epoch, step, test_loss: record.test_loss });
+    }
+    write_budget_record(&budget_record_path(run_dir), &candidates);
+    format!(
+        "{} candidates exported, epochs {} to {}",
+        candidates.len(),
+        candidates.first().map_or("", |candidate| candidate.epoch.as_str()),
+        candidates.last().map_or("", |candidate| candidate.epoch.as_str())
+    )
+}
+
+fn write_budget_record(path: &str, candidates: &[BudgetCandidate]) {
+    let rendered: String =
+        candidates.iter().map(|candidate| format!("{}\t{}\t{}\n", candidate.epoch, candidate.step, candidate.test_loss)).collect();
+    let staging_path = format!("{path}.partial");
+    std::fs::write(&staging_path, rendered).unwrap_or_else(|error| panic!("failed to write {staging_path}: {error}"));
+    std::fs::rename(&staging_path, path).unwrap_or_else(|error| panic!("failed to rename {staging_path} to {path}: {error}"));
+}
+
+/// A budgeted run's candidates, from its `candidates.txt`; an error before its training is done.
+pub(crate) fn read_budget_candidates(run_dir: &str) -> Result<Vec<BudgetCandidate>, String> {
+    let path = budget_record_path(run_dir);
+    let text = std::fs::read_to_string(&path).map_err(|error| format!("failed to read {path}: {error}"))?;
+    text.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            let [epoch, step, test_loss] = fields[..] else { return Err(format!("{path}: not epoch, step, test loss: {line}")) };
+            Ok(BudgetCandidate {
+                epoch: epoch.to_string(),
+                step: step.parse().map_err(|error| format!("{path}: invalid step {step}: {error}"))?,
+                test_loss: test_loss.parse().map_err(|error| format!("{path}: invalid test loss {test_loss}: {error}"))?,
+            })
+        })
+        .collect()
+}
+
+/// After a budget's round robin: its winner, the candidate at `step`, exported as the arm's
+/// `candidate.nnue` and `candidate.txt`, exactly as a patience run's best is, so the gate and the
+/// promotion read it unchanged. The line saying so.
+pub(crate) fn export_budget_winner(config: &NetConfig, run_dir: &str, lambda: preprocessing_config::ArmLambda, step: u64) -> String {
+    let history_path = format!("{run_dir}/history.tsv");
+    let Some(record) = history::read_all(&history_path).into_iter().find(|record| record.step == step) else {
+        log::error!("{history_path} records no round at step {step}, the round robin's winner. Stop and look at the run.");
+        process::exit(1);
+    };
+    let checkpoints_dir = format!("{run_dir}/checkpoints");
+    export_candidate(config, run_dir, lambda, &checkpoints_dir, record.learning_rate, step, record.test_loss)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_budget_record_reads_back_as_written() {
+        let dir = std::env::temp_dir().join(format!("smithy-candidates-{}-budget-record", std::process::id()));
+        let dir = dir.to_str().unwrap();
+        std::fs::remove_dir_all(dir).ok();
+        std::fs::create_dir_all(dir).unwrap();
+        assert!(read_budget_candidates(dir).is_err(), "no candidates.txt before the training is done");
+        let candidates = vec![
+            BudgetCandidate { epoch: "2.00".to_string(), step: 589824, test_loss: 0.6213 },
+            BudgetCandidate { epoch: "2.25".to_string(), step: 663552, test_loss: 0.6201 },
+        ];
+        write_budget_record(&budget_record_path(dir), &candidates);
+        assert_eq!(read_budget_candidates(dir), Ok(candidates));
+        std::fs::write(budget_record_path(dir), "2.00\t589824\n").unwrap();
+        assert!(read_budget_candidates(dir).is_err(), "a line short of a field");
+        std::fs::remove_dir_all(dir).ok();
+    }
 
     #[test]
     fn feature_set_of_maps_every_nnue_kind() {

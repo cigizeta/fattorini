@@ -9,7 +9,8 @@ use fattorini::pipeline::preprocessing_config::{self, ArmLambda};
 
 use crate::cache::CacheRecord;
 use crate::game_labels::RoundProgress;
-use crate::net_config::NetConfig;
+use crate::budget::Budget;
+use crate::net_config::{NetConfig, Schedule};
 use crate::rounds_display::{print_progress, timing_line};
 use crate::stacked_adamw::StackedAdamW;
 use crate::stacked_network::StackedNetwork;
@@ -38,14 +39,72 @@ pub(crate) struct Arm {
     pub(crate) stages: stages::Stages,
 }
 
+/// How a run's rate moves and when it ends, its config's `training.schedule` in figures.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Rule {
+    /// Deprecated: stages stepped down by patience (`stages.rs`).
+    Patience { warmup_rounds: u64, patience_rounds: u64, stage_count: usize },
+    /// A fixed budget, the rate falling with the step (`budget.rs`).
+    Budget(Budget),
+}
+
+impl Rule {
+    /// `config`'s rule for a run over `train_rows` training rows.
+    pub(crate) fn of(config: &NetConfig, train_rows: u64) -> Rule {
+        let warmup_rounds = config.training.warmup_rounds.expect("net_config::load already validated this is Some");
+        match config.training.schedule {
+            Schedule::Patience => Rule::Patience {
+                warmup_rounds,
+                patience_rounds: config.training.patience_rounds.expect("net_config::load already validated this is Some"),
+                stage_count: config.training.learning_rate.len(),
+            },
+            Schedule::Budget => Rule::Budget(Budget::new(
+                train_rows,
+                config.training.training_batch_size as u64,
+                config.training.steps_per_round,
+                warmup_rounds,
+                config.training.epochs.expect("net_config::load already validated this is Some"),
+                &config.training.learning_rate,
+            )),
+        }
+    }
+
+    /// Where a run whose rounds are `rounds` stands under this rule.
+    pub(crate) fn stages(&self, rounds: &[(u64, f64)], steps_per_round: u64) -> stages::Stages {
+        match *self {
+            Rule::Patience { warmup_rounds, patience_rounds, stage_count } => {
+                stages::stage_after(rounds, steps_per_round, warmup_rounds, patience_rounds, stage_count)
+            }
+            Rule::Budget(budget) => stages::budget_after(rounds, budget.total_steps, budget.warmup_steps),
+        }
+    }
+
+    pub(crate) fn budget(&self) -> Option<Budget> {
+        match *self {
+            Rule::Budget(budget) => Some(budget),
+            Rule::Patience { .. } => None,
+        }
+    }
+
+    /// The rate the step `step` trained at, as a history row records it: a stage's for patience (read
+    /// from the optimizer by the caller, `stage_rate`), the falling rate's for a budget.
+    fn recorded_rate(&self, step: u64, stage_rate: f64) -> f64 {
+        match self {
+            Rule::Budget(budget) => budget.rate(step),
+            Rule::Patience { .. } => stage_rate,
+        }
+    }
+}
+
 /// Opens one lambda's run, in `run_dir`, for `train_in_lockstep`: freezes or checks its
 /// `run_config.txt` and replays where it is in its rates. Its weights are loaded into the stack later
 /// (`open_stack`). `source` is the dataset it trains on.
+#[allow(clippy::too_many_arguments)]
 fn open_arm(
-    config: &NetConfig, source: &str, run_dir: String, lambda: ArmLambda, column: usize, train_rows: u64, test_rows: u64,
+    config: &NetConfig, rule: &Rule, source: &str, run_dir: String, lambda: ArmLambda, column: usize, train_rows: u64,
+    test_rows: u64,
 ) -> Arm {
     let warmup_rounds = config.training.warmup_rounds.expect("net_config::load already validated this is Some");
-    let patience_rounds = config.training.patience_rounds.expect("net_config::load already validated this is Some");
     let rates = &config.training.learning_rate;
     let steps_per_round = config.training.steps_per_round;
 
@@ -62,27 +121,33 @@ fn open_arm(
     // its run step (`StackedAdamW::run_step`) and its rate from `history.tsv`, so the fields those derivations read
     // have to be the same ones the earlier invocations of this run used. See `run_config`'s own module
     // doc comment for what each frozen field protects.
-    run_config::freeze_or_verify(
-        &format!("{run_dir}/run_config.txt"),
-        &[
-            ("architecture", format!("{:?}", config.architecture)),
-            // What the output is trained to mean and the loss: a run started under the atan curve and
-            // the matching loss records no such line, so it is refused rather than resumed.
-            ("curve", format!("{} bce", fattorini::labels::LOGISTIC.describe())),
-            // The dataset actually trained on.
-            ("parent", source.to_string()),
-            ("lambda", preprocessing_config::lambda_text(lambda)),
-            ("learning_rate", rates.iter().map(|rate| format!("{rate:e}")).collect::<Vec<String>>().join(" ")),
-            ("training_batch_size", config.training.training_batch_size.to_string()),
-            ("steps_per_round", steps_per_round.to_string()),
-            ("warmup_rounds", warmup_rounds.to_string()),
-            ("patience_rounds", patience_rounds.to_string()),
-            ("train_rows", train_rows.to_string()),
-            ("test_rows", test_rows.to_string()),
-        ],
-    );
+    let mut frozen: Vec<(&str, String)> = vec![
+        ("architecture", format!("{:?}", config.architecture)),
+        // What the output is trained to mean and the loss: a run started under the atan curve and
+        // the matching loss records no such line, so it is refused rather than resumed.
+        ("curve", format!("{} bce", fattorini::labels::LOGISTIC.describe())),
+        // The dataset actually trained on.
+        ("parent", source.to_string()),
+        ("lambda", preprocessing_config::lambda_text(lambda)),
+        ("learning_rate", rates.iter().map(|rate| format!("{rate:e}")).collect::<Vec<String>>().join(" ")),
+        ("training_batch_size", config.training.training_batch_size.to_string()),
+        ("steps_per_round", steps_per_round.to_string()),
+        ("warmup_rounds", warmup_rounds.to_string()),
+    ];
+    // Patience's line is kept as it was, so a patience run begun before budgets resumes; a budget
+    // writes its own, which a patience run's file lacks, so neither resumes as the other.
+    match rule {
+        Rule::Patience { patience_rounds, .. } => frozen.push(("patience_rounds", patience_rounds.to_string())),
+        Rule::Budget(budget) => {
+            frozen.push(("schedule", "budget".to_string()));
+            frozen.push(("epochs", budget.epochs.to_string()));
+        }
+    }
+    frozen.push(("train_rows", train_rows.to_string()));
+    frozen.push(("test_rows", test_rows.to_string()));
+    run_config::freeze_or_verify(&format!("{run_dir}/run_config.txt"), &frozen);
 
-    let stages = replay_stages(&history_path, steps_per_round, warmup_rounds, patience_rounds, rates.len());
+    let stages = replay_stages(&history_path, steps_per_round, rule);
     Arm {
         lambda,
         column,
@@ -254,7 +319,7 @@ impl<N: StackedModel> round::Arms<N::Batch> for Stack<N> {
 /// not starting points.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn open_stack<N: StackedModel>(
-    config: &NetConfig, network: N, bounds: Vec<(&'static str, f64)>, arms: &[Arm], active: &[usize],
+    config: &NetConfig, rule: &Rule, network: N, bounds: Vec<(&'static str, f64)>, arms: &[Arm], active: &[usize],
     starting_weights: impl FnOnce() -> std::collections::HashMap<String, tch::Tensor>, persists_position: bool,
     device: tch::Device,
 ) -> Stack<N> {
@@ -262,9 +327,12 @@ pub(crate) fn open_stack<N: StackedModel>(
     let warmup_rounds = config.training.warmup_rounds.expect("net_config::load already validated this is Some");
     let steps_per_round = config.training.steps_per_round;
     let mut optimizer = StackedAdamW::new(network.parameters(), rates[0]);
-    // Set on resumed slots too: the ramp is derived from each restored step count, so a run
-    // interrupted inside it continues it, and one past it is unaffected.
+    // Set on resumed slots too: the ramp, and a budget's fall, are derived from each restored step
+    // count, so a run interrupted inside either continues it.
     optimizer.set_warmup_steps((warmup_rounds * steps_per_round) as i64);
+    if let Some(budget) = rule.budget() {
+        optimizer.set_budget(budget);
+    }
     let mut starting_weights = Some(starting_weights);
     let mut starting: Option<std::collections::HashMap<String, tch::Tensor>> = None;
     for (slot, &index) in active.iter().enumerate() {
@@ -347,7 +415,7 @@ pub(crate) struct LockstepParts<'a> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::BatchSource + Send, S: train_stream::TrainStream + Send>(
     config: &NetConfig, parts: &LockstepParts, lambdas: &[ArmLambda], train_rows: u64, test_readers: &mut [T],
-    open_stack: impl FnOnce(&[Arm], &[usize]) -> Stack<N>, open_stream: impl FnOnce(u64, Option<Vec<u64>>) -> S,
+    open_stack: impl FnOnce(&Rule, &[Arm], &[usize]) -> Stack<N>, open_stream: impl FnOnce(u64, Option<Vec<u64>>) -> S,
     to_batch: &round::BatchBuilder<impl Fn(&[CacheRecord]) -> H + Sync, impl Fn(&H) -> N::Batch>, host_bytes: fn(&H) -> usize,
     finish: impl Fn(&Arm), after_round: impl Fn(), stop_requested: &AtomicBool,
 ) -> bool {
@@ -360,7 +428,6 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
     let source = parts.source;
     log::info!("training lambdas {} in lockstep on the dataset of {source}", preprocessing_config::lambdas_text(lambdas));
     let warmup_rounds = config.training.warmup_rounds.expect("net_config::load already validated this is Some");
-    let patience_rounds = config.training.patience_rounds.expect("net_config::load already validated this is Some");
     let rates = config.training.learning_rate.clone();
     let steps_per_round = config.training.steps_per_round;
     let batch_size = config.training.training_batch_size as usize;
@@ -379,18 +446,30 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
         "one round is {steps_per_round} steps, {:.4} passes over the train cache",
         (steps_per_round * batch_size as u64) as f64 / train_rows as f64
     );
-    log::info!(
-        "rates {}: {warmup_rounds} warmup rounds, then {patience_rounds} rounds without a new best move to the next \
-         rate, and at the last one end the run",
-        rates.iter().map(|rate| format!("{rate:e}")).collect::<Vec<String>>().join(" ")
-    );
+    let rule = Rule::of(config, train_rows);
+    match rule {
+        Rule::Patience { patience_rounds, .. } => log::info!(
+            "rates {}: {warmup_rounds} warmup rounds, then {patience_rounds} rounds without a new best move to the next \
+             rate, and at the last one end the run",
+            rates.iter().map(|rate| format!("{rate:e}")).collect::<Vec<String>>().join(" ")
+        ),
+        Rule::Budget(budget) => log::info!(
+            "a budget of {} rounds, {} epochs: {warmup_rounds} warmup rounds, then the rate from {:e} to {:e}, geometric; \
+             candidates at rounds {}",
+            budget.total_rounds(),
+            budget.epochs,
+            budget.start,
+            budget.end,
+            budget.candidate_steps().iter().map(|step| (step / steps_per_round).to_string()).collect::<Vec<String>>().join(", ")
+        ),
+    }
 
     log::info!("device = {:?}", parts.device);
     let mut arms: Vec<Arm> = lambdas
         .iter()
         .enumerate()
         .map(|(column, &lambda)| {
-            open_arm(config, source, (parts.lambda_dir)(lambda), lambda, column, train_rows, test_rows)
+            open_arm(config, &rule, source, (parts.lambda_dir)(lambda), lambda, column, train_rows, test_rows)
         })
         .collect();
     // The arms still training, by index into `arms`, ascending: a run interrupted between meeting its
@@ -406,7 +485,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
     if active.is_empty() {
         return true;
     }
-    let mut stack = open_stack(&arms, &active);
+    let mut stack = open_stack(&rule, &arms, &active);
     // One stream for every arm, standing at the lowest arm's count. Counts differ after a crash between
     // two arms' backups, or for runs begun one after another: an arm further ahead skips the batches it
     // has trained on until the stream reaches it, then joins (`round::run_round`).
@@ -481,7 +560,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
                 &arm.history_path,
                 &history::EvalRecord {
                     step: 0,
-                    learning_rate: stack.optimizer.learning_rate(slot),
+                    learning_rate: rule.recorded_rate(0, stack.optimizer.learning_rate(slot)),
                     train_loss: f64::NAN,
                     test_loss: test_losses.global[slot],
                     train_duration_secs: 0.0,
@@ -490,15 +569,29 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
             );
             history::append_pieces(&pieces_path(&arm.run_dir), 0, &round::losses_of_arm(&test_losses.by_pieces, slot));
             arm_slice::save_arm(stack.network.parameters(), slot as i64, &checkpoint_store::checkpoint_path(&arm.checkpoints_dir, 0));
-            arm.stages = replay_stages(&arm.history_path, steps_per_round, warmup_rounds, patience_rounds, rates.len());
+            arm.stages = replay_stages(&arm.history_path, steps_per_round, &rule);
             log::info!("lambda {}: starting weights measured, test loss {:.6}, the run's first best", arm.lambda, test_losses.global[slot]);
         }
     }
 
     let mut train_stream = open_stream(steps_done, stream_cursors);
-    for &index in &active {
-        let stage = arms[index].stages.stage;
-        log::info!("lambda {}: training at rate {:e}, stage {} of {}", arms[index].lambda, rates[stage], stage + 1, rates.len());
+    for (slot, &index) in active.iter().enumerate() {
+        match rule {
+            Rule::Patience { .. } => {
+                let stage = arms[index].stages.stage;
+                log::info!("lambda {}: training at rate {:e}, stage {} of {}", arms[index].lambda, rates[stage], stage + 1, rates.len());
+            }
+            Rule::Budget(budget) => {
+                let step = stack.optimizer.run_step(slot) as u64;
+                log::info!(
+                    "lambda {}: training from round {} of {}, at rate {:e}",
+                    arms[index].lambda,
+                    step / steps_per_round + 1,
+                    budget.total_rounds(),
+                    budget.rate(step + 1)
+                );
+            }
+        }
     }
 
     // Only the first round of this process resumes a partially-done round; every later one starts
@@ -550,7 +643,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
             let arm = &mut arms[index];
             step = stack.optimizer.run_step(slot) as u64;
             let (train_loss, test_loss) = (outcome.train_loss[slot], outcome.test_loss[slot]);
-            let learning_rate = stack.optimizer.learning_rate(slot);
+            let learning_rate = rule.recorded_rate(step, stack.optimizer.learning_rate(slot));
             // History first, archive second, prune third: the stages replayed from the history name the
             // best, the one checkpoint kept, so the row has to exist before the file it describes. A
             // crash between the first two leaves a history row with no checkpoint, which is harmless; a
@@ -571,13 +664,23 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
             let checkpoint_archive_path = checkpoint_store::checkpoint_path(&arm.checkpoints_dir, step);
             arm_slice::save_arm(stack.network.parameters(), slot as i64, &checkpoint_archive_path);
             let previous_stage = arm.stages.stage;
-            arm.stages = replay_stages(&arm.history_path, steps_per_round, warmup_rounds, patience_rounds, rates.len());
+            arm.stages = replay_stages(&arm.history_path, steps_per_round, &rule);
             let stages = arm.stages;
-            checkpoint_store::keep_only(&arm.checkpoints_dir, stages.best_step);
+            match rule {
+                Rule::Patience { .. } => checkpoint_store::keep_only(&arm.checkpoints_dir, stages.best_step),
+                // The candidates for the round robin, and this round's for nothing but a look: a
+                // resume reads `model.vs`, never a checkpoint.
+                Rule::Budget(budget) => {
+                    let mut keep = budget.candidate_steps();
+                    keep.push(step);
+                    checkpoint_store::keep_steps(&arm.checkpoints_dir, &keep);
+                }
+            }
             completed.push(index);
             // A new best keeps its optimizer beside its checkpoint, for a rollback to it. Through a
-            // staging name, so that a crash never leaves a half-written one to roll back to.
-            if stages.best_step == step {
+            // staging name, so that a crash never leaves a half-written one to roll back to. A budget
+            // never rolls back.
+            if stages.best_step == step && rule.budget().is_none() {
                 let staging_path = format!("{}.partial", arm.best_optimizer_path);
                 stack.optimizer.save_arm(slot, &staging_path);
                 std::fs::rename(&staging_path, &arm.best_optimizer_path)
@@ -625,7 +728,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
         // in it; every lambda's numbers are the page's training table. Then its switches and finishes.
         if !completed.is_empty() {
             let mut line = timing_line(step / steps_per_round, outcome.train_duration_secs, outcome.test_duration_secs);
-            if let Some((lambda, loss)) = grid_best(parts, steps_per_round, warmup_rounds, patience_rounds, rates.len()) {
+            if let Some((lambda, loss)) = grid_best(parts, steps_per_round, &rule) {
                 line.push_str(&format!("; best lambda {lambda}, loss {loss:.6}"));
             }
             let new_bests: Vec<String> =
@@ -662,24 +765,21 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
 
 /// Where the run in `history_path` is in its list of rates, replayed from its recorded test losses:
 /// stage 0 before any round.
-fn replay_stages(
-    history_path: &str, steps_per_round: u64, warmup_rounds: u64, patience_rounds: u64, stage_count: usize,
-) -> stages::Stages {
-    let rounds = recorded_rounds(history_path);
-    stages::stage_after(&rounds, steps_per_round, warmup_rounds, patience_rounds, stage_count)
+fn replay_stages(history_path: &str, steps_per_round: u64, rule: &Rule) -> stages::Stages {
+    rule.stages(&recorded_rounds(history_path), steps_per_round)
 }
 
 /// The latest round of `history_path` and the stages replayed up to it; `None` before its first
 /// round. The status page's training table, and each round's event line (`grid_best`).
 pub(crate) fn latest_round(
-    history_path: &str, steps_per_round: u64, warmup_rounds: u64, patience_rounds: u64, stage_count: usize,
+    history_path: &str, steps_per_round: u64, rule: &Rule,
 ) -> Option<(history::EvalRecord, stages::Stages)> {
     if !std::path::Path::new(history_path).exists() {
         return None;
     }
     let mut records = history::read_all(history_path);
     let rounds: Vec<(u64, f64)> = records.iter().map(|record| (record.step, record.test_loss)).collect();
-    let stages = stages::stage_after(&rounds, steps_per_round, warmup_rounds, patience_rounds, stage_count);
+    let stages = rule.stages(&rounds, steps_per_round);
     Some((records.pop()?, stages))
 }
 
@@ -735,13 +835,13 @@ fn has_history_row(history_path: &str, step: u64) -> bool {
 /// The grid's lambda with the lowest best loss so far, and that loss, from every lambda's history: the
 /// whole grid, not only the arms, since a lambda that finished in an earlier invocation is not one.
 /// `None` before any round.
-fn grid_best(parts: &LockstepParts, steps_per_round: u64, warmup_rounds: u64, patience_rounds: u64, stage_count: usize) -> Option<(ArmLambda, f64)> {
+fn grid_best(parts: &LockstepParts, steps_per_round: u64, rule: &Rule) -> Option<(ArmLambda, f64)> {
     parts
         .grid
         .iter()
         .filter_map(|&lambda| {
             let history_path = format!("{}/history.tsv", (parts.lambda_dir)(lambda));
-            let (_, stages) = latest_round(&history_path, steps_per_round, warmup_rounds, patience_rounds, stage_count)?;
+            let (_, stages) = latest_round(&history_path, steps_per_round, rule)?;
             Some((lambda, stages.best_loss))
         })
         .min_by(|left, right| left.1.total_cmp(&right.1))
@@ -753,7 +853,8 @@ mod tests {
 
     #[test]
     fn replay_stages_is_the_first_rate_for_a_run_with_no_history() {
-        let stages = replay_stages("data/networks/train-main-test-no-such-run/history.tsv", 512, 2, 8, 6);
+        let rule = Rule::Patience { warmup_rounds: 2, patience_rounds: 8, stage_count: 6 };
+        let stages = replay_stages("data/networks/train-main-test-no-such-run/history.tsv", 512, &rule);
         assert_eq!((stages.stage, stages.finished), (0, false));
     }
 
@@ -775,7 +876,7 @@ mod tests {
             );
         }
 
-        let stages = replay_stages(path, 512, 0, 2, 3);
+        let stages = replay_stages(path, 512, &Rule::Patience { warmup_rounds: 0, patience_rounds: 2, stage_count: 3 });
         assert_eq!((stages.stage, stages.best_step, stages.best_loss), (1, 1024, 0.29));
 
         std::fs::remove_file(path).ok();
@@ -887,7 +988,7 @@ mod tests {
             prepare: |records: &[CacheRecord]| batch::host_batch(records, FeatureSet::Psq),
             upload: |host: &batch::HostBatch| batch::upload(host, device),
         };
-        let stack_of = |arms: &[Arm], active: &[usize]| {
+        let stack_of = |rule: &Rule, arms: &[Arm], active: &[usize]| {
             let network = StackedNetwork::new(FeatureSet::Psq, &config.architecture, active.len() as i64, device);
             let bounds = network.weight_bounds();
             let starting_weights = || {
@@ -895,7 +996,7 @@ mod tests {
                 let _ = nnue_network::Network::of(&vs.root(), FeatureSet::Psq, &config.architecture);
                 vs.variables()
             };
-            open_stack(&config, network, bounds, arms, active, starting_weights, false, device)
+            open_stack(&config, rule, network, bounds, arms, active, starting_weights, false, device)
         };
         let train_rows = files.iter().map(|file| file.positions).sum();
         let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
@@ -944,14 +1045,14 @@ mod tests {
             prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
             upload: |host: &transformer_batch::HostTransformerBatch| transformer_batch::upload(host, device),
         };
-        let stack_of = |arms: &[Arm], active: &[usize]| {
+        let stack_of = |rule: &Rule, arms: &[Arm], active: &[usize]| {
             let network = StackedTransformer::new(&config.architecture, active.len() as i64, device);
             let starting_weights = || {
                 let vs = tch::nn::VarStore::new(device);
                 let _ = transformer_network::TransformerNetwork::new(&vs.root(), &config.architecture);
                 vs.variables()
             };
-            open_stack(&config, network, Vec::new(), arms, active, starting_weights, false, device)
+            open_stack(&config, rule, network, Vec::new(), arms, active, starting_weights, false, device)
         };
         let train_rows = files.iter().map(|file| file.positions).sum();
         let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {

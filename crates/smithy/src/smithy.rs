@@ -83,7 +83,8 @@ use super::pgn_train_stream;
 use super::stacked_network::StackedNetwork;
 use super::train_stream::BatchSource;
 use super::candidates::{export_best, feature_set_of};
-use super::lockstep::{self, open_stack, train_in_lockstep, Arm, LockstepParts};
+use super::budget::Budget;
+use super::lockstep::{self, open_stack, train_in_lockstep, Arm, LockstepParts, Rule};
 use super::{batch, candidates, checkpoint_store, nnue_network, round, round_robin};
 
 const PREFIX: &str = "smithy";
@@ -312,6 +313,11 @@ fn load_config(path: &str) -> Result<(GenConfig, NetConfig), String> {
     // A transformer is labelled per lambda by its PGN stream, which knows no progress.
     if config.lambda == LambdaMode::Polyline && matches!(net.architecture.kind, ArchitectureKind::Transformer { .. }) {
         return Err(format!("{path}: lambda: polyline trains an NNUE only, not a transformer"));
+    }
+    // A budget's round robin is among one arm's checkpoints: nine arms of nine candidates each is not
+    // wanted, and the grid is deprecated.
+    if net.training.schedule == net_config::Schedule::Budget && config.lambda != LambdaMode::Polyline {
+        return Err(format!("{path}: schedule: budget trains one arm, so it needs lambda: polyline"));
     }
     if config.scale.is_some() && path == preprocessing_config::net_config_path(&config_name_of(path)) {
         return Err(format!("{path}: scale: is a run's, chosen at New run, never a config's"));
@@ -926,8 +932,8 @@ impl ScoreDealing {
 enum View {
     #[default]
     None,
-    /// The round robin: its lambdas, each pairing's two, and the pairs each pairing wants.
-    RoundRobin { lambdas: Vec<f64>, players: Vec<(usize, usize)> },
+    /// The round robin: its candidates' labels (`lambda 0.05`, `epoch 2.25`), and each pairing's two.
+    RoundRobin { labels: Vec<String>, players: Vec<(usize, usize)> },
     /// The gate, its SPRT at `elo_d`.
     Gate { elo_d: f64 },
     /// A test (`matches.rs`), its time from its record.
@@ -950,7 +956,13 @@ impl ForgeFiles {
             stage_count: training.learning_rate.len(),
             steps_per_round: training.steps_per_round,
             warmup_rounds: training.warmup_rounds.expect("net_config::load already validated this is Some"),
-            patience_rounds: training.patience_rounds.expect("net_config::load already validated this is Some"),
+            patience_rounds: training.patience_rounds,
+            budget: (training.schedule == net_config::Schedule::Budget).then(|| {
+                (
+                    training.epochs.expect("net_config::load already validated this is Some"),
+                    training.training_batch_size as u64,
+                )
+            }),
             rates: training.learning_rate.clone(),
         };
         ForgeFiles { root: run_dir(name), config: config.clone(), schedule }
@@ -980,8 +992,8 @@ impl Shared {
                 // Each set counted up to its own target, the test set's last game overshooting it.
                 time: Some(self_play_time(self.self_play_started, self.test_got.min(test_left) + self.train_got, test_left + train_left)),
             },
-            (Work::Pairs { wanted, .. }, View::RoundRobin { lambdas, players, .. }) => {
-                round_robin_view(lambdas, players, &self.pairs, wanted, &self.pair_times, self.depth())
+            (Work::Pairs { wanted, .. }, View::RoundRobin { labels, players, .. }) => {
+                round_robin_view(labels, players, &self.pairs, wanted, &self.pair_times, self.depth())
             }
             (Work::Pairs { .. }, View::Gate { elo_d }) => {
                 gate_view(*elo_d, self.pairs.first().map_or(&[][..], Vec::as_slice), &self.pair_times, self.depth())
@@ -2803,14 +2815,37 @@ struct SlotView {
     book: Option<book::BookLive>,
 }
 
-/// A training's rates and patience, which replay a lambda's stages from its `history.tsv`.
+/// A training's rates and its patience or budget, which replay a lambda's stages from its
+/// `history.tsv`.
 #[derive(Clone)]
 struct Schedule {
     rates: Vec<f64>,
     stage_count: usize,
     steps_per_round: u64,
     warmup_rounds: u64,
-    patience_rounds: u64,
+    /// Patience's; none for a budget.
+    patience_rounds: Option<u64>,
+    /// A budget's (`budget.rs`): its epochs and the batch its steps are counted in; none for patience.
+    budget: Option<(f64, u64)>,
+}
+
+impl Schedule {
+    /// The rule an arm in `arm_dir` trains by: a budget's figures need the rows it trains on, which
+    /// its frozen `run_config.txt` records; none before that file exists.
+    fn rule(&self, arm_dir: &str) -> Option<lockstep::Rule> {
+        let Some((epochs, training_batch_size)) = self.budget else {
+            return Some(lockstep::Rule::Patience {
+                warmup_rounds: self.warmup_rounds,
+                patience_rounds: self.patience_rounds.expect("a patience schedule has its patience"),
+                stage_count: self.stage_count,
+            });
+        };
+        let text = std::fs::read_to_string(format!("{arm_dir}/run_config.txt")).ok()?;
+        let train_rows: u64 = text.lines().find_map(|line| line.strip_prefix("train_rows\t"))?.trim().parse().ok()?;
+        Budget::checked(train_rows, training_batch_size, self.steps_per_round, self.warmup_rounds, epochs, &self.rates)
+            .ok()
+            .map(lockstep::Rule::Budget)
+    }
 }
 
 /// The status page, polling `/state.json`.
@@ -2840,9 +2875,11 @@ struct RoundRow {
     /// The round the current stage began at, its latest switch's; 0 in the first stage. The page's
     /// estimate of a one-arm run's length.
     stage_round: u64,
-    /// Rounds without a new best, of `patience`.
+    /// Rounds without a new best, of `patience`; both 0 under a budget, which has neither.
     waiting: u64,
     patience: u64,
+    /// A budget's length in rounds, which the page's progress and ETA read; none under patience.
+    total_rounds: Option<u64>,
     finished: bool,
     /// How long the round took, training and test: alike for every lambda trained in it, which
     /// train in lockstep.
@@ -3007,7 +3044,8 @@ struct LambdaView {
 
 #[derive(Clone, Serialize)]
 struct StandingView {
-    lambda: f64,
+    /// The candidate, `lambda 0.05` for a grid's, `epoch 2.25` for a budget's.
+    label: String,
     points: f64,
     games: u64,
     score: f64,
@@ -3073,8 +3111,11 @@ impl Status {
             .iter()
             .map(|record| [(record.step / per_round) as f64, record.train_loss, record.test_loss, record.learning_rate])
             .collect();
-        let row = lockstep::latest_round(path, per_round, schedule.warmup_rounds, schedule.patience_rounds, schedule.stage_count).map(
-            |(record, stages)| {
+        let arm_dir = Path::new(path).parent().map_or(String::new(), |dir| dir.to_string_lossy().into_owned());
+        let rule = schedule.rule(&arm_dir);
+        let row = rule.and_then(|rule| lockstep::latest_round(path, per_round, &rule).map(|round| (rule, round))).map(
+            |(rule, (record, stages))| {
+                let budget = rule.budget();
                 RoundRow {
                     round: record.step / per_round,
                     learning_rate: record.learning_rate,
@@ -3082,11 +3123,17 @@ impl Status {
                     test_loss: record.test_loss,
                     best_loss: stages.best_loss,
                     best_round: stages.best_step / per_round,
-                    stage: schedule.rates.iter().position(|&rate| rate == record.learning_rate).map(|index| index + 1),
-                    stages: schedule.stage_count,
+                    // A budget's rate falls every step: no stage names it.
+                    stage: if budget.is_some() {
+                        None
+                    } else {
+                        schedule.rates.iter().position(|&rate| rate == record.learning_rate).map(|index| index + 1)
+                    },
+                    stages: if budget.is_some() { 0 } else { schedule.stage_count },
                     stage_round: stages.switch_step / per_round,
-                    waiting: stages.rounds_without_improvement(record.step, per_round),
-                    patience: schedule.patience_rounds,
+                    waiting: if budget.is_some() { 0 } else { stages.rounds_without_improvement(record.step, per_round) },
+                    patience: schedule.patience_rounds.unwrap_or(0),
+                    total_rounds: budget.map(|budget| budget.total_rounds()),
                     finished: stages.finished,
                     train_seconds: record.train_duration_secs,
                     test_seconds: record.test_duration_secs,
@@ -3256,14 +3303,26 @@ impl Status {
         let round_robin = match live {
             WorkView::RoundRobin { .. } => Some(live.clone()),
             _ => {
-                // Its players are the lambdas that learned, as the round robin chose them: a grid's
-                // constants alone, a polyline run having no round robin.
-                let constants: Vec<f64> = lambdas.iter().filter_map(|arm| arm.constant()).collect();
-                let learned = learned_lambdas(&dirs, generation, &constants);
-                let players = round_robin_players(learned.len());
+                // Its players as the round robin chose them: a budget's, its arm's checkpoints in
+                // `candidates.txt`; a grid's, its constants that learned. A polyline run under patience
+                // has none.
+                let (labels, wanted) = if files.schedule.budget.is_some() {
+                    let listed = lambdas
+                        .first()
+                        .and_then(|&arm| candidates::read_budget_candidates(&dirs.arm(generation, arm)).ok())
+                        .unwrap_or_default();
+                    let labels: Vec<String> = listed.iter().map(|candidate| epoch_label(&candidate.epoch)).collect();
+                    let wanted = budget_pairs(labels.len(), config.scale);
+                    (labels, wanted)
+                } else {
+                    let constants: Vec<f64> = lambdas.iter().filter_map(|arm| arm.constant()).collect();
+                    let learned = learned_lambdas(&dirs, generation, &constants);
+                    (learned.into_iter().map(lambda_label).collect(), config.round_robin_pairs)
+                };
+                let players = round_robin_players(labels.len());
                 let record = dirs.round_robin(generation);
                 let results = Path::new(&record).exists().then(|| recorded_pairs(&record, players.len()).ok()).flatten();
-                results.map(|results| round_robin_view(&learned, &players, &results, config.round_robin_pairs, &recorded_times(&record), config.depth()))
+                results.map(|results| round_robin_view(&labels, &players, &results, wanted, &recorded_times(&record), config.depth()))
             }
         };
         let gate = match live {
@@ -3728,14 +3787,22 @@ impl Run<'_> {
         let batch_size = config.training.training_batch_size as usize;
         // Said as the rate switches are: what ended, and where its best was.
         let stage_count = config.training.learning_rate.len();
-        let finish = |arm: &Arm| {
-            let (_, test_loss) = export_best(config, &arm.run_dir, arm.lambda, &arm.stages);
-            log::info!(
-                "lambda {}: finished after stage {stage_count} of {stage_count}, best at round {} (test loss {test_loss:.6}), \
-                 candidate exported",
-                arm.lambda,
-                arm.stages.best_step / config.training.steps_per_round
-            );
+        let rule = Rule::of(config, train_rows);
+        let finish = |arm: &Arm| match rule {
+            Rule::Patience { .. } => {
+                let (_, test_loss) = export_best(config, &arm.run_dir, arm.lambda, &arm.stages);
+                log::info!(
+                    "lambda {}: finished after stage {stage_count} of {stage_count}, best at round {} (test loss {test_loss:.6}), \
+                     candidate exported",
+                    arm.lambda,
+                    arm.stages.best_step / config.training.steps_per_round
+                );
+            }
+            // No candidate yet: the round robin among these chooses it.
+            Rule::Budget(budget) => {
+                let line = candidates::export_budget_candidates(config, &arm.run_dir, &budget);
+                log::info!("lambda {}: its budget of {} rounds trained, {line}", arm.lambda, budget.total_rounds());
+            }
         };
         let stop: &AtomicBool = &self.stop;
         // The training's state to the remote every `COPY_UP_EVERY`, between rounds, when no file is
@@ -3758,7 +3825,7 @@ impl Run<'_> {
                 prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
                 upload: |host: &transformer_batch::HostTransformerBatch| transformer_batch::upload(host, device),
             };
-            let stack_of = |arms: &[Arm], active: &[usize]| {
+            let stack_of = |rule: &Rule, arms: &[Arm], active: &[usize]| {
                 let network = StackedTransformer::new(&config.architecture, active.len() as i64, device);
                 let starting_weights = || {
                     let mut vs = tch::nn::VarStore::new(device);
@@ -3766,7 +3833,7 @@ impl Run<'_> {
                     self.seed(&mut vs, &teacher_vs);
                     vs.variables()
                 };
-                open_stack(config, network, Vec::new(), arms, active, starting_weights, false, device)
+                open_stack(config, rule, network, Vec::new(), arms, active, starting_weights, false, device)
             };
             // One shuffle buffer per piece count, so that every batch holds one length.
             let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
@@ -3782,7 +3849,7 @@ impl Run<'_> {
                 prepare: |records: &[CacheRecord]| batch::host_batch(records, feature_set),
                 upload: |host: &batch::HostBatch| batch::upload(host, device),
             };
-            let stack_of = |arms: &[Arm], active: &[usize]| {
+            let stack_of = |rule: &Rule, arms: &[Arm], active: &[usize]| {
                 let network = StackedNetwork::new(feature_set, &config.architecture, active.len() as i64, device);
                 let bounds = network.weight_bounds();
                 let starting_weights = || {
@@ -3791,7 +3858,7 @@ impl Run<'_> {
                     self.seed(&mut vs, &teacher_vs);
                     vs.variables()
                 };
-                open_stack(config, network, bounds, arms, active, starting_weights, false, device)
+                open_stack(config, rule, network, bounds, arms, active, starting_weights, false, device)
             };
             // The buckets were just prepared, so a failure to open them is a disk gone wrong.
             let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
@@ -3814,6 +3881,10 @@ impl Run<'_> {
             let candidate = generation::candidate_network_path(&lambda_dir(lambda));
             if Path::new(&candidate).is_file() {
                 publish(&candidate)?;
+            }
+            // A budget's candidates, every quarter epoch's, all of them the round robin's.
+            for candidate in candidates::read_budget_candidates(&lambda_dir(lambda)).unwrap_or_default() {
+                publish(&candidates::budget_candidate_path(&lambda_dir(lambda), &candidate.epoch))?;
             }
         }
         Ok(Ended::Done)
@@ -3863,42 +3934,75 @@ impl Run<'_> {
         publish(&generation::candidate_network_path(&dir))
     }
 
-    /// The round robin: the winning lambda, by points.
-    fn round_robin(&self, state: &GenState, lambdas: &[f64]) -> Result<(Ended, f64), String> {
-        let names: Vec<String> =
-            lambdas.iter().map(|&lambda| self.candidate(state, ArmLambda::Constant(lambda))).collect::<Result<_, _>>()?;
-        let players = round_robin_players(lambdas.len());
-        let pairings: Vec<(String, String)> = players.iter().map(|&(i, j)| (names[i].clone(), names[j].clone())).collect();
-        let wanted = self.config.round_robin_pairs;
+    /// A grid's round robin among its constant lambdas: the winning lambda, by points.
+    fn grid_round_robin(&self, state: &GenState, lambdas: &[f64]) -> Result<(Ended, f64), String> {
+        let candidates: Vec<(String, String)> = lambdas
+            .iter()
+            .map(|&lambda| Ok((lambda_label(lambda), self.candidate(state, ArmLambda::Constant(lambda))?)))
+            .collect::<Result<_, String>>()?;
+        let (ended, winner) = self.round_robin(state, &candidates, self.config.round_robin_pairs)?;
+        Ok((ended, lambdas[winner]))
+    }
+
+    /// A budget's round robin among its arm's checkpoints (`budget.rs`): the winner's step, exported
+    /// as the arm's candidate for the gate. Once exported, a resume finds it and plays nothing.
+    fn budget_round_robin(&self, state: &GenState, arm: ArmLambda) -> Result<Ended, String> {
+        let dir = self.dirs.arm(state.generation, arm);
+        if candidates::read_candidate_step(&dir).is_ok() {
+            return Ok(Ended::Done);
+        }
+        let listed = candidates::read_budget_candidates(&dir)?;
+        let players: Vec<(String, String)> = listed
+            .iter()
+            .map(|candidate| Ok((epoch_label(&candidate.epoch), publish(&candidates::budget_candidate_path(&dir, &candidate.epoch))?)))
+            .collect::<Result<_, String>>()?;
+        let wanted = budget_pairs(listed.len(), self.config.scale);
+        let (ended, winner) = self.round_robin(state, &players, wanted)?;
+        if let Ended::Stopped = ended {
+            return Ok(Ended::Stopped);
+        }
+        let line = candidates::export_budget_winner(self.net, &dir, arm, listed[winner].step);
+        log::info!("round robin: epoch {} wins, {line}", listed[winner].epoch);
+        publish(&generation::candidate_network_path(&dir))?;
+        Ok(Ended::Done)
+    }
+
+    /// The round robin among `candidates`, each a label and its network's name on the remote,
+    /// `wanted` pairs a pairing: the winner's index, by points.
+    fn round_robin(&self, state: &GenState, candidates: &[(String, String)], wanted: u32) -> Result<(Ended, usize), String> {
+        let players = round_robin_players(candidates.len());
+        let pairings: Vec<(String, String)> =
+            players.iter().map(|&(i, j)| (candidates[i].1.clone(), candidates[j].1.clone())).collect();
         let total_games = pairings.len() as u64 * u64::from(wanted) * 2;
         log::info!(
-            "round robin: {} lambdas, {} pairings of {} pairs, {} games",
-            lambdas.len(),
+            "round robin: {} candidates, {} pairings of {} pairs, {} games",
+            candidates.len(),
             pairings.len(),
             progress::grouped(wanted),
             progress::grouped(total_games)
         );
         let started = Instant::now();
         let record = self.dirs.round_robin(state.generation);
+        let labels: Vec<String> = candidates.iter().map(|(label, _)| label.clone()).collect();
         // Its progress is its section's graphical bar alone, timed from its record (`round_robin_view`).
-        self.lock().view = View::RoundRobin { lambdas: lambdas.to_vec(), players: players.clone() };
+        self.lock().view = View::RoundRobin { labels: labels.clone(), players: players.clone() };
         // Candidates against candidates: the defaults, judging the networks alone.
         let (ended, results) = self.play_pairs(pairings, [SearchParameters::DEFAULT; 2], wanted, &record, |_| false)?;
         self.lock().view = View::None;
         if let Ended::Stopped = ended {
-            return Ok((Ended::Stopped, 0.0));
+            return Ok((Ended::Stopped, 0));
         }
         // Every pairing is complete here, so the points rank (`round_robin`'s module doc).
-        let first = &round_robin::standings(lambdas.len(), &players, &results)[0];
+        let first = &round_robin::standings(candidates.len(), &players, &results)[0];
         log::info!(
-            "round robin: done in {}, winner lambda {:.2}, {} of {} points ({:.1}%)",
+            "round robin: done in {}, winner {}, {} of {} points ({:.1}%)",
             minutes(started),
-            lambdas[first.candidate],
+            labels[first.candidate],
             points_text(first.points),
             first.games,
             100.0 * first.score
         );
-        Ok((Ended::Done, lambdas[first.candidate]))
+        Ok((Ended::Done, first.candidate))
     }
 
     /// The gate: `winner`'s candidate against the teacher, an SPRT. `Some(pass)` once decided.
@@ -4093,17 +4197,17 @@ fn recorded_times(record: &str) -> Vec<(u64, bool)> {
 
 /// The round robin as the page shows it: `results` by pairing of `players`, `wanted` pairs each, its
 /// time from `times`, its games at `depth`.
-fn round_robin_view(lambdas: &[f64], players: &[(usize, usize)], results: &[Vec<i32>], wanted: u32, times: &[(u64, bool)], depth: u32) -> WorkView {
+fn round_robin_view(labels: &[String], players: &[(usize, usize)], results: &[Vec<i32>], wanted: u32, times: &[(u64, bool)], depth: u32) -> WorkView {
     let played: u64 = results.iter().map(|pairs| pairs.len() as u64).sum();
     WorkView::RoundRobin {
         pairings: players.len(),
         wanted,
         time: pairs_eta(times, (players.len() as u64 * u64::from(wanted)).saturating_sub(played)),
         limit: format!("depth {depth}"),
-        standings: round_robin::standings(lambdas.len(), players, results)
+        standings: round_robin::standings(labels.len(), players, results)
             .iter()
             .map(|standing| StandingView {
-                lambda: lambdas[standing.candidate],
+                label: labels[standing.candidate].clone(),
                 points: standing.points,
                 games: standing.games,
                 score: standing.score,
@@ -4196,6 +4300,32 @@ fn recorded_pairs(record: &str, count: usize) -> Result<Vec<Vec<i32>>, String> {
         }
     }
     Ok(results)
+}
+
+/// A grid's candidate as the round robin shows it.
+fn lambda_label(lambda: f64) -> String {
+    format!("lambda {lambda:.2}")
+}
+
+/// A budget's candidate as the round robin shows it, its epoch as `candidates.txt` spells it.
+fn epoch_label(epoch: &str) -> String {
+    format!("epoch {epoch}")
+}
+
+/// Games each candidate of a budget's round robin plays: about 2,000, so that nine checkpoints a
+/// quarter epoch apart, a few Elo from each other, are told apart.
+const BUDGET_GAMES_A_CANDIDATE: u32 = 2000;
+
+/// Pairs a pairing among `count` candidates of a budget's round robin, each candidate meeting the
+/// `count - 1` others two games a pair, `BUDGET_GAMES_A_CANDIDATE` in all: 125 for nine. Not
+/// `round_robin_pairs`, the grid's. A scaled run's shrunk as that one is (`scale::games`).
+fn budget_pairs(count: usize, scale: Option<u64>) -> u32 {
+    let opponents = (count.max(2) - 1) as u32;
+    let pairs = (BUDGET_GAMES_A_CANDIDATE / 2).div_ceil(opponents);
+    match scale {
+        Some(s) => scale::games(pairs, s, scale::MIN_PAIRS),
+        None => pairs,
+    }
 }
 
 /// The round robin's pairings of `count` lambdas, by index: every two, the first before the second.
@@ -5479,13 +5609,20 @@ fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
             if fell_back > 0 {
                 log::info!("{fell_back} of {} lambdas fell back to the teacher and play no round robin", arms.len());
             }
-            let winner = if learned.len() == 1 {
+            let winner = if run.net.training.schedule == net_config::Schedule::Budget {
+                // A budget's one arm (`load_config`), its round robin among its own checkpoints, the
+                // winner exported as its candidate. Step 0 is never one: `learned_arms` keeps the arm.
+                if let Ended::Stopped = run.budget_round_robin(state, learned[0])? {
+                    return Ok(stopped());
+                }
+                learned[0]
+            } else if learned.len() == 1 {
                 log::info!("one lambda learned, {}: no round robin, straight to the gate", learned[0]);
                 learned[0]
             } else {
                 // Two arms or more are a grid's: a polyline run trains one.
                 let constants: Vec<f64> = learned.iter().map(|arm| arm.constant().expect("a grid's arm is a constant")).collect();
-                let (ended, winner) = run.round_robin(state, &constants)?;
+                let (ended, winner) = run.grid_round_robin(state, &constants)?;
                 if let Ended::Stopped = ended {
                     return Ok(stopped());
                 }
@@ -6039,6 +6176,16 @@ mod tests {
         assert!(load("both", format!("lambda: polyline\n{forge}training_positions: 7\n{network}")).unwrap_err().contains("grid_center"));
         assert!(load("no-center", format!("{rest}training_positions: 7\n{network}")).unwrap_err().contains("grid_center"));
         assert!(load("unknown-mode", format!("lambda: curve\n{forge}training_positions: 7\n{network}")).is_err());
+
+        // A budget trains one arm: the polyline's, never a grid.
+        let budget = network.replace(
+            "learning_rate: 0.1\n",
+            "schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n",
+        )
+        .replace("  patience_rounds: 1\n", "");
+        let (_, net) = load("budget", format!("lambda: polyline\n{rest}training_positions: 7\n{budget}")).unwrap();
+        assert_eq!(net.training.schedule, net_config::Schedule::Budget);
+        assert!(load("budget-grid", format!("{forge}training_positions: 7\n{budget}")).unwrap_err().contains("lambda: polyline"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -6478,7 +6625,8 @@ mod tests {
         // grown since is read again rather than served from the cache.
         let dir = scratch("arm-rounds");
         let path = format!("{dir}/history.tsv");
-        let schedule = Schedule { rates: vec![1e-3, 1e-4], stage_count: 2, steps_per_round: 10, warmup_rounds: 1, patience_rounds: 6 };
+        let schedule =
+            Schedule { rates: vec![1e-3, 1e-4], stage_count: 2, steps_per_round: 10, warmup_rounds: 1, patience_rounds: Some(6), budget: None };
         let record = |step: u64, rate: f64, train: f64, test: f64| super::super::history::EvalRecord {
             step, learning_rate: rate, train_loss: train, test_loss: test, train_duration_secs: 1.0, test_duration_secs: 0.5,
         };
@@ -6496,6 +6644,49 @@ mod tests {
         assert_eq!(curve[2], [2.0, 0.64, 0.63, 1e-4]);
         assert_eq!(last.expect("a round").round, 2);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_budget_arm_s_row_has_its_length_and_no_stage_nor_patience() {
+        let dir = scratch("budget-rounds");
+        let path = format!("{dir}/history.tsv");
+        // 100 steps an epoch, rounds of 10, 2 epochs: 20 rounds.
+        let schedule = Schedule {
+            rates: vec![1e-3, 1e-5],
+            stage_count: 2,
+            steps_per_round: 10,
+            warmup_rounds: 1,
+            patience_rounds: None,
+            budget: Some((2.0, 10)),
+        };
+        let status = test_status(Arc::new(Mutex::new(Shared::default())));
+        super::super::history::append(
+            &path,
+            &super::super::history::EvalRecord {
+                step: 10, learning_rate: 1e-3, train_loss: 0.66, test_loss: 0.65, train_duration_secs: 1.0, test_duration_secs: 0.5,
+            },
+        );
+        let (last, _) = status.arm_rounds(&path, &schedule);
+        assert!(last.is_none(), "no run_config.txt yet, so no budget to read the round by");
+        std::fs::write(format!("{dir}/run_config.txt"), "schedule\tbudget\ntrain_rows\t1000\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        super::super::history::append(
+            &path,
+            &super::super::history::EvalRecord {
+                step: 20, learning_rate: 8e-4, train_loss: 0.64, test_loss: 0.63, train_duration_secs: 1.0, test_duration_secs: 0.5,
+            },
+        );
+        let row = status.arm_rounds(&path, &schedule).0.expect("a round");
+        assert_eq!((row.round, row.total_rounds, row.stage, row.stages, row.patience, row.finished), (2, Some(20), None, 0, 0, false));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_budget_round_robin_plays_about_two_thousand_games_a_candidate() {
+        assert_eq!(budget_pairs(9, None), 125);
+        assert_eq!(budget_pairs(9, None) * 2 * 8, 2000);
+        assert_eq!(budget_pairs(2, None), 1000);
+        assert!(budget_pairs(9, Some(64)) < 125, "a scaled run's fewer");
     }
 
     fn test_claim() -> Claim {

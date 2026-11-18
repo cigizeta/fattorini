@@ -68,6 +68,36 @@ pub fn stage_after(
     stages
 }
 
+/// A budgeted run's rounds (`budget.rs`) read as `Stages`, so the round loop and the page read either
+/// schedule alike: one stage, never switched nor rolled back, finished once a round reaches
+/// `total_steps`. The best is tracked for the page alone: a budget's candidate is chosen by a round
+/// robin, never by its loss.
+pub fn budget_after(rounds: &[(u64, f64)], total_steps: u64, warmup_steps: u64) -> Stages {
+    let mut stages = Stages {
+        stage: 0,
+        finished: false,
+        best_step: 0,
+        best_loss: f64::INFINITY,
+        patience_from: warmup_steps,
+        switch_step: 0,
+        rounds_used_at_switch: 0,
+        warmup_end: warmup_steps,
+        last_step: 0,
+    };
+    for &(step, test_loss) in rounds {
+        stages.last_step = step;
+        if test_loss < stages.best_loss {
+            stages.best_loss = test_loss;
+            stages.best_step = step;
+        }
+        if step >= total_steps {
+            stages.finished = true;
+            break;
+        }
+    }
+    stages
+}
+
 impl Stages {
     /// Before any round.
     fn start(steps_per_round: u64, warmup_rounds: u64) -> Stages {
@@ -133,6 +163,18 @@ mod tests {
 
     fn replay(losses: &[f64], stage_count: usize) -> Stages {
         stage_after(&rounds(losses), ROUND, WARMUP, PATIENCE, stage_count)
+    }
+
+    #[test]
+    fn a_budget_never_switches_and_finishes_at_its_last_step() {
+        // Flat losses for many rounds: patience would have switched, a budget does not.
+        let flat = rounds(&[0.5, 0.4, 0.6, 0.6, 0.6, 0.6, 0.6]);
+        let stages = budget_after(&flat, 80, 20);
+        assert_eq!((stages.stage, stages.finished, stages.switch_step), (0, false, 0));
+        assert_eq!((stages.best_step, stages.best_loss, stages.last_step), (20, 0.4, 70));
+        let stages = budget_after(&rounds(&[0.5, 0.4, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]), 80, 20);
+        assert!(stages.finished);
+        assert_eq!(stages.last_step, 80, "read up to the last step, no further");
     }
 
     #[test]

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use tch::{Device, Kind, Tensor};
 
 use super::arm_slice;
+use super::budget::Budget;
 use super::stacked_network::retained_index;
 
 pub struct StackedAdamW {
@@ -26,6 +27,10 @@ pub struct StackedAdamW {
     eps: f64,
     wd: f64,
     warmup_steps: i64,
+    /// A budgeted run's falling rate (`budget.rs`), which replaces every arm's fixed rate: computed
+    /// from each arm's count every step, the count being its run step under a budget, which never
+    /// rolls back.
+    budget: Option<Budget>,
     parameters: HashMap<String, Tensor>,
     moments: HashMap<String, (Tensor, Tensor)>,
     bounds: HashMap<String, f64>,
@@ -69,6 +74,7 @@ impl StackedAdamW {
             eps: 1e-8,
             wd: 0.01,
             warmup_steps: 0,
+            budget: None,
             parameters: parameters.iter().map(|(name, tensor)| (name.clone(), tensor.shallow_clone())).collect(),
             moments,
             bounds: HashMap::new(),
@@ -109,6 +115,13 @@ impl StackedAdamW {
     pub fn set_warmup_steps(&mut self, steps: i64) {
         assert!(steps >= 0, "a warmup of {steps} steps is meaningless");
         self.warmup_steps = steps;
+    }
+
+    /// Trains every arm on `budget`'s schedule from now on: its warmup, then its geometric fall, the
+    /// rate of each step `budget.rate` of the arm's count. Every arm's fixed rate is ignored.
+    pub fn set_budget(&mut self, budget: Budget) {
+        self.set_warmup_steps(budget.warmup_steps as i64);
+        self.budget = Some(budget);
     }
 
     /// `AdamW::set_learning_rate` for arm `arm` alone.
@@ -190,7 +203,16 @@ impl StackedAdamW {
             } else {
                 (t / self.warmup_steps as f64).clamp_max(1.0)
             };
-            let lr = (&self.rates_on_device * warmup).to_kind(Kind::Float);
+            let rate = match &self.budget {
+                // `Budget::decayed` on the device: start * (end / start) ^ progress.
+                Some(budget) => {
+                    let span = (budget.total_steps - budget.warmup_steps) as f64;
+                    let progress = ((t - budget.warmup_steps as f64) / span).clamp(0.0, 1.0);
+                    (progress * (budget.end / budget.start).ln()).exp() * budget.start
+                }
+                None => self.rates_on_device.shallow_clone(),
+            };
+            let lr = (rate * warmup).to_kind(Kind::Float);
             let stepping = self.stepping_on_device.as_ref().map(|flags| flags.to_kind(Kind::Bool));
 
             for (name, param) in self.parameters.iter_mut() {
@@ -372,6 +394,25 @@ mod tests {
             let stacked = parameters["w"].get(arm as i64);
             let own = &unstacked.weights[arm];
             assert!(stacked.allclose(own, 1e-5, 1e-6, false), "{what}, arm {arm}: {stacked:?} against {own:?}");
+        }
+    }
+
+    #[test]
+    fn a_budget_trains_every_arm_at_budget_rate_of_its_step() {
+        // 8 steps an epoch, rounds of 2, 2 epochs: 16 steps, the first 2 the warmup.
+        let budget = Budget::new(80, 10, 2, 1, 2.0, &[0.1, 0.001]);
+        assert_eq!((budget.total_steps, budget.warmup_steps), (16, 2));
+        let mut unstacked = unstacked();
+        let (parameters, targets, mut optimizer) = stacked();
+        optimizer.set_budget(budget);
+        for step in 1..=18u64 {
+            for arm in 0..ARMS {
+                // An unstacked AdamW with no warmup of its own, told each step's whole rate.
+                unstacked.optimizers[arm].set_learning_rate(budget.rate(step));
+                step_unstacked(&mut unstacked, arm);
+            }
+            step_stacked(&parameters, &targets, &mut optimizer);
+            assert_arms_agree(&parameters, &unstacked, &format!("step {step}"));
         }
     }
 

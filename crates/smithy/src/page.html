@@ -242,9 +242,10 @@ function work(view, waiting, stop = "") {
       const played = view.standings.reduce((sum, s) => sum + s.games, 0) / 2, total = view.pairings * view.wanted * 2;
       return `<h2>Round robin: ${view.wanted} pairs a pairing</h2><div class="muted">${escape(view.limit)}</div>`
         + `<div>${whole(played)} of ${whole(total)} games (${percent(total > 0 ? played / total : 0)})${times(view)}</div>${bar(played, total)}`
-        + table(["rank", "lambda", "points", "games", "score"],
+        + table(["rank", "candidate", "points", "games", "score"],
           // The score and its margin each in a slot of its own width, so both align whatever their digits.
-          view.standings.map((s, i) => [String(i + 1), number(s.lambda, 2), number(s.points, 1), whole(s.games),
+          // A candidate by its label: a grid's `lambda 0.05`, a budget's `epoch 2.25`.
+          view.standings.map((s, i) => [String(i + 1), s.label, number(s.points, 1), whole(s.games),
             { html: `<span class="share">${escape(percent(s.score))}</span> <span class="margin">±${escape(percent(s.margin))}</span>` }]));
     }
     case "gate":
@@ -320,7 +321,9 @@ function trainingProgress(lambdas, round) {
   const shape = lambdas.map((l) => l.last).find(Boolean);
   // A fresh run, no round recorded: its first round's pass alone.
   if (!shape) return roundLine(round);
-  // One arm: its length estimated from its stages. A grid keeps the patience rounds below.
+  // A budget: its length known from the start. One arm: its length estimated from its stages. A grid
+  // keeps the patience rounds below.
+  if (shape.total_rounds !== null) return budgetProgress(shape, round);
   if (lambdas.length === 1) return stageProgress(shape, round);
   const share = shape.stages * shape.patience;
   // Settled: a finished lambda's share and every stage it left behind, which no new best takes back,
@@ -376,6 +379,19 @@ function stageProgress(r, round) {
     + `ETA about ${duration(Math.round(left * pace))}; ${bound}</div>${bar(r.round, total, r.round)}`;
 }
 
+// A budgeted run's progress: its rounds of the budget's, its ETA the rounds left at the latest round's
+// pace.
+function budgetProgress(r, round) {
+  const total = r.total_rounds;
+  const elapsed = `elapsed ${duration(Math.round(r.elapsed_seconds))}`;
+  const pace = r.train_seconds + r.test_seconds;
+  // Round 0 only tests, so its seconds are no round's pace: no ETA until a round has trained.
+  const left = Math.max(0, total - r.round);
+  const eta = !r.finished && r.train_seconds > 0 && left > 0 ? `, ETA about ${duration(Math.round(left * pace))}` : "";
+  return `${roundLine(round)}<div>round ${whole(r.round)} of ${whole(total)} (${percent(r.round / Math.max(1, total))}), `
+    + `${elapsed}${eta}</div>${bar(r.round, total, r.round)}`;
+}
+
 // The round under way, as the text bar has it: its half, done of total, rate, and that half's ETA.
 function roundLine(round) {
   if (!round) return "";
@@ -411,32 +427,35 @@ function training(list, round = null, polyline = null) {
   // One polyline arm: its lambda and rank say nothing, and its rounds draw a loss chart instead.
   const single = lambdas.length === 1 && lambdas[0].lambda === "polyline";
   const columns = single ? 2 : 0;
+  // A budget has neither stages nor patience: its two columns dropped, its falling rate in three digits.
+  const budget = lambdas.some((l) => l.last && l.last.total_rounds !== null);
+  const end = budget ? -2 : undefined;
   return `<h2>Training</h2>${values}${trainingProgress(lambdas, round)}${took}`
-    + (lambdas.length === 0 ? "" : table(["lambda", "rank", "learning rate", "train loss", "test loss", "best loss", "round", "stage", "patience"].slice(columns),
+    + (lambdas.length === 0 ? "" : table(["lambda", "rank", "learning rate", "train loss", "test loss", "best loss", "round", "stage", "patience"].slice(columns, end),
       lambdas.map((l) => {
         const r = l.last;
         if (!r) {
-          return [lambdaText(l.lambda), "", "not started", "", "", "", "", "", ""].slice(columns);
+          return [lambdaText(l.lambda), "", "not started", "", "", "", "", "", ""].slice(columns, end);
         }
         // Green when the best is this very round's. Not patience at 0: a stage's warmup round counts no
         // patience, so a warmup worse than the best would show green too.
         const best = `<span class="loss${!r.finished && r.best_round === r.round ? " fresh" : ""}">${escape(number(r.best_loss, 6))}</span>`;
         // The best's round and the latest, each in a slot of its own width, so the slashes align.
         const round = `<span class="at">${escape(whole(r.best_round))}</span> / <span class="of">${escape(whole(r.round))}</span>`;
-        return [lambdaText(l.lambda), String(ranked.indexOf(l) + 1), r.learning_rate.toExponential(0), number(r.train_loss, 6), number(r.test_loss, 6),
+        return [lambdaText(l.lambda), String(ranked.indexOf(l) + 1), r.learning_rate.toExponential(budget ? 2 : 0), number(r.train_loss, 6), number(r.test_loss, 6),
           { html: best }, { html: round },
           r.finished ? "finished" : (r.stage ? `${r.stage} of ${r.stages}` : ""),
-          r.finished ? "" : `${r.waiting} of ${r.patience}`].slice(columns);
+          r.finished ? "" : `${r.waiting} of ${r.patience}`].slice(columns, end);
       }),
       lambdas.map((l) => l.last && l.last.finished)))
-    + (single ? lossChart(lambdas[0].curve || [], lambdas[0].last) : "");
+    + (single ? lossChart(lambdas[0].curve || [], lambdas[0].last, budget) : "");
 }
 
 // A polyline arm's losses round by round, `curve` its `[round, train, test, rate]` rows: train and
 // test lines, a faint line where each later learning rate begins, a dot at the best round. Round 0
 // left out: it only tests, and its loss, far above the rest, would flatten the curve. Inline SVG in a
-// fixed coordinate space, scaled to the box's width.
-function lossChart(curve, last) {
+// fixed coordinate space, scaled to the box's width. A budget's rate falls every round: no stage lines.
+function lossChart(curve, last, budget = false) {
   const rows = curve.filter((c) => c[0] >= 1 && Number.isFinite(c[1]) && Number.isFinite(c[2]));
   if (rows.length === 0) return "";
   const [width, height, left, right, top, bottom] = [1000, 240, 56, 12, 12, 28];
@@ -453,7 +472,7 @@ function lossChart(curve, last) {
   const path = (index) => rows.map((c, i) => `${i ? "L" : "M"}${x(c[0]).toFixed(1)},${y(c[index]).toFixed(1)}`).join("");
   // Stage boundaries: the last round of each rate before a switch. A round's losses are measured
   // after it trains, so the first round at the new rate already shows its drop, which starts here.
-  const stages = rows.filter((c, i) => i + 1 < rows.length && c[3] !== rows[i + 1][3])
+  const stages = rows.filter((c, i) => !budget && i + 1 < rows.length && c[3] !== rows[i + 1][3])
     .map((c) => `<line class="stage" x1="${x(c[0]).toFixed(1)}" x2="${x(c[0]).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const loss = low + f * (high - low);

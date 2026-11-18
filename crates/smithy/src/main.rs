@@ -29,6 +29,7 @@ mod arm_slice;
 mod batch;
 mod book;
 mod book_scores;
+mod budget;
 mod candidates;
 mod checkpoint_store;
 mod export;

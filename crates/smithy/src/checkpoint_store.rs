@@ -39,6 +39,16 @@ pub fn keep_only(checkpoints_dir: &str, best: u64) {
     }
 }
 
+/// Deletes every checkpoint but those at `keep`: a budgeted run's (`budget.rs`), which keeps its
+/// candidates for the round robin and its latest round for a resume, and has no best to roll back to.
+pub fn keep_steps(checkpoints_dir: &str, keep: &[u64]) {
+    for step in checkpoint_steps(checkpoints_dir) {
+        if !keep.contains(&step) {
+            std::fs::remove_file(checkpoint_path(checkpoints_dir, step)).ok();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +76,17 @@ mod tests {
             keep_only(&checkpoints_dir, best);
             assert_eq!(checkpoint_steps(&checkpoints_dir), vec![best]);
         }
+    }
+
+    #[test]
+    fn keep_steps_keeps_exactly_the_steps_given() {
+        let checkpoints_dir = format!("{}/checkpoints", temp_dir("keep-steps"));
+        for step in [0u64, 10, 20, 30, 40, 50] {
+            write_checkpoint(&checkpoints_dir, step);
+        }
+        keep_steps(&checkpoints_dir, &[20, 40, 50, 60]);
+        assert_eq!(checkpoint_steps(&checkpoints_dir), vec![20, 40, 50], "a step kept but never written is no error");
+        keep_steps(&format!("{checkpoints_dir}-missing"), &[0]);
     }
 
     #[test]

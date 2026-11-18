@@ -1,6 +1,24 @@
 # A fixed budget and a falling schedule: implementation
 
-**Status:** plan written 2026-11-17, not applied. Implements fixed-budget-schedule.md.
+**Status:** plan written 2026-11-17. Steps 1 to 9 written 2026-11-18, not yet compiled nor tested
+(step 10, by the developer); then the scaled smoke run (step 11). Implements fixed-budget-schedule.md.
+
+**As written (2026-11-18), where it differs from or settles the plan:**
+
+- The open points: the budget's rate replaces the fixed rate inside `StackedAdamW` (`set_budget`),
+  the warmup factor unchanged, both from the arm's count, which a budget never rolls back. The round
+  robin record needed no change, only the view (`StandingView::label`). `scale` needs nothing for
+  training (`train_rows` shrinks); a scaled run's round robin pairs shrink by `scale::games`.
+- `stages::budget_after` replays a budget's rounds as `Stages` (one stage, no switch, finished at
+  `total_steps`), so the round loop's patience branches never fire under a budget: the loop differs
+  only in its pruning (`keep_steps`), no `best.opt`, and the rate a history row records
+  (`Budget::rate`). `lockstep::Rule` carries either schedule.
+- `run_config.txt` of a patience run is byte-identical to before; a budget adds `schedule` and
+  `epochs` and has no `patience_rounds`, so neither resumes as the other.
+- `lambda: polyline` is checked in the smithy's `load_config`, the forge key's reader, not in
+  `net_config`.
+- The page: `Budget::checked` (no panic on a poll), the budget's table without stage and patience,
+  its rate in three digits, its progress `round r of R`, no stage lines on its loss chart.
 
 ## What the code does today (read 2026-11-17)
 

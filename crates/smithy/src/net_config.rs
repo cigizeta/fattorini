@@ -282,11 +282,30 @@ pub struct Training {
     /// stopping at the last. Counted from the latest of the last new best, the last switch of rate and
     /// the end of warmup. At least 1. Every kind; `load` requires it.
     pub patience_rounds: Option<u64>,
+    /// How the rate moves and when training ends: `patience` (the default, deprecated), the stages
+    /// above stepped down by `patience_rounds`; or `budget`, `epochs` passes over the training set, the
+    /// rate falling geometrically from `learning_rate`'s first rate to its second, the candidate chosen
+    /// afterwards by a round robin among checkpoints from half the budget to its end (`budget.rs`).
+    #[serde(default)]
+    pub schedule: Schedule,
+    /// A budget's length in passes over the training set; a budget's alone, required by it.
+    pub epochs: Option<f64>,
     /// How many positions a streamed transformer's shuffle buffers hold in all, one buffer per piece
     /// count. A transformer only: an NNUE trains on its training set fully shuffled, scattered into
     /// buckets and shuffled again every epoch, with no buffer to size, so `load` refuses the key on
     /// one rather than silently ignoring a value meant to take effect.
     pub shuffle_buffer: Option<u64>,
+}
+
+/// `net.yaml`'s `training.schedule` field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Schedule {
+    /// Stages stepped down by patience, the lowest-loss checkpoint the candidate (`stages.rs`).
+    #[default]
+    Patience,
+    /// A fixed number of epochs, the rate falling geometrically, candidates chosen by a round robin.
+    Budget,
 }
 
 /// `net.yaml`'s `training.attention` field -- `full` attends every token pair, `kings-only`
@@ -418,17 +437,45 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
         }
         (_, None) => {}
     }
-    // Every kind trains its lambdas in lockstep through the same schedule (`stages.rs`).
-    for (name, value, least) in
-        [("warmup_rounds", config.training.warmup_rounds, 0), ("patience_rounds", config.training.patience_rounds, 1)]
-    {
-        match value {
-            Some(value) => ensure!(value >= least, "{path}: training.{name} must be at least {least}, got {value}"),
-            None => return Err(format!("{path}: training.{name} is missing")),
+    match config.training.warmup_rounds {
+        Some(_) => {}
+        None => return Err(format!("{path}: training.warmup_rounds is missing")),
+    }
+    let rates = &config.training.learning_rate;
+    match config.training.schedule {
+        // Every kind trains its lambdas in lockstep through the same stages (`stages.rs`).
+        Schedule::Patience => {
+            match config.training.patience_rounds {
+                Some(value) => ensure!(value >= 1, "{path}: training.patience_rounds must be at least 1, got {value}"),
+                None => return Err(format!("{path}: training.patience_rounds is missing")),
+            }
+            ensure!(config.training.epochs.is_none(), "{path}: training.epochs is a budget's; schedule: patience has none");
+        }
+        // The lambda's mode, polyline only, is a forge key, checked by the smithy's `load_config`.
+        Schedule::Budget => {
+            ensure!(
+                !matches!(config.architecture.kind, ArchitectureKind::Transformer { .. }),
+                "{path}: schedule: budget trains an NNUE only, not a transformer"
+            );
+            ensure!(
+                config.training.patience_rounds.is_none(),
+                "{path}: training.patience_rounds is patience's; schedule: budget has none"
+            );
+            match config.training.epochs {
+                Some(epochs) => ensure!(
+                    epochs.is_finite() && epochs > 0.0,
+                    "{path}: training.epochs must be a positive number, got {epochs}"
+                ),
+                None => return Err(format!("{path}: training.epochs is missing, and schedule: budget needs it")),
+            }
+            ensure!(
+                rates.len() == 2,
+                "{path}: schedule: budget takes a learning_rate of exactly two rates, start then end, got {}",
+                rates.len()
+            );
         }
     }
 
-    let rates = &config.training.learning_rate;
     ensure!(!rates.is_empty(), "{path}: training.learning_rate is an empty list, so there is no rate to train at");
     for rate in rates {
         ensure!(
@@ -703,6 +750,107 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// An NNUE fixture under `schedule: budget`, its schedule lines given verbatim.
+    fn budget_fixture(name: &str, kind: &str, schedule: &str) -> std::path::PathBuf {
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-budget-{name}.yaml"));
+        std::fs::write(
+            &path,
+            format!(
+                "architecture:\n  kind: {kind}\n  embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\ntraining:\n\
+                 \x20 training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  warmup_rounds: 1\n\
+                 {schedule}"
+            ),
+        )
+        .expect("failed to write the fixture file");
+        path
+    }
+
+    #[test]
+    fn load_accepts_a_budget() {
+        let path = budget_fixture("ok", "psq", "  schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n");
+
+        let config = load(path.to_str().unwrap());
+
+        std::fs::remove_file(&path).ok();
+        assert_eq!(config.training.schedule, Schedule::Budget);
+        assert_eq!(config.training.epochs, Some(4.0));
+        assert_eq!(config.training.learning_rate, vec![1.0e-3, 1.0e-5]);
+        assert_eq!(config.training.patience_rounds, None);
+    }
+
+    #[test]
+    fn load_defaults_the_schedule_to_patience() {
+        let path = nnue_fixture("default-schedule", "3.0e-4", "8");
+
+        let config = load(path.to_str().unwrap());
+
+        std::fs::remove_file(&path).ok();
+        assert_eq!(config.training.schedule, Schedule::Patience);
+    }
+
+    /// `read`'s error for a budget fixture, which must exist.
+    fn budget_refusal(name: &str, kind: &str, schedule: &str) -> String {
+        let path = budget_fixture(name, kind, schedule);
+        let result = read(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        result.expect_err("the budget fixture should be refused")
+    }
+
+    #[test]
+    fn load_refuses_a_budget_without_epochs() {
+        let error = budget_refusal("no-epochs", "psq", "  schedule: budget\n  learning_rate: [1.0e-3, 1.0e-5]\n");
+        assert!(error.contains("training.epochs is missing"), "{error}");
+    }
+
+    #[test]
+    fn load_refuses_a_budget_with_a_non_positive_epochs() {
+        let error = budget_refusal("zero-epochs", "psq", "  schedule: budget\n  epochs: 0\n  learning_rate: [1.0e-3, 1.0e-5]\n");
+        assert!(error.contains("must be a positive number"), "{error}");
+    }
+
+    #[test]
+    fn load_refuses_a_budget_without_exactly_two_rates() {
+        for rates in ["1.0e-3", "[1.0e-3, 1.0e-4, 1.0e-5]"] {
+            let error = budget_refusal("rates", "psq", &format!("  schedule: budget\n  epochs: 4\n  learning_rate: {rates}\n"));
+            assert!(error.contains("exactly two rates"), "{rates}: {error}");
+        }
+    }
+
+    #[test]
+    fn load_refuses_a_budget_whose_rate_rises() {
+        let error = budget_refusal("rising", "psq", "  schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-5, 1.0e-3]\n");
+        assert!(error.contains("strictly decreasing"), "{error}");
+    }
+
+    #[test]
+    fn load_refuses_a_budget_with_a_patience() {
+        let error = budget_refusal(
+            "patience",
+            "psq",
+            "  schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n  patience_rounds: 6\n",
+        );
+        assert!(error.contains("schedule: budget has none"), "{error}");
+    }
+
+    #[test]
+    fn load_refuses_a_budget_on_a_transformer() {
+        let path = transformer_fixture_with("budget", "", "  warmup_rounds: 0\n  schedule: budget\n  epochs: 4\n");
+        let result = read(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        let error = result.expect_err("a budget on a transformer should be refused");
+        assert!(error.contains("not a transformer"), "{error}");
+    }
+
+    #[test]
+    fn load_refuses_epochs_under_patience() {
+        let path = budget_fixture("epochs-patience", "psq", "  epochs: 4\n  learning_rate: 1.0e-3\n  patience_rounds: 6\n");
+        let result = read(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        let error = result.expect_err("epochs under patience should be refused");
+        assert!(error.contains("schedule: patience has none"), "{error}");
+    }
+
     #[test]
     #[should_panic(expected = "embedding_dim 7 is odd")]
     fn load_rejects_a_pairwise_kind_with_an_odd_embedding_dim() {
@@ -914,6 +1062,11 @@ mod tests {
             let config = load(&format!("configs/{name}.yaml"));
             assert!(matches!(config.architecture.kind, ArchitectureKind::PsqThreatsScrelu), "{name}");
             assert!(config.training.patience_rounds.is_some(), "{name}");
+        }
+        for name in ["lc0-halfk-threats-screlu-hidden-budget", "lc0-halfk-threats-screlu-hidden-512-budget"] {
+            let config = load(&format!("configs/{name}.yaml"));
+            assert_eq!(config.training.schedule, Schedule::Budget, "{name}");
+            assert_eq!((config.training.epochs, config.training.learning_rate.clone()), (Some(4.0), vec![1.0e-3, 1.0e-5]), "{name}");
         }
     }
 }
