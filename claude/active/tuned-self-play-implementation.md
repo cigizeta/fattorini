@@ -1,7 +1,9 @@
 # Tuned self-play: implementation plan
 
-**Status:** planned and implemented 2026-11-08, awaiting the developer's check. The design and its
-seven decisions are in tuned-self-play.md.
+**Status:** planned and implemented 2026-11-08; **the code checked in use** (2026-11-18): every tune
+since runs on it. Of section 4, step 1 is done (the lc0 network's 32k tune, 2026-11-09, test 4);
+steps 2 and 3, PeSTO's tune and its corpus played again, wait for the PeSTO track (TODO.md, item 2).
+The design and its seven decisions are in tuned-self-play.md.
 
 ## 1. The tune's length and start (`spsa.rs`, `tune.rs`, `smithy.rs`)
 

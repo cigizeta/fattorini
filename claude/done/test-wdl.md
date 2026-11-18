@@ -1,6 +1,7 @@
 # Wins, losses and draws on a test's card
 
-**Status:** implemented 2026-11-08, awaiting the developer's check.
+**Status:** implemented 2026-11-08; **checked in use** (2026-11-18): every test's card since shows its
+`+W -L =D` (test 15, `+212 -278 =228`), headed "results" since 2026-11-16. Done.
 
 The arena's command line says `+66 -84 =134` for a duel; the smithy's card said only games and
 points. Asked by the developer for duels, matches and SPRTs alike.
