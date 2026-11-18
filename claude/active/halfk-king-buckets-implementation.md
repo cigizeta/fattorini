@@ -17,7 +17,10 @@ committed (the engine); steps 5 to 8 written (the smithy, the census, the two co
   second, scaled), panicked on a half-written line under its cache's lock, and the poisoned lock
   took the loopback listener down. Fixed: the page reads whole lines alone outside the lock, and
   `lan-http` answers a panicking handler with a 500.
-- **The census by layout:** to run. `PsqNetwork` keeps `halfk: bool` with `king_layout` beside it (fewer
+- **The census by layout (`--king-buckets 8`):** the design's shares, side to move: 32.2, 28.7,
+  10.7, 8.2, 5.6, 8.0, 2.8, 3.7%. The rarest, bucket 7 (a5 to b8), gets about 33 million positions a
+  pass over today's 1.19 billion and 118 million over 4 x 1024^3, against a8's 1.6 and 5.7 million
+  in the 32: about 20 times more. The largest bucket over the rarest, 12 to 1, against 210 to 1. `PsqNetwork` keeps `halfk: bool` with `king_layout` beside it (fewer
 edits than an `Option`); `QuantizedPsqNetwork::halfk` is the `Option<Layout>`. The design: halfk-king-buckets.md.
 
 ## What the code is today
