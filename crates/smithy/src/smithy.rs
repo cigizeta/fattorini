@@ -341,12 +341,25 @@ fn config_name_of(path: &str) -> String {
 fn scale_forge(config: &mut GenConfig, net: &mut NetConfig, s: u64) {
     let training = &mut net.training;
     let batch = |size: i64| scale::volume(size.max(0) as u64, s, scale::MIN_BATCH) as i64;
+    let full_round = training.training_batch_size.max(1) as f64 * training.steps_per_round.max(1) as f64;
     training.training_batch_size = batch(training.training_batch_size);
     training.test_batch_size = batch(training.test_batch_size);
     training.steps_per_round = scale::volume(training.steps_per_round, s, 1);
+    let epochs = training.epochs.map(|epochs| scaled_epochs(epochs, s, full_round, training));
+    training.epochs = epochs;
     config.training_positions = scale::volume(config.training_positions, s, scale::MIN_POSITIONS);
     config.test_positions = scale::volume(config.test_positions, s, scale::MIN_BATCH);
     config.round_robin_pairs = scale::games(config.round_robin_pairs, s, scale::MIN_PAIRS);
+}
+
+/// A budget's epochs in a run scaled by `s`, so that it keeps the full run's count of rounds, as
+/// patience keeps its own: a round's rows go from `full_round` to the scaled batch times the scaled
+/// round, the training set's rows by `1/s`, so the epochs scale by `s` times the round's ratio. That is
+/// `1/s` when both shrink by `s`, more once the batch stops at `scale::MIN_BATCH` (found 2026-11-18: at
+/// 1/1024 a plain `1/s` left a few rounds, the candidates collapsing to five).
+fn scaled_epochs(epochs: f64, s: u64, full_round: f64, scaled: &net_config::Training) -> f64 {
+    let scaled_round = scaled.training_batch_size.max(1) as f64 * scaled.steps_per_round.max(1) as f64;
+    epochs * s as f64 * scaled_round / full_round
 }
 
 impl GenConfig {
@@ -2869,18 +2882,9 @@ struct RoundRow {
     test_loss: f64,
     best_loss: f64,
     best_round: u64,
-    /// The round's rate, counted from 1, of `stages`; `None` for a rate the schedule does not name.
-    stage: Option<usize>,
-    stages: usize,
-    /// The round the current stage began at, its latest switch's; 0 in the first stage. The page's
-    /// estimate of a one-arm run's length.
-    stage_round: u64,
-    /// Rounds without a new best, of `patience`; both 0 under a budget, which has neither.
-    waiting: u64,
-    patience: u64,
-    /// A budget's length in rounds, which the page's progress and ETA read; none under patience.
-    total_rounds: Option<u64>,
     finished: bool,
+    /// What the row's schedule adds: patience's stages, or a budget's length.
+    schedule: ScheduleRow,
     /// How long the round took, training and test: alike for every lambda trained in it, which
     /// train in lockstep.
     train_seconds: f64,
@@ -2888,6 +2892,25 @@ struct RoundRow {
     /// Every round's training and test seconds so far, round 0's test included: the training's elapsed
     /// time as its files record it, across stops and restarts, for the page's ETA.
     elapsed_seconds: f64,
+}
+
+/// A training row's part that is its schedule's, `kind` saying which.
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ScheduleRow {
+    Patience {
+        /// The round's rate, counted from 1, of `stages`; `None` for a rate the schedule does not name.
+        stage: Option<usize>,
+        stages: usize,
+        /// The round the current stage began at, its latest switch's; 0 in the first stage. The page's
+        /// estimate of a one-arm run's length.
+        stage_round: u64,
+        /// Rounds without a new best, of `patience`.
+        waiting: u64,
+        patience: u64,
+    },
+    /// A budget's length in rounds, which the page's progress and ETA read. No stage, no patience.
+    Budget { total_rounds: u64 },
 }
 
 /// What the status page draws, polled as JSON. Internal to the page: no other reader is promised
@@ -3114,27 +3137,29 @@ impl Status {
         let arm_dir = Path::new(path).parent().map_or(String::new(), |dir| dir.to_string_lossy().into_owned());
         let rule = schedule.rule(&arm_dir);
         let row = rule.and_then(|rule| lockstep::latest_round(path, per_round, &rule).map(|round| (rule, round))).map(
-            |(rule, (record, stages))| {
-                let budget = rule.budget();
+            |(rule, (record, standing))| {
+                let schedule_row = match (standing, rule) {
+                    (lockstep::Standing::Patience(stages), lockstep::Rule::Patience { patience_rounds, stage_count, .. }) => {
+                        ScheduleRow::Patience {
+                            stage: schedule.rates.iter().position(|&rate| rate == record.learning_rate).map(|index| index + 1),
+                            stages: stage_count,
+                            stage_round: stages.switch_step / per_round,
+                            waiting: stages.rounds_without_improvement(record.step, per_round),
+                            patience: patience_rounds,
+                        }
+                    }
+                    (_, lockstep::Rule::Budget(budget)) => ScheduleRow::Budget { total_rounds: budget.total_rounds() },
+                    (lockstep::Standing::Budget(_), lockstep::Rule::Patience { .. }) => unreachable!("an arm stands by its rule"),
+                };
                 RoundRow {
                     round: record.step / per_round,
                     learning_rate: record.learning_rate,
                     train_loss: record.train_loss,
                     test_loss: record.test_loss,
-                    best_loss: stages.best_loss,
-                    best_round: stages.best_step / per_round,
-                    // A budget's rate falls every step: no stage names it.
-                    stage: if budget.is_some() {
-                        None
-                    } else {
-                        schedule.rates.iter().position(|&rate| rate == record.learning_rate).map(|index| index + 1)
-                    },
-                    stages: if budget.is_some() { 0 } else { schedule.stage_count },
-                    stage_round: stages.switch_step / per_round,
-                    waiting: if budget.is_some() { 0 } else { stages.rounds_without_improvement(record.step, per_round) },
-                    patience: schedule.patience_rounds.unwrap_or(0),
-                    total_rounds: budget.map(|budget| budget.total_rounds()),
-                    finished: stages.finished,
+                    best_loss: standing.best_loss(),
+                    best_round: standing.best_step() / per_round,
+                    finished: standing.finished(),
+                    schedule: schedule_row,
                     train_seconds: record.train_duration_secs,
                     test_seconds: record.test_duration_secs,
                     elapsed_seconds,
@@ -3790,12 +3815,12 @@ impl Run<'_> {
         let rule = Rule::of(config, train_rows);
         let finish = |arm: &Arm| match rule {
             Rule::Patience { .. } => {
-                let (_, test_loss) = export_best(config, &arm.run_dir, arm.lambda, &arm.stages);
+                let (_, test_loss) = export_best(config, &arm.run_dir, arm.lambda, arm.standing.best_step());
                 log::info!(
                     "lambda {}: finished after stage {stage_count} of {stage_count}, best at round {} (test loss {test_loss:.6}), \
                      candidate exported",
                     arm.lambda,
-                    arm.stages.best_step / config.training.steps_per_round
+                    arm.standing.best_step() / config.training.steps_per_round
                 );
             }
             // No candidate yet: the round robin among these chooses it.
@@ -6647,7 +6672,7 @@ mod tests {
     }
 
     #[test]
-    fn a_budget_arm_s_row_has_its_length_and_no_stage_nor_patience() {
+    fn a_budget_arm_s_row_has_its_length_and_no_stage_nor_patience_at_all() {
         let dir = scratch("budget-rounds");
         let path = format!("{dir}/history.tsv");
         // 100 steps an epoch, rounds of 10, 2 epochs: 20 rounds.
@@ -6677,8 +6702,49 @@ mod tests {
             },
         );
         let row = status.arm_rounds(&path, &schedule).0.expect("a round");
-        assert_eq!((row.round, row.total_rounds, row.stage, row.stages, row.patience, row.finished), (2, Some(20), None, 0, 0, false));
+        assert_eq!((row.round, row.finished), (2, false));
+        assert!(matches!(row.schedule, ScheduleRow::Budget { total_rounds: 20 }), "a budget's length, no stage nor patience");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_scaled_budget_keeps_the_full_run_s_rounds_whatever_the_floors() {
+        let training = |batch: i64, round: u64| net_config::Training {
+            learning_rate: vec![1.0e-3, 1.0e-5],
+            training_batch_size: batch,
+            test_batch_size: batch,
+            steps_per_round: round,
+            attention: None,
+            warmup_rounds: Some(1),
+            patience_rounds: None,
+            schedule: net_config::Schedule::Budget,
+            epochs: Some(4.0),
+            shuffle_buffer: None,
+        };
+        let rows: u64 = 1_200_000_000;
+        let rounds = |rows: u64, training: &net_config::Training| {
+            Budget::new(
+                rows,
+                training.training_batch_size as u64,
+                training.steps_per_round,
+                1,
+                training.epochs.unwrap(),
+                &training.learning_rate,
+            )
+            .total_rounds()
+        };
+        let full = rounds(rows, &training(4096, 4096));
+        assert_eq!(full, 287);
+        // 1/16: batch and round both shrink by 16. 1/1024: the batch stops at 256, the round at 4.
+        for s in [16u64, 1024] {
+            let mut scaled = training(4096, 4096);
+            let full_round = 4096.0 * 4096.0;
+            scaled.training_batch_size = scale::volume(4096, s, scale::MIN_BATCH) as i64;
+            scaled.steps_per_round = scale::volume(4096, s, 1);
+            scaled.epochs = Some(scaled_epochs(4.0, s, full_round, &scaled));
+            let got = rounds(rows / s, &scaled);
+            assert!(got.abs_diff(full) <= 1, "1/{s}: {got} rounds against {full}");
+        }
     }
 
     #[test]

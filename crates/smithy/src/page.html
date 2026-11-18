@@ -323,9 +323,9 @@ function trainingProgress(lambdas, round) {
   if (!shape) return roundLine(round);
   // A budget: its length known from the start. One arm: its length estimated from its stages. A grid
   // keeps the patience rounds below.
-  if (shape.total_rounds !== null) return budgetProgress(shape, round);
+  if (shape.schedule.kind === "budget") return budgetProgress(shape, round);
   if (lambdas.length === 1) return stageProgress(shape, round);
-  const share = shape.stages * shape.patience;
+  const share = shape.schedule.stages * shape.schedule.patience;
   // Settled: a finished lambda's share and every stage it left behind, which no new best takes back,
   // its current one too once its patience has run out: the stage ends at the next switch. Waiting: its
   // current stage's patience, which a new best resets.
@@ -333,13 +333,14 @@ function trainingProgress(lambdas, round) {
     const r = l.last;
     if (!r) return sum;
     if (r.finished) return sum + share;
-    if (!r.stage) return sum;
-    return sum + (r.stage - 1) * r.patience + (r.waiting >= r.patience ? r.patience : 0);
+    const p = r.schedule;
+    if (!p.stage) return sum;
+    return sum + (p.stage - 1) * p.patience + (p.waiting >= p.patience ? p.patience : 0);
   }, 0);
   const done = settled + lambdas.reduce((sum, l) => {
     const r = l.last;
     // An exhausted stage is in `settled` already.
-    return r && !r.finished && r.stage && r.waiting < r.patience ? sum + r.waiting : sum;
+    return r && !r.finished && r.schedule.stage && r.schedule.waiting < r.schedule.patience ? sum + r.schedule.waiting : sum;
   }, 0);
   const total = share * lambdas.length;
   // The training's elapsed time as its histories record it, the longest one's: the lambdas train in
@@ -365,14 +366,15 @@ function stageProgress(r, round) {
   const pace = r.train_seconds + r.test_seconds;
   // Round 0 only tests, so its seconds are no round's pace: no time until a round has trained.
   const time = (rounds) => (r.train_seconds > 0 ? ` (${duration(Math.round(rounds * pace))})` : "");
-  const stage = r.stage || 1;
+  const p = r.schedule;
+  const stage = p.stage || 1;
   // At the round of a switch the row is still the old stage's, its patience used up: that stage is
   // done too, and the minimum is the later stages' alone.
-  const done = r.stage_round > 0 && r.stage_round === r.round ? stage : stage - 1;
-  const minimum = Math.max(0, r.patience - r.waiting) + (r.stages - stage) * r.patience;
+  const done = p.stage_round > 0 && p.stage_round === r.round ? stage : stage - 1;
+  const minimum = Math.max(0, p.patience - p.waiting) + (p.stages - stage) * p.patience;
   const bound = `at least ${whole(minimum)} rounds left${time(minimum)}`;
   if (done === 0) return `${roundLine(round)}<div>${whole(r.round)} rounds, ${elapsed}; ${bound}</div>`;
-  const estimate = Math.ceil(r.stages * r.stage_round / done) - r.round;
+  const estimate = Math.ceil(p.stages * p.stage_round / done) - r.round;
   const left = Math.max(estimate, minimum);
   const total = r.round + left;
   return `${roundLine(round)}<div>${whole(r.round)} of about ${whole(total)} rounds (${percent(r.round / total)}), ${elapsed}, `
@@ -382,7 +384,7 @@ function stageProgress(r, round) {
 // A budgeted run's progress: its rounds of the budget's, its ETA the rounds left at the latest round's
 // pace.
 function budgetProgress(r, round) {
-  const total = r.total_rounds;
+  const total = r.schedule.total_rounds;
   const elapsed = `elapsed ${duration(Math.round(r.elapsed_seconds))}`;
   const pace = r.train_seconds + r.test_seconds;
   // Round 0 only tests, so its seconds are no round's pace: no ETA until a round has trained.
@@ -428,7 +430,7 @@ function training(list, round = null, polyline = null) {
   const single = lambdas.length === 1 && lambdas[0].lambda === "polyline";
   const columns = single ? 2 : 0;
   // A budget has neither stages nor patience: its two columns dropped, its falling rate in three digits.
-  const budget = lambdas.some((l) => l.last && l.last.total_rounds !== null);
+  const budget = lambdas.some((l) => l.last && l.last.schedule.kind === "budget");
   const end = budget ? -2 : undefined;
   return `<h2>Training</h2>${values}${trainingProgress(lambdas, round)}${took}`
     + (lambdas.length === 0 ? "" : table(["lambda", "rank", "learning rate", "train loss", "test loss", "best loss", "round", "stage", "patience"].slice(columns, end),
@@ -444,8 +446,9 @@ function training(list, round = null, polyline = null) {
         const round = `<span class="at">${escape(whole(r.best_round))}</span> / <span class="of">${escape(whole(r.round))}</span>`;
         return [lambdaText(l.lambda), String(ranked.indexOf(l) + 1), r.learning_rate.toExponential(budget ? 2 : 0), number(r.train_loss, 6), number(r.test_loss, 6),
           { html: best }, { html: round },
-          r.finished ? "finished" : (r.stage ? `${r.stage} of ${r.stages}` : ""),
-          r.finished ? "" : `${r.waiting} of ${r.patience}`].slice(columns, end);
+          // Patience's two columns, which a budget's table drops (`end`).
+          r.finished ? "finished" : (r.schedule.stage ? `${r.schedule.stage} of ${r.schedule.stages}` : ""),
+          r.finished ? "" : `${r.schedule.waiting} of ${r.schedule.patience}`].slice(columns, end);
       }),
       lambdas.map((l) => l.last && l.last.finished)))
     + (single ? lossChart(lambdas[0].curve || [], lambdas[0].last, budget) : "");

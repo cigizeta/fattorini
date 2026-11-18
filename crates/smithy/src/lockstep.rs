@@ -9,7 +9,7 @@ use fattorini::pipeline::preprocessing_config::{self, ArmLambda};
 
 use crate::cache::CacheRecord;
 use crate::game_labels::RoundProgress;
-use crate::budget::Budget;
+use crate::budget::{Budget, BudgetStanding};
 use crate::net_config::{NetConfig, Schedule};
 use crate::rounds_display::{print_progress, timing_line};
 use crate::stacked_adamw::StackedAdamW;
@@ -36,7 +36,39 @@ pub(crate) struct Arm {
     pub(crate) best_optimizer_path: String,
     pub(crate) history_path: String,
     pub(crate) round_progress_path: String,
-    pub(crate) stages: stages::Stages,
+    pub(crate) standing: Standing,
+}
+
+/// Where an arm stands, by its rule: patience's stages, or a budget's progress, which has no stage and
+/// no patience.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Standing {
+    Patience(stages::Stages),
+    Budget(BudgetStanding),
+}
+
+impl Standing {
+    pub(crate) fn finished(&self) -> bool {
+        match self {
+            Standing::Patience(stages) => stages.finished,
+            Standing::Budget(standing) => standing.finished,
+        }
+    }
+
+    /// The step of the lowest test loss so far: patience's candidate, a budget's for the page alone.
+    pub(crate) fn best_step(&self) -> u64 {
+        match self {
+            Standing::Patience(stages) => stages.best_step,
+            Standing::Budget(standing) => standing.best_step,
+        }
+    }
+
+    pub(crate) fn best_loss(&self) -> f64 {
+        match self {
+            Standing::Patience(stages) => stages.best_loss,
+            Standing::Budget(standing) => standing.best_loss,
+        }
+    }
 }
 
 /// How a run's rate moves and when it ends, its config's `training.schedule` in figures.
@@ -70,12 +102,12 @@ impl Rule {
     }
 
     /// Where a run whose rounds are `rounds` stands under this rule.
-    pub(crate) fn stages(&self, rounds: &[(u64, f64)], steps_per_round: u64) -> stages::Stages {
+    pub(crate) fn standing(&self, rounds: &[(u64, f64)], steps_per_round: u64) -> Standing {
         match *self {
             Rule::Patience { warmup_rounds, patience_rounds, stage_count } => {
-                stages::stage_after(rounds, steps_per_round, warmup_rounds, patience_rounds, stage_count)
+                Standing::Patience(stages::stage_after(rounds, steps_per_round, warmup_rounds, patience_rounds, stage_count))
             }
-            Rule::Budget(budget) => stages::budget_after(rounds, budget.total_steps, budget.warmup_steps),
+            Rule::Budget(budget) => Standing::Budget(budget.standing(rounds)),
         }
     }
 
@@ -147,7 +179,7 @@ fn open_arm(
     frozen.push(("test_rows", test_rows.to_string()));
     run_config::freeze_or_verify(&format!("{run_dir}/run_config.txt"), &frozen);
 
-    let stages = replay_stages(&history_path, steps_per_round, rule);
+    let standing = replay(&history_path, steps_per_round, rule);
     Arm {
         lambda,
         column,
@@ -158,7 +190,7 @@ fn open_arm(
         best_optimizer_path,
         history_path,
         round_progress_path,
-        stages,
+        standing,
     }
 }
 
@@ -356,7 +388,10 @@ pub(crate) fn open_stack<N: StackedModel>(
                 arm_slice::fill_slice(&network.parameters()[name], slot as i64, value, name);
             }
         }
-        optimizer.set_learning_rate(slot, rates[arm.stages.stage]);
+        // A stage's rate; a budget's falls by itself (`set_budget`).
+        if let Standing::Patience(stages) = arm.standing {
+            optimizer.set_learning_rate(slot, rates[stages.stage]);
+        }
     }
     // After the weights load, so a start from a network trained without the bounds begins inside them.
     for (name, bound) in bounds {
@@ -476,7 +511,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
     // rule and finishing has met it already, so it finishes now and never joins.
     let mut active: Vec<usize> = Vec::new();
     for (index, arm) in arms.iter().enumerate() {
-        if arm.stages.finished {
+        if arm.standing.finished() {
             finish(arm);
         } else {
             active.push(index);
@@ -568,9 +603,17 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
                 },
             );
             history::append_pieces(&pieces_path(&arm.run_dir), 0, &round::losses_of_arm(&test_losses.by_pieces, slot));
-            arm_slice::save_arm(stack.network.parameters(), slot as i64, &checkpoint_store::checkpoint_path(&arm.checkpoints_dir, 0));
-            arm.stages = replay_stages(&arm.history_path, steps_per_round, &rule);
-            log::info!("lambda {}: starting weights measured, test loss {:.6}, the run's first best", arm.lambda, test_losses.global[slot]);
+            arm.standing = replay(&arm.history_path, steps_per_round, &rule);
+            let loss = test_losses.global[slot];
+            match rule {
+                // Patience's first best, checkpointed for a rollback to it.
+                Rule::Patience { .. } => {
+                    arm_slice::save_arm(stack.network.parameters(), slot as i64, &checkpoint_store::checkpoint_path(&arm.checkpoints_dir, 0));
+                    log::info!("lambda {}: starting weights measured, test loss {loss:.6}, the run's first best", arm.lambda);
+                }
+                // For the history alone: a budget never rolls back, and step 0 is never a candidate.
+                Rule::Budget(_) => log::info!("lambda {}: starting weights measured, test loss {loss:.6}", arm.lambda),
+            }
         }
     }
 
@@ -578,7 +621,8 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
     for (slot, &index) in active.iter().enumerate() {
         match rule {
             Rule::Patience { .. } => {
-                let stage = arms[index].stages.stage;
+                let Standing::Patience(stages) = arms[index].standing else { unreachable!("a patience rule's arm stands by stages") };
+                let stage = stages.stage;
                 log::info!("lambda {}: training at rate {:e}, stage {} of {}", arms[index].lambda, rates[stage], stage + 1, rates.len());
             }
             Rule::Budget(budget) => {
@@ -644,10 +688,10 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
             step = stack.optimizer.run_step(slot) as u64;
             let (train_loss, test_loss) = (outcome.train_loss[slot], outcome.test_loss[slot]);
             let learning_rate = rule.recorded_rate(step, stack.optimizer.learning_rate(slot));
-            // History first, archive second, prune third: the stages replayed from the history name the
-            // best, the one checkpoint kept, so the row has to exist before the file it describes. A
-            // crash between the first two leaves a history row with no checkpoint, which is harmless; a
-            // crash before the prune leaves an extra checkpoint, which the next round's prune deletes.
+            // History first, archive second, prune third: the standing replayed from the history names
+            // the checkpoints kept, so the row has to exist before the file it describes. A crash
+            // between the first two leaves a history row with no checkpoint, which is harmless; a crash
+            // before the prune leaves an extra checkpoint, which the next round's prune deletes.
             history::append(
                 &arm.history_path,
                 &history::EvalRecord {
@@ -663,24 +707,33 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
             history::append_pieces(&pieces_path(&arm.run_dir), step, &round::losses_of_arm(&outcome.test_loss_by_pieces, slot));
             let checkpoint_archive_path = checkpoint_store::checkpoint_path(&arm.checkpoints_dir, step);
             arm_slice::save_arm(stack.network.parameters(), slot as i64, &checkpoint_archive_path);
-            let previous_stage = arm.stages.stage;
-            arm.stages = replay_stages(&arm.history_path, steps_per_round, &rule);
-            let stages = arm.stages;
-            match rule {
-                Rule::Patience { .. } => checkpoint_store::keep_only(&arm.checkpoints_dir, stages.best_step),
-                // The candidates for the round robin, and this round's for nothing but a look: a
-                // resume reads `model.vs`, never a checkpoint.
-                Rule::Budget(budget) => {
+            let previous = arm.standing;
+            arm.standing = replay(&arm.history_path, steps_per_round, &rule);
+            completed.push(index);
+            let (previous, stages) = match (previous, arm.standing, rule) {
+                (Standing::Patience(previous), Standing::Patience(stages), _) => (previous, stages),
+                // A budget: no stage, no patience, no rollback. It keeps its candidates for the round
+                // robin, and this round's for nothing but a look (a resume reads `model.vs`, never a
+                // checkpoint), and ends at its last step.
+                (_, Standing::Budget(standing), Rule::Budget(budget)) => {
                     let mut keep = budget.candidate_steps();
                     keep.push(step);
                     checkpoint_store::keep_steps(&arm.checkpoints_dir, &keep);
+                    stack.save_slot(slot);
+                    RoundProgress { train_cursors: outcome.cursors.clone(), rows_done: 0, loss_sum: 0.0, train_duration_secs: 0.0 }
+                        .save(&arm.round_progress_path);
+                    if standing.finished {
+                        finished.push(index);
+                    }
+                    continue;
                 }
-            }
-            completed.push(index);
+                _ => unreachable!("an arm stands by its rule"),
+            };
+            let previous_stage = previous.stage;
+            checkpoint_store::keep_only(&arm.checkpoints_dir, stages.best_step);
             // A new best keeps its optimizer beside its checkpoint, for a rollback to it. Through a
-            // staging name, so that a crash never leaves a half-written one to roll back to. A budget
-            // never rolls back.
-            if stages.best_step == step && rule.budget().is_none() {
+            // staging name, so that a crash never leaves a half-written one to roll back to.
+            if stages.best_step == step {
                 let staging_path = format!("{}.partial", arm.best_optimizer_path);
                 stack.optimizer.save_arm(slot, &staging_path);
                 std::fs::rename(&staging_path, &arm.best_optimizer_path)
@@ -696,7 +749,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
             // rollback must still happen. It sets the whole slot from files, so doing it twice is the
             // same as once.
             if !stages.finished && stages.switch_step == step {
-                roll_back(&mut stack, slot, arm);
+                roll_back(&mut stack, slot, arm, &stages);
             }
 
             // The backup last, so that one taken at a switch's step already holds what the switch did.
@@ -732,7 +785,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
                 line.push_str(&format!("; best lambda {lambda}, loss {loss:.6}"));
             }
             let new_bests: Vec<String> =
-                completed.iter().filter(|&&index| arms[index].stages.best_step == step).map(|&index| arms[index].lambda.to_string()).collect();
+                completed.iter().filter(|&&index| arms[index].standing.best_step() == step).map(|&index| arms[index].lambda.to_string()).collect();
             if !new_bests.is_empty() {
                 line.push_str(&format!("; a new best for lambda {}", new_bests.join(", ")));
             }
@@ -763,24 +816,22 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
     }
 }
 
-/// Where the run in `history_path` is in its list of rates, replayed from its recorded test losses:
-/// stage 0 before any round.
-fn replay_stages(history_path: &str, steps_per_round: u64, rule: &Rule) -> stages::Stages {
-    rule.stages(&recorded_rounds(history_path), steps_per_round)
+/// Where the run in `history_path` stands under `rule`, replayed from its recorded test losses: its
+/// first rate, or its budget's start, before any round.
+fn replay(history_path: &str, steps_per_round: u64, rule: &Rule) -> Standing {
+    rule.standing(&recorded_rounds(history_path), steps_per_round)
 }
 
-/// The latest round of `history_path` and the stages replayed up to it; `None` before its first
-/// round. The status page's training table, and each round's event line (`grid_best`).
-pub(crate) fn latest_round(
-    history_path: &str, steps_per_round: u64, rule: &Rule,
-) -> Option<(history::EvalRecord, stages::Stages)> {
+/// The latest round of `history_path` and where the run stands at it; `None` before its first round.
+/// The status page's training table, and each round's event line (`grid_best`).
+pub(crate) fn latest_round(history_path: &str, steps_per_round: u64, rule: &Rule) -> Option<(history::EvalRecord, Standing)> {
     if !std::path::Path::new(history_path).exists() {
         return None;
     }
     let mut records = history::read_all(history_path);
     let rounds: Vec<(u64, f64)> = records.iter().map(|record| (record.step, record.test_loss)).collect();
-    let stages = rule.stages(&rounds, steps_per_round);
-    Some((records.pop()?, stages))
+    let standing = rule.standing(&rounds, steps_per_round);
+    Some((records.pop()?, standing))
 }
 
 /// Every round of `history_path` as `(step, test_loss)`, in the order recorded; none without the file.
@@ -791,12 +842,12 @@ fn recorded_rounds(history_path: &str) -> Vec<(u64, f64)> {
     history::read_all(history_path).iter().map(|record| (record.step, record.test_loss)).collect()
 }
 
-/// Rolls `arm`, slot `slot` of `stack`, back to its best: the best step's checkpoint into its weights,
-/// and its optimizer as it was there, `best.opt`, or a fresh one for a best at step 0, which then warms
-/// up again. Its run step is kept: the stream does not rewind. Sets the whole slot from files, whatever
-/// it held, so a second call changes nothing.
-fn roll_back<N: StackedModel>(stack: &mut Stack<N>, slot: usize, arm: &Arm) {
-    let best_step = arm.stages.best_step;
+/// Rolls `arm`, slot `slot` of `stack`, back to its best by `stages`: the best step's checkpoint into
+/// its weights, and its optimizer as it was there, `best.opt`, or a fresh one for a best at step 0,
+/// which then warms up again. Its run step is kept: the stream does not rewind. Sets the whole slot
+/// from files, whatever it held, so a second call changes nothing. Patience's alone.
+fn roll_back<N: StackedModel>(stack: &mut Stack<N>, slot: usize, arm: &Arm, stages: &stages::Stages) {
+    let best_step = stages.best_step;
     let checkpoint = checkpoint_store::checkpoint_path(&arm.checkpoints_dir, best_step);
     assert!(
         std::path::Path::new(&checkpoint).exists(),
@@ -841,8 +892,8 @@ fn grid_best(parts: &LockstepParts, steps_per_round: u64, rule: &Rule) -> Option
         .iter()
         .filter_map(|&lambda| {
             let history_path = format!("{}/history.tsv", (parts.lambda_dir)(lambda));
-            let (_, stages) = latest_round(&history_path, steps_per_round, rule)?;
-            Some((lambda, stages.best_loss))
+            let (_, standing) = latest_round(&history_path, steps_per_round, rule)?;
+            Some((lambda, standing.best_loss()))
         })
         .min_by(|left, right| left.1.total_cmp(&right.1))
 }
@@ -854,7 +905,9 @@ mod tests {
     #[test]
     fn replay_stages_is_the_first_rate_for_a_run_with_no_history() {
         let rule = Rule::Patience { warmup_rounds: 2, patience_rounds: 8, stage_count: 6 };
-        let stages = replay_stages("data/networks/train-main-test-no-such-run/history.tsv", 512, &rule);
+        let Standing::Patience(stages) = replay("data/networks/train-main-test-no-such-run/history.tsv", 512, &rule) else {
+            panic!("a patience rule stands by stages")
+        };
         assert_eq!((stages.stage, stages.finished), (0, false));
     }
 
@@ -876,7 +929,9 @@ mod tests {
             );
         }
 
-        let stages = replay_stages(path, 512, &Rule::Patience { warmup_rounds: 0, patience_rounds: 2, stage_count: 3 });
+        let Standing::Patience(stages) = replay(path, 512, &Rule::Patience { warmup_rounds: 0, patience_rounds: 2, stage_count: 3 }) else {
+            panic!("a patience rule stands by stages")
+        };
         assert_eq!((stages.stage, stages.best_step, stages.best_loss), (1, 1024, 0.29));
 
         std::fs::remove_file(path).ok();
@@ -1003,7 +1058,7 @@ mod tests {
             PgnTrainStream::open(files.clone(), &lambdas, 16, steps_done * 8, 1)
         };
         let finish = |arm: &Arm| {
-            export_best(&config, &arm.run_dir, arm.lambda, &arm.stages);
+            export_best(&config, &arm.run_dir, arm.lambda, arm.standing.best_step());
         };
         let stop_requested = AtomicBool::new(false);
         let finished = train_in_lockstep(
@@ -1059,7 +1114,7 @@ mod tests {
             BucketedTrainStream::open(files.clone(), &lambdas, 16, 8, steps_done * 8, 1)
         };
         let finish = |arm: &Arm| {
-            export_best(&config, &arm.run_dir, arm.lambda, &arm.stages);
+            export_best(&config, &arm.run_dir, arm.lambda, arm.standing.best_step());
         };
         let stop_requested = AtomicBool::new(false);
         let finished = train_in_lockstep(

@@ -11,7 +11,7 @@ use crate::budget::{self, Budget};
 use crate::feature_set::FeatureSet;
 use crate::net_config::{ArchitectureKind, NetConfig};
 use crate::stack_head::HeadShape;
-use crate::{checkpoint_store, export, history, nnue_network, stages};
+use crate::{checkpoint_store, export, history, nnue_network};
 
 /// Exports one lambda's candidate to `gen-<g>/lambda-<l>/candidate.nnue`, with `candidate.txt`
 /// beside it naming the checkpoint. Called by `export_best` when the lambda's run stops, so the
@@ -211,9 +211,9 @@ pub(crate) fn feature_set_of(kind: &ArchitectureKind) -> FeatureSet {
 /// Ends one lambda's run: exports its candidate, the best checkpoint of the whole run, into the run's
 /// directory. Returns the line saying so, and the best round's test loss, for the server to say in
 /// its own way.
-pub(crate) fn export_best(config: &NetConfig, run_dir: &str, lambda: preprocessing_config::ArmLambda, stages: &stages::Stages) -> (String, f64) {
+pub(crate) fn export_best(config: &NetConfig, run_dir: &str, lambda: preprocessing_config::ArmLambda, best_step: u64) -> (String, f64) {
     let history_path = format!("{run_dir}/history.tsv");
-    let Some(best) = history::read_all(&history_path).into_iter().find(|record| record.step == stages.best_step) else {
+    let Some(best) = history::read_all(&history_path).into_iter().find(|record| record.step == best_step) else {
         log::error!("{history_path} records no finite test loss, so there is no candidate to export. Stop and look at the run.");
         process::exit(1);
     };

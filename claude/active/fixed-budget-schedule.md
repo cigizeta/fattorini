@@ -58,6 +58,9 @@ shelved: this is the standard technique, not one of them.
    **Ours:**
    - **Replaced the same day by a round robin** (the developer: simpler): the candidates the
      checkpoints at **every quarter epoch from epoch 2 to 4: 2, 2.25, 2.5, ..., 3.75, 4, nine**
+     (generalized 2026-11-18: every sixteenth of the budget from its half to its end, the same nine at
+     4 epochs, so a scaled run's budget, a fraction of an epoch, has nine too; see
+     fixed-budget-schedule-implementation.md)
      (an epoch one pass over the training set; none before half the budget; every epoch's end among
      them, where every position has been seen equally often). Generous on purpose for the first
      runs (the developer: no reason to be Scrooge at first): the first round robin shows how

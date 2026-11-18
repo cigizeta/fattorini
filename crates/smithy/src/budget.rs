@@ -80,26 +80,40 @@ impl Budget {
         self.start * (self.end / self.start).powf(progress)
     }
 
-    /// The candidates, `(epoch, step)` in order: every quarter epoch from half the budget to its end,
-    /// each at the first round end at or past it (checkpoints exist at round ends only), the last at
-    /// `total_steps`. Two quarters landing on one round end (a tiny scaled run) give one candidate,
-    /// the earlier epoch's.
+    /// The candidates, `(epoch, step)` in order: nine, every sixteenth of the budget from its half to
+    /// its end (for 4 epochs, every quarter epoch from 2 to 4), each at the first round end at or past
+    /// it (checkpoints exist at round ends only), the last at `total_steps`. Fractions of the budget,
+    /// not whole quarter epochs, so a scaled run's budget, a fraction of an epoch, still has nine. Two
+    /// landing on one round end (a tiny run) give one candidate, the earlier's.
     pub fn candidates(&self) -> Vec<(f64, u64)> {
-        let first_quarter = (self.epochs * 2.0).ceil() as u64; // the quarter at or past half the budget
-        let last_quarter = (self.epochs * 4.0).floor() as u64;
         let mut candidates: Vec<(f64, u64)> = Vec::new();
-        for quarter in first_quarter..=last_quarter {
-            let epoch = quarter as f64 / 4.0;
+        for sixteenth in 8..=16u32 {
+            let epoch = self.epochs * f64::from(sixteenth) / 16.0;
             let step = whole_rounds(epoch * self.steps_per_epoch as f64, self.steps_per_round).min(self.total_steps);
             if candidates.last().is_none_or(|&(_, last)| last < step) {
                 candidates.push((epoch, step));
             }
         }
-        // An `epochs` off the quarter grid still ends at the budget's end.
-        if candidates.last().is_none_or(|&(_, last)| last < self.total_steps) {
-            candidates.push((self.epochs, self.total_steps));
-        }
         candidates
+    }
+
+    /// Where a budgeted run whose rounds are `rounds`, `(step, test_loss)` in step order, stands:
+    /// finished once a round reaches `total_steps`, read no further. Its best for the page alone: a
+    /// budget's candidate is chosen by its round robin, never by its loss.
+    pub fn standing(&self, rounds: &[(u64, f64)]) -> BudgetStanding {
+        let mut standing = BudgetStanding { last_step: 0, finished: false, best_step: 0, best_loss: f64::INFINITY };
+        for &(step, test_loss) in rounds {
+            standing.last_step = step;
+            if test_loss < standing.best_loss {
+                standing.best_loss = test_loss;
+                standing.best_step = step;
+            }
+            if step >= self.total_steps {
+                standing.finished = true;
+                break;
+            }
+        }
+        standing
     }
 
     /// Every candidate's step.
@@ -108,14 +122,28 @@ impl Budget {
     }
 }
 
+/// Where a budgeted run stands (`Budget::standing`): no stage and no patience, only how far it has
+/// gone, and its lowest test loss so far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BudgetStanding {
+    /// The step of the last round read, `0` before any.
+    pub last_step: u64,
+    pub finished: bool,
+    /// The step of the lowest test loss so far, `0` before any round, and that loss, infinite before
+    /// any. A `NaN` loss is never a best.
+    pub best_step: u64,
+    pub best_loss: f64,
+}
+
 /// `steps` rounded up to whole rounds of `steps_per_round`.
 fn whole_rounds(steps: f64, steps_per_round: u64) -> u64 {
     (steps / steps_per_round as f64).ceil() as u64 * steps_per_round
 }
 
-/// An epoch as a candidate's name spells it, `2.00`, `2.25`, ...
+/// An epoch as a candidate's name spells it, `2.000`, `2.250`, ...: three decimals, so a scaled run's
+/// candidates, a fraction of an epoch apart, never share one.
 pub fn epoch_label(epoch: f64) -> String {
-    format!("{epoch:.2}")
+    format!("{epoch:.3}")
 }
 
 #[cfg(test)]
@@ -169,19 +197,23 @@ mod tests {
             assert!(step as f64 >= at && (step as f64) < at + 4096.0, "epoch {epoch}: the first round end past it");
         }
         assert_eq!(candidates.last().unwrap().1, budget.total_steps);
-        assert_eq!(epoch_label(2.25), "2.25");
+        assert_eq!(epoch_label(2.25), "2.250");
     }
 
     #[test]
-    fn other_budgets_take_every_quarter_from_their_half() {
+    fn any_budget_has_nine_candidates_over_its_second_half() {
         let three = Budget::new(1_000_000, 100, 10, 0, 3.0, &[1.0e-3, 1.0e-5]);
         let epochs: Vec<f64> = three.candidates().iter().map(|&(epoch, _)| epoch).collect();
-        assert_eq!(epochs, vec![1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0]);
+        assert_eq!(epochs, vec![1.5, 1.6875, 1.875, 2.0625, 2.25, 2.4375, 2.625, 2.8125, 3.0]);
 
-        let odd = Budget::new(1_000_000, 100, 10, 0, 2.6, &[1.0e-3, 1.0e-5]);
-        let candidates = odd.candidates();
-        assert_eq!(candidates.first().unwrap().0, 1.5);
-        assert_eq!(*candidates.last().unwrap(), (2.6, odd.total_steps), "off the quarter grid, the end still a candidate");
+        // A scaled run's budget, a fraction of an epoch: still nine, the last at its end, each labelled
+        // apart from the others.
+        let scaled = Budget::new(1_000_000, 100, 10, 0, 4.0 / 27.0, &[1.0e-3, 1.0e-5]);
+        let candidates = scaled.candidates();
+        assert_eq!(candidates.len(), 9);
+        assert_eq!(candidates.last().unwrap().1, scaled.total_steps);
+        let labels: Vec<String> = candidates.iter().map(|&(epoch, _)| epoch_label(epoch)).collect();
+        assert!(labels.windows(2).all(|pair| pair[0] != pair[1]), "{labels:?}");
     }
 
     #[test]
@@ -191,6 +223,21 @@ mod tests {
         let steps = tiny.candidate_steps();
         assert!(steps.windows(2).all(|pair| pair[0] < pair[1]), "{steps:?}");
         assert_eq!(*steps.last().unwrap(), tiny.total_steps);
+    }
+
+    #[test]
+    fn a_budget_stands_where_its_rounds_went_and_finishes_at_its_last_step() {
+        // 8 steps an epoch, rounds of 10, 10 epochs: 80 steps. Flat losses never end it early.
+        let budget = Budget::new(80, 10, 10, 1, 10.0, &[1.0e-3, 1.0e-5]);
+        assert_eq!(budget.total_steps, 80);
+        let rounds = |losses: &[f64]| -> Vec<(u64, f64)> {
+            losses.iter().enumerate().map(|(index, &loss)| ((index as u64 + 1) * 10, loss)).collect()
+        };
+        let standing = budget.standing(&rounds(&[0.5, 0.4, 0.6, 0.6, 0.6, 0.6, 0.6]));
+        assert_eq!(standing, BudgetStanding { last_step: 70, finished: false, best_step: 20, best_loss: 0.4 });
+        let standing = budget.standing(&rounds(&[0.5, 0.4, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]));
+        assert!(standing.finished);
+        assert_eq!(standing.last_step, 80, "read up to the last step, no further");
     }
 
     #[test]

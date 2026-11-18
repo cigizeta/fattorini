@@ -7,8 +7,14 @@
 
 - The open points: the budget's rate replaces the fixed rate inside `StackedAdamW` (`set_budget`),
   the warmup factor unchanged, both from the arm's count, which a budget never rolls back. The round
-  robin record needed no change, only the view (`StandingView::label`). `scale` needs nothing for
-  training (`train_rows` shrinks); a scaled run's round robin pairs shrink by `scale::games`.
+  robin record needed no change, only the view (`StandingView::label`). A scaled run's round robin
+  pairs shrink by `scale::games`.
+- **`scale` did need something (found 2026-11-18, the first scaled smoke run, stopped at round 35 of
+  7,748):** scaling shrinks the rows and the batch by `s`, keeping the steps an epoch, and the round by
+  `s`, so 4 epochs were `s` times the full run's 287 rounds. `scale_forge` now divides `epochs` by `s`.
+  With a budget a fraction of an epoch, whole quarter epochs no longer work: **the candidates are nine
+  fractions of the budget, every sixteenth from its half to its end** (the developer, 2026-11-18),
+  the same nine checkpoints for 4 epochs, and labelled with three decimals (`epoch-2.250.nnue`).
 - `stages::budget_after` replays a budget's rounds as `Stages` (one stage, no switch, finished at
   `total_steps`), so the round loop's patience branches never fire under a budget: the loop differs
   only in its pruning (`keep_steps`), no `best.opt`, and the rate a history row records
@@ -99,6 +105,36 @@
   gained: the round robin's candidates span about 1e-4 (epoch 2) to 1e-5 (epoch 4), so it shows
   whether the low end pays; if epoch 3 (about 3e-5) beats epoch 4, the next configs end at 3e-5.
 
+**2026-11-18: steps 1 to 11 done.** Tests and clippy clean; the scaled smoke run, after the two
+fixes below, went end to end (the budget, nine candidates, the round robin, the winner's export, the
+gate). Next: step 12, the validation run on the training machine.
+
+## Fixed after the scaled smoke run (the developer, 2026-11-18, approved, tested)
+
+**The scale, again:** the first fix's `epochs / s` held only while the batch shrank by `s`; past
+`s = 16` the batch stops at `scale::MIN_BATCH`, and the 1/1024 smoke run trained a few rounds (its
+winner at step 24, loss 0.6926, about ln 2), its nine candidates collapsing to five. `scaled_epochs`
+now scales by `s` times the ratio of the scaled round's rows to the full one's, so every scale keeps
+the full run's 287 rounds; tested at 1/16 and 1/1024.
+
+**No stages nor patience under a budget, as below:** `lockstep::Standing`, `Patience(Stages)` or
+`Budget(BudgetStanding)` (`Budget::standing`), on every arm; `stages::budget_after` removed; the
+round loop's budget branch records, prunes, backs up and ends, the patience path untouched; step 0
+checkpointed under patience alone; `export_best` takes the best step; `RoundRow::schedule`,
+`ScheduleRow::Patience { .. }` or `Budget { total_rounds }`, read by the page.
+
+**For budgeted runs, stages and patience do not exist**, yet the code as written models a budget as
+a degenerate patience run: `stages::budget_after` returns a one-stage `Stages`, the round loop's
+switch and rollback code stays on the budget's path (inert only because `switch_step` is 0), and
+`RoundRow` sends the page a budget's stage and patience as `None` or 0. Proposed, to settle first:
+
+1. `budget_after` removed: the loop's budget branch records the round, keeps its candidates and
+   finishes at `total_steps`, with no `Stages`; `Arm.stages` patience's alone.
+2. `RoundRow` with a part per schedule: `Patience { stage, stages, stage_round, waiting, patience }`
+   or `Budget { total_rounds }`, which the page reads instead of zeros.
+3. `best_loss` and `best_round` kept for both: facts of the history, not of patience (the page's
+   green best and the chart's dot).
+
 ## Steps
 
 1. `net_config.rs`: the `schedule` and `epochs` fields, the validation, the tests. Every existing
@@ -129,7 +165,12 @@ cargo clippy --workspace --all-targets
 11. **A scaled smoke run** of `lc0-halfk-threats-screlu-hidden-budget` on a development tree, end to
     end: training to its budget, nine candidates exported, the round robin, the winner's export, the
     gate. Then a resume check: stopped mid-training and mid-round-robin, resumed.
-12. **The validation run:** `lc0-halfk-threats-screlu-hidden-budget` on the training machine (about 3.6
+12. **Also to look at in it (the developer, 2026-11-18):** in the scaled smoke runs the train loss
+    often crossed the test loss, where under patience it stayed above. Expected from the scale alone:
+    a scaled round's train loss averages few rows (the batch at its 256 floor) and is noisy, the frozen
+    test set's is smooth, and the gap that keeps train above while the loss falls is smaller at 1e-3.
+    If a full run's 16.8M rows a round still cross, it is something else, to investigate.
+    **The validation run:** `lc0-halfk-threats-screlu-hidden-budget` on the training machine (about 3.6
     hours), against screlu-hidden at 256 under patience: final losses, the round robin's curve over
     epochs 2 to 4, a depth-9 duel of the two winners. Then the 512 pair, once the patience 512 run is
     in.
