@@ -21,6 +21,15 @@ In this order:
 and its `.bak`. No trial started from that smithy until it restarts on the new build; then
 trial-rename.md to done/ once its Trials section lists all 16.
 
+**Then, more of Lc0's data (the developer, 2026-11-18):** once `-hidden-512` run 1 ends and its
+duels are played (its gate, then against `lc0-halfk-threats-screlu-hidden-g1-r1` at depth 9 and
+10+0.1), Lc0's data loaded towards 4 * 1024^3 positions. Why: width 512 overfits from its third pass
+over today's 1.2B (a pass about 71 rounds of 4096 x 4096). At round 143, as pass 3 began, its train
+loss fell 0.0010 in three rounds and went below the test loss, which rose from its best; width 256
+shows the same drop at the start of its passes 4 and 5 (rounds about 214 and 285), its pass 3
+hidden by 1e-3's noise. So at 1.2B, width 512 trains well for about 2 passes, and a width-512
+budget run of 4 passes is not worth starting before the larger corpus.
+
 **Tomorrow, 2026-11-18 (the developer, 2026-11-17):** `lc0-halfk-threats-screlu-hidden-512` run 1
 finishes under patience (started 2026-11-17; at round 49 0.62355 against 256's 0.62444 at the same
 step, still falling), for a clean comparison with screlu-hidden at 256. Meanwhile: the implementation
