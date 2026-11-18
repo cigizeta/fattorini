@@ -1,6 +1,6 @@
 # CalVer
 
-**Status:** implemented 2026-11-11, the month check included; tests to run. Replaces SemVer's
+**Status:** implemented 2026-11-11, the month check included; tests passed 2026-11-18. Replaces SemVer's
 `0.1.0` before the first release (TODO.md, "Before the release or CCRL").
 
 ## Decisions (the developer, 2026-11-11)

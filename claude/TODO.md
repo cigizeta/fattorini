@@ -181,8 +181,6 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
   every other build (dev-name.md); the description stays in the startup `info string` and
   `about`, both already there. Takes effect with the next snapshot or
   release (Lichess's snapshot of cb71819 still has the long name).
-- **CalVer, not SemVer:** implemented 2026-11-11 (calver.md), `2026.11.0`, the month enforced by
-  `arena release`. Left: its tests run, then calver.md to `done/`.
 
 ## Code to clean up
 
