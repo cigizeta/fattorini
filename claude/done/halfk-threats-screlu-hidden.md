@@ -1,5 +1,9 @@
 # halfk_threats_screlu_hidden: design
 
+**Done 2026-11-16:** `lc0-halfk-threats-screlu-hidden-g1-r1` drew both duels against
+`lc0-halfk-threats-screlu-g1-r2`, leaning its way (test 13, 53.6% at depth 9; test 14, 51.2% at
+10+0.1): the halfk line's best at width 256. Width 512 continues in TODO.md.
+
 Status: designed 2026-11-02, decisions by the developer one at a time; the implementation plan,
 halfk-threats-screlu-hidden-implementation.md.
 Step 2 of the halfk line (TODO.md): halfk_threats_screlu (halfk-threats-screlu.md) plus hidden

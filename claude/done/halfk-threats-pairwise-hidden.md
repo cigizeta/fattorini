@@ -1,5 +1,9 @@
 # halfk_threats_pairwise_hidden: design
 
+**Done 2026-11-17:** run 1 trained, its gate passed (89.3%), then lost to
+`lc0-halfk-threats-screlu-hidden-g1-r1` at depth 9 (test 15, 45.4%) and at 10+0.1 (test 16,
+45.9%). Width 512 continues in TODO.md.
+
 Status: designed 2026-11-02, decisions by the developer; implemented the same day, ahead of step 2's
 duel (the developer, "we can implement"; halfk-threats-pairwise-hidden-implementation.md), trained
 unless step 2 (halfk-threats-screlu-hidden.md) loses its depth-9 duel against step 1's winner (the

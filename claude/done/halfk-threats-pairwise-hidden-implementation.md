@@ -1,5 +1,7 @@
 # halfk_threats_pairwise_hidden: implementation plan
 
+**Done 2026-11-17:** applied, trained and duelled (halfk-threats-pairwise-hidden.md).
+
 Status: written 2026-11-02 and applied the same day, ahead of step 2's duel (the developer, "we can
 implement"), to test. Implements halfk-threats-pairwise-hidden.md: step 2's network with each
 perspective's 256 lanes clipped and their halves multiplied, 256 products into 256 -> 16 -> 32 -> 1.

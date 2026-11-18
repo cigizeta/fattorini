@@ -1,5 +1,8 @@
 # Blitz time management: a soft time, a hard maximum, the increment counted
 
+**Superseded 2026-11-13, see reckless-only.md:** Split never had its 180+2 duel; Reckless's time
+management replaced both it and Classic.
+
 Status: design settled (2026-11-11), implementation plan next. Nothing implemented.
 
 ## The problem

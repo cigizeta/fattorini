@@ -1,5 +1,7 @@
 # halfk_threats_screlu_hidden: implementation plan
 
+**Done 2026-11-16:** applied, trained and duelled (halfk-threats-screlu-hidden.md).
+
 Status: written 2026-11-02; steps 1 and 2 applied together the same day, to test (a loaded network
 measures its pawn scale at once, so the format could not load without the quantized head). As
 built: `QuantizedHead::TwoHidden { first, second, output }` through `stack_head_value`; the f32

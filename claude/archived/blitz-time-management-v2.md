@@ -1,5 +1,8 @@
 # Blitz time management, Split v2: design and implementation plan
 
+**Superseded 2026-11-13, see reckless-only.md:** Split never had its 180+2 duel; Reckless's time
+management replaced both it and Classic.
+
 Revises blitz-time-management.md after its implementation (blitz-time-management-implementation.md)
 lost the 10+0.1 duel to `Classic` on 2026-11-11: +26 -52 =58 for Split, S 0.4044, about -67 Elo,
 resolved at 136 games (`data/matches/fattorini-split-vs-fattorini-classic/20261111-1625/`).

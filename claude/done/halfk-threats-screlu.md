@@ -1,5 +1,9 @@
 # halfk_threats_screlu
 
+**Done 2026-11-16:** implemented (halfk-threats-screlu-implementation.md); run 2,
+`lc0-halfk-threats-screlu-g1-r2`, won at depth 9 (test 11, 54.7%) and drew at 10+0.1 (test 12,
+52.7%) against `lc0-psq-threats-screlu-g1-r1`.
+
 Status: designed 2026-11-02 (the developer), no code yet. Step 1 of the halfk line (TODO.md), the
 baseline that steps 2 and 3 are judged against. Its implementation plan is to be written next,
 after this design is agreed.

@@ -1,5 +1,7 @@
 # halfk_threats_screlu: implementation plan
 
+**Done 2026-11-16:** applied, trained and duelled (halfk-threats-screlu.md).
+
 Status: written 2026-11-02. **2026-11-16:** the halfk configs moved from the lambda grid to
 `lambda: polyline` (the developer: the grid is deprecated), so `lc0-halfk-threats-screlu` again
 differs from `lc0-psq-threats-screlu` by its kind alone; the design's lambdas 0.01 to 0.09 and 0.91

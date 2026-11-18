@@ -1,5 +1,8 @@
 # Timing the threats at evaluation
 
+**Done 2026-11-13:** measured (`--threat-parts`, depth 13): three quarters of an evaluation, at most
+19% of a search. The threats optimization was closed the same day (TODO.md, "Speed").
+
 **Status:** design proposed 2026-10-29, to discuss. Answers TODO's "Make the threats incremental"
 first step: whether the threats are a large enough share of an evaluation to be worth making
 incremental.

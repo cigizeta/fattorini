@@ -1,5 +1,7 @@
 # Tuning suffixes
 
+**Done 2026-11-15:** in use since the time tune (`@search-time-tuned`, test 9).
+
 Status: **implemented 2026-11-13** with time-management-spsa-implementation.md
 (`players::TuningSuffix`), waiting for its tests.
 

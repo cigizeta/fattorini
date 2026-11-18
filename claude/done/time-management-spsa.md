@@ -1,5 +1,9 @@
 # The time management's SPSA
 
+**Done 2026-11-15:** implemented (time-management-spsa-implementation.md), the tune of
+`lc0-psq-threats-screlu-g1-r1` run at 32,768 pairs and accepted on test 9 (53.2% at 10+0.1); the
+180+2 duel dropped.
+
 Status: **design agreed, 2026-11-13** (22 parameters, a set per network in its own file, the
 draft table). Next: the implementation plan, time-management-spsa-implementation.md.
 
