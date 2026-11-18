@@ -432,7 +432,13 @@ function training(list, round = null, polyline = null) {
   // A budget has neither stages nor patience: its two columns dropped, its falling rate in three digits.
   const budget = lambdas.some((l) => l.last && l.last.schedule.kind === "budget");
   const end = budget ? -2 : undefined;
-  return `<h2>Training</h2>${values}${trainingProgress(lambdas, round)}${took}`
+  // A budget's schedule, under the polyline: its rate's two ends and how it falls between them.
+  const plan = budget && lambdas.find((l) => l.last && l.last.schedule.kind === "budget").last.schedule;
+  const rates = plan
+    ? `<div class="muted">learning rate falling geometrically from ${escape(plan.start.toExponential(0))} `
+      + `to ${escape(plan.end.toExponential(0))} over ${escape(String(plan.epochs))} epochs</div>`
+    : "";
+  return `<h2>Training</h2>${values}${rates}${trainingProgress(lambdas, round)}${took}`
     + (lambdas.length === 0 ? "" : table(["lambda", "rank", "learning rate", "train loss", "test loss", "best loss", "round", "stage", "patience"].slice(columns, end),
       lambdas.map((l) => {
         const r = l.last;
@@ -488,7 +494,7 @@ function lossChart(curve, last, budget = false) {
   for (let round = Math.ceil(first / step) * step; round <= latest; round += step) rounds.push(round);
   const roundTicks = rounds.map((round) => `<text x="${x(round).toFixed(1)}" y="${height - 8}" text-anchor="middle">${whole(round)}</text>`).join("");
   const bestRow = last && rows.find((c) => c[0] === last.best_round);
-  const best = bestRow ? `<circle class="best" cx="${x(bestRow[0]).toFixed(1)}" cy="${y(bestRow[2]).toFixed(1)}" r="4"/>` : "";
+  const best = bestRow ? `<circle class="best" cx="${x(bestRow[0]).toFixed(1)}" cy="${y(bestRow[2]).toFixed(1)}" r="5"/>` : "";
   const legend = `<line class="test" x1="${width - 190}" x2="${width - 170}" y1="${top + 6}" y2="${top + 6}"/>`
     + `<text x="${width - 164}" y="${top + 10}">test loss</text>`
     + `<line class="train" x1="${width - 100}" x2="${width - 80}" y1="${top + 6}" y2="${top + 6}"/>`

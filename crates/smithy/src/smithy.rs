@@ -2920,8 +2920,10 @@ enum ScheduleRow {
         waiting: u64,
         patience: u64,
     },
-    /// A budget's length in rounds, which the page's progress and ETA read. No stage, no patience.
-    Budget { total_rounds: u64 },
+    /// A budget's length in rounds, which the page's progress and ETA read, and its rate falling
+    /// geometrically from `start` to `end` over `epochs` passes, which the page says under the
+    /// polyline. No stage, no patience.
+    Budget { total_rounds: u64, start: f64, end: f64, epochs: f64 },
 }
 
 /// What the status page draws, polled as JSON. Internal to the page: no other reader is promised
@@ -3166,7 +3168,12 @@ impl Status {
                             patience: patience_rounds,
                         }
                     }
-                    (_, lockstep::Rule::Budget(budget)) => ScheduleRow::Budget { total_rounds: budget.total_rounds() },
+                    (_, lockstep::Rule::Budget(budget)) => ScheduleRow::Budget {
+                        total_rounds: budget.total_rounds(),
+                        start: budget.start,
+                        end: budget.end,
+                        epochs: budget.epochs,
+                    },
                     (lockstep::Standing::Budget(_), lockstep::Rule::Patience { .. }) => unreachable!("an arm stands by its rule"),
                 };
                 RoundRow {
@@ -6735,7 +6742,7 @@ mod tests {
         );
         let row = status.arm_rounds(&path, &schedule).0.expect("a round");
         assert_eq!((row.round, row.finished), (2, false));
-        assert!(matches!(row.schedule, ScheduleRow::Budget { total_rounds: 20 }), "a budget's length, no stage nor patience");
+        assert!(matches!(row.schedule, ScheduleRow::Budget { total_rounds: 20, .. }), "a budget's length, no stage nor patience");
         std::fs::remove_dir_all(&dir).ok();
     }
 

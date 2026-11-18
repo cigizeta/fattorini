@@ -111,7 +111,15 @@ steps of 4096, about 4 to 5 minutes each:
   (by 0.003 to 0.005): a geometric fall to a lower end lowers the rate throughout, and at this scale
   the middle of the run matters more than the end. Back to 1e-5. A rate held high for longer, as
   Lc0's step schedule, may beat r3: the budget has no step schedule yet.
-- **Width 128** (`configs/lc0-alpha-pieces-128.yaml`): r3's schedule, width doubled. Next.
+- **Width 128** (`configs/lc0-alpha-pieces-128.yaml`, run 1): r3's schedule, width doubled, about
+  0.9M parameters: test loss 0.6504 at the end (best 0.6502), ahead of width 64 at every step (by
+  0.003 at the end) and level with the best NNUE baseline (0.6507; the two baselines differ by
+  0.003). Behind the NNUE until about step 1400, so likely further from its limit. 10 minutes,
+  about 2.3 times width 64's. 3e-4 suited it.
+
+**Where step 8 leaves it:** the pipeline works end to end, and at 1/1024 the transformer learns as
+well as the NNUEs, slightly better as it widens. Which gains more from more data needs a larger
+scale or the full corpus, on the training machine's GPU.
 
 Lc0's settings, for reference (Chessformer, ICLR 2026, appendix A.2): Nadam, its 191M network at
 2e-3, then 3e-4 at 4.49M steps and 3e-5 at 5.47M of 6M; its small ablations (width 256, 8 layers,
