@@ -189,7 +189,9 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
   (the developer, 2026-11-16):** no config uses it since that day (the four halfk configs moved to
   `lambda: polyline`, before the halfk line's first run), so `grid_center`, the lockstep arms and
   the per-lambda candidates (`<config>-g<g>-l<lambda>-r<n>`) can go; a design note first, saying
-  what still reads old runs' candidates (arena players, the tests form, freeze).
+  what still reads old runs' candidates (arena players, the tests form, freeze). **Not before the
+  budget has proved itself on full runs** (the developer, 2026-11-18): no code removed while the
+  schedule that replaces patience is unproven.
 - **The Tests form's network select, with the lambda grid** (the developer, 2026-11-08): once a
   generation trains the polyline's one arm alone, "winner (lpolyline)" chooses among one, so the
   select goes when the grid goes, not before.
