@@ -2922,8 +2922,9 @@ enum ScheduleRow {
     },
     /// A budget's length in rounds, which the page's progress and ETA read, and its rate falling
     /// geometrically from `start` to `end` over `epochs` passes, which the page says under the
-    /// polyline. No stage, no patience.
-    Budget { total_rounds: u64, start: f64, end: f64, epochs: f64 },
+    /// polyline. No stage, no patience. `rounds_per_epoch`, fractional, places the loss chart's line
+    /// where each later pass over the training set begins.
+    Budget { total_rounds: u64, start: f64, end: f64, epochs: f64, rounds_per_epoch: f64 },
 }
 
 /// What the status page draws, polled as JSON. Internal to the page: no other reader is promised
@@ -3173,6 +3174,7 @@ impl Status {
                         start: budget.start,
                         end: budget.end,
                         epochs: budget.epochs,
+                        rounds_per_epoch: budget.rounds_per_epoch(),
                     },
                     (lockstep::Standing::Budget(_), lockstep::Rule::Patience { .. }) => unreachable!("an arm stands by its rule"),
                 };

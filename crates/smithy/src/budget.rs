@@ -66,6 +66,12 @@ impl Budget {
         self.total_steps / self.steps_per_round
     }
 
+    /// One pass over the training set in rounds, fractional: a pass rarely ends at a round's end. The
+    /// page's loss chart draws a line where each later pass begins.
+    pub fn rounds_per_epoch(&self) -> f64 {
+        self.steps_per_epoch as f64 / self.steps_per_round as f64
+    }
+
     /// The rate step `step` trains at, the first update being step 1: the warmup's ramp to `start`,
     /// then geometric to `end` at `total_steps`. `StackedAdamW` computes the same on the device.
     pub fn rate(&self, step: u64) -> f64 {
@@ -162,6 +168,13 @@ mod tests {
         assert_eq!(budget.total_steps % 4096, 0);
         assert!(budget.total_steps >= 4 * 292_968 && budget.total_steps - 4 * 292_968 < 4096);
         assert_eq!(budget.total_rounds(), 287);
+    }
+
+    #[test]
+    fn an_epoch_in_rounds_is_fractional() {
+        let budget = full();
+        assert!((budget.rounds_per_epoch() - 292_968.0 / 4096.0).abs() < 1e-12);
+        assert!(budget.rounds_per_epoch() * budget.epochs <= budget.total_rounds() as f64, "every pass ends inside the budget");
     }
 
     #[test]

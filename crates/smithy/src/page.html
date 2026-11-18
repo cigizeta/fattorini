@@ -464,11 +464,17 @@ function training(list, round = null, polyline = null) {
 // test lines, a faint line where each later learning rate begins, a dot at the best round. Round 0
 // left out: it only tests, and its loss, far above the rest, would flatten the curve. Inline SVG in a
 // fixed coordinate space, scaled to the box's width. A budget's rate falls every round: no stage lines.
+// A budget knows its length, so its axis is fixed from the start at its rounds (the developer,
+// 2026-11-18): a feature stays where it is round after round, and the empty width is what is left.
+// Instead of stage lines, a line where each later pass over the training set begins, where
+// memorising shows first (a wide halfk network's train loss fell at its third pass's start).
 function lossChart(curve, last, budget = false) {
   const rows = curve.filter((c) => c[0] >= 1 && Number.isFinite(c[1]) && Number.isFinite(c[2]));
   if (rows.length === 0) return "";
   const [width, height, left, right, top, bottom] = [1000, 240, 56, 12, 12, 28];
-  const first = rows[0][0], latest = rows[rows.length - 1][0];
+  const plan = budget && last && last.schedule.kind === "budget" ? last.schedule : null;
+  const first = plan ? 1 : rows[0][0];
+  const latest = plan ? Math.max(plan.total_rounds, rows[rows.length - 1][0]) : rows[rows.length - 1][0];
   // The y range from the rounds after the first tenth alone, linear: the first rounds' steep drop
   // would otherwise take the whole height. Their lines leave the plot through its top, cut there by
   // a clip rectangle, not pinned to the edge, which would draw values that never were.
@@ -483,6 +489,14 @@ function lossChart(curve, last, budget = false) {
   // after it trains, so the first round at the new rate already shows its drop, which starts here.
   const stages = rows.filter((c, i) => !budget && i + 1 < rows.length && c[3] !== rows[i + 1][3])
     .map((c) => `<line class="stage" x1="${x(c[0]).toFixed(1)}" x2="${x(c[0]).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
+  // A budget's passes: one line at each whole epoch strictly inside the budget, none at its end,
+  // which the axis marks. A scaled run's budget, a fraction of one pass, draws none.
+  const epochs = [];
+  if (plan && plan.rounds_per_epoch > 0) {
+    for (let k = 1; k < plan.epochs && k * plan.rounds_per_epoch < latest; k++) epochs.push(k * plan.rounds_per_epoch);
+  }
+  const passes = epochs
+    .map((round) => `<line class="stage" x1="${x(round).toFixed(1)}" x2="${x(round).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const loss = low + f * (high - low);
     return `<text x="${left - 6}" y="${(y(loss) + 4).toFixed(1)}" text-anchor="end">${loss.toFixed(4)}</text>`;
@@ -501,7 +515,7 @@ function lossChart(curve, last, budget = false) {
     + `<text x="${width - 74}" y="${top + 10}">train loss</text>`;
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="training and test loss by round">`
     + `<defs><clipPath id="loss-plot"><rect x="${left}" y="${top}" width="${width - left - right}" height="${height - top - bottom}"/></clipPath></defs>`
-    + stages
+    + stages + passes
     + `<line class="axis" x1="${left}" x2="${left}" y1="${top}" y2="${height - bottom}"/>`
     + `<line class="axis" x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}"/>`
     + ticks + roundTicks

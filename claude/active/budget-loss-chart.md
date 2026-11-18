@@ -1,6 +1,8 @@
 # A budget's loss chart: a fixed horizontal axis and its epochs
 
-**Status:** design settled and plan written, 2026-11-18 (the developer); no code yet.
+**Status:** design settled and plan written, 2026-11-18 (the developer). Implemented the same day:
+`Budget::rounds_per_epoch` (with a test), `ScheduleRow::Budget`'s `rounds_per_epoch`, `lossChart`'s
+fixed axis and epoch lines (as the stage lines are drawn, `class="stage"`). Steps 3 and 4 left.
 
 ## Why
 
