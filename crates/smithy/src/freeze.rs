@@ -206,6 +206,26 @@ pub(crate) fn read(dir: &str, rows: u64, labelling: &Labelling) -> Result<Vec<Ca
     Ok(records)
 }
 
+/// Every position of the frozen test set of `dir`, without its labels: what a census of where its
+/// kings stand reads (`census.rs`), never a training's, and never its losses. An error when it is not
+/// frozen.
+pub(crate) fn read_positions(dir: &str) -> Result<Vec<fattorini::features::CanonicalPosition>, String> {
+    let Some(manifest) = read_manifest(dir, 0)? else {
+        return Err(format!("{dir} holds no frozen test set: the server freezes it when it trains"));
+    };
+    let mut positions = open_decoder(&positions_path(dir));
+    CacheHeader::read(&mut positions);
+    let progress = progress::bar(manifest.rows, progress::Unit::Count("positions"), "reading the frozen test set's positions");
+    let read = (0..manifest.rows)
+        .map(|_| {
+            progress.inc(1);
+            read_position(&mut positions)
+        })
+        .collect();
+    progress.finish();
+    Ok(read)
+}
+
 fn open_decoder(path: &str) -> zstd::Decoder<'static, BufReader<File>> {
     let file = File::open(path).unwrap_or_else(|error| panic!("failed to open {path}: {error}"));
     zstd::Decoder::new(file).unwrap_or_else(|error| panic!("failed to open a zstd decoder for {path}: {error}"))

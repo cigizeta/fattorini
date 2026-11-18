@@ -31,6 +31,7 @@ mod book;
 mod book_scores;
 mod budget;
 mod candidates;
+mod census;
 mod checkpoint_store;
 mod export;
 mod feature_set;
@@ -87,6 +88,8 @@ fn main() {
         Some(lc0::CHILD_COMMAND) => lc0::run(&rest),
         // The one-off rewrite of Lc0's corpus into Lc0's curve, run by hand once: in no usage line.
         Some(lc0::rewrite::REWRITE_COMMAND) => lc0::rewrite::run(&rest),
+        // Where the kings stand in Lc0's test set and corpus, a check run by hand: in no usage line.
+        Some(census::COMMAND) => census::run(&rest),
         // The book job's child, likewise.
         Some(book::CHILD_COMMAND) => book::run(&rest),
         Some(verb @ ("start" | "stop" | "status")) => smithy::run(verb, &rest),
