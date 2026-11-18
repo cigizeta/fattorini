@@ -425,7 +425,7 @@ function training(list, round = null, polyline = null) {
     ? `<div class="muted">round ${whole(latest.round)} took ${number(latest.train_seconds + latest.test_seconds, 1)}s: `
       + `training ${number(latest.train_seconds, 1)}s, test ${number(latest.test_seconds, 1)}s</div>`
     : "";
-  const values = polyline ? `<div class="muted">lambda by progress, tenth by tenth: ${escape(polyline)}</div>` : "";
+  const values = polyline ? `<div class="muted">lambda for each tenth of the training: ${escape(polyline)}</div>` : "";
   // One polyline arm: its lambda and rank say nothing, and its rounds draw a loss chart instead.
   const single = lambdas.length === 1 && lambdas[0].lambda === "polyline";
   const columns = single ? 2 : 0;
