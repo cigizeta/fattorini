@@ -414,7 +414,9 @@ changes).
 - **The GPU's idle 12 to 15% in training** (2026-11-18, `-hidden-512`, one network, batch 4096): busy
   85 to 88% steadily, no dips, so the feed is not starving it; the gap is between kernels. A profile
   of one training step (a CUDA kernel timeline) to say whether it is a per-step sync or a host to
-  device copy not overlapped with compute: if so, a cheap fix worth a few percent. Not urgent; the
+  device copy not overlapped with compute: if so, a cheap fix worth a few percent. Postponed (the
+developer, 2026-11-18): Nsight Systems cannot attach to a running process on Windows, so it launches
+a short scaled run of the same config, on an idle machine, never beside a training. Not urgent; the
   larger lever is the batch of 8192 (under "To design").
 - **Lc0's Convert, if it runs again:** skip a slow tar only while another worker downloads at normal
   speed (a stall reads as slowness today), and stop retrying a tar skipped N times.
