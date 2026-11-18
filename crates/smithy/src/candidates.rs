@@ -265,6 +265,12 @@ pub(crate) fn export_budget_candidates(config: &NetConfig, run_dir: &str, plan: 
     let checkpoints_dir = format!("{run_dir}/checkpoints");
     std::fs::create_dir_all(format!("{run_dir}/candidates"))
         .unwrap_or_else(|error| panic!("failed to create {run_dir}/candidates: {error}"));
+    // A transformer has no engine network to write until MCTS: its candidates are recorded alone,
+    // their test losses its comparison, with no round robin among them.
+    let engine_file = !matches!(config.architecture.kind, ArchitectureKind::Transformer { .. });
+    if !engine_file {
+        log::info!("no candidate networks: the engine has no forward pass for transformer networks yet");
+    }
     let mut candidates = Vec::new();
     for (epoch, step) in plan.candidates() {
         let Some(record) = records.iter().find(|record| record.step == step) else {
@@ -272,12 +278,14 @@ pub(crate) fn export_budget_candidates(config: &NetConfig, run_dir: &str, plan: 
             process::exit(1);
         };
         let epoch = budget::epoch_label(epoch);
-        let output_path = budget_candidate_path(run_dir, &epoch);
-        let staging_path = format!("{output_path}.partial");
-        let checkpoint_path = checkpoint_store::checkpoint_path(&checkpoints_dir, step);
-        write_engine_network(config, &checkpoint_path, &staging_path, step, record.learning_rate);
-        std::fs::rename(&staging_path, &output_path)
-            .unwrap_or_else(|error| panic!("failed to rename {staging_path} to {output_path}: {error}"));
+        if engine_file {
+            let output_path = budget_candidate_path(run_dir, &epoch);
+            let staging_path = format!("{output_path}.partial");
+            let checkpoint_path = checkpoint_store::checkpoint_path(&checkpoints_dir, step);
+            write_engine_network(config, &checkpoint_path, &staging_path, step, record.learning_rate);
+            std::fs::rename(&staging_path, &output_path)
+                .unwrap_or_else(|error| panic!("failed to rename {staging_path} to {output_path}: {error}"));
+        }
         candidates.push(BudgetCandidate { epoch, step, test_loss: record.test_loss });
     }
     write_budget_record(&budget_record_path(run_dir), &candidates);

@@ -1,120 +1,94 @@
-//! The transformer's training stream under `labels: self` and `labels: lc0`: the records of
-//! `pgn_train_stream::EpochRecords`, under its epoch and resume rules, through one shuffle buffer
-//! per piece count, since the transformer cannot pad and every batch must hold positions of one
-//! length.
+//! The transformer's training stream: the scattered buckets, fully shuffled as an NNUE reads them
+//! (`buckets::BucketStream`), grouped online by piece count, since the transformer cannot pad and
+//! every batch must hold positions of one length.
 //!
-//! **Buckets.** A record goes to the bucket of its piece count, 3 to 32 with the kings: 30
-//! buckets. K vs K is dropped, after `EpochRecords` has counted it, so an epoch's count stays its
-//! searched positions, the `.meta` total less its games (`cache::is_bare_kings`).
+//! **Groups.** A record goes to the group of its count of pieces beside the kings, 1 to 30; K vs K
+//! is skipped. A group reaching the batch size is emitted whole, in arrival order, and starts empty
+//! again. No random draw: the buckets' order is already a uniform shuffle, and grouping only reorders
+//! it.
 //!
-//! **Capacities from the first fill.** The stream first reads `buffer_capacity` records into the
-//! buckets, emitting nothing. Each bucket's capacity is then what it holds, but at least two batches,
-//! so a bucket's capacity follows its piece count's share of the games, and the total stays near
-//! `buffer_capacity`, plus the floors of the rare buckets.
+//! **Epochs.** After every committed record once, the epoch ends and every group is cleared: a
+//! piece count's last, partial batch is dropped. Each epoch holds the same records, so each piece
+//! count gives the same full batches every epoch, and the batches of an epoch are a constant
+//! (`buckets::PieceCounts::batches_per_epoch`).
 //!
-//! **A bucket emits when full.** Records go on being read into their buckets, and the first bucket
-//! to reach its capacity gives one batch, drawn uniformly at random from it. Each piece count then
-//! gets batches at the rate its records arrive, so over a run the mix of lengths is the games'. A
-//! rare bucket's records may wait long, across epochs, but none is lost or given twice.
-//!
-//! **Batches are always full**, so a resume is derived from the step count as the NNUE's is.
+//! **Resume.** From the step count: the epoch is `steps / batches_per_epoch`, and the batches done
+//! in it are replayed, grouped and thrown away, from the epoch's start. The grouping depends only on
+//! the epoch's seed, so the batch returned next is the one an unbroken run trained next. Nothing is
+//! persisted beyond the step count.
 
-use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
-
-use super::cache::{is_bare_kings, CacheRecord};
-use super::pgn_stream::StreamFile;
-use super::pgn_train_stream::EpochRecords;
+use super::buckets::{self, BucketStream, Labelling, PieceCounts, PIECE_COUNTS};
+use super::cache::CacheRecord;
 use super::train_stream::TrainStream;
 
-/// One bucket per count of pieces beside the kings, 0 to 30; bucket 0, K vs K, is never filled.
-const BUCKETS: usize = 31;
-
 pub(crate) struct BucketedTrainStream {
-    records: EpochRecords,
+    stream: BucketStream,
     batch_size: usize,
-    /// `buckets[n]` holds the records with `n` pieces beside the kings.
-    buckets: Vec<Vec<CacheRecord>>,
-    /// Each bucket's capacity, set by the first fill.
-    capacities: Vec<usize>,
-    /// The records the first fill read, every bucket together.
-    filled: usize,
-    rng: StdRng,
+    /// `groups[n]` holds the records with `n` pieces beside the kings; `groups[0]` stays empty.
+    groups: Vec<Vec<CacheRecord>>,
+    /// The records of an epoch, and those read so far in the current one.
+    records_per_epoch: u64,
+    read_in_epoch: u64,
 }
 
 impl BucketedTrainStream {
-    /// Opens the stream over `files`, labelled at every one of `lambdas` in that order, `emitted`
-    /// positions into the run (`batch_size * step_count`), and fills its buckets with
-    /// `buffer_capacity` records up front, so the fill reports as its own step.
-    pub fn open(
-        files: Vec<StreamFile>, lambdas: &[f64], buffer_capacity: usize, batch_size: usize, emitted: u64, threads: usize,
-    ) -> BucketedTrainStream {
-        assert!(buffer_capacity > 0, "a shuffle buffer holds at least one record");
+    /// `dir`'s buckets labelled by `labelling`, `counts` their piece counts, in batches of
+    /// `batch_size`, `steps_done` batches into the run.
+    pub fn open(dir: &str, labelling: Labelling, counts: &PieceCounts, batch_size: usize, steps_done: u64) -> Result<BucketedTrainStream, String> {
         assert!(batch_size > 0, "a batch holds at least one record");
-        let records = EpochRecords::open(files, lambdas, emitted, threads);
-        // Salted apart from `PgnTrainStream`'s 1, though no run holds both.
-        let rng = StdRng::seed_from_u64(records.draw_seed(2));
-        let mut stream =
-            BucketedTrainStream { records, batch_size, buckets: vec![Vec::new(); BUCKETS], capacities: Vec::new(), filled: 0, rng };
-        while stream.filled < buffer_capacity {
-            let record = stream.next_trainable();
-            stream.buckets[bucket_of(&record)].push(record);
-            stream.filled += 1;
+        let records_per_epoch = buckets::committed_records(dir)?;
+        if counts.records() != records_per_epoch {
+            return Err(format!("{dir}: piece counts of {} records, but the buckets hold {records_per_epoch}", counts.records()));
         }
-        stream.capacities = stream.buckets.iter().map(|bucket| bucket.len().max(2 * batch_size)).collect();
-        stream
-    }
-
-    /// The records the first fill read.
-    #[cfg(test)]
-    pub fn buffer_capacity(&self) -> usize {
-        self.filled
-    }
-
-    /// The next record that is not K vs K. Stops on a corpus whose whole epoch is K vs K, which would
-    /// otherwise loop here forever.
-    fn next_trainable(&mut self) -> CacheRecord {
-        let mut skipped = 0u64;
-        loop {
-            let record = self.records.next_record();
-            if !is_bare_kings(&record.canonical) {
-                return record;
+        let batches_per_epoch = counts.batches_per_epoch(batch_size as u64);
+        if batches_per_epoch == 0 {
+            return Err(format!("{dir}: no piece count holds a batch of {batch_size}"));
+        }
+        let epoch = steps_done / batches_per_epoch;
+        let replay = steps_done % batches_per_epoch;
+        let stream = BucketStream::open(dir, labelling, epoch * records_per_epoch)?;
+        let mut grouped = BucketedTrainStream {
+            stream,
+            batch_size,
+            groups: vec![Vec::new(); PIECE_COUNTS],
+            records_per_epoch,
+            read_in_epoch: 0,
+        };
+        if replay > 0 {
+            log::info!("resuming in epoch {epoch}: replaying its first {replay} batches, untrained, to reach the batch it stopped before");
+            for _ in 0..replay {
+                grouped.next_batch(batch_size);
             }
-            skipped += 1;
-            assert!(skipped <= self.records.epoch_positions(), "a whole epoch of the training files holds only K vs K");
         }
+        Ok(grouped)
     }
-}
-
-/// The bucket of `record`: its count of pieces beside the kings.
-fn bucket_of(record: &CacheRecord) -> usize {
-    let pieces = record.canonical.pieces.len();
-    assert!(pieces < BUCKETS, "a position with {pieces} pieces beside the kings");
-    pieces
 }
 
 impl TrainStream for BucketedTrainStream {
-    /// Never short: a bucket gives a batch only once it holds its capacity, at least two batches.
+    /// Never short: a group gives a batch only once it holds `batch_size` records.
     fn next_batch(&mut self, batch_size: usize) -> Vec<CacheRecord> {
         assert_eq!(batch_size, self.batch_size, "the stream was opened for batches of {}", self.batch_size);
         loop {
-            let record = self.next_trainable();
-            let bucket = bucket_of(&record);
-            self.buckets[bucket].push(record);
-            if self.buckets[bucket].len() < self.capacities[bucket] {
+            if self.read_in_epoch == self.records_per_epoch {
+                self.groups.iter_mut().for_each(Vec::clear);
+                self.read_in_epoch = 0;
+            }
+            let record = self.stream.next_record();
+            self.read_in_epoch += 1;
+            let pieces = record.canonical.pieces.len();
+            assert!(pieces < PIECE_COUNTS, "a position with {pieces} pieces beside the kings");
+            if pieces == 0 {
                 continue;
             }
-            let records = &mut self.buckets[bucket];
-            let mut batch = Vec::with_capacity(batch_size);
-            for _ in 0..batch_size {
-                let slot = self.rng.random_range(0..records.len());
-                batch.push(records.swap_remove(slot));
+            let group = &mut self.groups[pieces];
+            group.push(record);
+            if group.len() == batch_size {
+                return std::mem::replace(group, Vec::with_capacity(batch_size));
             }
-            return batch;
         }
     }
 
-    /// Deliberately empty, as `PgnTrainStream`'s: the position is derived from the step count.
+    /// Deliberately empty: the position is derived from the step count.
     fn cursors(&self) -> Vec<u64> {
         Vec::new()
     }
@@ -123,78 +97,106 @@ impl TrainStream for BucketedTrainStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pgn_stream::StreamFile;
+    use fattorini::pipeline::preprocessing_config::ArmLambda;
+    use std::sync::atomic::AtomicBool;
 
-    /// Three games, 10 positions: a white rook alone beside the kings (3 positions), rook and knight
-    /// (4), and the kings alone (3, K vs K).
+    /// Three games: a rook alone beside the kings (2 searched positions), a rook and a knight (3), and
+    /// the kings alone (2, K vs K). 10 positions a copy, 7 of them searched.
     const GAMES: &str = concat!(
         "[Result \"1-0\"]\n[FEN \"4k3/8/8/8/8/8/8/R3K3 w - - 0 1\"]\n[SetUp \"1\"]\n\n1. Kd2 {1.50} Kd7 {-1.20}\n1-0\n\n",
         "[Result \"0-1\"]\n[FEN \"4k3/8/8/8/8/8/8/RN2K3 w - - 0 1\"]\n[SetUp \"1\"]\n\n1. Ke2 {-0.40} Ke7 {0.30} 2. Kf2 {-0.90}\n0-1\n\n",
         "[Result \"1/2-1/2\"]\n[FEN \"4k3/8/8/8/8/8/8/4K3 w - - 0 1\"]\n[SetUp \"1\"]\n\n1. Kd2 {0.00} Kd7 {0.00}\n1/2-1/2\n\n",
     );
 
-    fn fixture(name: &str, repeats: &[u64]) -> (String, Vec<StreamFile>) {
+    /// A scratch directory with `copies[i]` copies of `GAMES` in file `i`, scattered into its
+    /// `buckets`, and their piece counts.
+    fn fixture(name: &str, copies: &[u64]) -> (String, String, PieceCounts) {
         let dir = std::env::temp_dir().join(format!("smithy-bucketed-train-stream-test-{name}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).expect("failed to create the fixture directory");
         let dir = dir.to_str().unwrap().replace('\\', "/");
-        let files = repeats
+        let files: Vec<StreamFile> = copies
             .iter()
             .enumerate()
             .map(|(index, &count)| {
                 let path = format!("{dir}/gamma-{index}.pgn.zst");
-                let compressed = zstd::encode_all(GAMES.repeat(count as usize).as_bytes(), 3).expect("failed to compress");
-                std::fs::write(&path, compressed).expect("failed to write the fixture");
+                std::fs::write(&path, zstd::encode_all(GAMES.repeat(count as usize).as_bytes(), 3).unwrap()).unwrap();
                 StreamFile { path, positions: count * 10 }
             })
             .collect();
-        (dir, files)
+        let bucket_dir = format!("{dir}/buckets");
+        buckets::prepare_for_tests(&bucket_dir, &files, 2);
+        let counts = buckets::ensure_piece_counts(&bucket_dir, 2, &AtomicBool::new(false), &|_| {}).unwrap().unwrap();
+        (dir, bucket_dir, counts)
+    }
+
+    fn labelling() -> Labelling {
+        Labelling::new(&[ArmLambda::Constant(0.5)], None).unwrap()
+    }
+
+    /// A batch as a comparable key: its positions' bytes and its labels' bits.
+    fn key(batch: &[CacheRecord]) -> Vec<(Vec<u8>, Vec<u32>)> {
+        batch
+            .iter()
+            .map(|record| {
+                let mut bytes = Vec::new();
+                crate::cache::write_position(&mut bytes, &record.canonical);
+                (bytes, record.labels.iter().map(|label| label.to_bits()).collect())
+            })
+            .collect()
     }
 
     #[test]
     fn every_batch_is_full_of_one_piece_count_and_never_k_vs_k() {
-        let (dir, files) = fixture("one-length", &[3, 4]);
-        let mut stream = BucketedTrainStream::open(files, &[0.7, 1.0], 8, 2, 0, 2);
-        assert_eq!(stream.buffer_capacity(), 8);
-        for _ in 0..200 {
-            let batch = stream.next_batch(2);
-            assert_eq!(batch.len(), 2);
+        let (dir, buckets, counts) = fixture("one-length", &[3, 4]);
+        let mut stream = BucketedTrainStream::open(&buckets, labelling(), &counts, 4, 0).unwrap();
+        for _ in 0..100 {
+            let batch = stream.next_batch(4);
+            assert_eq!(batch.len(), 4);
             let pieces = batch[0].canonical.pieces.len();
             assert!(pieces > 0, "a K vs K batch");
             assert!(batch.iter().all(|record| record.canonical.pieces.len() == pieces), "a batch mixes piece counts");
-            assert!(batch.iter().all(|record| record.labels.len() == 2), "one label per lambda");
         }
         assert!(stream.cursors().is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn each_piece_count_gets_batches_in_proportion_to_its_records() {
-        let (dir, files) = fixture("shares", &[5, 5]);
-        let mut stream = BucketedTrainStream::open(files, &[1.0], 16, 2, 0, 2);
-        // The rook alone is 3 of every 7 trainable positions, rook and knight the other 4.
-        let batches = 3000;
-        let rook_alone = (0..batches).filter(|_| stream.next_batch(2)[0].canonical.pieces.len() == 1).count();
-        let share = rook_alone as f64 / batches as f64;
-        assert!((0.38..=0.48).contains(&share), "the rook alone got {share:.3} of the batches, about 3/7 expected");
+    fn an_epoch_gives_its_full_batches_and_drops_the_partial_ones() {
+        // 5 copies: 10 positions of a rook alone, 15 of a rook and a knight, 10 of K vs K, 35 an epoch.
+        let (dir, buckets, counts) = fixture("epoch", &[2, 3]);
+        assert_eq!(counts.batches_per_epoch(4), 5);
+        let mut stream = BucketedTrainStream::open(&buckets, labelling(), &counts, 4, 0).unwrap();
+        // Each epoch: 2 batches of a rook alone, 3 of a rook and a knight, whatever the order.
+        for epoch in 0..3 {
+            let mut lengths: Vec<usize> = (0..5).map(|_| stream.next_batch(4)[0].canonical.pieces.len()).collect();
+            lengths.sort();
+            assert_eq!(lengths, [1, 1, 2, 2, 2], "epoch {epoch}");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn a_resume_starts_where_the_step_count_says() {
-        let (dir, files) = fixture("resume", &[2, 3]);
-        // 50 positions an epoch; 120 emitted is epoch 2, 20 into it.
-        let stream = BucketedTrainStream::open(files, &[1.0], 4, 2, 120, 1);
-        assert_eq!(stream.records.epoch(), 2);
+    fn a_resume_returns_the_batch_an_unbroken_run_returned() {
+        let (dir, buckets, counts) = fixture("resume", &[2, 3]);
+        let mut whole = BucketedTrainStream::open(&buckets, labelling(), &counts, 4, 0).unwrap();
+        let run: Vec<_> = (0..17).map(|_| key(&whole.next_batch(4))).collect();
+        // 5 batches an epoch: step 0, the end of an epoch (10), and inside one (7, 13).
+        for steps_done in [0u64, 7, 10, 13] {
+            let mut resumed = BucketedTrainStream::open(&buckets, labelling(), &counts, 4, steps_done).unwrap();
+            let rest: Vec<_> = (steps_done..17).map(|_| key(&resumed.next_batch(4))).collect();
+            assert_eq!(rest, run[steps_done as usize..], "resumed at step {steps_done}");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    #[should_panic(expected = "holds only K vs K")]
-    fn a_corpus_of_k_vs_k_alone_is_refused() {
-        let dir = std::env::temp_dir().join(format!("smithy-bucketed-train-stream-test-bare-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("failed to create the fixture directory");
-        let path = format!("{}/gamma-0.pgn.zst", dir.to_str().unwrap().replace('\\', "/"));
-        let bare = "[Result \"1/2-1/2\"]\n[FEN \"4k3/8/8/8/8/8/8/4K3 w - - 0 1\"]\n[SetUp \"1\"]\n\n1. Kd2 {0.00} Kd7 {0.00}\n1/2-1/2\n\n";
-        std::fs::write(&path, zstd::encode_all(bare.repeat(4).as_bytes(), 3).expect("failed to compress")).expect("failed to write");
-        let _ = BucketedTrainStream::open(vec![StreamFile { path, positions: 12 }], &[1.0], 4, 2, 0, 1);
+    fn a_batch_no_piece_count_fills_is_refused() {
+        let (dir, buckets, counts) = fixture("too-large", &[1]);
+        // 2 of a rook alone, 3 of a rook and a knight: no batch of 4.
+        let error = BucketedTrainStream::open(&buckets, labelling(), &counts, 4, 0).err().expect("refused");
+        assert!(error.contains("no piece count holds a batch of 4"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -238,9 +238,137 @@ pub(crate) fn for_each_pair(dir: &str, bucket: usize, mut visit: impl FnMut(f32,
     }
 }
 
+/// Counts of pieces beside the kings a position can hold: 0 (K vs K) to 30.
+pub(crate) const PIECE_COUNTS: usize = 31;
+
+const PIECE_COUNTS_FILE: &str = "piece-counts.txt";
+
+fn piece_counts_path(dir: &str) -> String {
+    format!("{dir}/{PIECE_COUNTS_FILE}")
+}
+
+/// How many records of a bucket directory hold each count of pieces beside the kings. A transformer
+/// cannot pad, so it trains on batches of one piece count, and these counts give its batches an
+/// epoch. Measured once by a pass over the buckets and kept beside them; a scatter that changes the
+/// buckets deletes the file.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PieceCounts {
+    counts: [u64; PIECE_COUNTS],
+}
+
+impl PieceCounts {
+    /// The records with `pieces` pieces beside the kings.
+    pub(crate) fn of(&self, pieces: usize) -> u64 {
+        self.counts[pieces]
+    }
+
+    /// Every record counted, K vs K included: the buckets' records when the counts are theirs.
+    pub(crate) fn records(&self) -> u64 {
+        self.counts.iter().sum()
+    }
+
+    /// The full batches of `batch_size` an epoch gives when each piece count forms its own batches
+    /// and a count's last, partial batch is dropped. K vs K never trains.
+    pub(crate) fn batches_per_epoch(&self, batch_size: u64) -> u64 {
+        self.counts[1..].iter().map(|&count| count / batch_size).sum()
+    }
+
+    /// One `pieces<TAB>records` line per count, 0 to 30.
+    fn text(&self) -> String {
+        self.counts.iter().enumerate().map(|(pieces, count)| format!("{pieces}\t{count}\n")).collect()
+    }
+
+    fn parse(text: &str) -> Option<PieceCounts> {
+        let mut counts = [0; PIECE_COUNTS];
+        let mut lines = text.lines();
+        for (pieces, count) in counts.iter_mut().enumerate() {
+            let (key, number) = lines.next()?.split_once('\t')?;
+            if key != pieces.to_string() {
+                return None;
+            }
+            *count = number.parse().ok()?;
+        }
+        lines.next().is_none().then_some(PieceCounts { counts })
+    }
+}
+
+/// The piece counts of the buckets `dir`, read by `threads` a bucket at a time, `bar` counting every
+/// record read; `None` when stopped, checked between buckets.
+fn measure_piece_counts(dir: &str, threads: usize, stop: &AtomicBool, bar: &progress::Bar) -> Option<PieceCounts> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let total = std::sync::Mutex::new([0u64; PIECE_COUNTS]);
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, BUCKETS) {
+            scope.spawn(|| {
+                let mut counts = [0u64; PIECE_COUNTS];
+                while !stop.load(Ordering::SeqCst) {
+                    let index = next.fetch_add(1, Ordering::SeqCst);
+                    if index >= BUCKETS {
+                        break;
+                    }
+                    let mut read = 0;
+                    for_each_pair(dir, index, |_, _, _, pieces| {
+                        assert!(pieces < PIECE_COUNTS, "a position with {pieces} pieces beside the kings");
+                        counts[pieces] += 1;
+                        read += 1;
+                    });
+                    bar.inc(read);
+                }
+                let mut total = total.lock().expect("the counts' lock");
+                for (mine, theirs) in total.iter_mut().zip(&counts) {
+                    *mine += theirs;
+                }
+            });
+        }
+    });
+    if stop.load(Ordering::SeqCst) {
+        return None;
+    }
+    Some(PieceCounts { counts: total.into_inner().expect("the counts' lock") })
+}
+
+/// The piece counts kept beside the buckets `dir`, or measured on them and kept there first: once
+/// per scatter. A kept file whose records are not the buckets' is measured again. `None` when
+/// stopped.
+pub(crate) fn ensure_piece_counts(dir: &str, threads: usize, stop: &AtomicBool, say: &dyn Fn(String)) -> Result<Option<PieceCounts>, String> {
+    let path = piece_counts_path(dir);
+    let records = committed_records(dir)?;
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        match PieceCounts::parse(&text) {
+            Some(counts) if counts.records() == records => return Ok(Some(counts)),
+            Some(counts) => {
+                say(format!("{path}: counts {} records, not the buckets' {records}, so it is measured again", counts.records()))
+            }
+            None => say(format!("{path}: unreadable, so it is measured again")),
+        }
+    }
+    say(format!("counting the pieces of the {} positions of {dir}", progress::grouped(records)));
+    let bar = progress::resumed(0, records, progress::Unit::Count("positions"), "counting pieces");
+    let measured = measure_piece_counts(dir, threads, stop, &bar);
+    bar.finish();
+    let Some(counts) = measured else {
+        return Ok(None);
+    };
+    let partial = format!("{path}.partial");
+    std::fs::write(&partial, counts.text()).map_err(|error| format!("{partial}: {error}"))?;
+    std::fs::rename(&partial, &path).map_err(|error| format!("{path}: {error}"))?;
+    Ok(Some(counts))
+}
+
 /// The direct blend at `lambda`, from its two ends.
 pub(crate) fn blend(at_zero: f32, at_one: f32, lambda: f64) -> f32 {
     ((1.0 - lambda) * f64::from(at_zero) + lambda * f64::from(at_one)) as f32
+}
+
+/// `files` scattered into `dir` without the tables, which a test machine may lack, through Lc0's
+/// frozen curve as the tests' fixtures are written: for other modules' tests. The records scattered.
+#[cfg(test)]
+pub(crate) fn prepare_for_tests(dir: &str, files: &[StreamFile], threads: usize) -> u64 {
+    let curve = Curve::Atan(fattorini::labels::LC0_FILES);
+    match prepare_in_batches(dir, files, threads, &AtomicBool::new(false), None, &|_| {}, BATCH_POSITIONS, None, curve) {
+        Ok(Prepared::Done(records)) => records,
+        other => panic!("{dir}: the fixture's scatter ended {other:?}"),
+    }
 }
 
 /// How a prepare ended.
@@ -338,6 +466,12 @@ fn prepare_in_batches(
     let new: Vec<StreamFile> = files.iter().filter(|file| !scattered.contains(&file.path.as_str())).cloned().collect();
     if new.is_empty() {
         return Ok(Prepared::Done(state.records()));
+    }
+    // The buckets are about to change, so the piece counts measured on them no longer hold.
+    let counts_path = piece_counts_path(dir);
+    match std::fs::remove_file(&counts_path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(format!("{counts_path}: {error}")),
+        _ => {}
     }
     let positions: u64 = new.iter().map(|file| file.positions).sum();
     let batches = batches(&new, batch_positions);
@@ -456,6 +590,8 @@ pub(crate) struct BucketStream {
     receiver: Option<Receiver<Vec<CacheRecord>>>,
     loader: Option<JoinHandle<()>>,
     current: std::vec::IntoIter<CacheRecord>,
+    /// Every committed record once: an epoch.
+    total: u64,
 }
 
 /// An epoch's bucket order and the seed of each bucket's permutation.
@@ -530,24 +666,30 @@ impl BucketStream {
                 start = 0;
             }
         });
-        Ok(BucketStream { receiver: Some(receiver), loader: Some(loader), current: Vec::new().into_iter() })
+        Ok(BucketStream { receiver: Some(receiver), loader: Some(loader), current: Vec::new().into_iter(), total })
+    }
+
+    /// The records of an epoch: every committed record once.
+    pub fn records_per_epoch(&self) -> u64 {
+        self.total
+    }
+
+    /// The next record, running on into the next bucket and the next epoch.
+    pub fn next_record(&mut self) -> CacheRecord {
+        loop {
+            if let Some(record) = self.current.next() {
+                return record;
+            }
+            let next = self.receiver.as_ref().expect("a live stream holds its receiver").recv();
+            self.current = next.expect("the bucket loader stopped: its panic is above").into_iter();
+        }
     }
 }
 
 impl TrainStream for BucketStream {
     /// Never short: the epochs never end, and a batch runs on into the next bucket.
     fn next_batch(&mut self, batch_size: usize) -> Vec<CacheRecord> {
-        let mut batch = Vec::with_capacity(batch_size);
-        while batch.len() < batch_size {
-            match self.current.next() {
-                Some(record) => batch.push(record),
-                None => {
-                    let next = self.receiver.as_ref().expect("a live stream holds its receiver").recv();
-                    self.current = next.expect("the bucket loader stopped: its panic is above").into_iter();
-                }
-            }
-        }
-        batch
+        (0..batch_size).map(|_| self.next_record()).collect()
     }
 
     /// Deliberately empty: the position is derived from the step count.
@@ -677,6 +819,22 @@ mod tests {
         // 40 an epoch: 50 is 10 into the second.
         let mut resumed = open(&buckets, &[0.5], 50);
         assert_eq!(resumed.next_batch(100).iter().map(key).collect::<Vec<_>>(), run[50..]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn records_read_one_at_a_time_are_the_batches_records_in_order() {
+        let dir = scratch("one-at-a-time");
+        let files = training_set(&dir, &[3, 5]);
+        let buckets = format!("{dir}/buckets");
+        prepare(&buckets, &files, 2, &AtomicBool::new(false), &quiet).unwrap();
+        let mut batched = open(&buckets, &[0.5], 7);
+        let mut single = open(&buckets, &[0.5], 7);
+        assert_eq!(single.records_per_epoch(), 40);
+        // 100 records from 7 in: past the end of the first epoch and into the third.
+        let batches: Vec<_> = (0..10).flat_map(|_| batched.next_batch(10)).map(|record| key(&record)).collect();
+        let records: Vec<_> = (0..100).map(|_| key(&single.next_record())).collect();
+        assert_eq!(records, batches);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -901,6 +1059,88 @@ mod tests {
         let record = |message: String| said.borrow_mut().push(message);
         assert_eq!(prepare(&buckets, &files, 1, &never, &record), Ok(Prepared::Done(20)));
         assert!(said.borrow()[0].contains("labelled otherwise"), "{:?}", said.borrow());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Three games with a rook alone beside the kings (2 searched positions), a rook and a knight (3)
+    /// and the kings alone (2): 10 positions a copy, 7 of them searched.
+    const PIECED: &str = concat!(
+        "[Result \"1-0\"]\n[FEN \"4k3/8/8/8/8/8/8/R3K3 w - - 0 1\"]\n[SetUp \"1\"]\n\n1. Kd2 {1.50} Kd7 {-1.20}\n1-0\n\n",
+        "[Result \"0-1\"]\n[FEN \"4k3/8/8/8/8/8/8/RN2K3 w - - 0 1\"]\n[SetUp \"1\"]\n\n1. Ke2 {-0.40} Ke7 {0.30} 2. Kf2 {-0.90}\n0-1\n\n",
+        "[Result \"1/2-1/2\"]\n[FEN \"4k3/8/8/8/8/8/8/4K3 w - - 0 1\"]\n[SetUp \"1\"]\n\n1. Kd2 {0.00} Kd7 {0.00}\n1/2-1/2\n\n",
+    );
+
+    /// `copies[i]` copies of `PIECED` in file `i`, named apart from `training_set`'s by `stem`.
+    fn pieced_set(dir: &str, stem: &str, copies: &[u64]) -> Vec<StreamFile> {
+        copies
+            .iter()
+            .enumerate()
+            .map(|(index, &count)| {
+                let path = format!("{dir}/{stem}-{index}.pgn.zst");
+                std::fs::write(&path, zstd::encode_all(PIECED.repeat(count as usize).as_bytes(), 3).unwrap()).unwrap();
+                StreamFile { path, positions: count * 10 }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_piece_counts_are_measured_and_give_the_batches_of_an_epoch() {
+        let dir = scratch("piece-counts");
+        let files = pieced_set(&dir, "train", &[2, 3]);
+        let buckets = format!("{dir}/buckets");
+        let never = AtomicBool::new(false);
+        assert_eq!(prepare(&buckets, &files, 2, &never, &quiet), Ok(Prepared::Done(35)));
+        let counts = ensure_piece_counts(&buckets, 2, &never, &quiet).unwrap().unwrap();
+        assert_eq!((counts.of(0), counts.of(1), counts.of(2), counts.of(3)), (10, 10, 15, 0));
+        // 10 of one piece give 2 batches of 4, 15 of two give 3; K vs K none.
+        assert_eq!(counts.batches_per_epoch(4), 5);
+        assert_eq!(counts.batches_per_epoch(11), 1);
+        assert_eq!(PieceCounts::parse(&counts.text()), Some(counts));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_piece_counts_are_kept_until_the_buckets_change() {
+        let dir = scratch("piece-counts-kept");
+        let files = pieced_set(&dir, "train", &[1]);
+        let buckets = format!("{dir}/buckets");
+        let never = AtomicBool::new(false);
+        prepare(&buckets, &files, 1, &never, &quiet).unwrap();
+        let measured = ensure_piece_counts(&buckets, 1, &never, &quiet).unwrap().unwrap();
+        let path = piece_counts_path(&buckets);
+
+        // A kept file holding the buckets' records is read, not measured again.
+        let mut planted = [0; PIECE_COUNTS];
+        planted[5] = 7;
+        std::fs::write(&path, PieceCounts { counts: planted }.text()).unwrap();
+        assert_eq!(ensure_piece_counts(&buckets, 1, &never, &quiet).unwrap().unwrap().of(5), 7);
+
+        // One that does not is measured again.
+        planted[5] = 6;
+        std::fs::write(&path, PieceCounts { counts: planted }.text()).unwrap();
+        let said = std::cell::RefCell::new(Vec::new());
+        let record = |message: String| said.borrow_mut().push(message);
+        assert_eq!(ensure_piece_counts(&buckets, 1, &never, &record).unwrap().unwrap(), measured);
+        assert!(said.borrow()[0].contains("measured again"), "{:?}", said.borrow());
+
+        // A scatter appending a file deletes it, and the next measure counts the new positions.
+        let mut more = files.clone();
+        more.extend(pieced_set(&dir, "more", &[2]));
+        assert_eq!(prepare(&buckets, &more, 1, &never, &quiet), Ok(Prepared::Done(21)));
+        assert!(!std::path::Path::new(&path).exists());
+        let counts = ensure_piece_counts(&buckets, 1, &never, &quiet).unwrap().unwrap();
+        assert_eq!((counts.of(0), counts.of(1), counts.of(2)), (6, 6, 9));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_stopped_count_keeps_nothing() {
+        let dir = scratch("piece-counts-stopped");
+        let files = pieced_set(&dir, "train", &[1]);
+        let buckets = format!("{dir}/buckets");
+        prepare(&buckets, &files, 1, &AtomicBool::new(false), &quiet).unwrap();
+        assert_eq!(ensure_piece_counts(&buckets, 1, &AtomicBool::new(true), &quiet), Ok(None));
+        assert!(!std::path::Path::new(&piece_counts_path(&buckets)).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

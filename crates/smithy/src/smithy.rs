@@ -311,10 +311,6 @@ fn load_config(path: &str) -> Result<(GenConfig, NetConfig), String> {
     }
     tune::args_of(&config.tune, PESTO).map_err(|message| format!("{path}: {message}"))?;
     let mut net = net_config::read(path)?;
-    // A transformer is labelled per lambda by its PGN stream, which knows no progress.
-    if config.lambda == LambdaMode::Polyline && matches!(net.architecture.kind, ArchitectureKind::Transformer { .. }) {
-        return Err(format!("{path}: lambda: polyline trains an NNUE only, not a transformer"));
-    }
     // A budget's round robin is among one arm's checkpoints: nine arms of nine candidates each is not
     // wanted, and the grid is deprecated.
     if net.training.schedule == net_config::Schedule::Budget && config.lambda != LambdaMode::Polyline {
@@ -3730,9 +3726,6 @@ impl Run<'_> {
     }
 
     fn train(&self, state: &GenState, arms: &[ArmLambda]) -> Result<Ended, String> {
-        // The constant arms' lambdas, for the transformer's stream: a polyline run is NNUE only.
-        let lambdas: Vec<f64> = arms.iter().filter_map(|arm| arm.constant()).collect();
-        let lambdas = lambdas.as_slice();
         let generation = state.generation;
         // The students start from the teacher's weights (`seed`), so a teacher trained under the atan
         // curve would carry its unit into the new training.
@@ -3770,7 +3763,7 @@ impl Run<'_> {
         let test = TestSet::of(self.config, &self.dirs, generation)?;
         let config = self.net;
         let transformer = matches!(config.architecture.kind, ArchitectureKind::Transformer { .. });
-        // An NNUE trains on its training set fully shuffled (`buckets.rs`), scattered here first: once for
+        // Every architecture trains on its training set fully shuffled (`buckets.rs`), scattered here first: once for
         // a source's corpus, shared by every forge of that source; per generation for self-play. A disposable local cache, outside the run's directory, so
         // the archive never moves it; a run's older generations' buckets go.
         let bucket_dir = if let Some(on) = on_source {
@@ -3787,22 +3780,15 @@ impl Run<'_> {
             }
             format!("{run_buckets}/{current}")
         };
-        let train_rows: u64 = if transformer {
-            files.iter().map(|file| file.positions).sum()
-        } else {
-            match buckets::prepare(&bucket_dir, &files, threads, &self.stop, &say, curve)? {
-                Prepared::Done(records) => records,
-                Prepared::Stopped => return Ok(Ended::Stopped),
-            }
+        let scattered: u64 = match buckets::prepare(&bucket_dir, &files, threads, &self.stop, &say, curve)? {
+            Prepared::Done(records) => records,
+            Prepared::Stopped => return Ok(Ended::Stopped),
         };
         // The polyline, measured from the buckets just scattered, so the corpus is read once: a
         // source's beside its corpus on the remote, shared by every full run of it as its frozen test
         // set is; a self-play generation's and a scaled run's in the generation's directory. The
         // frozen test set's polyline labels need it, so that set comes after.
         let polyline = if arms.contains(&ArmLambda::Polyline) {
-            if transformer {
-                return Err(format!("{}: lambda polyline needs buckets, which a transformer does not scatter", self.name));
-            }
             let path = polyline_path(self.config, &self.dirs, generation);
             match polyline::ensure(&path, &bucket_dir, threads, &self.stop, &say)? {
                 Some(polyline) => Some(polyline),
@@ -3810,6 +3796,24 @@ impl Run<'_> {
             }
         } else {
             None
+        };
+        let batch_size = config.training.training_batch_size as usize;
+        // A transformer cannot pad: it trains on batches of one piece count, a count's partial batch
+        // dropped each epoch (`bucketed_train_stream.rs`), so its rows are its full batches' and not
+        // every position scattered.
+        let (train_rows, piece_counts) = if transformer {
+            let Some(counts) = buckets::ensure_piece_counts(&bucket_dir, threads, &self.stop, &say)? else {
+                return Ok(Ended::Stopped);
+            };
+            let rows = counts.batches_per_epoch(batch_size as u64) * batch_size as u64;
+            log::info!(
+                "training: {} of the {} positions scattered fill whole batches of one piece count",
+                progress::grouped(rows),
+                progress::grouped(scattered)
+            );
+            (rows, Some(counts))
+        } else {
+            (scattered, None)
         };
         let labelling = Labelling::new(arms, polyline)?;
         test.freeze(&labelling, &curve)?;
@@ -3820,7 +3824,7 @@ impl Run<'_> {
             progress::grouped(files.len())
         );
         if let Some(on) = on_source {
-            record_corpus(&self.dirs, on, train_rows, test.rows)?;
+            record_corpus(&self.dirs, on, scattered, test.rows)?;
         }
         let started = Instant::now();
         let device = tch::Device::cuda_if_available();
@@ -3832,7 +3836,6 @@ impl Run<'_> {
         let lambda_dir = |lambda: ArmLambda| self.dirs.arm(generation, lambda);
         let parts = LockstepParts { source: &source, grid: arms.to_vec(), lambda_dir: &lambda_dir, persists_position: false, device };
         let teacher_vs = self.dirs.teacher_vs(generation);
-        let batch_size = config.training.training_batch_size as usize;
         // Said as the rate switches are: what ended, and where its best was.
         let stage_count = config.training.learning_rate.len();
         let rule = Rule::of(config, train_rows);
@@ -3867,7 +3870,7 @@ impl Run<'_> {
         };
         // Only the batches, the stream and the stacked network depend on the architecture.
         let done = if transformer {
-            let shuffle = config.training.shuffle_buffer.expect("a streamed transformer has a shuffle buffer") as usize;
+            let counts = piece_counts.as_ref().expect("a transformer's piece counts are ensured above");
             let attention = config.training.attention.expect("net_config::load requires attention for a transformer");
             let to_batch = round::BatchBuilder {
                 prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
@@ -3883,9 +3886,11 @@ impl Run<'_> {
                 };
                 open_stack(config, rule, network, Vec::new(), arms, active, starting_weights, false, device)
             };
-            // One shuffle buffer per piece count, so that every batch holds one length.
+            // The buckets grouped by piece count, so that every batch holds one length. They were
+            // just prepared and counted, so a failure to open them is a disk gone wrong.
             let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
-                BucketedTrainStream::open(files.clone(), lambdas, shuffle, batch_size, steps_done * batch_size as u64, threads)
+                BucketedTrainStream::open(&bucket_dir, labelling.clone(), counts, batch_size, steps_done)
+                    .unwrap_or_else(|message| panic!("{message}"))
             };
             train_in_lockstep(
                 config, &parts, arms, train_rows, &mut test_readers, stack_of, stream_from, &to_batch,

@@ -328,7 +328,7 @@ impl<N: StackedModel> round::Arms<N::Batch> for Stack<N> {
     // Without `persists_position`, `cursors` and `rows_done` are persisted as empty and zero rather
     // than as `run_round` reports them: both are derived from the step count on the way back in, and
     // writing a real value into a field nothing reads is how a stale second copy gets mistaken for
-    // state later. `PgnTrainStream::cursors` returns an empty vector for the same reason.
+    // state later. The bucket streams' `cursors` return an empty vector for the same reason.
     fn back_up(&mut self, arm: usize, cursors: &[u64], rows_done: u64, loss_sum: f64, duration_secs: f64) {
         self.save_slot(arm);
         let (train_cursors, rows_done) = if self.persists_position { (cursors.to_vec(), rows_done) } else { (Vec::new(), 0) };
@@ -755,7 +755,7 @@ pub(crate) fn train_in_lockstep<N: StackedModel, H: Send, T: train_stream::Batch
             // The backup last, so that one taken at a switch's step already holds what the switch did.
             stack.save_slot(slot);
             // The stream's cursors at the boundary: empty for a derived position
-            // (`PgnTrainStream::cursors`).
+            // (`BucketStream::cursors`).
             RoundProgress { train_cursors: outcome.cursors.clone(), rows_done: 0, loss_sum: 0.0, train_duration_secs: 0.0 }
                 .save(&arm.round_progress_path);
 
@@ -947,7 +947,6 @@ mod tests {
     use crate::feature_set::FeatureSet;
     use crate::grouped_test_set::GroupedTestSet;
     use crate::pgn_stream::StreamFile;
-    use crate::pgn_train_stream::PgnTrainStream;
     use crate::train_stream::TrainStream;
     use crate::{net_config, nnue_network, transformer_network};
     use fattorini::pipeline::generation;
@@ -968,9 +967,10 @@ mod tests {
     }
 
     /// A fresh temporary directory named after `test`, with `config` as its `net.yaml`, and two
-    /// training segments of labelled games, a rook up so that no position is K vs K: the config, the
-    /// segments, and the test set the server would build from them, read once and grouped by piece count.
-    fn fixture(test: &str, config: &str, lambdas: &[f64]) -> (String, NetConfig, Vec<StreamFile>, GroupedTestSet) {
+    /// training segments of labelled games, a rook up so that no position is K vs K, scattered into its
+    /// `buckets` as the server scatters a training set: the config, the bucket directory with its 40
+    /// records, and a test set of those records at `lambdas`, grouped by piece count.
+    fn fixture(test: &str, config: &str, lambdas: &[f64]) -> (String, NetConfig, String, GroupedTestSet) {
         let dir = std::env::temp_dir().join(format!("smithy-lockstep-{test}-{}", std::process::id()));
         let dir = dir.to_str().unwrap().replace('\\', "/");
         std::fs::remove_dir_all(&dir).ok();
@@ -992,17 +992,17 @@ mod tests {
                 StreamFile { path, positions: pairs * 7 }
             })
             .collect();
-        let mut test = PgnTrainStream::open_one_pass(files.clone(), lambdas, 1);
-        let mut records = Vec::new();
-        loop {
-            let batch = test.next_batch(64);
-            if batch.is_empty() {
-                break;
-            }
-            records.extend(batch);
-        }
+        let buckets = format!("{dir}/buckets");
+        assert_eq!(crate::buckets::prepare_for_tests(&buckets, &files, 1), 40);
+        let records = crate::buckets::BucketStream::open(&buckets, constant_labelling(lambdas), 0).unwrap().next_batch(40);
         let grouped = GroupedTestSet::load(&mut Flat(records), config.training.test_batch_size as usize);
-        (dir, config, files, grouped)
+        (dir, config, buckets, grouped)
+    }
+
+    /// The labels of constant `lambdas`, as a grid's arms are labelled.
+    fn constant_labelling(lambdas: &[f64]) -> crate::buckets::Labelling {
+        let arms: Vec<ArmLambda> = lambdas.iter().map(|&lambda| ArmLambda::Constant(lambda)).collect();
+        crate::buckets::Labelling::new(&arms, None).unwrap()
     }
 
     /// Every lambda's run ended, each with its history, its rounds at the same steps as the others'.
@@ -1031,7 +1031,7 @@ mod tests {
     #[test]
     fn two_lambdas_train_in_lockstep_to_their_candidates() {
         let lambdas = [0.70, 0.80];
-        let (dir, config, files, grouped) = fixture(
+        let (dir, config, buckets, grouped) = fixture(
             "nnue",
             "labels: lc0\n\
              architecture:\n  kind: psq\n  embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\n\
@@ -1058,9 +1058,9 @@ mod tests {
             };
             open_stack(&config, rule, network, bounds, arms, active, starting_weights, false, device)
         };
-        let train_rows = files.iter().map(|file| file.positions).sum();
+        let train_rows = 40;
         let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
-            PgnTrainStream::open(files.clone(), &lambdas, 16, steps_done * 8, 1)
+            crate::buckets::BucketStream::open(&buckets, constant_labelling(&lambdas), steps_done * 8).unwrap()
         };
         let finish = |arm: &Arm| {
             export_best(&config, &arm.run_dir, arm.lambda, arm.standing.best_step());
@@ -1081,19 +1081,19 @@ mod tests {
     }
 
     /// The server's training of a transformer, as `Run::train` wires it: two lambdas in lockstep,
-    /// stacked, with dropout, its stream one shuffle buffer per piece count, each lambda to its stop with
+    /// stacked, with dropout, its stream the scattered buckets grouped by piece count, each lambda to its stop with
     /// its own history and its `candidate.txt` alone, since the engine cannot run it.
     #[test]
     fn a_transformers_lambdas_train_in_lockstep_to_their_stops() {
         let lambdas = [0.70, 0.80];
-        let (dir, config, files, grouped) = fixture(
+        let (dir, config, buckets, grouped) = fixture(
             "transformer",
             "labels: lc0\n\
              architecture:\n  kind: transformer\n  embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\n  num_layers: 2\n  \
              num_heads: 2\n  feedforward_dim: 16\n  dropout: 0.1\n\
              label:\n  lambda: [0.70, 0.80]\n\
              training:\n  attention: full\n  learning_rate: [1.0e-2, 1.0e-3]\n  training_batch_size: 8\n  test_batch_size: 8\n  \
-             steps_per_round: 2\n  shuffle_buffer: 16\n  warmup_rounds: 0\n  patience_rounds: 1\n",
+             steps_per_round: 2\n  warmup_rounds: 0\n  patience_rounds: 1\n",
             &lambdas,
         );
         let device = tch::Device::Cpu;
@@ -1114,9 +1114,12 @@ mod tests {
             };
             open_stack(&config, rule, network, Vec::new(), arms, active, starting_weights, false, device)
         };
-        let train_rows = files.iter().map(|file| file.positions).sum();
+        // Every position a rook up, 40 of them: 5 batches of 8 an epoch.
+        let counts = crate::buckets::ensure_piece_counts(&buckets, 1, &AtomicBool::new(false), &|_| {}).unwrap().unwrap();
+        let train_rows = counts.batches_per_epoch(8) * 8;
+        let labelling = constant_labelling(&lambdas);
         let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
-            BucketedTrainStream::open(files.clone(), &lambdas, 16, 8, steps_done * 8, 1)
+            BucketedTrainStream::open(&buckets, labelling.clone(), &counts, 8, steps_done).unwrap()
         };
         let finish = |arm: &Arm| {
             export_best(&config, &arm.run_dir, arm.lambda, arm.standing.best_step());

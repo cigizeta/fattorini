@@ -323,10 +323,9 @@ pub struct Training {
     pub schedule: Schedule,
     /// A budget's length in passes over the training set; a budget's alone, required by it.
     pub epochs: Option<f64>,
-    /// How many positions a streamed transformer's shuffle buffers hold in all, one buffer per piece
-    /// count. A transformer only: an NNUE trains on its training set fully shuffled, scattered into
-    /// buckets and shuffled again every epoch, with no buffer to size, so `load` refuses the key on
-    /// one rather than silently ignoring a value meant to take effect.
+    /// Read by nothing: every architecture trains on its training set fully shuffled, scattered into
+    /// buckets and shuffled again every epoch, with no buffer to size. Kept so that `load` refuses
+    /// the key rather than silently ignoring a value meant to take effect.
     pub shuffle_buffer: Option<u64>,
 }
 
@@ -461,22 +460,13 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
             return Err(format!("{path}: training.attention is only meaningful when architecture.kind is transformer"))
         }
     }
-    // `shuffle_buffer`: a transformer has one when it streams (`labels: self` or `lc0`, its buffers
-    // sized by it); the smithy refuses a transformer without one when it trains. An NNUE has none: its training set
-    // is fully shuffled through buckets.
-    match (&config.architecture.kind, config.training.shuffle_buffer) {
-        (ArchitectureKind::Transformer { .. }, Some(value)) => {
-            ensure!(value >= 1, "{path}: training.shuffle_buffer must be at least 1, got {value}")
-        }
-        (ArchitectureKind::Transformer { .. }, None) => {}
-        (_, Some(_)) => {
-            return Err(format!(
-                "{path}: training.shuffle_buffer is read by no NNUE any more: an NNUE trains on its training set fully \
-                 shuffled through buckets; delete it"
-            ))
-        }
-        (_, None) => {}
-    }
+    // `shuffle_buffer` is read by nothing any more: every architecture trains on its training set fully
+    // shuffled through buckets, a transformer's grouped by piece count. Kept as a field only to say so.
+    ensure!(
+        config.training.shuffle_buffer.is_none(),
+        "{path}: training.shuffle_buffer is read by nothing any more: every architecture, the transformer included, \
+         trains on its training set fully shuffled through buckets; delete it"
+    );
     match config.training.warmup_rounds {
         Some(_) => {}
         None => return Err(format!("{path}: training.warmup_rounds is missing")),
@@ -492,11 +482,9 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
             ensure!(config.training.epochs.is_none(), "{path}: training.epochs is a budget's; schedule: patience has none");
         }
         // The lambda's mode, polyline only, is a forge key, checked by the smithy's `load_config`.
+        // A transformer's budget ends at its training: no round robin, its candidates' test losses
+        // recorded alone (`candidates::export_budget_candidates`).
         Schedule::Budget => {
-            ensure!(
-                !matches!(config.architecture.kind, ArchitectureKind::Transformer { .. }),
-                "{path}: schedule: budget trains an NNUE only, not a transformer"
-            );
             ensure!(
                 config.training.patience_rounds.is_none(),
                 "{path}: training.patience_rounds is patience's; schedule: budget has none"
@@ -617,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "training.shuffle_buffer is read by no NNUE any more")]
+    #[should_panic(expected = "training.shuffle_buffer is read by nothing any more")]
     fn load_rejects_an_nnue_kind_with_a_shuffle_buffer_field() {
         let pid = std::process::id();
         let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-nnue-shuffle-buffer.yaml"));
@@ -651,7 +639,8 @@ mod tests {
     }
 
     #[test]
-    fn load_takes_a_streamed_transformer_s_shuffle_buffer() {
+    #[should_panic(expected = "training.shuffle_buffer is read by nothing any more")]
+    fn load_rejects_a_transformer_with_a_shuffle_buffer_field() {
         let pid = std::process::id();
         let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-streamed-transformer.yaml"));
         std::fs::write(
@@ -664,7 +653,7 @@ mod tests {
         )
         .expect("failed to write the fixture file");
 
-        assert_eq!(load(path.to_str().unwrap()).training.shuffle_buffer, Some(16));
+        let _ = load(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
     }
 
@@ -874,12 +863,12 @@ mod tests {
     }
 
     #[test]
-    fn load_refuses_a_budget_on_a_transformer() {
+    fn load_accepts_a_budget_on_a_transformer() {
         let path = transformer_fixture_with("budget", "", "  warmup_rounds: 0\n  schedule: budget\n  epochs: 4\n");
         let result = read(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
-        let error = result.expect_err("a budget on a transformer should be refused");
-        assert!(error.contains("not a transformer"), "{error}");
+        let config = result.expect("a transformer trains under a budget, its round robin skipped");
+        assert_eq!(config.training.schedule, Schedule::Budget);
     }
 
     #[test]
