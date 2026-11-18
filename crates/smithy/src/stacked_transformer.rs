@@ -209,6 +209,7 @@ mod tests {
         Architecture {
             embedding_dim: Some(16),
             value_head: Some(ValueHeadConfig { hidden_dim: hidden.to_vec() }),
+            king_buckets: None,
             kind: ArchitectureKind::Transformer { num_layers, num_heads: 4, feedforward_dim: 32, dropout },
         }
     }

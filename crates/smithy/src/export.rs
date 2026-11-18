@@ -77,30 +77,30 @@ pub fn screlu_network_from(vs: &nn::VarStore, embedding_dim: i64, step: u64, lea
     network
 }
 
-/// `screlu_network_from` for a halfk_threats_screlu checkpoint: its transform holds
-/// `halfk::TRAINING_ROWS` rows, the engine's and then the factor's. Each piece row becomes its own
+/// `screlu_network_from` for a halfk_threats_screlu checkpoint in `layout`'s king buckets: its
+/// transform holds the layout's `training_rows`, the engine's and then the factor's. Each piece row becomes its own
 /// weights plus its factor row's (`halfk::factor_row`), and the factor rows go, so the engine reads
 /// plain per-bucket rows and never the factorisation; the threat rows and the bias as they are.
 /// With `hidden_dims` (halfk_threats_screlu_hidden's two), the head's hidden layers as they are; with
 /// `pairwise` too (halfk_threats_pairwise_hidden), the first reading `embedding_dim` products.
 pub fn halfk_network_from(
-    vs: &nn::VarStore, pairwise: bool, embedding_dim: i64, hidden_dims: &[i64], step: u64, learning_rate: f64,
+    vs: &nn::VarStore, layout: halfk::Layout, pairwise: bool, embedding_dim: i64, hidden_dims: &[i64], step: u64, learning_rate: f64,
 ) -> PsqNetwork {
     let head_input = if pairwise { embedding_dim } else { 2 * embedding_dim };
     // Pairwise is halfk_threats_pairwise_hidden, whose castling and en passant rows follow the
-    // factor rows in training and the threat rows in the engine (`halfk::CASTLING_ROW`).
-    let training_rows = if pairwise { halfk::TRAINING_ROWS_WITH_STATE } else { halfk::TRAINING_ROWS };
+    // factor rows in training and the threat rows in the engine (`Layout::castling_row`).
+    let training_rows = if pairwise { layout.training_rows_with_state() } else { layout.training_rows() };
     let (training, transform_bias, hidden, output) = weights_from(vs, training_rows as i64, embedding_dim, head_input, hidden_dims, false);
     let dim = embedding_dim as usize;
-    let mut transform = training[..halfk::ROWS * dim].to_vec();
-    for row in 0..halfk::HALFK_ROWS {
-        let factor = (halfk::ROWS + halfk::factor_row(row)) * dim;
+    let mut transform = training[..layout.rows() * dim].to_vec();
+    for row in 0..layout.halfk_rows() {
+        let factor = (layout.rows() + halfk::factor_row(row)) * dim;
         for (weight, shared) in transform[row * dim..(row + 1) * dim].iter_mut().zip(&training[factor..factor + dim]) {
             *weight += shared;
         }
     }
     if pairwise {
-        transform.extend_from_slice(&training[halfk::TRAINING_ROWS * dim..]);
+        transform.extend_from_slice(&training[layout.training_rows() * dim..]);
     }
     PsqNetwork {
         embedding_dim: dim,
@@ -116,7 +116,7 @@ pub fn halfk_network_from(
         stack: None,
         material: None,
         halfk: true,
-        king_layout: halfk::Layout::Squares,
+        king_layout: layout,
     }
 }
 
@@ -907,35 +907,39 @@ mod tests {
         // f32 forward pass, on positions whose kings stand in many buckets, mirrored and not. With
         // no hidden layer and with two, over the squares and over the products, the first hidden
         // layer's weights drawn beyond psq's bound, which halfk does not keep.
-        for (pairwise, hidden_dims, tag) in [
-            (false, &[][..], fattorini::nnue::FEATURE_SET_HALFK_THREATS_SCRELU),
-            (false, &[16, 32][..], fattorini::nnue::FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN),
-            (true, &[16, 32][..], fattorini::nnue::FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN),
+        // Each kind in every king layout, its tag the layout's (`fattorini::nnue`, 3 a layout).
+        for (layout, first_tag) in [
+            (halfk::Layout::Squares, fattorini::nnue::FEATURE_SET_HALFK_THREATS_SCRELU),
+            (halfk::Layout::Eight, fattorini::nnue::FEATURE_SET_HALFK8_THREATS_SCRELU),
+            (halfk::Layout::Ten, fattorini::nnue::FEATURE_SET_HALFK10_THREATS_SCRELU),
         ] {
+        for (index, (pairwise, hidden_dims)) in [(false, &[][..]), (false, &[16, 32][..]), (true, &[16, 32][..])].into_iter().enumerate() {
+            let tag = first_tag + index as u32;
             let path = std::env::temp_dir()
                 .join(format!("fattorini-export-halfk-agreement-{tag}-{}.nnue", std::process::id()))
                 .to_str()
                 .unwrap()
                 .to_string();
             let vs = nn::VarStore::new(tch::Device::Cpu);
-            let feature_set = if pairwise { FeatureSet::HalfKav2HmState } else { FeatureSet::HalfKav2Hm };
+            let feature_set = if pairwise { FeatureSet::HalfKav2HmState(layout) } else { FeatureSet::HalfKav2Hm(layout) };
             let oracle = Network::with_options(&vs.root(), feature_set, pairwise, !pairwise, HeadShape::Plain, 32, hidden_dims);
             // The piece rows start at zero; drawn here, so that a row of the wrong bucket, or a factor
             // folded into the wrong row, moves the value.
             tch::no_grad(|| {
                 let variables = vs.variables();
-                let mut pieces = variables["transform.weight"].narrow(1, 0, halfk::HALFK_ROWS as i64);
+                let mut pieces = variables["transform.weight"].narrow(1, 0, layout.halfk_rows() as i64);
                 let _ = pieces.uniform_(-0.05, 0.05);
                 if let Some(first) = variables.get(FIRST_HIDDEN_WEIGHT) {
                     let _ = first.shallow_clone().uniform_(-3.0, 3.0);
                 }
             });
 
-            halfk_network_from(&vs, pairwise, 32, hidden_dims, 512, 1e-3).write(&path).expect("export should succeed");
+            halfk_network_from(&vs, layout, pairwise, 32, hidden_dims, 512, 1e-3).write(&path).expect("export should succeed");
             let bytes = std::fs::read(&path).unwrap();
-            assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), tag);
+            assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), tag, "{layout:?}");
             let engine = load_psq(&path);
             assert!(engine.halfk && engine.threats && engine.screlu != engine.pairwise, "a halfk export must load as one");
+            assert_eq!(engine.king_layout, layout);
             assert_eq!(engine.pairwise, pairwise);
             assert_eq!(engine.hidden.len(), hidden_dims.len());
 
@@ -944,6 +948,7 @@ mod tests {
                 assert_agrees(engine.evaluate_pawns(&board), oracle_value(&oracle, &board), fen);
             }
             std::fs::remove_file(&path).ok();
+        }
         }
     }
 
@@ -1003,13 +1008,13 @@ mod tests {
     /// case), then quantized as the engine does at load.
     fn quantize_halfk_at(value: f64) -> Result<(), String> {
         let vs = nn::VarStore::new(tch::Device::Cpu);
-        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, false, true, HeadShape::Plain, 8, &[]);
+        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm(halfk::Layout::Squares), false, true, HeadShape::Plain, 8, &[]);
         tch::no_grad(|| {
             for name in ["transform.weight", "transform.bias"] {
                 let _ = vs.variables()[name].shallow_clone().fill_(value);
             }
         });
-        let network = halfk_network_from(&vs, false, 8, &[], 0, 0.0);
+        let network = halfk_network_from(&vs, halfk::Layout::Squares, false, 8, &[], 0, 0.0);
         fattorini::nnue::QuantizedPsqNetwork::quantize(&network).map(|_| ())
     }
 

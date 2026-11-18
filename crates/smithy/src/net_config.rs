@@ -30,17 +30,50 @@ pub struct NetConfig {
 /// same value-head MLP shape (`value_head.rs`) fed from some accumulator or embedding of this width.
 /// `load` requires both; read them through `embedding_dim()` and `value_head_hidden_dim()`. `kind` decides which concrete network
 /// this describes, and, for `Transformer`, which further fields exist alongside these two.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct Architecture {
     #[serde(default)]
     pub(super) embedding_dim: Option<i64>,
     #[serde(default)]
     pub(super) value_head: Option<ValueHeadConfig>,
+    /// A halfk kind's king buckets, 32, 8 or 10 (`halfk::Layout`); 32 when absent, every config
+    /// before them. Refused on any other kind.
+    #[serde(default)]
+    pub(super) king_buckets: Option<usize>,
     #[serde(flatten)]
     pub kind: ArchitectureKind,
 }
 
+/// The derived form, `king_buckets` written only when set: `run_config.txt` freezes this text
+/// (`lockstep`), so a run begun before the field existed reads the same and resumes, while a run of
+/// 8 or 10 buckets records them and never resumes as another layout.
+impl std::fmt::Debug for Architecture {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fields = formatter.debug_struct("Architecture");
+        fields.field("embedding_dim", &self.embedding_dim).field("value_head", &self.value_head);
+        if let Some(buckets) = self.king_buckets {
+            fields.field("king_buckets", &buckets);
+        }
+        fields.field("kind", &self.kind).finish()
+    }
+}
+
 impl Architecture {
+    /// The king layout `king_buckets` names, `Squares` when absent. `load` has checked it.
+    pub fn king_layout(&self) -> fattorini::features::halfk::Layout {
+        self.king_buckets
+            .map(|buckets| fattorini::features::halfk::Layout::of_buckets(buckets).expect("king_buckets is 32, 8 or 10, checked by load"))
+            .unwrap_or(fattorini::features::halfk::Layout::Squares)
+    }
+
+    /// Whether this is one of the halfk kinds.
+    pub fn halfk(&self) -> bool {
+        matches!(
+            self.kind,
+            ArchitectureKind::HalfkThreatsScrelu | ArchitectureKind::HalfkThreatsScreluHidden | ArchitectureKind::HalfkThreatsPairwiseHidden
+        )
+    }
+
     /// The accumulator or embedding width. `load` has checked it is present.
     pub fn embedding_dim(&self) -> i64 {
         self.embedding_dim.expect("every kind has an embedding_dim, checked by load")
@@ -359,6 +392,13 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
     let config: NetConfig = serde_yaml::from_str(&contents).map_err(|error| format!("failed to parse {path}: {error}"))?;
     ensure!(config.architecture.embedding_dim.is_some(), "{path}: architecture.embedding_dim is missing");
     ensure!(config.architecture.value_head.is_some(), "{path}: architecture.value_head is missing");
+    if let Some(buckets) = config.architecture.king_buckets {
+        ensure!(config.architecture.halfk(), "{path}: architecture.king_buckets is a halfk kind's, not this kind's");
+        ensure!(
+            fattorini::features::halfk::Layout::of_buckets(buckets).is_some(),
+            "{path}: architecture.king_buckets is 32, 8 or 10, not {buckets}"
+        );
+    }
     if config.architecture.pairwise() {
         ensure!(
             config.architecture.embedding_dim() % 2 == 0,
@@ -849,6 +889,43 @@ mod tests {
         std::fs::remove_file(&path).ok();
         let error = result.expect_err("epochs under patience should be refused");
         assert!(error.contains("schedule: patience has none"), "{error}");
+    }
+
+    #[test]
+    fn king_buckets_default_to_32_and_take_8_or_10_on_a_halfk_kind_alone() {
+        use fattorini::features::halfk::Layout;
+        let pid = std::process::id();
+        let read_with = |name: &str, kind: &str, buckets: &str| {
+            let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-king-buckets-{name}.yaml"));
+            std::fs::write(
+                &path,
+                format!(
+                    "architecture:\n  kind: {kind}\n  embedding_dim: 8\n{buckets}  value_head:\n    hidden_dim: []\ntraining:\n  \
+                     learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+                     warmup_rounds: 0\n  patience_rounds: 1\n"
+                ),
+            )
+            .expect("failed to write the fixture file");
+            let result = read(path.to_str().unwrap());
+            std::fs::remove_file(&path).ok();
+            result
+        };
+        let layout = |name, buckets| read_with(name, "halfk_threats_screlu", buckets).map(|config| config.architecture.king_layout());
+        assert_eq!(layout("absent", ""), Ok(Layout::Squares));
+        assert_eq!(layout("32", "  king_buckets: 32\n"), Ok(Layout::Squares));
+        assert_eq!(layout("8", "  king_buckets: 8\n"), Ok(Layout::Eight));
+        assert_eq!(layout("10", "  king_buckets: 10\n"), Ok(Layout::Ten));
+        let error = layout("7", "  king_buckets: 7\n").expect_err("7 buckets are no layout");
+        assert!(error.contains("32, 8 or 10"), "{error}");
+        let error = read_with("psq", "psq_threats_screlu", "  king_buckets: 8\n").expect_err("a psq kind has no king buckets").to_string();
+        assert!(error.contains("a halfk kind's"), "{error}");
+        // `run_config.txt`'s frozen text: unchanged without the field, so older runs resume; the
+        // layout in it with the field.
+        let absent = format!("{:?}", read_with("debug-absent", "halfk_threats_screlu", "").unwrap().architecture);
+        assert!(!absent.contains("king_buckets"), "{absent}");
+        assert!(absent.starts_with("Architecture { embedding_dim: Some(8), value_head: Some("), "{absent}");
+        let eight = format!("{:?}", read_with("debug-8", "halfk_threats_screlu", "  king_buckets: 8\n").unwrap().architecture);
+        assert!(eight.contains("king_buckets: 8, kind: HalfkThreatsScrelu"), "{eight}");
     }
 
     #[test]

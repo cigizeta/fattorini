@@ -4,12 +4,13 @@
 
 use std::process;
 
+use fattorini::features::halfk::Layout;
 use fattorini::nnue::QuantizedPsqNetwork;
 use fattorini::pipeline::{generation, preprocessing_config};
 
 use crate::budget::{self, Budget};
 use crate::feature_set::FeatureSet;
-use crate::net_config::{ArchitectureKind, NetConfig};
+use crate::net_config::{Architecture, ArchitectureKind, NetConfig};
 use crate::stack_head::HeadShape;
 use crate::{checkpoint_store, export, history, nnue_network};
 
@@ -111,7 +112,7 @@ pub(crate) fn write_record(path: &str, fields: &[(&str, String)]) {
 /// backward pass to accelerate, and a CUDA context would be pure startup cost.
 pub(crate) fn write_engine_network(config: &NetConfig, checkpoint_path: &str, output_path: &str, step: u64, learning_rate: f64) {
     let mut vs = tch::nn::VarStore::new(tch::Device::Cpu);
-    let feature_set = feature_set_of(&config.architecture.kind);
+    let feature_set = feature_set_for(&config.architecture);
     let _ = nnue_network::Network::of(&vs.root(), feature_set, &config.architecture);
     vs.load(checkpoint_path).unwrap_or_else(|error| panic!("failed to load {checkpoint_path}: {error}"));
 
@@ -153,10 +154,10 @@ pub(crate) fn write_engine_network(config: &NetConfig, checkpoint_path: &str, ou
         }
         // The engine's own quantization first, so that a network whose folded rows do not fit
         // `i16` is refused here, by name, never written to be refused at load.
-        FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
+        FeatureSet::HalfKav2Hm(layout) | FeatureSet::HalfKav2HmState(layout) => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let pairwise = config.architecture.pairwise();
-            let network = export::halfk_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate);
+            let network = export::halfk_network_from(&vs, layout, pairwise, embedding_dim, hidden_dims, step, learning_rate);
             QuantizedPsqNetwork::quantize(&network).and_then(|_| network.write(output_path))
         }
     };
@@ -166,7 +167,18 @@ pub(crate) fn write_engine_network(config: &NetConfig, checkpoint_path: &str, ou
     });
 }
 
-/// The rows and batches each NNUE `architecture.kind` trains on: separate types, since
+/// The rows and batches `architecture` trains on: its kind's (`feature_set_of`), a halfk kind's in
+/// its `king_buckets` layout.
+pub(crate) fn feature_set_for(architecture: &Architecture) -> FeatureSet {
+    match feature_set_of(&architecture.kind) {
+        FeatureSet::HalfKav2Hm(_) => FeatureSet::HalfKav2Hm(architecture.king_layout()),
+        FeatureSet::HalfKav2HmState(_) => FeatureSet::HalfKav2HmState(architecture.king_layout()),
+        other => other,
+    }
+}
+
+/// The rows and batches each NNUE `architecture.kind` trains on, a halfk kind's in 32 buckets
+/// (`feature_set_for` gives the config's layout): separate types, since
 /// `net_config::ArchitectureKind` also has to carry a non-NNUE value (`Transformer`) that
 /// `FeatureSet` has no business knowing about.
 pub(crate) fn feature_set_of(kind: &ArchitectureKind) -> FeatureSet {
@@ -186,11 +198,11 @@ pub(crate) fn feature_set_of(kind: &ArchitectureKind) -> FeatureSet {
         // psq_threats' rows and batches: the square is the network's, as the product is.
         ArchitectureKind::PsqThreatsScrelu => FeatureSet::PsqThreats,
         // halfk's rows, and batches of its own carrying each piece row's factor row.
-        ArchitectureKind::HalfkThreatsScrelu => FeatureSet::HalfKav2Hm,
+        ArchitectureKind::HalfkThreatsScrelu => FeatureSet::HalfKav2Hm(Layout::Squares),
         // halfk's rows and batches; the hidden layers read no bucket.
-        ArchitectureKind::HalfkThreatsScreluHidden => FeatureSet::HalfKav2Hm,
+        ArchitectureKind::HalfkThreatsScreluHidden => FeatureSet::HalfKav2Hm(Layout::Squares),
         // halfk's rows plus psq's castling and en passant rows, for MCTS.
-        ArchitectureKind::HalfkThreatsPairwiseHidden => FeatureSet::HalfKav2HmState,
+        ArchitectureKind::HalfkThreatsPairwiseHidden => FeatureSet::HalfKav2HmState(Layout::Squares),
         // psq_threats' rows; the square the network's, the bucket the batches' third.
         ArchitectureKind::PsqThreatsScreluMaterial => FeatureSet::PsqThreats,
         // psq_threats' rows; the phase bucket is the fourth of the buckets its batches carry.
@@ -348,9 +360,9 @@ mod tests {
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsStack), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsPairwiseMaterial), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScrelu), FeatureSet::PsqThreats);
-        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScrelu), FeatureSet::HalfKav2Hm);
-        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScreluHidden), FeatureSet::HalfKav2Hm);
-        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseHidden), FeatureSet::HalfKav2HmState);
+        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScrelu), FeatureSet::HalfKav2Hm(Layout::Squares));
+        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScreluHidden), FeatureSet::HalfKav2Hm(Layout::Squares));
+        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseHidden), FeatureSet::HalfKav2HmState(Layout::Squares));
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluMaterial), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluPhase), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluCount), FeatureSet::PsqThreats);

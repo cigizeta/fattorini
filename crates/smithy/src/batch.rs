@@ -20,10 +20,10 @@ pub enum DenseBatch {
     Psq(DenseBatchPsq),
     /// psq's shape at `psq_threats::ROWS` wide.
     PsqThreats(DenseBatchPsq),
-    /// psq's shape at `halfk::TRAINING_ROWS` wide: halfk's rows, each piece row's factor row too.
-    HalfKav2Hm(DenseBatchPsq),
-    /// At `halfk::TRAINING_ROWS_WITH_STATE` wide: halfk's, then its castling and en passant rows.
-    HalfKav2HmState(DenseBatchPsq),
+    /// psq's shape at the layout's `training_rows` wide: halfk's rows, each piece row's factor row too.
+    HalfKav2Hm(DenseBatchPsq, halfk::Layout),
+    /// At `training_rows_with_state` wide: halfk's, then its castling and en passant rows.
+    HalfKav2HmState(DenseBatchPsq, halfk::Layout),
 }
 
 impl DenseBatch {
@@ -47,15 +47,15 @@ impl DenseBatch {
         match self {
             DenseBatch::Psq(_) => FeatureSet::Psq,
             DenseBatch::PsqThreats(_) => FeatureSet::PsqThreats,
-            DenseBatch::HalfKav2Hm(_) => FeatureSet::HalfKav2Hm,
-            DenseBatch::HalfKav2HmState(_) => FeatureSet::HalfKav2HmState,
+            DenseBatch::HalfKav2Hm(_, layout) => FeatureSet::HalfKav2Hm(*layout),
+            DenseBatch::HalfKav2HmState(_, layout) => FeatureSet::HalfKav2HmState(*layout),
         }
     }
 
     /// The batch's active rows and buckets, whichever kind: every kind is psq's form.
     pub fn psq(&self) -> &DenseBatchPsq {
         match self {
-            DenseBatch::Psq(batch) | DenseBatch::PsqThreats(batch) | DenseBatch::HalfKav2Hm(batch) | DenseBatch::HalfKav2HmState(batch) => batch,
+            DenseBatch::Psq(batch) | DenseBatch::PsqThreats(batch) | DenseBatch::HalfKav2Hm(batch, _) | DenseBatch::HalfKav2HmState(batch, _) => batch,
         }
     }
 
@@ -67,8 +67,8 @@ impl DenseBatch {
         match self {
             DenseBatch::Psq(batch) => DenseBatch::Psq(batch.to_device(device)),
             DenseBatch::PsqThreats(batch) => DenseBatch::PsqThreats(batch.to_device(device)),
-            DenseBatch::HalfKav2Hm(batch) => DenseBatch::HalfKav2Hm(batch.to_device(device)),
-            DenseBatch::HalfKav2HmState(batch) => DenseBatch::HalfKav2HmState(batch.to_device(device)),
+            DenseBatch::HalfKav2Hm(batch, layout) => DenseBatch::HalfKav2Hm(batch.to_device(device), layout),
+            DenseBatch::HalfKav2HmState(batch, layout) => DenseBatch::HalfKav2HmState(batch.to_device(device), layout),
         }
     }
 }
@@ -168,9 +168,9 @@ pub enum HostBatch {
     /// As psq's, at psq_threats' width (`psq_threats_indices`).
     PsqThreats { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
     /// As psq's, at halfk's training width (`halfk_indices`).
-    HalfKav2Hm { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
+    HalfKav2Hm { layout: halfk::Layout, rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
     /// As halfk's, with the castling and en passant rows (`halfk_state_indices`).
-    HalfKav2HmState { rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
+    HalfKav2HmState { layout: halfk::Layout, rows: usize, own: Vec<i32>, opponent: Vec<i32>, label: Vec<f32>, buckets: Vec<i32> },
 }
 
 /// Builds `records`' host-side vectors under `feature_set`: all the CPU work of a batch.
@@ -184,13 +184,13 @@ pub fn host_batch(records: &[CacheRecord], feature_set: FeatureSet) -> HostBatch
             let (own, opponent, label, buckets) = psq_threats_indices(records);
             HostBatch::PsqThreats { rows: records.len(), own, opponent, label, buckets }
         }
-        FeatureSet::HalfKav2Hm => {
-            let (own, opponent, label, buckets) = halfk_indices(records);
-            HostBatch::HalfKav2Hm { rows: records.len(), own, opponent, label, buckets }
+        FeatureSet::HalfKav2Hm(layout) => {
+            let (own, opponent, label, buckets) = halfk_indices(layout, records);
+            HostBatch::HalfKav2Hm { layout, rows: records.len(), own, opponent, label, buckets }
         }
-        FeatureSet::HalfKav2HmState => {
-            let (own, opponent, label, buckets) = halfk_state_indices(records);
-            HostBatch::HalfKav2HmState { rows: records.len(), own, opponent, label, buckets }
+        FeatureSet::HalfKav2HmState(layout) => {
+            let (own, opponent, label, buckets) = halfk_state_indices(layout, records);
+            HostBatch::HalfKav2HmState { layout, rows: records.len(), own, opponent, label, buckets }
         }
     }
 }
@@ -219,11 +219,11 @@ pub fn upload(host: &HostBatch, device: Device) -> DenseBatch {
         HostBatch::PsqThreats { rows, own, opponent, label, buckets } => {
             DenseBatch::PsqThreats(psq_on(*rows, psq_threats::ROWS, own, opponent, label, buckets, device))
         }
-        HostBatch::HalfKav2Hm { rows, own, opponent, label, buckets } => {
-            DenseBatch::HalfKav2Hm(psq_on(*rows, halfk::TRAINING_ROWS, own, opponent, label, buckets, device))
+        HostBatch::HalfKav2Hm { layout, rows, own, opponent, label, buckets } => {
+            DenseBatch::HalfKav2Hm(psq_on(*rows, layout.training_rows(), own, opponent, label, buckets, device), *layout)
         }
-        HostBatch::HalfKav2HmState { rows, own, opponent, label, buckets } => {
-            DenseBatch::HalfKav2HmState(psq_on(*rows, halfk::TRAINING_ROWS_WITH_STATE, own, opponent, label, buckets, device))
+        HostBatch::HalfKav2HmState { layout, rows, own, opponent, label, buckets } => {
+            DenseBatch::HalfKav2HmState(psq_on(*rows, layout.training_rows_with_state(), own, opponent, label, buckets, device), *layout)
         }
     }
 }
@@ -256,29 +256,29 @@ fn psq_threats_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>
 /// the same identity and square whatever the king's bucket (`halfk::factor_row`), past the engine's
 /// rows. The factor rows are distinct within a perspective as the piece rows are, so every
 /// active input is still exactly 1.
-fn halfk_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
-    active_indices(records, halfk::TRAINING_ROWS, |canonical| {
-        let features = halfk::expand(halfk::Layout::Squares, canonical);
-        (with_factor_rows(features.own), with_factor_rows(features.opponent))
+fn halfk_indices(layout: halfk::Layout, records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
+    active_indices(records, layout.training_rows(), |canonical| {
+        let features = halfk::expand(layout, canonical);
+        (with_factor_rows(layout, features.own), with_factor_rows(layout, features.opponent))
     })
 }
 
 /// `halfk_indices` with the castling and en passant rows, after the factor rows
-/// (`halfk::TRAINING_ROWS_WITH_STATE`): what the export moves to the engine's `halfk::CASTLING_ROW`.
-fn halfk_state_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
-    active_indices(records, halfk::TRAINING_ROWS_WITH_STATE, |canonical| {
-        // The state rows are past `HALFK_ROWS`, so `with_factor_rows` gives them no factor row.
-        let features = halfk::expand_with_state(halfk::Layout::Squares, canonical, halfk::TRAINING_ROWS);
-        (with_factor_rows(features.own), with_factor_rows(features.opponent))
+/// (`training_rows_with_state`): what the export moves to the engine's `castling_row`.
+fn halfk_state_indices(layout: halfk::Layout, records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
+    active_indices(records, layout.training_rows_with_state(), |canonical| {
+        // The state rows are past the piece rows, so `with_factor_rows` gives them no factor row.
+        let features = halfk::expand_with_state(layout, canonical, layout.training_rows());
+        (with_factor_rows(layout, features.own), with_factor_rows(layout, features.opponent))
     })
 }
 
 /// `rows` with each piece row's factor row added.
-fn with_factor_rows(rows: Vec<u16>) -> Vec<u16> {
+fn with_factor_rows(layout: halfk::Layout, rows: Vec<u16>) -> Vec<u16> {
     let factors: Vec<u16> = rows
         .iter()
-        .filter(|&&row| (row as usize) < halfk::HALFK_ROWS)
-        .map(|&row| (halfk::ROWS + halfk::factor_row(row as usize)) as u16)
+        .filter(|&&row| (row as usize) < layout.halfk_rows())
+        .map(|&row| (layout.rows() + halfk::factor_row(row as usize)) as u16)
         .collect();
     let mut rows = rows;
     rows.extend(factors);
@@ -576,7 +576,11 @@ mod tests {
         // Bag `row` is the own perspective of `row`, bag `rows + row` its opponent's; a position
         // with no threats and the first and last rows are covered by `varied_psq_records`.
         // Halfk's bags hold its rows, then every piece row's factor row.
-        for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats, FeatureSet::HalfKav2Hm, FeatureSet::HalfKav2HmState] {
+        let mut feature_sets = vec![FeatureSet::Psq, FeatureSet::PsqThreats];
+        for layout in halfk::Layout::ALL {
+            feature_sets.extend([FeatureSet::HalfKav2Hm(layout), FeatureSet::HalfKav2HmState(layout)]);
+        }
+        for feature_set in feature_sets {
             let records = varied_psq_records();
             let batch = to_dense_batch(&records, feature_set);
             let batch = batch.psq();
@@ -595,17 +599,17 @@ mod tests {
                             let features = psq_threats::expand(&record.canonical);
                             (features.own, features.opponent)
                         }
-                        FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
+                        FeatureSet::HalfKav2Hm(layout) | FeatureSet::HalfKav2HmState(layout) => {
                             // With the state rows, they come after the factor rows, none of their own.
-                            let features = if feature_set == FeatureSet::HalfKav2Hm {
-                                halfk::expand(halfk::Layout::Squares, &record.canonical)
+                            let features = if feature_set == FeatureSet::HalfKav2Hm(layout) {
+                                halfk::expand(layout, &record.canonical)
                             } else {
-                                halfk::expand_with_state(halfk::Layout::Squares, &record.canonical, halfk::TRAINING_ROWS)
+                                halfk::expand_with_state(layout, &record.canonical, layout.training_rows())
                             };
                             let with_factors = |rows: Vec<u16>| {
-                                let pieces: Vec<u16> = rows.iter().copied().filter(|&row| (row as usize) < halfk::HALFK_ROWS).collect();
+                                let pieces: Vec<u16> = rows.iter().copied().filter(|&row| (row as usize) < layout.halfk_rows()).collect();
                                 assert!(pieces.len() >= 2, "both kings at least");
-                                let factors = pieces.iter().map(|&row| (halfk::ROWS + row as usize % halfk::FACTOR_ROWS) as u16);
+                                let factors = pieces.iter().map(|&row| (layout.rows() + row as usize % halfk::FACTOR_ROWS) as u16);
                                 rows.iter().copied().chain(factors).collect::<Vec<u16>>()
                             };
                             (with_factors(features.own), with_factors(features.opponent))

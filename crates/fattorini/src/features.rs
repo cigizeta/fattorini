@@ -746,8 +746,9 @@ pub mod halfk {
     /// The threat rows, shared by every bucket.
     pub const THREAT_ROWS: usize = 64 * 64;
 
-    /// `Layout::Squares`' buckets, and the counts below its: what the smithy reads until it takes
-    /// a network's layout.
+    /// `Layout::Squares`' buckets, and the counts below marked for tests its: today's 32-bucket
+    /// numbers, kept for the tests that pin them. Code reads a network's `Layout` instead.
+    #[cfg(test)]
     pub const BUCKETS: usize = 32;
 
     /// Own pawn to queen, the opponent's pawn to queen, and the kings' shared plane.
@@ -760,15 +761,19 @@ pub mod halfk {
     pub const FACTOR_ROWS: usize = IDENTITIES * 64;
 
     /// The piece rows, `32 * 704 = 22,528`.
+    #[cfg(test)]
     pub const HALFK_ROWS: usize = BUCKETS * FACTOR_ROWS;
 
     /// The first threat row, right after the piece rows.
+    #[cfg(test)]
     pub const THREAT_ROW: usize = HALFK_ROWS;
 
     /// The transform's row count per perspective, `26,624`.
-    pub const ROWS: usize = THREAT_ROW + 64 * 64;
+    #[cfg(test)]
+    pub const ROWS: usize = THREAT_ROW + THREAT_ROWS;
 
     /// The trainer's transform: the engine's rows, then the factor's, `27,328`.
+    #[cfg(test)]
     pub const TRAINING_ROWS: usize = ROWS + FACTOR_ROWS;
 
     /// The castling and en passant rows, psq's 12 (`state_rows`), outside the buckets as the threat
@@ -777,13 +782,16 @@ pub mod halfk {
     pub const STATE_ROWS: usize = 12;
 
     /// The first of the four castling rows in the engine's layout.
+    #[cfg(test)]
     pub const CASTLING_ROW: usize = ROWS;
 
     /// The engine's transform with the state rows, `26,636`.
+    #[cfg(test)]
     pub const ROWS_WITH_STATE: usize = ROWS + STATE_ROWS;
 
     /// The trainer's transform with the state rows: `TRAINING_ROWS`, then the 12, `27,340`. After the
     /// factor rows, so that those stay at `ROWS` for every halfk network.
+    #[cfg(test)]
     pub const TRAINING_ROWS_WITH_STATE: usize = TRAINING_ROWS + STATE_ROWS;
 
     /// `perspective`'s castling and en passant rows, from `base` (`CASTLING_ROW` in the engine,
@@ -812,6 +820,7 @@ pub mod halfk {
 
     /// `Layout::Squares`' bucket of a king already oriented for its perspective, and whether that
     /// perspective is mirrored (`Layout::king_bucket`).
+    #[cfg(test)]
     pub fn king_bucket(king: Square) -> (usize, bool) {
         Layout::Squares.king_bucket(king)
     }

@@ -94,7 +94,7 @@ impl StackedNetwork {
             })
             .collect();
         let activation = match feature_set {
-            FeatureSet::Psq | FeatureSet::PsqThreats | FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => Activation::ClippedRelu,
+            FeatureSet::Psq | FeatureSet::PsqThreats | FeatureSet::HalfKav2Hm(_) | FeatureSet::HalfKav2HmState(_) => Activation::ClippedRelu,
         };
         StackedNetwork {
             feature_set, parameters, arms, hidden_layers: value_head_hidden_dims.len(), activation, pairwise, screlu, head,
@@ -717,8 +717,10 @@ mod tests {
         // hidden weights within 0.02 (16 inputs of at most 1 move a unit by at most 0.32), so every
         // unit passes gradient.
         for (pairwise, hidden) in [(false, &[][..]), (false, &[8, 4][..]), (true, &[8, 4][..])] {
-            // Pairwise is halfk_threats_pairwise_hidden's, with the castling and en passant rows.
-            let feature_set = if pairwise { FeatureSet::HalfKav2HmState } else { FeatureSet::HalfKav2Hm };
+            // Pairwise is halfk_threats_pairwise_hidden's, with the castling and en passant rows. In
+            // 8 king buckets: the stack's shapes follow the layout as the network's do.
+            let layout = fattorini::features::halfk::Layout::Eight;
+            let feature_set = if pairwise { FeatureSet::HalfKav2HmState(layout) } else { FeatureSet::HalfKav2Hm(layout) };
             let networks: Vec<(nn::VarStore, Network)> = (0..3)
                 .map(|arm| {
                     let vs = nn::VarStore::new(Device::Cpu);

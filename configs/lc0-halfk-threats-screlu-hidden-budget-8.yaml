@@ -1,0 +1,46 @@
+# lc0-halfk-threats-screlu-hidden-budget in 8 king buckets (2026-11-18, halfk-king-buckets.md): the
+# same network, corpus, forge and schedule, the king's 32 squares merged into 8 buckets (ranks 1 and
+# 2 split into the wing and the center, ranks 3 and 4 likewise together, ranks 5 to 8 likewise
+# together), so that each bucket's rows see more positions. Differs from
+# lc0-halfk-threats-screlu-hidden-budget by its king buckets alone: compared with it, the bench,
+# final losses and the duels say whether the 8 buckets replace the 32.
+
+# The forge. Lambda by progress: each generation trains one arm, each position labelled at the
+# polyline measured on its corpus. A budget trains one arm: polyline only.
+lambda: polyline
+# From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
+# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+training_positions: 1073741824
+# From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
+test_positions: 4194304
+# The grid's: a budget's round robin plays about 2,000 games a candidate, 125 pairs a pairing for nine.
+round_robin_pairs: 400
+gate_elo_d: 35
+
+# The tune of each generation that passed its gate, started by hand, at 10+0.1: the default
+# length, 32,768 pairs, from its teacher's tune (generation 1's from the defaults); the next
+# generation's self-play plays it.
+tune:
+  length: default
+  control: 10+0.1
+
+# The network: (9728 -> 256) x 2, each lane squared after the clip, -> 16 -> 32 -> 1; in training
+# 10432 rows, halfk's and the factor's.
+labels: lc0
+
+architecture:
+  kind: halfk_threats_screlu_hidden
+  king_buckets: 8
+  embedding_dim: 256
+  value_head:
+    hidden_dim: [16, 32]
+
+training:
+  training_batch_size: 4096
+  test_batch_size: 16384
+  steps_per_round: 4096
+  # As lc0-halfk-threats-screlu-hidden-budget's.
+  schedule: budget
+  epochs: 4
+  learning_rate: [1.0e-3, 1.0e-5]
+  warmup_rounds: 1

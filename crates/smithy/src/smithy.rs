@@ -82,7 +82,7 @@ use super::buckets::{self, BucketStream, Labelling, Prepared};
 use super::pgn_train_stream;
 use super::stacked_network::StackedNetwork;
 use super::train_stream::BatchSource;
-use super::candidates::{export_best, feature_set_of};
+use super::candidates::{export_best, feature_set_for};
 use super::budget::Budget;
 use super::lockstep::{self, open_stack, train_in_lockstep, Arm, LockstepParts, Rule};
 use super::{batch, candidates, checkpoint_store, nnue_network, round, round_robin};
@@ -3884,7 +3884,7 @@ impl Run<'_> {
                 transformer_batch::HostTransformerBatch::bytes, finish, &after_round, stop,
             )
         } else {
-            let feature_set = feature_set_of(&config.architecture.kind);
+            let feature_set = feature_set_for(&config.architecture);
             let to_batch = round::BatchBuilder {
                 prepare: |records: &[CacheRecord]| batch::host_batch(records, feature_set),
                 upload: |host: &batch::HostBatch| batch::upload(host, device),

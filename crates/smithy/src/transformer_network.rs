@@ -409,6 +409,7 @@ mod tests {
         super::super::net_config::Architecture {
             embedding_dim: Some(16),
             value_head: Some(super::super::net_config::ValueHeadConfig { hidden_dim: vec![8, 8] }),
+            king_buckets: None,
             kind: super::super::net_config::ArchitectureKind::Transformer {
                 num_layers: 2, num_heads: 4, feedforward_dim: 32, dropout: 0.0,
             },

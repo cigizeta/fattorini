@@ -1,7 +1,9 @@
 //! `smithy king-buckets`: where the kings stand in Lc0's frozen test set and in its training corpus,
 //! by the halfk network's king buckets. A one-off check, run by hand, read-only, on the CPU.
 //!
-//! A halfk network keeps 32 king buckets a perspective, each with rows of its own, trained only by
+//! `--king-buckets 8` (or 10) adds the corpus's shares by that layout's buckets (`halfk::Layout`).
+//!
+//! A halfk network keeps 32 king buckets a perspective (or a coarser layout's), each with rows of its own, trained only by
 //! the positions that put that perspective's king there. Counting the kings answers two questions:
 //! whether the frozen test set is sound (its distribution should match the corpus's up to noise; a
 //! clear difference would mean its sampling went wrong), and how thin the rare buckets are, so how
@@ -24,7 +26,9 @@ use super::{freeze, pgn_train_stream, preprocessing_config, remote};
 /// The command, in no usage line: a check run by hand, as `lc0`'s rewrite is.
 pub(crate) const COMMAND: &str = "king-buckets";
 
-const BUCKETS: usize = halfk::BUCKETS;
+/// The squares of the mirrored half-board, `Layout::Squares`' buckets: counted at that grain, every
+/// coarser layout's buckets are sums of them (`Census::layout_counts`).
+const BUCKETS: usize = 32;
 
 /// Segments read for every position wanted, at most: enough spread that a few segments' games do not
 /// stand for the corpus, few enough that the read stays minutes.
@@ -60,7 +64,7 @@ impl Census {
                 Color::White => position.white_king,
                 Color::Black => position.black_king,
             };
-            let (bucket, _) = halfk::king_bucket(oriented_square(king, color));
+            let (bucket, _) = halfk::Layout::Squares.king_bucket(oriented_square(king, color));
             self.counts[row][bucket] += 1;
         }
         self.positions += 1;
@@ -69,18 +73,43 @@ impl Census {
     fn share(&self, row: usize, bucket: usize) -> f64 {
         self.counts[row][bucket] as f64 / self.positions.max(1) as f64
     }
+
+    /// Row `row`'s counts by `layout`'s buckets, each the sum of its squares'.
+    fn layout_counts(&self, row: usize, layout: halfk::Layout) -> Vec<u64> {
+        let mut counts = vec![0; layout.buckets()];
+        for (square, &count) in self.counts[row].iter().enumerate() {
+            counts[layout_bucket(layout, square)] += count;
+        }
+        counts
+    }
+}
+
+/// `layout`'s bucket of the half-board's `square` (`rank * 4 + file`, `Squares`' bucket).
+fn layout_bucket(layout: halfk::Layout, square: usize) -> usize {
+    let square = fattorini::board::square::Square::try_from(((square / 4) * 8 + square % 4) as u8).expect("a square of files a to d");
+    layout.king_bucket(square).0
 }
 
 pub(crate) fn run(args: &[String]) {
-    let sample = match args {
-        [] => None,
-        [flag, count] if flag == "--sample" => match count.replace('_', "").parse::<u64>() {
-            Ok(count) if count > 0 => Some(count),
-            _ => fail(&format!("--sample takes a positive count of positions, not {count}")),
-        },
-        _ => fail("usage: smithy king-buckets [--sample <positions>], the corpus's sample the test set's size by default"),
-    };
-    match census(sample) {
+    const USAGE: &str = "usage: smithy king-buckets [--sample <positions>] [--king-buckets 8|10], the corpus's sample the test \
+                         set's size by default, each square alone (32 buckets) by default";
+    let (mut sample, mut layout) = (None, halfk::Layout::Squares);
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        let Some(value) = rest.next() else { fail(USAGE) };
+        match flag.as_str() {
+            "--sample" => match value.replace('_', "").parse::<u64>() {
+                Ok(count) if count > 0 => sample = Some(count),
+                _ => fail(&format!("--sample takes a positive count of positions, not {value}")),
+            },
+            "--king-buckets" => match value.parse::<usize>().ok().and_then(halfk::Layout::of_buckets) {
+                Some(chosen) => layout = chosen,
+                None => fail(&format!("--king-buckets takes 32, 8 or 10, not {value}")),
+            },
+            _ => fail(USAGE),
+        }
+    }
+    match census(sample, layout) {
         Ok(report) => println!("{report}"),
         Err(message) => fail(&message),
     }
@@ -93,7 +122,7 @@ fn fail(message: &str) -> ! {
 
 /// The test set counted whole, then the corpus sampled, `sample` positions or the test set's count,
 /// and the report comparing them.
-fn census(sample: Option<u64>) -> Result<String, String> {
+fn census(sample: Option<u64>, layout: halfk::Layout) -> Result<String, String> {
     let root = preprocessing_config::LC0_ROOT;
     let frozen = remote::remote_path(&format!("{root}/frozen"));
     let mut test = Census::new();
@@ -103,7 +132,41 @@ fn census(sample: Option<u64>) -> Result<String, String> {
     let files = pgn_train_stream::training_files(root)?;
     let corpus_positions: u64 = files.iter().map(|file| file.positions).sum();
     let corpus = sample_corpus(&files, sample.unwrap_or(test.positions))?;
-    Ok(report(&test, &corpus, corpus_positions))
+    let mut text = report(&test, &corpus, corpus_positions);
+    if layout != halfk::Layout::Squares {
+        text.push_str(&layout_report(&corpus, corpus_positions, layout));
+    }
+    Ok(text)
+}
+
+/// The corpus's shares by `layout`'s buckets: a board of each square's bucket and its share, then
+/// the rarest bucket and its positions a pass.
+fn layout_report(corpus: &Census, corpus_positions: u64, layout: halfk::Layout) -> String {
+    let mut text = format!("\n== {} king buckets ==\n", layout.buckets());
+    for (row, perspective) in PERSPECTIVES.iter().enumerate() {
+        let counts = layout_counts_shares(corpus, row, layout);
+        text.push_str(&format!("\nThe {perspective}'s king, the corpus:\n"));
+        text.push_str(&board("Each square's bucket, and the bucket's share of positions:", |square| {
+            let bucket = layout_bucket(layout, square);
+            format!("{}:{:.1}%", bucket + 1, 100.0 * counts[bucket])
+        }));
+        let (rarest, share) = counts.iter().copied().enumerate().min_by(|left, right| left.1.total_cmp(&right.1)).expect("a bucket at least");
+        text.push_str(&format!("The rarest: bucket {}, {:.3}%.\n", rarest + 1, 100.0 * share));
+        for (name, size) in CORPORA {
+            let size = if size == 0.0 { corpus_positions as f64 } else { size };
+            text.push_str(&format!(
+                "  its positions a pass over {name} ({}): about {}\n",
+                progress::grouped(size as u64),
+                progress::grouped((share * size).round() as u64)
+            ));
+        }
+    }
+    text
+}
+
+/// Row `row`'s share of positions in each of `layout`'s buckets.
+fn layout_counts_shares(census: &Census, row: usize, layout: halfk::Layout) -> Vec<f64> {
+    census.layout_counts(row, layout).iter().map(|&count| count as f64 / census.positions.max(1) as f64).collect()
 }
 
 /// The segments to read for `wanted` positions out of `files`, by index, evenly spread: about
@@ -250,6 +313,20 @@ mod tests {
         assert_eq!(census.counts[1][15], 1, "the opponent, white, on d4");
         assert_eq!(census.positions, 2);
         assert_eq!((square_name(0), square_name(13), square_name(31)), ("a1".to_string(), "b4".to_string(), "d8".to_string()));
+    }
+
+    #[test]
+    fn a_layouts_buckets_sum_their_squares() {
+        let mut census = Census::new();
+        // White to move on g1 (b1) and on e1 (d1), Black on b8 (b1): the 8 merge b1 and a1 into
+        // bucket 0, d1 and c1 into 1; the 10 keep each.
+        census.add(&position("1k6/8/8/8/8/8/8/6K1 w - - 0 1"));
+        census.add(&position("1k6/8/8/8/8/8/8/4K3 w - - 0 1"));
+        assert_eq!(census.layout_counts(0, halfk::Layout::Eight), vec![1, 1, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(census.layout_counts(1, halfk::Layout::Eight), vec![2, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(census.layout_counts(0, halfk::Layout::Ten), vec![0, 1, 0, 1, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(census.layout_counts(0, halfk::Layout::Squares), census.counts[0].to_vec());
+        assert_eq!(layout_bucket(halfk::Layout::Eight, 31), 7, "d8 in the far center");
     }
 
     #[test]

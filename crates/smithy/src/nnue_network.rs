@@ -64,9 +64,9 @@ pub enum Network {
     /// as the piece-square ones, added before the activation, so one neuron can see a threat and
     /// the pieces on its squares together.
     PsqThreats(NetworkPsq),
-    /// psq_threats_screlu's shape over `halfk::TRAINING_ROWS` rows: halfk's, then the factor's
+    /// psq_threats_screlu's shape over its layout's `training_rows`: halfk's, then the factor's
     /// (`with_options` sets their starting weights).
-    HalfKav2Hm(NetworkPsq),
+    HalfKav2Hm(NetworkPsq, halfk::Layout),
 }
 
 impl Network {
@@ -109,7 +109,7 @@ impl Network {
     ) -> Network {
         let halfk = feature_set.halfk();
         assert!(
-            (feature_set == FeatureSet::HalfKav2HmState) == (halfk && pairwise),
+            matches!(feature_set, FeatureSet::HalfKav2HmState(_)) == (halfk && pairwise),
             "halfk's castling and en passant rows are halfk_threats_pairwise_hidden's, and it has them: the engine \
              reads them from a halfk pairwise network (tag 22) alone"
         );
@@ -156,11 +156,11 @@ impl Network {
             FeatureSet::PsqThreats => Network::PsqThreats(NetworkPsq::with_rows(
                 vs, psq_threats::ROWS, pairwise, screlu, head, embedding_dim, value_head_hidden_dims,
             )),
-            FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
-                let rows = if feature_set == FeatureSet::HalfKav2Hm { halfk::TRAINING_ROWS } else { halfk::TRAINING_ROWS_WITH_STATE };
+            FeatureSet::HalfKav2Hm(layout) | FeatureSet::HalfKav2HmState(layout) => {
+                let rows = feature_set.training_rows();
                 let network = NetworkPsq::with_rows(vs, rows, pairwise, screlu, head, embedding_dim, value_head_hidden_dims);
-                network.start_factorised(rows);
-                Network::HalfKav2Hm(network)
+                network.start_factorised(layout, rows);
+                Network::HalfKav2Hm(network, layout)
             }
         }
     }
@@ -172,8 +172,8 @@ impl Network {
         match self {
             Network::Psq(_) => FeatureSet::Psq,
             Network::PsqThreats(_) => FeatureSet::PsqThreats,
-            Network::HalfKav2Hm(network) if network.pairwise => FeatureSet::HalfKav2HmState,
-            Network::HalfKav2Hm(_) => FeatureSet::HalfKav2Hm,
+            Network::HalfKav2Hm(network, layout) if network.pairwise => FeatureSet::HalfKav2HmState(*layout),
+            Network::HalfKav2Hm(_, layout) => FeatureSet::HalfKav2Hm(*layout),
         }
     }
 
@@ -236,7 +236,7 @@ impl Network {
         match (self, batch) {
             (Network::Psq(network), DenseBatch::Psq(batch))
             | (Network::PsqThreats(network), DenseBatch::PsqThreats(batch))
-            | (Network::HalfKav2Hm(network), DenseBatch::HalfKav2Hm(batch) | DenseBatch::HalfKav2HmState(batch)) => {
+            | (Network::HalfKav2Hm(network, _), DenseBatch::HalfKav2Hm(batch, _) | DenseBatch::HalfKav2HmState(batch, _)) => {
                 let (own_dense, opponent_dense) = batch.dense();
                 network.pawns(&own_dense, &opponent_dense, batch.buckets())
             }
@@ -304,7 +304,7 @@ impl NetworkPsq {
         NetworkPsq { transform, head, pairwise, screlu }
     }
 
-    /// A halfk network's starting weights, factorised: its 22,528 piece rows at zero, so that every
+    /// A halfk network's starting weights, factorised: its piece rows (`layout`'s) at zero, so that every
     /// bucket starts as the factor and learns only how it differs from it, and its threat rows, factor
     /// rows and bias drawn as a fresh psq_threats network's would be. `nn::linear` draws every row
     /// within a bound proportional to `1 / sqrt(rows)`, here over the training width; rescaled to
@@ -312,12 +312,12 @@ impl NetworkPsq {
     /// Stockfish's choice: a rare king bucket keeps the factor's weights until its own data moves it.
     /// The castling and en passant rows of a network with them (`rows` its training width) are drawn
     /// as the threat rows are.
-    fn start_factorised(&self, rows: usize) {
+    fn start_factorised(&self, layout: halfk::Layout, rows: usize) {
         let scale = (rows as f64 / psq_threats::ROWS as f64).sqrt();
         tch::no_grad(|| {
             let mut weight = self.transform.ws.shallow_clone();
             let _ = weight.g_mul_scalar_(scale);
-            let _ = weight.narrow(1, 0, halfk::HALFK_ROWS as i64).zero_();
+            let _ = weight.narrow(1, 0, layout.halfk_rows() as i64).zero_();
             if let Some(bias) = &self.transform.bs {
                 let _ = bias.shallow_clone().g_mul_scalar_(scale);
             }
@@ -381,26 +381,30 @@ mod tests {
                 let label = Tensor::zeros([batch_size, 1], (tch::Kind::Float, tch::Device::Cpu));
                 DenseBatch::PsqThreats(DenseBatchPsq::from_dense(&zeros, &zeros, label))
             }
-            FeatureSet::HalfKav2Hm => {
-                let zeros = Tensor::zeros([batch_size, halfk::TRAINING_ROWS as i64], (tch::Kind::Float, tch::Device::Cpu));
+            FeatureSet::HalfKav2Hm(layout) => {
+                let zeros = Tensor::zeros([batch_size, layout.training_rows() as i64], (tch::Kind::Float, tch::Device::Cpu));
                 let label = Tensor::zeros([batch_size, 1], (tch::Kind::Float, tch::Device::Cpu));
-                DenseBatch::HalfKav2Hm(DenseBatchPsq::from_dense(&zeros, &zeros, label))
+                DenseBatch::HalfKav2Hm(DenseBatchPsq::from_dense(&zeros, &zeros, label), layout)
             }
-            FeatureSet::HalfKav2HmState => {
-                let zeros = Tensor::zeros([batch_size, halfk::TRAINING_ROWS_WITH_STATE as i64], (tch::Kind::Float, tch::Device::Cpu));
+            FeatureSet::HalfKav2HmState(layout) => {
+                let zeros = Tensor::zeros([batch_size, layout.training_rows_with_state() as i64], (tch::Kind::Float, tch::Device::Cpu));
                 let label = Tensor::zeros([batch_size, 1], (tch::Kind::Float, tch::Device::Cpu));
-                DenseBatch::HalfKav2HmState(DenseBatchPsq::from_dense(&zeros, &zeros, label))
+                DenseBatch::HalfKav2HmState(DenseBatchPsq::from_dense(&zeros, &zeros, label), layout)
             }
         }
     }
 
     #[test]
     fn forward_produces_the_expected_shape_for_every_feature_set() {
-        for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats, FeatureSet::HalfKav2Hm, FeatureSet::HalfKav2HmState] {
+        let mut feature_sets = vec![FeatureSet::Psq, FeatureSet::PsqThreats];
+        for layout in halfk::Layout::ALL {
+            feature_sets.extend([FeatureSet::HalfKav2Hm(layout), FeatureSet::HalfKav2HmState(layout)]);
+        }
+        for feature_set in feature_sets {
             let vs = nn::VarStore::new(tch::Device::Cpu);
-            let network = if feature_set == FeatureSet::HalfKav2Hm {
+            let network = if matches!(feature_set, FeatureSet::HalfKav2Hm(_)) {
                 Network::with_options(&vs.root(), feature_set, false, true, HeadShape::Plain, 8, &[])
-            } else if feature_set == FeatureSet::HalfKav2HmState {
+            } else if matches!(feature_set, FeatureSet::HalfKav2HmState(_)) {
                 Network::with_options(&vs.root(), feature_set, true, false, HeadShape::Plain, 8, &[8, 4])
             } else {
                 Network::new(&vs.root(), feature_set, 8, &[4])
@@ -421,12 +425,12 @@ mod tests {
             let width = match feature_set {
                 FeatureSet::Psq => psq::ROWS,
                 FeatureSet::PsqThreats => psq_threats::ROWS,
-                FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
+                FeatureSet::HalfKav2Hm(_) | FeatureSet::HalfKav2HmState(_) => {
                     unreachable!("halfk has its own forward test, `forward_produces_the_expected_shape_for_every_feature_set`")
                 }
             };
             let batch = match feature_set {
-                FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => unreachable!(),
+                FeatureSet::HalfKav2Hm(_) | FeatureSet::HalfKav2HmState(_) => unreachable!(),
                 FeatureSet::Psq => DenseBatch::Psq(DenseBatchPsq::from_dense(
                     &dense_row(&[0, 53, width - 1], width),
                     &Tensor::zeros([1, width as i64], (tch::Kind::Float, tch::Device::Cpu)),
@@ -577,40 +581,42 @@ mod tests {
 
     #[test]
     fn a_halfk_network_starts_factorised_as_a_fresh_psq_threats_one() {
-        let vs = nn::VarStore::new(tch::Device::Cpu);
-        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, false, true, HeadShape::Plain, 64, &[]);
-        let weight = &vs.variables()["transform.weight"];
-        assert_eq!(weight.size(), [64, halfk::TRAINING_ROWS as i64]);
-        let pieces = weight.narrow(1, 0, halfk::HALFK_ROWS as i64);
-        assert_eq!(pieces.abs().max().double_value(&[]), 0.0, "every bucket starts as the factor");
-        // The rest within a fresh psq_threats transform's bound, and filling it, not
-        // `1 / sqrt(TRAINING_ROWS)`'s narrower one.
-        let rest = weight.narrow(1, halfk::HALFK_ROWS as i64, (halfk::TRAINING_ROWS - halfk::HALFK_ROWS) as i64);
-        let reference = nn::VarStore::new(tch::Device::Cpu);
-        let _ = Network::with_options(&reference.root(), FeatureSet::PsqThreats, false, true, HeadShape::Plain, 64, &[]);
-        let bound = reference.variables()["transform.weight"].abs().max().double_value(&[]);
-        let largest = rest.abs().max().double_value(&[]);
-        assert!(largest <= bound * 1.001 && largest > bound * 0.9, "{largest} against psq_threats' {bound}");
+        for layout in halfk::Layout::ALL {
+            let vs = nn::VarStore::new(tch::Device::Cpu);
+            let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm(layout), false, true, HeadShape::Plain, 64, &[]);
+            let weight = &vs.variables()["transform.weight"];
+            assert_eq!(weight.size(), [64, layout.training_rows() as i64]);
+            let pieces = weight.narrow(1, 0, layout.halfk_rows() as i64);
+            assert_eq!(pieces.abs().max().double_value(&[]), 0.0, "{layout:?}: every bucket starts as the factor");
+            // The rest within a fresh psq_threats transform's bound, and filling it, not
+            // `1 / sqrt(training_rows)`'s narrower one.
+            let rest = weight.narrow(1, layout.halfk_rows() as i64, (layout.training_rows() - layout.halfk_rows()) as i64);
+            let reference = nn::VarStore::new(tch::Device::Cpu);
+            let _ = Network::with_options(&reference.root(), FeatureSet::PsqThreats, false, true, HeadShape::Plain, 64, &[]);
+            let bound = reference.variables()["transform.weight"].abs().max().double_value(&[]);
+            let largest = rest.abs().max().double_value(&[]);
+            assert!(largest <= bound * 1.001 && largest > bound * 0.9, "{layout:?}: {largest} against psq_threats' {bound}");
+        }
     }
 
     #[test]
     #[should_panic(expected = "a halfk network is halfk_threats_screlu")]
     fn a_halfk_network_of_another_shape_is_refused() {
         let vs = nn::VarStore::new(tch::Device::Cpu);
-        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, false, false, HeadShape::Plain, 8, &[]);
+        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm(halfk::Layout::Squares), false, false, HeadShape::Plain, 8, &[]);
     }
 
     #[test]
     #[should_panic(expected = "a halfk network is halfk_threats_screlu")]
     fn a_halfk_network_with_one_hidden_layer_is_refused() {
         let vs = nn::VarStore::new(tch::Device::Cpu);
-        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, false, true, HeadShape::Plain, 8, &[4]);
+        let _ = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm(halfk::Layout::Squares), false, true, HeadShape::Plain, 8, &[4]);
     }
 
     #[test]
     fn a_halfk_networks_hidden_layers_are_not_bounded() {
         let vs = nn::VarStore::new(tch::Device::Cpu);
-        let network = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm, false, true, HeadShape::Plain, 8, &[8, 4]);
+        let network = Network::with_options(&vs.root(), FeatureSet::HalfKav2Hm(halfk::Layout::Squares), false, true, HeadShape::Plain, 8, &[8, 4]);
         assert!(vs.variables().contains_key(FIRST_HIDDEN_WEIGHT));
         assert_eq!(network.weight_bounds(), TRANSFORM_BOUNDS.to_vec(), "the engine quantizes each hidden row on its own scale");
     }
