@@ -637,7 +637,117 @@ pub mod halfk {
         pub opponent: Vec<u16>,
     }
 
-    /// The king's buckets: 4 files (after the mirror) x 8 ranks.
+    /// Which king squares share a bucket, each square of the mirrored half-board (files a to d, the
+    /// king on e to h mirrored onto them) mapped to its bucket. `Squares` is one bucket a square, 32,
+    /// Stockfish's; `Eight` and `Ten` merge the squares a king rarely stands on, so that each bucket's
+    /// rows see more positions (on Lc0's corpus, 2026-11-18, the rarest of the 32, a8, had about 210
+    /// times fewer than b1). A network's layout is its tag's (`nnue`), every count of its transform
+    /// following it.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub enum Layout {
+        Squares,
+        /// Ranks 1 and 2 split into the wing (a, b) and the center (c, d); ranks 3 and 4 likewise,
+        /// together; ranks 5 to 8 likewise, together.
+        Eight,
+        /// `Eight` with rank 1 split into its four squares: the king in the corner, castled short,
+        /// castled long, not castled yet.
+        Ten,
+    }
+
+    /// The tables, by `rank * 4 + file` of the mirrored square.
+    const EIGHT: [u8; 32] = [
+        0, 0, 1, 1, //
+        2, 2, 3, 3, //
+        4, 4, 5, 5, //
+        4, 4, 5, 5, //
+        6, 6, 7, 7, //
+        6, 6, 7, 7, //
+        6, 6, 7, 7, //
+        6, 6, 7, 7, //
+    ];
+    const TEN: [u8; 32] = [
+        0, 1, 2, 3, //
+        4, 4, 5, 5, //
+        6, 6, 7, 7, //
+        6, 6, 7, 7, //
+        8, 8, 9, 9, //
+        8, 8, 9, 9, //
+        8, 8, 9, 9, //
+        8, 8, 9, 9, //
+    ];
+
+    impl Layout {
+        pub const ALL: [Layout; 3] = [Layout::Squares, Layout::Eight, Layout::Ten];
+
+        /// The layout of `buckets` buckets, the config's `king_buckets`.
+        pub fn of_buckets(buckets: usize) -> Option<Layout> {
+            Layout::ALL.into_iter().find(|layout| layout.buckets() == buckets)
+        }
+
+        pub fn buckets(self) -> usize {
+            match self {
+                Layout::Squares => 32,
+                Layout::Eight => 8,
+                Layout::Ten => 10,
+            }
+        }
+
+        /// The bucket of a king already oriented for its perspective, and whether that perspective
+        /// is mirrored left-right (the king on files e to h).
+        pub fn king_bucket(self, king: Square) -> (usize, bool) {
+            let (file, rank) = (king.file() as usize, king.rank() as usize);
+            let mirrored = file >= 4;
+            let file = if mirrored { 7 - file } else { file };
+            let square = rank * 4 + file;
+            let bucket = match self {
+                Layout::Squares => square,
+                Layout::Eight => EIGHT[square] as usize,
+                Layout::Ten => TEN[square] as usize,
+            };
+            (bucket, mirrored)
+        }
+
+        /// The piece rows, `buckets * 704`.
+        pub fn halfk_rows(self) -> usize {
+            self.buckets() * FACTOR_ROWS
+        }
+
+        /// The first threat row, right after the piece rows.
+        pub fn threat_row(self) -> usize {
+            self.halfk_rows()
+        }
+
+        /// The engine's transform rows a perspective.
+        pub fn rows(self) -> usize {
+            self.threat_row() + THREAT_ROWS
+        }
+
+        /// The trainer's transform: the engine's rows, then the factor's.
+        pub fn training_rows(self) -> usize {
+            self.rows() + FACTOR_ROWS
+        }
+
+        /// The first of the four castling rows in the engine's layout.
+        pub fn castling_row(self) -> usize {
+            self.rows()
+        }
+
+        /// The engine's transform with the state rows.
+        pub fn rows_with_state(self) -> usize {
+            self.rows() + STATE_ROWS
+        }
+
+        /// The trainer's transform with the state rows, after the factor's.
+        pub fn training_rows_with_state(self) -> usize {
+            self.training_rows() + STATE_ROWS
+        }
+    }
+
+    /// The threat rows, shared by every bucket.
+    pub const THREAT_ROWS: usize = 64 * 64;
+
+    /// `Layout::Squares`' buckets, and the counts below its: what the smithy reads until it takes
+    /// a network's layout.
     pub const BUCKETS: usize = 32;
 
     /// Own pawn to queen, the opponent's pawn to queen, and the kings' shared plane.
@@ -700,13 +810,10 @@ pub mod halfk {
         base + 4 + (file as usize ^ if mirrored { 7 } else { 0 })
     }
 
-    /// The bucket of a king already oriented for its perspective, and whether that perspective is
-    /// mirrored left-right (the king on files e to h).
+    /// `Layout::Squares`' bucket of a king already oriented for its perspective, and whether that
+    /// perspective is mirrored (`Layout::king_bucket`).
     pub fn king_bucket(king: Square) -> (usize, bool) {
-        let (file, rank) = (king.file() as usize, king.rank() as usize);
-        let mirrored = file >= 4;
-        let file = if mirrored { 7 - file } else { file };
-        (rank * 4 + file, mirrored)
+        Layout::Squares.king_bucket(king)
     }
 
     /// The row of one piece seen from one perspective: its king's `bucket` and `mirrored`
@@ -725,23 +832,23 @@ pub mod halfk {
 
     /// The factor row of a piece row: the same identity and square, whatever the bucket.
     pub fn factor_row(row: usize) -> usize {
-        debug_assert!(row < HALFK_ROWS, "row {row} is not a piece row");
+        debug_assert!(row < Layout::Squares.halfk_rows(), "row {row} is not a piece row of any layout");
         row % FACTOR_ROWS
     }
 
     /// Every active row of `perspective`'s view: its piece rows (`piece_rows`), then the threat rows
     /// of `board`, the same position rebuilt.
-    pub fn active_rows(canonical: &CanonicalPosition, board: &Board, perspective: Color) -> Vec<u16> {
-        let (_, mirrored) = king_bucket(oriented_square(king_square_of(canonical, perspective), perspective));
-        let mut rows = piece_rows(canonical, perspective);
-        psq_threats::push_threat_rows_from(board, perspective, THREAT_ROW, mirrored, &mut rows);
+    pub fn active_rows(layout: Layout, canonical: &CanonicalPosition, board: &Board, perspective: Color) -> Vec<u16> {
+        let (_, mirrored) = layout.king_bucket(oriented_square(king_square_of(canonical, perspective), perspective));
+        let mut rows = piece_rows(layout, canonical, perspective);
+        psq_threats::push_threat_rows_from(board, perspective, layout.threat_row(), mirrored, &mut rows);
         rows
     }
 
     /// `perspective`'s piece rows: one per piece, both kings included, in its own king's bucket.
     /// What the engine keeps incrementally; the threats it adds at evaluation.
-    pub fn piece_rows(canonical: &CanonicalPosition, perspective: Color) -> Vec<u16> {
-        let (bucket, mirrored) = king_bucket(oriented_square(king_square_of(canonical, perspective), perspective));
+    pub fn piece_rows(layout: Layout, canonical: &CanonicalPosition, perspective: Color) -> Vec<u16> {
+        let (bucket, mirrored) = layout.king_bucket(oriented_square(king_square_of(canonical, perspective), perspective));
         let mut rows = Vec::with_capacity(canonical.pieces.len() + 2 + 32);
         for &packed in &canonical.pieces {
             let (square, piece_type, color) = unpack_canonical_piece(packed);
@@ -757,22 +864,22 @@ pub mod halfk {
 
     /// Both perspectives' rows. The attacks need a `Board`, so the record is rebuilt into one
     /// (`board_from_canonical`), once for both.
-    pub fn expand(canonical: &CanonicalPosition) -> PositionFeatures {
+    pub fn expand(layout: Layout, canonical: &CanonicalPosition) -> PositionFeatures {
         let board = board_from_canonical(canonical);
         let side_to_move = canonical.side_to_move;
         PositionFeatures {
-            own: active_rows(canonical, &board, side_to_move),
-            opponent: active_rows(canonical, &board, side_to_move.opposite()),
+            own: active_rows(layout, canonical, &board, side_to_move),
+            opponent: active_rows(layout, canonical, &board, side_to_move.opposite()),
         }
     }
 
     /// `expand` for a network with the state rows: each perspective's rows, then its castling and
-    /// en passant rows from `base` (`TRAINING_ROWS` in the trainer, `CASTLING_ROW` in the engine).
-    pub fn expand_with_state(canonical: &CanonicalPosition, base: usize) -> PositionFeatures {
-        let mut features = expand(canonical);
+    /// en passant rows from `base` (`training_rows` in the trainer, `castling_row` in the engine).
+    pub fn expand_with_state(layout: Layout, canonical: &CanonicalPosition, base: usize) -> PositionFeatures {
+        let mut features = expand(layout, canonical);
         let side_to_move = canonical.side_to_move;
         for (perspective, rows) in [(side_to_move, &mut features.own), (side_to_move.opposite(), &mut features.opponent)] {
-            let (_, mirrored) = king_bucket(oriented_square(king_square_of(canonical, perspective), perspective));
+            let (_, mirrored) = layout.king_bucket(oriented_square(king_square_of(canonical, perspective), perspective));
             push_state_rows(canonical.castling_rights, canonical.en_passant_file, perspective, mirrored, base, rows);
         }
         features
@@ -792,12 +899,12 @@ pub mod halfk {
 
         fn features(fen: &str) -> PositionFeatures {
             let (board, _) = Board::from_fen(fen).unwrap();
-            expand(&extract_canonical(&board))
+            expand(Layout::Squares, &extract_canonical(&board))
         }
 
         fn state(fen: &str) -> PositionFeatures {
             let (board, _) = Board::from_fen(fen).unwrap();
-            expand_with_state(&extract_canonical(&board), CASTLING_ROW)
+            expand_with_state(Layout::Squares, &extract_canonical(&board), CASTLING_ROW)
         }
 
         fn state_of(rows: &[u16]) -> Vec<u16> {
@@ -846,6 +953,76 @@ pub mod halfk {
             assert_eq!(HALFK_ROWS, 22_528);
             assert_eq!(ROWS, 26_624);
             assert_eq!(FACTOR_ROWS, 704);
+        }
+
+        #[test]
+        fn the_squares_layout_is_todays_counts() {
+            let layout = Layout::Squares;
+            assert_eq!(
+                [layout.buckets(), layout.halfk_rows(), layout.threat_row(), layout.rows(), layout.training_rows()],
+                [BUCKETS, HALFK_ROWS, THREAT_ROW, ROWS, TRAINING_ROWS]
+            );
+            assert_eq!(
+                [layout.castling_row(), layout.rows_with_state(), layout.training_rows_with_state()],
+                [CASTLING_ROW, ROWS_WITH_STATE, TRAINING_ROWS_WITH_STATE]
+            );
+            for index in 0u8..64 {
+                let square = Square::try_from(index).unwrap();
+                let (file, rank) = (square.file() as usize, square.rank() as usize);
+                let mirrored = file >= 4;
+                let file = if mirrored { 7 - file } else { file };
+                assert_eq!(layout.king_bucket(square), (rank * 4 + file, mirrored), "{square:?}");
+            }
+        }
+
+        #[test]
+        fn the_coarse_layouts_counts() {
+            assert_eq!(Layout::Eight.rows(), 8 * 704 + 4096);
+            assert_eq!(Layout::Ten.rows(), 10 * 704 + 4096);
+            assert_eq!(Layout::Ten.training_rows_with_state(), 10 * 704 + 4096 + 704 + 12);
+            for layout in Layout::ALL {
+                assert_eq!(Layout::of_buckets(layout.buckets()), Some(layout));
+            }
+            assert_eq!(Layout::of_buckets(7), None);
+        }
+
+        /// The design's maps, square by square: rank 1's a, b, c, d first.
+        #[test]
+        fn the_coarse_layouts_are_the_designs_maps() {
+            let eight = [[0, 0, 1, 1], [2, 2, 3, 3], [4, 4, 5, 5], [4, 4, 5, 5], [6, 6, 7, 7], [6, 6, 7, 7], [6, 6, 7, 7], [6, 6, 7, 7]];
+            let ten = [[0, 1, 2, 3], [4, 4, 5, 5], [6, 6, 7, 7], [6, 6, 7, 7], [8, 8, 9, 9], [8, 8, 9, 9], [8, 8, 9, 9], [8, 8, 9, 9]];
+            for (layout, map) in [(Layout::Eight, eight), (Layout::Ten, ten)] {
+                for (rank, files) in map.iter().enumerate() {
+                    for (file, &bucket) in files.iter().enumerate() {
+                        let square = Square::try_from((rank * 8 + file) as u8).unwrap();
+                        let mirror = Square::try_from((rank * 8 + 7 - file) as u8).unwrap();
+                        assert_eq!(layout.king_bucket(square), (bucket, false), "{layout:?} {square:?}");
+                        assert_eq!(layout.king_bucket(mirror), (bucket, true), "{layout:?} {mirror:?}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn every_layouts_rows_are_in_range_and_never_repeat() {
+            let fens = [
+                STARTING_POSITION_FEN,
+                "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
+                "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+                "8/8/8/4k3/8/4K3/8/8 w - - 0 1",
+            ];
+            for layout in Layout::ALL {
+                for fen in fens {
+                    let (board, _) = Board::from_fen(fen).unwrap();
+                    let features = expand_with_state(layout, &extract_canonical(&board), layout.castling_row());
+                    for rows in [features.own, features.opponent] {
+                        assert!(rows.iter().all(|&row| (row as usize) < layout.rows_with_state()), "{layout:?} {fen}: out of range");
+                        let mut unique = sorted(rows.clone());
+                        unique.dedup();
+                        assert_eq!(unique.len(), rows.len(), "{layout:?} {fen}: a row repeats");
+                    }
+                }
+            }
         }
 
         #[test]
@@ -901,8 +1078,8 @@ pub mod halfk {
             // (bucket 3, mirrored).
             let (board, _) = Board::from_fen("4k3/8/8/8/8/2N5/8/K7 w - - 0 1").unwrap();
             let canonical = extract_canonical(&board);
-            let white = active_rows(&canonical, &board, Color::White);
-            let black = active_rows(&canonical, &board, Color::Black);
+            let white = active_rows(Layout::Squares, &canonical, &board, Color::White);
+            let black = active_rows(Layout::Squares, &canonical, &board, Color::Black);
 
             // White's own knight (identity 1) on c3 (18), bucket 0.
             assert!(white.contains(&(64 + 18)));

@@ -116,6 +116,7 @@ pub fn halfk_network_from(
         stack: None,
         material: None,
         halfk: true,
+        king_layout: halfk::Layout::Squares,
     }
 }
 
@@ -139,6 +140,7 @@ fn network_from(
         stack: None,
         material: None,
         halfk: false,
+        king_layout: halfk::Layout::Squares,
     }
 }
 
@@ -180,6 +182,7 @@ pub fn stack_network_from(
         stack: Some(StackLayers { l1, l2, output }),
         material: None,
         halfk: false,
+        king_layout: halfk::Layout::Squares,
     }
 }
 
@@ -243,6 +246,7 @@ pub fn kings_network_from(vs: &nn::VarStore, embedding_dim: i64, hidden_dims: &[
         stack: Some(StackLayers { l1, l2, output }),
         material: None,
         halfk: false,
+        king_layout: halfk::Layout::Squares,
     }
 }
 
@@ -289,6 +293,7 @@ pub fn hidden_beside_network_from(
         stack: None,
         material: None,
         halfk: false,
+        king_layout: halfk::Layout::Squares,
     }
 }
 
@@ -342,6 +347,7 @@ pub fn material_network_from(
         stack: None,
         material: Some(material),
         halfk: false,
+        king_layout: halfk::Layout::Squares,
     }
 }
 
@@ -386,6 +392,7 @@ pub fn taper_network_from(vs: &nn::VarStore, embedding_dim: i64, step: u64, lear
         stack: None,
         material: Some(material),
         halfk: false,
+        king_layout: halfk::Layout::Squares,
     }
 }
 

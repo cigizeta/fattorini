@@ -258,7 +258,7 @@ fn psq_threats_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>
 /// active input is still exactly 1.
 fn halfk_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
     active_indices(records, halfk::TRAINING_ROWS, |canonical| {
-        let features = halfk::expand(canonical);
+        let features = halfk::expand(halfk::Layout::Squares, canonical);
         (with_factor_rows(features.own), with_factor_rows(features.opponent))
     })
 }
@@ -268,7 +268,7 @@ fn halfk_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<
 fn halfk_state_indices(records: &[CacheRecord]) -> (Vec<i32>, Vec<i32>, Vec<f32>, Vec<i32>) {
     active_indices(records, halfk::TRAINING_ROWS_WITH_STATE, |canonical| {
         // The state rows are past `HALFK_ROWS`, so `with_factor_rows` gives them no factor row.
-        let features = halfk::expand_with_state(canonical, halfk::TRAINING_ROWS);
+        let features = halfk::expand_with_state(halfk::Layout::Squares, canonical, halfk::TRAINING_ROWS);
         (with_factor_rows(features.own), with_factor_rows(features.opponent))
     })
 }
@@ -598,9 +598,9 @@ mod tests {
                         FeatureSet::HalfKav2Hm | FeatureSet::HalfKav2HmState => {
                             // With the state rows, they come after the factor rows, none of their own.
                             let features = if feature_set == FeatureSet::HalfKav2Hm {
-                                halfk::expand(&record.canonical)
+                                halfk::expand(halfk::Layout::Squares, &record.canonical)
                             } else {
-                                halfk::expand_with_state(&record.canonical, halfk::TRAINING_ROWS)
+                                halfk::expand_with_state(halfk::Layout::Squares, &record.canonical, halfk::TRAINING_ROWS)
                             };
                             let with_factors = |rows: Vec<u16>| {
                                 let pieces: Vec<u16> = rows.iter().copied().filter(|&row| (row as usize) < halfk::HALFK_ROWS).collect();

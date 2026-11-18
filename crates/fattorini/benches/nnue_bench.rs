@@ -76,6 +76,9 @@
 //!
 //! `cargo bench --bench nnue_bench -- --halfk --width 256 --depth 9`
 //!
+//! `--king-buckets 8` (or 10) with `--halfk` takes that king layout (`halfk::Layout`) in place of
+//! the 32: what fewer refreshes save.
+//!
 //! `--hidden` with `--halfk` makes it a halfk_threats_screlu_hidden one: two hidden layers in place of
 //! the output, 16 and 32 unless `--head` says otherwise, the output reading the second alone; it also
 //! prints the share of zero squares, what skipping them in the first layer could save. The first
@@ -315,7 +318,7 @@ fn random_psq_network(embedding_dim: usize, hidden_dims: &[usize], threats: bool
 
     PsqNetwork {
         embedding_dim, transform, transform_bias, hidden, output, step: 0, learning_rate: 0.0, threats, pairwise,
-        screlu, stack: None, material: None, halfk: false,
+        screlu, stack: None, material: None, halfk: false, king_layout: halfk::Layout::Squares,
     }
 }
 
@@ -1958,10 +1961,19 @@ fn main() {
             // psq_threats_screlu's random network with halfk's rows in place of psq's, drawn apart. No
             // hidden layer, whatever `--head` says; with `--hidden`, two, `--head`'s or 16 and 32, the
             // output reading the second alone; with `--pairwise` too, over the products instead of the
-            // squares (halfk_threats_pairwise_hidden).
+            // squares (halfk_threats_pairwise_hidden). `--king-buckets 8` (or 10) takes that king
+            // layout in place of the 32 (`halfk::Layout`).
+            let layout = match arguments.iter().position(|argument| argument == "--king-buckets") {
+                Some(at) => {
+                    let buckets = arguments.get(at + 1).and_then(|value| value.parse().ok()).expect("--king-buckets takes 32, 8 or 10");
+                    halfk::Layout::of_buckets(buckets).expect("--king-buckets takes 32, 8 or 10")
+                }
+                None => halfk::Layout::Squares,
+            };
             let mut network = random_psq_network(embedding_dim, &[], true, false, true, false);
-            network.transform = Xorshift(0xD1B54A32D192ED03).weights(halfk::ROWS * embedding_dim);
+            network.transform = Xorshift(0xD1B54A32D192ED03).weights(layout.rows() * embedding_dim);
             network.halfk = true;
+            network.king_layout = layout;
             if arguments.iter().any(|argument| argument == "--hidden") {
                 let widths = if arguments.iter().any(|argument| argument == "--head") { hidden_dims.clone() } else { vec![16, 32] };
                 assert_eq!(widths.len(), 2, "--halfk --hidden takes two hidden widths, --head \"16,32\"");

@@ -1,6 +1,9 @@
 # Fewer king buckets for halfk: the implementation
 
-**Status:** plan, 2026-11-18, approved (the tags, not a `VERSION` 3: the developer); no code. The design: halfk-king-buckets.md.
+**Status:** plan, 2026-11-18, approved (the tags, not a `VERSION` 3: the developer). Steps 1 to 4
+written, the engine's commit: the smithy reads `Layout::Squares` until step 6, and the old constants
+stay as `Squares`' until then. `PsqNetwork` keeps `halfk: bool` with `king_layout` beside it (fewer
+edits than an `Option`); `QuantizedPsqNetwork::halfk` is the `Option<Layout>`. The design: halfk-king-buckets.md.
 
 ## What the code is today
 

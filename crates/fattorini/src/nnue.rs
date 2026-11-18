@@ -169,11 +169,50 @@ pub const FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN: u32 = 21;
 /// castling and en passant rows after the threats (`halfk::ROWS_WITH_STATE`), for MCTS, whose value
 /// head scores a leaf with no search beneath it; the two earlier halfk tags have none.
 pub const FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN: u32 = 22;
+/// Tags 20 to 22 with 8 king buckets (`halfk::Layout::Eight`) in place of 32, in that order: the same
+/// kinds, their transforms `8 * 704` piece rows. Tags of their own for the reason
+/// `FEATURE_SET_PSQ_PAIRWISE` gives; tags 20 to 22 stay 32 buckets.
+pub const FEATURE_SET_HALFK8_THREATS_SCRELU: u32 = 23;
+pub const FEATURE_SET_HALFK8_THREATS_SCRELU_HIDDEN: u32 = 24;
+pub const FEATURE_SET_HALFK8_THREATS_PAIRWISE_HIDDEN: u32 = 25;
+/// Tags 20 to 22 with 10 king buckets (`halfk::Layout::Ten`), as tags 23 to 25.
+pub const FEATURE_SET_HALFK10_THREATS_SCRELU: u32 = 26;
+pub const FEATURE_SET_HALFK10_THREATS_SCRELU_HIDDEN: u32 = 27;
+pub const FEATURE_SET_HALFK10_THREATS_PAIRWISE_HIDDEN: u32 = 28;
+
+/// The halfk kinds' tags of 32 buckets, in the order each layout's tags follow.
+const HALFK_TAGS: [u32; 3] =
+    [FEATURE_SET_HALFK_THREATS_SCRELU, FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN, FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN];
+
+/// A tag's kind and king layout: a halfk tag of 8 or 10 buckets as its kind's 32-bucket tag and its
+/// layout, so that everything past the header reads one tag a kind; any other tag as itself,
+/// `Squares`.
+fn split_layout(feature_set: u32) -> (u32, halfk::Layout) {
+    match feature_set {
+        FEATURE_SET_HALFK8_THREATS_SCRELU..=FEATURE_SET_HALFK8_THREATS_PAIRWISE_HIDDEN => {
+            (HALFK_TAGS[(feature_set - FEATURE_SET_HALFK8_THREATS_SCRELU) as usize], halfk::Layout::Eight)
+        }
+        FEATURE_SET_HALFK10_THREATS_SCRELU..=FEATURE_SET_HALFK10_THREATS_PAIRWISE_HIDDEN => {
+            (HALFK_TAGS[(feature_set - FEATURE_SET_HALFK10_THREATS_SCRELU) as usize], halfk::Layout::Ten)
+        }
+        _ => (feature_set, halfk::Layout::Squares),
+    }
+}
+
+/// `split_layout`'s inverse: a halfk kind's 32-bucket tag with `layout`'s.
+fn with_layout(feature_set: u32, layout: halfk::Layout) -> u32 {
+    let Some(index) = HALFK_TAGS.iter().position(|&tag| tag == feature_set) else { return feature_set };
+    match layout {
+        halfk::Layout::Squares => feature_set,
+        halfk::Layout::Eight => FEATURE_SET_HALFK8_THREATS_SCRELU + index as u32,
+        halfk::Layout::Ten => FEATURE_SET_HALFK10_THREATS_SCRELU + index as u32,
+    }
+}
 
 /// The transform's row count and the head's input width (in multiples of `embedding_dim`) for each
-/// feature set the engine can run, `None` for the others. The one place the kinds' layouts differ:
-/// the byte format itself is shared.
-fn shape_of(feature_set: u32) -> Option<(usize, usize)> {
+/// feature set the engine can run, `None` for the others, a halfk kind's rows its `layout`'s. The
+/// one place the kinds' layouts differ: the byte format itself is shared.
+fn shape_of(feature_set: u32, layout: halfk::Layout) -> Option<(usize, usize)> {
     match feature_set {
         FEATURE_SET_PSQ => Some((psq::ROWS, 2)),
         FEATURE_SET_PSQ_THREATS
@@ -189,8 +228,8 @@ fn shape_of(feature_set: u32) -> Option<(usize, usize)> {
         | FEATURE_SET_PSQ_THREATS_STACK
         | FEATURE_SET_PSQ_THREATS_PAIRWISE_MATERIAL
         | FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN => Some((psq_threats::ROWS, 1)),
-        FEATURE_SET_HALFK_THREATS_SCRELU | FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN => Some((halfk::ROWS, 2)),
-        FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN => Some((halfk::ROWS_WITH_STATE, 1)),
+        FEATURE_SET_HALFK_THREATS_SCRELU | FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN => Some((layout.rows(), 2)),
+        FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN => Some((layout.rows_with_state(), 1)),
         _ => None,
     }
 }
@@ -216,6 +255,12 @@ fn feature_set_name(feature_set: u32) -> &'static str {
         FEATURE_SET_HALFK_THREATS_SCRELU => "halfk_threats_screlu",
         FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN => "halfk_threats_screlu_hidden",
         FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN => "halfk_threats_pairwise_hidden",
+        FEATURE_SET_HALFK8_THREATS_SCRELU => "halfk_threats_screlu with 8 king buckets",
+        FEATURE_SET_HALFK8_THREATS_SCRELU_HIDDEN => "halfk_threats_screlu_hidden with 8 king buckets",
+        FEATURE_SET_HALFK8_THREATS_PAIRWISE_HIDDEN => "halfk_threats_pairwise_hidden with 8 king buckets",
+        FEATURE_SET_HALFK10_THREATS_SCRELU => "halfk_threats_screlu with 10 king buckets",
+        FEATURE_SET_HALFK10_THREATS_SCRELU_HIDDEN => "halfk_threats_screlu_hidden with 10 king buckets",
+        FEATURE_SET_HALFK10_THREATS_PAIRWISE_HIDDEN => "halfk_threats_pairwise_hidden with 10 king buckets",
         _ => "an unknown feature set",
     }
 }
@@ -505,6 +550,9 @@ pub struct PsqNetwork {
     /// the threat rows after them mirrored with the king. Screlu over threats only, no hidden layer
     /// and a plain output (`validate`).
     pub halfk: bool,
+    /// A halfk network's king buckets (`halfk::Layout`), which its tag records; `Squares` for every
+    /// other kind, which reads none.
+    pub king_layout: halfk::Layout,
 }
 
 /// The screlu head: each lane clipped and squared, own first, into `output`. Scalar: the reference,
@@ -521,9 +569,9 @@ impl PsqNetwork {
     /// The transform's row count.
     fn rows(&self) -> usize {
         if self.halfk_state() {
-            halfk::ROWS_WITH_STATE
+            self.king_layout.rows_with_state()
         } else if self.halfk {
-            halfk::ROWS
+            self.king_layout.rows()
         } else if self.threats {
             psq_threats::ROWS
         } else {
@@ -537,9 +585,14 @@ impl PsqNetwork {
         self.halfk && self.pairwise
     }
 
+    /// A halfk network's king layout, `None` for every other kind.
+    fn halfk_layout(&self) -> Option<halfk::Layout> {
+        self.halfk.then_some(self.king_layout)
+    }
+
     /// `perspective`'s active piece-square rows of `board`.
     fn piece_square_active_rows(&self, board: &Board, perspective: Color) -> Vec<u16> {
-        piece_square_active_rows(self.halfk, self.halfk_state(), board, perspective)
+        piece_square_active_rows(self.halfk_layout(), self.halfk_state(), board, perspective)
     }
 
     /// What the first head layer reads: both perspectives' accumulators, or their products.
@@ -571,7 +624,7 @@ impl PsqNetwork {
     /// into the piece-square one before the activation.
     fn add_threats(&self, accumulator: &mut [f32], board: &Board, perspective: Color) {
         let mut rows = Vec::with_capacity(32);
-        push_threat_rows(self.halfk, board, perspective, &mut rows);
+        push_threat_rows(self.halfk_layout(), board, perspective, &mut rows);
         for row in rows {
             self.add_row(accumulator, row as usize);
         }
@@ -917,11 +970,11 @@ impl PsqNetwork {
             );
         }
         let feature_set = if self.halfk && self.pairwise {
-            FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN
+            with_layout(FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN, self.king_layout)
         } else if self.halfk && !self.hidden.is_empty() {
-            FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN
+            with_layout(FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN, self.king_layout)
         } else if self.halfk {
-            FEATURE_SET_HALFK_THREATS_SCRELU
+            with_layout(FEATURE_SET_HALFK_THREATS_SCRELU, self.king_layout)
         } else if self.screlu && !self.hidden.is_empty() {
             FEATURE_SET_PSQ_THREATS_SCRELU_HIDDEN
         } else if self.screlu {
@@ -952,43 +1005,43 @@ const MAX_ACTIVE_ROWS: usize = 37;
 /// `perspective`'s active piece-square rows of `board`: psq's, or halfk's piece rows, then its
 /// castling and en passant rows if `state` (`halfk_state_rows`). Everything the incremental
 /// accumulator holds; the threats are added at evaluation.
-fn piece_square_active_rows(halfk: bool, state: bool, board: &Board, perspective: Color) -> Vec<u16> {
+fn piece_square_active_rows(halfk: Option<halfk::Layout>, state: bool, board: &Board, perspective: Color) -> Vec<u16> {
     let canonical = extract_canonical(board);
-    if !halfk {
+    let Some(layout) = halfk else {
         return psq::active_rows(&canonical, perspective);
-    }
-    let mut rows = halfk::piece_rows(&canonical, perspective);
+    };
+    let mut rows = halfk::piece_rows(layout, &canonical, perspective);
     if state {
-        rows.extend(halfk_state_rows(board, perspective));
+        rows.extend(halfk_state_rows(layout, board, perspective));
     }
     rows
 }
 
 /// `perspective`'s halfk castling and en passant rows of `board`, in the engine's layout, the file
 /// mirrored with its king (`halfk::push_state_rows`).
-fn halfk_state_rows(board: &Board, perspective: Color) -> Vec<u16> {
-    let (_, mirrored) = halfk_king(board, perspective);
+fn halfk_state_rows(layout: halfk::Layout, board: &Board, perspective: Color) -> Vec<u16> {
+    let (_, mirrored) = halfk_king(layout, board, perspective);
     let mut rows = Vec::with_capacity(5);
     let file = board.en_passant_square().map(|square| square.file() as u8);
-    halfk::push_state_rows(board.castling_rights(), file, perspective, mirrored, halfk::CASTLING_ROW, &mut rows);
+    halfk::push_state_rows(board.castling_rights(), file, perspective, mirrored, layout.castling_row(), &mut rows);
     rows
 }
 
 /// Pushes `perspective`'s threat rows of `board` onto `rows`: psq_threats', or halfk's, after its
 /// piece rows and mirrored with the perspective's king.
-fn push_threat_rows(halfk: bool, board: &Board, perspective: Color, rows: &mut Vec<u16>) {
-    if halfk {
-        let (_, mirrored) = halfk_king(board, perspective);
-        psq_threats::push_threat_rows_from(board, perspective, halfk::THREAT_ROW, mirrored, rows);
+fn push_threat_rows(halfk: Option<halfk::Layout>, board: &Board, perspective: Color, rows: &mut Vec<u16>) {
+    if let Some(layout) = halfk {
+        let (_, mirrored) = halfk_king(layout, board, perspective);
+        psq_threats::push_threat_rows_from(board, perspective, layout.threat_row(), mirrored, rows);
     } else {
         psq_threats::push_threat_rows(board, perspective, rows);
     }
 }
 
-/// `perspective`'s halfk king bucket in `board`, and whether its view is mirrored
-/// (`halfk::king_bucket`).
-fn halfk_king(board: &Board, perspective: Color) -> (usize, bool) {
-    halfk::king_bucket(oriented_square(king_square(board, perspective), perspective))
+/// `perspective`'s halfk king bucket in `board` under `layout`, and whether its view is mirrored
+/// (`halfk::Layout::king_bucket`).
+fn halfk_king(layout: halfk::Layout, board: &Board, perspective: Color) -> (usize, bool) {
+    layout.king_bucket(oriented_square(king_square(board, perspective), perspective))
 }
 
 fn king_square(board: &Board, color: Color) -> Square {
@@ -1127,8 +1180,9 @@ pub struct QuantizedPsqNetwork {
     pairwise: bool,
     screlu: bool,
     /// A halfk network (`PsqNetwork::halfk`): its piece rows halfk's, refreshed through the
-    /// thread's `RefreshCache` when a king changes bucket or mirror.
-    halfk: bool,
+    /// thread's `RefreshCache` when a king changes bucket or mirror; its king layout. `None` for
+    /// every other kind.
+    halfk: Option<halfk::Layout>,
     /// Whether its transform has halfk's castling and en passant rows (`PsqNetwork::halfk_state`).
     halfk_state: bool,
     /// Which quantization this is, for the `RefreshCache`: its entries hold this network's sums.
@@ -1302,12 +1356,13 @@ impl QuantizedPsqNetwork {
     pub fn quantize(network: &PsqNetwork) -> Result<QuantizedPsqNetwork, String> {
         let dim = network.embedding_dim;
         // Each group's rows start at `group * size`: halfk's buckets, or psq's rows as one group.
-        let (groups, size) = if network.halfk { (halfk::BUCKETS, halfk::FACTOR_ROWS) } else { (1, psq::ROWS) };
+        let layout = network.king_layout;
+        let (groups, size) = if network.halfk { (layout.buckets(), halfk::FACTOR_ROWS) } else { (1, psq::ROWS) };
         let mut worst = 0.0f32;
         for lane in 0..dim {
             for group in 0..groups {
                 // A network's castling and en passant rows are active beside any bucket's.
-                let state = if network.halfk_state() { halfk::CASTLING_ROW..halfk::ROWS_WITH_STATE } else { 0..0 };
+                let state = if network.halfk_state() { layout.castling_row()..layout.rows_with_state() } else { 0..0 };
                 let rows = (group * size..(group + 1) * size).chain(state);
                 let mut column: Vec<f32> = rows.map(|row| network.transform[row * dim + lane].abs()).collect();
                 column.sort_by(|a, b| b.total_cmp(a));
@@ -1401,7 +1456,7 @@ impl QuantizedPsqNetwork {
             threats: network.threats,
             pairwise: network.pairwise,
             screlu: network.screlu,
-            halfk: network.halfk,
+            halfk: network.halfk_layout(),
             halfk_state: network.halfk_state(),
             cache_id: CacheId::next(),
             transform: to_i16(&network.transform),
@@ -1492,12 +1547,12 @@ impl QuantizedPsqNetwork {
     }
 
     /// `perspective`'s halfk piece-square accumulator of `board`, into `accumulator`, through this
-    /// thread's `RefreshCache`: its entry for the king's square holds the sums of the pieces it last
-    /// saw there, so only the pieces that differ since are added or removed, rather than all 32.
-    /// Stockfish's "Finny tables". The entry is left at `board`'s pieces.
-    fn refresh_through_cache(&self, accumulator: &mut [i16], board: &Board, perspective: Color) {
-        let king = king_square(board, perspective);
-        let (bucket, mirrored) = halfk::king_bucket(oriented_square(king, perspective));
+    /// thread's `RefreshCache`: its entry for the king's bucket and mirror holds the sums of the
+    /// pieces it last saw there, so only the pieces that differ since are added or removed, rather
+    /// than all 32. Stockfish's "Finny tables". The entry is left at `board`'s pieces. Keyed by bucket
+    /// and mirror, not by square: every king square of a coarse bucket shares its rows, so its entry.
+    fn refresh_through_cache(&self, layout: halfk::Layout, accumulator: &mut [i16], board: &Board, perspective: Color) {
+        let (bucket, mirrored) = halfk_king(layout, board, perspective);
         REFRESH_CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
             if cache.network != self.cache_id.0 {
@@ -1510,7 +1565,8 @@ impl QuantizedPsqNetwork {
                 });
             }
             let RefreshCache { entries, added, removed, .. } = &mut *cache;
-            let entry = &mut entries[perspective as usize * 64 + king as usize];
+            // At most 32 buckets a mirror, `Squares`' count.
+            let entry = &mut entries[perspective as usize * 64 + mirrored as usize * 32 + bucket];
             added.clear();
             removed.clear();
             for color in [Color::White, Color::Black] {
@@ -1529,7 +1585,7 @@ impl QuantizedPsqNetwork {
                 }
             }
             if self.halfk_state {
-                let state = halfk_state_rows(board, perspective);
+                let state = halfk_state_rows(layout, board, perspective);
                 removed.extend(entry.state.iter().filter(|row| !state.contains(row)).map(|&row| row as usize));
                 added.extend(state.iter().filter(|row| !entry.state.contains(row)).map(|&row| row as usize));
                 entry.state = state;
@@ -1549,15 +1605,16 @@ impl QuantizedPsqNetwork {
     /// read-modify-write of the whole accumulator per changed row.
     ///
     /// For a halfk network, a perspective whose king changed bucket or mirror has every piece row
-    /// changed, so it is refreshed instead (`refresh_through_cache`); the other updates as psq's.
+    /// changed, so it is refreshed instead (`refresh_through_cache`); the other updates as psq's,
+    /// a king move inside its bucket included (its own row out and in).
     pub fn update(&self, parent_accumulators: &[Vec<i16>; 2], child_accumulators: &mut [Vec<i16>; 2], parent: &Board, child: &Board) {
         let mut refreshed = [false; 2];
-        let changes = if self.halfk {
-            let kings = [Color::White, Color::Black].map(|perspective| halfk_king(child, perspective));
+        let changes = if let Some(layout) = self.halfk {
+            let kings = [Color::White, Color::Black].map(|perspective| halfk_king(layout, child, perspective));
             for perspective in [Color::White, Color::Black] {
                 let index = perspective as usize;
-                if halfk_king(parent, perspective) != kings[index] {
-                    self.refresh_through_cache(&mut child_accumulators[index], child, perspective);
+                if halfk_king(layout, parent, perspective) != kings[index] {
+                    self.refresh_through_cache(layout, &mut child_accumulators[index], child, perspective);
                     refreshed[index] = true;
                 }
             }
@@ -1567,7 +1624,7 @@ impl QuantizedPsqNetwork {
             let state_changed = parent.castling_rights() != child.castling_rights() || parent.en_passant_square() != child.en_passant_square();
             if self.halfk_state && state_changed {
                 for perspective in [Color::White, Color::Black] {
-                    let (before, after) = (halfk_state_rows(parent, perspective), halfk_state_rows(child, perspective));
+                    let (before, after) = (halfk_state_rows(layout, parent, perspective), halfk_state_rows(layout, child, perspective));
                     for &row in before.iter().filter(|row| !after.contains(row)) {
                         changes.push(perspective, row as usize, false);
                     }
@@ -2403,9 +2460,11 @@ impl Network {
         if version != VERSION && version != ATAN_VERSION {
             return Err(format!("{path}: format version {version}, but this build reads versions {ATAN_VERSION} and {VERSION}"));
         }
-        let feature_set = reader.u32()?;
-        let Some((rows, head_input_multiple)) = shape_of(feature_set) else {
-            let name = feature_set_name(feature_set);
+        let tag = reader.u32()?;
+        // From here on one tag a kind, the king layout apart.
+        let (feature_set, king_layout) = split_layout(tag);
+        let Some((rows, head_input_multiple)) = shape_of(feature_set, king_layout) else {
+            let name = feature_set_name(tag);
             return Err(format!("{path}: holds {name} weights, which this build cannot run yet"));
         };
 
@@ -2564,7 +2623,7 @@ impl Network {
         ) || (is_stack && !screlu) || (is_material && !screlu);
         let network = PsqNetwork {
             embedding_dim, transform, transform_bias, hidden, output, step, learning_rate, threats, pairwise, screlu, stack, material,
-            halfk,
+            halfk, king_layout,
         };
         network.validate().map_err(|problem| format!("{path}: {problem}"))?;
         Network::from_psq_through(network, &curve_of_version(version)).map_err(|problem| format!("{path}: {problem}"))
@@ -2811,7 +2870,7 @@ pub(crate) mod tests {
 
         PsqNetwork {
             embedding_dim, transform, transform_bias, hidden, output, step: 512, learning_rate: 1e-3, threats, pairwise,
-            screlu: false, stack: None, material: None, halfk: false,
+            screlu: false, stack: None, material: None, halfk: false, king_layout: halfk::Layout::Squares,
         }
     }
 
@@ -4222,9 +4281,15 @@ pub(crate) mod tests {
     /// A halfk_threats_screlu sample: every row distinct, so a row of the wrong bucket or mirror
     /// cannot pass by coincidence, and its bias raised as `lively_threats_screlu_network`'s.
     fn lively_halfk_network(embedding_dim: usize) -> PsqNetwork {
+        lively_halfk_network_in(embedding_dim, halfk::Layout::Squares)
+    }
+
+    /// `lively_halfk_network` with `layout`'s king buckets.
+    fn lively_halfk_network_in(embedding_dim: usize, layout: halfk::Layout) -> PsqNetwork {
         let mut network = sample_network_with(embedding_dim, &[], true, false);
+        network.king_layout = layout;
         let mut next = 0.0f32;
-        network.transform = (0..halfk::ROWS * embedding_dim)
+        network.transform = (0..layout.rows() * embedding_dim)
             .map(|_| {
                 next += 1.0;
                 ((next * 0.618).fract() - 0.5) * 0.05
@@ -4248,7 +4313,12 @@ pub(crate) mod tests {
     /// `lively_halfk_hidden_network`, or with `pairwise` a halfk_threats_pairwise_hidden sample: each
     /// perspective's halves multiplied, the first layer reading `embedding_dim` products.
     fn lively_halfk_two_hidden_network(embedding_dim: usize, widths: [usize; 2], pairwise: bool) -> PsqNetwork {
-        let mut network = lively_halfk_network(embedding_dim);
+        lively_halfk_two_hidden_network_in(embedding_dim, widths, pairwise, halfk::Layout::Squares)
+    }
+
+    /// `lively_halfk_two_hidden_network` with `layout`'s king buckets.
+    fn lively_halfk_two_hidden_network_in(embedding_dim: usize, widths: [usize; 2], pairwise: bool, layout: halfk::Layout) -> PsqNetwork {
+        let mut network = lively_halfk_network_in(embedding_dim, layout);
         network.screlu = !pairwise;
         network.pairwise = pairwise;
         if pairwise {
@@ -4441,7 +4511,7 @@ pub(crate) mod tests {
         let (board, _) = Board::from_fen("4k3/8/8/8/8/8/2p5/N6K w - - 0 1").unwrap();
         let network = lively_halfk_network(8);
         let mut expected = network.transform_bias.clone();
-        for row in halfk::active_rows(&extract_canonical(&board), &board, Color::White) {
+        for row in halfk::active_rows(halfk::Layout::Squares, &extract_canonical(&board), &board, Color::White) {
             for (lane, value) in expected.iter_mut().zip(&network.transform[row as usize * 8..row as usize * 8 + 8]) {
                 *lane += value;
             }
@@ -4485,18 +4555,20 @@ pub(crate) mod tests {
         // Random games from a middlegame and an endgame whose kings walk, with castling, so that
         // kings change bucket and cross the d/e line: each such move refreshes its perspective
         // through the cache, every other updates. 32 lanes take the kernel, 24 the scalar loop; each
-        // width with no hidden layer and with two.
+        // width with no hidden layer and with two; each king layout, a coarse one's king moves inside
+        // a bucket updating rather than refreshing.
         use crate::movegen::legal::legal_moves;
 
+        for layout in halfk::Layout::ALL {
         for (embedding_dim, head) in
             [(32, "output"), (24, "output"), (32, "screlu"), (24, "screlu"), (32, "pairwise"), (24, "pairwise")]
         {
             let sample = match head {
-                "output" => lively_halfk_network(embedding_dim),
-                _ => lively_halfk_two_hidden_network(embedding_dim, [8, 8], head == "pairwise"),
+                "output" => lively_halfk_network_in(embedding_dim, layout),
+                _ => lively_halfk_two_hidden_network_in(embedding_dim, [8, 8], head == "pairwise", layout),
             };
             let network = QuantizedPsqNetwork::quantize(&sample).unwrap();
-            let (mut refreshes, mut mirror_flips) = (0, 0);
+            let (mut refreshes, mut mirror_flips, mut inside_bucket) = (0, 0, 0);
             // For pairwise, whose network has the castling and en passant rows: how often each changed.
             let (mut rights_changes, mut files_set) = (0, 0);
             let mut seed = 0x9E3779B97F4A7C15u64;
@@ -4521,9 +4593,11 @@ pub(crate) mod tests {
                         child.make_move(moves[(seed >> 32) as usize % moves.len()]);
 
                         for perspective in [Color::White, Color::Black] {
-                            let (before, after) = (halfk_king(&board, perspective), halfk_king(&child, perspective));
+                            let (before, after) = (halfk_king(layout, &board, perspective), halfk_king(layout, &child, perspective));
                             refreshes += (before != after) as usize;
                             mirror_flips += (before.1 != after.1) as usize;
+                            let king_moved = king_square(&board, perspective) != king_square(&child, perspective);
+                            inside_bucket += (king_moved && before == after) as usize;
                         }
                         rights_changes += (board.castling_rights() != child.castling_rights()) as usize;
                         files_set += child.en_passant_square().is_some() as usize;
@@ -4535,9 +4609,41 @@ pub(crate) mod tests {
                     }
                 }
             }
-            assert!(refreshes > 20 && mirror_flips > 0, "width {embedding_dim}: {refreshes} refreshes, {mirror_flips} mirror flips");
-            assert!(rights_changes > 0 && files_set > 0, "width {embedding_dim}: {rights_changes} rights changes, {files_set} en passant files");
+            let what = format!("{layout:?}, width {embedding_dim}");
+            assert!(refreshes > 0 && mirror_flips > 0, "{what}: {refreshes} refreshes, {mirror_flips} mirror flips");
+            if layout == halfk::Layout::Squares {
+                assert!(refreshes > 20, "{what}: {refreshes} refreshes");
+                assert_eq!(inside_bucket, 0, "{what}: every king move changes a square's bucket");
+            } else {
+                assert!(inside_bucket > 0, "{what}: no king move inside its bucket, so their update went untested");
+            }
+            assert!(rights_changes > 0 && files_set > 0, "{what}: {rights_changes} rights changes, {files_set} en passant files");
             assert_eq!(network.halfk_state, head == "pairwise", "only the pairwise kind has the state rows");
+        }
+        }
+    }
+
+    #[test]
+    fn every_halfk_kind_of_every_layout_survives_a_write_and_a_load_under_its_own_tag() {
+        // Tags 20 to 22 stay 32 buckets; 23 to 25 are 8, 26 to 28 are 10, each kind in that order.
+        for (layout, first_tag) in
+            [(halfk::Layout::Squares, 20), (halfk::Layout::Eight, FEATURE_SET_HALFK8_THREATS_SCRELU), (halfk::Layout::Ten, FEATURE_SET_HALFK10_THREATS_SCRELU)]
+        {
+            let kinds = [
+                lively_halfk_network_in(8, layout),
+                lively_halfk_two_hidden_network_in(8, [8, 4], false, layout),
+                lively_halfk_two_hidden_network_in(16, [8, 4], true, layout),
+            ];
+            for (index, network) in kinds.into_iter().enumerate() {
+                let path = temp_path("halfk-layout-round-trip");
+                network.write(&path).expect("a valid halfk network writes");
+                let bytes = fs::read(&path).unwrap();
+                let tag = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+                assert_eq!(tag, first_tag + index as u32, "{layout:?}, kind {index}");
+                assert_eq!(split_layout(tag), (HALFK_TAGS[index], layout));
+                assert_eq!(load_psq(&path), network, "{layout:?}, kind {index}");
+                std::fs::remove_file(&path).ok();
+            }
         }
     }
 
@@ -4551,9 +4657,11 @@ pub(crate) mod tests {
         let value = |fen: &str| network.evaluate_pawns(&Board::from_fen(fen).unwrap().0);
         assert_ne!(value("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"), value("r3k2r/8/8/8/8/8/8/R3K2R w - - 0 1"));
         assert_ne!(value("4k3/8/8/3Pp3/8/8/8/4K3 w - e6 0 2"), value("4k3/8/8/3Pp3/8/8/8/4K3 w - - 0 2"));
-        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_SCRELU), Some((halfk::ROWS, 2)));
-        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN), Some((halfk::ROWS, 2)));
-        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN), Some((halfk::ROWS_WITH_STATE, 1)));
+        let squares = halfk::Layout::Squares;
+        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_SCRELU, squares), Some((halfk::ROWS, 2)));
+        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN, squares), Some((halfk::ROWS, 2)));
+        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN, squares), Some((halfk::ROWS_WITH_STATE, 1)));
+        assert_eq!(shape_of(FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN, halfk::Layout::Eight), Some((8 * 704 + 4096 + 12, 1)));
     }
 
     #[test]
@@ -4572,17 +4680,19 @@ pub(crate) mod tests {
         .iter()
         .map(|fen| Board::from_fen(fen).unwrap().0)
         .collect();
-        let first = QuantizedPsqNetwork::quantize(&lively_halfk_network(32)).unwrap();
-        let mut other = lively_halfk_network(32);
-        other.transform_bias.iter_mut().for_each(|bias| *bias -= 0.2);
-        let second = QuantizedPsqNetwork::quantize(&other).unwrap();
-        for network in [&first, &second, &first] {
-            for board in &boards {
-                let expected = network.refresh_by_color(board);
-                for perspective in [Color::White, Color::Black] {
-                    let mut accumulator = vec![0i16; 32];
-                    network.refresh_through_cache(&mut accumulator, board, perspective);
-                    assert_eq!(accumulator, expected[perspective as usize], "{}", board.to_fen(1));
+        for layout in halfk::Layout::ALL {
+            let first = QuantizedPsqNetwork::quantize(&lively_halfk_network_in(32, layout)).unwrap();
+            let mut other = lively_halfk_network_in(32, layout);
+            other.transform_bias.iter_mut().for_each(|bias| *bias -= 0.2);
+            let second = QuantizedPsqNetwork::quantize(&other).unwrap();
+            for network in [&first, &second, &first] {
+                for board in &boards {
+                    let expected = network.refresh_by_color(board);
+                    for perspective in [Color::White, Color::Black] {
+                        let mut accumulator = vec![0i16; 32];
+                        network.refresh_through_cache(layout, &mut accumulator, board, perspective);
+                        assert_eq!(accumulator, expected[perspective as usize], "{layout:?}: {}", board.to_fen(1));
+                    }
                 }
             }
         }
@@ -5339,6 +5449,7 @@ pub(crate) mod tests {
             stack: None,
             material: None,
             halfk: false,
+            king_layout: halfk::Layout::Squares,
         }
     }
 
