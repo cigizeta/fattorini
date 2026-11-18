@@ -16,9 +16,10 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
-**On the training machine, before its smithy starts (trial-rename.md, 2026-11-18):** rename its
-kept trials, `data/tests` to `data/trials`, `tests.tsv` to `trials.tsv`, `test-NNNN.*` to
-`trial-NNNN.*`; then trial-rename.md to done/ once its Trials section lists them.
+**The trials renamed on disk (trial-rename.md): done 2026-11-18** on the machine training
+`lc0-halfk-threats-screlu-hidden-512`, while its smithy (the old build) trained: 16 trials, `trials.tsv`
+and its `.bak`. No trial started from that smithy until it restarts on the new build; then
+trial-rename.md to done/ once its Trials section lists all 16.
 
 **Tomorrow, 2026-11-18 (the developer, 2026-11-17):** `lc0-halfk-threats-screlu-hidden-512` run 1
 finishes under patience (started 2026-11-17; at round 49 0.62355 against 256's 0.62444 at the same
