@@ -16,6 +16,10 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 In this order:
 
+**On the training machine, before its smithy starts (trial-rename.md, 2026-11-18):** rename its
+kept trials, `data/tests` to `data/trials`, `tests.tsv` to `trials.tsv`, `test-NNNN.*` to
+`trial-NNNN.*`; then trial-rename.md to done/ once its Trials section lists them.
+
 **Tomorrow, 2026-11-18 (the developer, 2026-11-17):** `lc0-halfk-threats-screlu-hidden-512` run 1
 finishes under patience (started 2026-11-17; at round 49 0.62355 against 256's 0.62444 at the same
 step, still falling), for a clean comparison with screlu-hidden at 256. Meanwhile: the implementation
