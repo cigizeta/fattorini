@@ -83,8 +83,12 @@ impl Listener {
                     continue;
                 }
             };
+            // A handler that panics answers its request alone with a 500 and leaves the thread
+            // serving: unwound, one bad request killed every thread in turn as the page polled it
+            // again, and the listener closed with the process still up (2026-11-18).
             let reply = match read(&mut request) {
-                Ok(parsed) => handle(&parsed),
+                Ok(parsed) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&parsed)))
+                    .unwrap_or_else(|_| Reply::error(500, "the request's handler panicked; its message is in the server's terminal")),
                 Err(reply) => reply,
             };
             // A client gone before its answer costs it only a retry.
@@ -276,6 +280,29 @@ mod tests {
         assert!(get(&url("127.0.0.1", port, "/quick"), None, timeout).is_ok());
         assert!(started.elapsed() < Duration::from_secs(1), "the quick request waited {:?}", started.elapsed());
         assert!(slow.join().unwrap().is_ok());
+        stop.store(true, Ordering::SeqCst);
+        thread.join().unwrap();
+    }
+
+    /// One thread: the request after a panicking one is answered by the same thread, so it lived.
+    #[test]
+    fn a_panicking_handler_answers_500_and_its_thread_serves_on() {
+        let listener = Listener::bind("127.0.0.1", 0).unwrap();
+        let port = listener.port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let stop = Arc::clone(&stop);
+            let handle = |request: &Request| {
+                assert!(request.path != "/boom", "a handler's bug");
+                Reply::status("OK", b"")
+            };
+            std::thread::spawn(move || listener.serve_concurrently(1, &handle, &stop))
+        };
+        let timeout = Duration::from_secs(10);
+        for _ in 0..3 {
+            assert_eq!(get(&url("127.0.0.1", port, "/boom"), None, timeout).unwrap().code, 500);
+            assert_eq!(get(&url("127.0.0.1", port, "/fine"), None, timeout).unwrap().code, 200);
+        }
         stop.store(true, Ordering::SeqCst);
         thread.join().unwrap();
     }

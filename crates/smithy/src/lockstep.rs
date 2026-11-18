@@ -828,7 +828,12 @@ pub(crate) fn latest_round(history_path: &str, steps_per_round: u64, rule: &Rule
     if !std::path::Path::new(history_path).exists() {
         return None;
     }
-    let mut records = history::read_all(history_path);
+    latest_of(history::read_all(history_path), steps_per_round, rule)
+}
+
+/// `latest_round` of `records` already read: the status page reads them itself, tolerating a line
+/// the trainer is still writing (`history::read_complete`).
+pub(crate) fn latest_of(mut records: Vec<history::EvalRecord>, steps_per_round: u64, rule: &Rule) -> Option<(history::EvalRecord, Standing)> {
     let rounds: Vec<(u64, f64)> = records.iter().map(|record| (record.step, record.test_loss)).collect();
     let standing = rule.standing(&rounds, steps_per_round);
     Some((records.pop()?, standing))

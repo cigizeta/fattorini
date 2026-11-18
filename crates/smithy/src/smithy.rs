@@ -3137,13 +3137,20 @@ impl Status {
         let Ok(modified) = std::fs::metadata(path).and_then(|meta| meta.modified()) else {
             return (None, Vec::new());
         };
-        let mut cache = self.history.lock().expect("the lock should not be poisoned");
-        if let Some((when, row, curve)) = cache.get(path)
-            && *when == modified {
+        // The lock held only to look and to store, never while the file is read: a panic there would
+        // poison it for every later poll. A poisoned one is taken all the same, the cache only
+        // saving reads.
+        {
+            let cache = self.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some((when, row, curve)) = cache.get(path)
+                && *when == modified
+            {
                 return (row.clone(), curve.clone());
             }
+        }
         let per_round = schedule.steps_per_round;
-        let records = super::history::read_all(path);
+        // The trainer appends while the page reads: the rounds whose lines are whole.
+        let records = super::history::read_complete(path);
         let elapsed_seconds: f64 = records.iter().map(|record| record.train_duration_secs + record.test_duration_secs).sum();
         let curve: Vec<[f64; 4]> = records
             .iter()
@@ -3151,7 +3158,7 @@ impl Status {
             .collect();
         let arm_dir = Path::new(path).parent().map_or(String::new(), |dir| dir.to_string_lossy().into_owned());
         let rule = schedule.rule(&arm_dir);
-        let row = rule.and_then(|rule| lockstep::latest_round(path, per_round, &rule).map(|round| (rule, round))).map(
+        let row = rule.and_then(|rule| lockstep::latest_of(records, per_round, &rule).map(|round| (rule, round))).map(
             |(rule, (record, standing))| {
                 let schedule_row = match (standing, rule) {
                     (lockstep::Standing::Patience(stages), lockstep::Rule::Patience { patience_rounds, stage_count, .. }) => {
@@ -3181,6 +3188,7 @@ impl Status {
                 }
             },
         );
+        let mut cache = self.history.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.insert(path.to_string(), (modified, row.clone(), Vec::clone(&curve)));
         (row, curve)
     }

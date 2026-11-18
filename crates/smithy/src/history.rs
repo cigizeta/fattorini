@@ -123,6 +123,37 @@ pub fn read_all(path: &str) -> Vec<EvalRecord> {
     records
 }
 
+/// `read_all` for a reader beside the writer, the status page: the rounds whose lines are whole, never
+/// a panic. The trainer appends a line while the page reads, so the last can be half written (a
+/// scaled run appends five a second): a line counts only once its newline is written, since a
+/// number cut short still parses, and reading stops at the first line that does not parse; a file
+/// that cannot be opened or has no header yet reads as no rounds.
+pub fn read_complete(path: &str) -> Vec<EvalRecord> {
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let whole = &text[..text.rfind('\n').map_or(0, |end| end + 1)];
+    let mut lines = whole.lines();
+    if lines.next() != Some(HEADER) {
+        return Vec::new();
+    }
+    let mut records = Vec::new();
+    for line in lines {
+        let columns: Vec<&str> = line.split('\t').collect();
+        let [step, learning_rate, train_loss, test_loss, train_duration_secs, test_duration_secs] = columns.as_slice() else { break };
+        let (Ok(step), Ok(learning_rate), Ok(train_loss), Ok(test_loss), Ok(train_duration_secs), Ok(test_duration_secs)) = (
+            step.parse(),
+            learning_rate.parse(),
+            train_loss.parse(),
+            test_loss.parse(),
+            train_duration_secs.parse(),
+            test_duration_secs.parse(),
+        ) else {
+            break;
+        };
+        records.push(EvalRecord { step, learning_rate, train_loss, test_loss, train_duration_secs, test_duration_secs });
+    }
+    records
+}
+
 /// A single closure can't serve all three columns here since it isn't generic (Rust infers one
 /// concrete return type per closure from its first use) -- a real generic function is needed so
 /// `step`'s `u64` and the two loss columns' `f64` can share this parsing logic.
@@ -142,6 +173,27 @@ mod tests {
         EvalRecord {
             step, learning_rate: 1.0e-3, train_loss: 1.0, test_loss, train_duration_secs: 9.0, test_duration_secs: 1.0,
         }
+    }
+
+    #[test]
+    fn a_half_written_history_reads_as_its_whole_rounds() {
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("smithy-history-test-{pid}-half-written.tsv"));
+        let path = path.to_str().unwrap();
+        std::fs::remove_file(path).ok();
+        assert!(read_complete(path).is_empty(), "no file: no rounds");
+        append(path, &sample(8192, 0.65));
+        append(path, &sample(16384, 0.64));
+        let whole = std::fs::read_to_string(path).unwrap();
+        // The third line cut short, mid-column and mid-number: neither counts.
+        for cut in ["24576\t1e-3\t1", "24576\t1e-3\t1\t0.63\t9\t1"] {
+            std::fs::write(path, format!("{whole}{cut}")).unwrap();
+            let records = read_complete(path);
+            assert_eq!(records.iter().map(|record| record.step).collect::<Vec<u64>>(), vec![8192, 16384], "{cut:?}");
+        }
+        std::fs::write(path, &whole[..10]).unwrap();
+        assert!(read_complete(path).is_empty(), "a header cut short: no rounds");
+        std::fs::remove_file(path).ok();
     }
 
     #[test]
