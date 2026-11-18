@@ -1,6 +1,7 @@
-//! Tests between the smithy's networks, asked from its page: a duel, a match or an SPRT of two
-//! players, played as a job by the arenas in colour-reversed pairs (`smithy::test_job`), and their
-//! log, the latest `KEPT` tests each with its games.
+//! Trials between the smithy's networks, asked from its page: a duel, a match or an SPRT of two
+//! players, played as a job by the arenas in colour-reversed pairs (`smithy::trial_job`), and their
+//! log, the latest `KEPT` trials each with its games. "Trial", Italian's "collaudo": "test" is
+//! held-out data's word (the test set, the test loss).
 //!
 //! **The duel** is arena's rule (`arena/src/duel.rs`), copied as `sprt.rs` copies arena's SPRT, the two
 //! binaries sharing no code beyond `fattorini`: per pair, S the mean pair score (the challenger's points
@@ -17,10 +18,10 @@ use fattorini::pipeline::protocol::Limit;
 
 use super::sprt::{Sprt, Verdict};
 
-/// Where the tests are kept, locally: `tests.tsv`, and each test's pairs and games.
-pub const TESTS_DIR: &str = "data/tests";
+/// Where the trials are kept, locally: `trials.tsv`, and each trial's pairs and games.
+pub const TRIALS_DIR: &str = "data/trials";
 
-/// The tests kept, with their games: the oldest goes as a new one starts past it.
+/// The trials kept, with their games: the oldest goes as a new one starts past it.
 pub const KEPT: usize = 20;
 
 /// arena's `duel::C`, `Phi^-1(0.999)` rounded.
@@ -30,7 +31,7 @@ pub const DUEL_MAX_PAIRS: u64 = 400;
 /// An SPRT's pairs at most, as the gate's (`GATE_MAX_PAIRS`): inconclusive past them.
 pub const SPRT_MAX_PAIRS: u32 = 5_000;
 
-/// A test's kind and its settings.
+/// A trial's kind and its settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
     Duel,
@@ -70,7 +71,7 @@ impl Kind {
                     _ => Err(format!("an SPRT's settings are elo0,elo1 with elo1 above elo0, not {settings:?}")),
                 }
             }
-            other => Err(format!("a test is a duel, a match or an sprt, not {other:?}")),
+            other => Err(format!("a trial is a duel, a match or an sprt, not {other:?}")),
         }
     }
 
@@ -84,7 +85,7 @@ impl Kind {
     }
 }
 
-/// One side of a test: a network, `pesto` or a forge run's (`players::network_player_name`), and
+/// One side of a trial: a network, `pesto` or a forge run's (`players::network_player_name`), and
 /// what it plays with (`players::TuningSuffix`). Written as a player, the network with its suffix:
 /// `<network>@search-tuned`, as the arena's players.
 #[derive(Debug, Clone, PartialEq)]
@@ -94,7 +95,7 @@ pub struct Side {
 }
 
 /// The time managements a side could name during the duels of 2026-11, as a third `@` field: read
-/// and dropped, so the tests logged then still read back.
+/// and dropped, so the trials logged then still read back.
 const RETIRED_TIME_MANAGEMENTS: [&str; 3] = ["classic", "split", "reckless"];
 
 impl Side {
@@ -104,7 +105,7 @@ impl Side {
     }
 
     /// `text` read back, a retired time management after it dropped. `@tuned` is no suffix any more:
-    /// the tests list's rows naming it were rewritten once to `@search-tuned`.
+    /// the trials list's rows naming it were rewritten once to `@search-tuned`.
     pub fn parse(text: &str) -> Result<Side, String> {
         let wrong = || format!("a side is <network>@<suffix>, the suffix {}, not {text:?}", TuningSuffix::WORDS);
         let (player, suffix) = text.split_once('@').ok_or_else(wrong)?;
@@ -121,7 +122,7 @@ impl Side {
     }
 }
 
-/// A test as the page asks for it, the challenger White in each pair's first game.
+/// A trial as the page asks for it, the challenger White in each pair's first game.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spec {
     pub kind: Kind,
@@ -131,12 +132,12 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// The job's words after `--test`: kind, settings, challenger, champion, each a player
+    /// The job's words after `--trial`: kind, settings, challenger, champion, each a player
     /// (`Side::text`), and the limit (`depth <d>` or `clock <clock>`, the arena's notation).
     pub fn parse(words: &[String]) -> Result<Spec, String> {
         let [kind, settings, challenger, champion, limit] = words else {
             return Err(
-                "a test is --test <duel|match|sprt> <settings> <challenger>@<suffix> <champion>@<suffix> <limit>".to_string()
+                "a trial is --trial <duel|match|sprt> <settings> <challenger>@<suffix> <champion>@<suffix> <limit>".to_string()
             );
         };
         Ok(Spec {
@@ -168,7 +169,7 @@ pub struct Gauge {
     pub right: &'static str,
 }
 
-/// A test as its pairs so far have it.
+/// A trial as its pairs so far have it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Judged {
     /// The pairs it counts: those up to its verdict, any after it dropped.
@@ -186,7 +187,7 @@ pub struct Judged {
 }
 
 /// Games won, lost and drawn, from the champion's side, as the arena's command line counts them, its
-/// first player the champion (the developer, 2026-11-08): a pair's, or a test's summed. A pair's `r`
+/// first player the champion (the developer, 2026-11-08): a pair's, or a trial's summed. A pair's `r`
 /// alone cannot give them (a 0 is two draws or a win and a loss), so they are counted as a pair
 /// arrives.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -346,7 +347,7 @@ fn judge_duel(pairs: &[i32]) -> Judged {
     let score = if side.count == 0 { 0.5 } else { side.mean() };
     let sigma = side.sigma();
     let threshold = if side.count == 0 { 1.0 } else { duel_threshold(side.count, sigma).min(1.0) };
-    // Said from the challenger's side, as its gauge reads: the question a test asks is the challenger's.
+    // Said from the challenger's side, as its gauge reads: the question a trial asks is the challenger's.
     // The challenger's score is left out: the table's challenger column already shows it.
     Judged {
         pairs: counted,
@@ -438,7 +439,7 @@ fn judge_sprt(elo0: f64, elo1: f64, pairs: &[i32]) -> Judged {
     }
 }
 
-/// One test as the log keeps it: one tab-separated line.
+/// One trial as the log keeps it: one tab-separated line.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Record {
     pub number: u32,
@@ -458,7 +459,7 @@ pub struct Record {
     pub mixed: bool,
 }
 
-/// The verdict a test is logged with at its start, until its final line replaces it: one that never
+/// The verdict a trial is logged with at its start, until its final line replaces it: one that never
 /// reached its end (a power cut, a crash) keeps it, and so reads as stopped and may be resumed.
 pub const INTERRUPTED: &str = "stopped: interrupted";
 
@@ -470,10 +471,10 @@ impl Record {
         self.verdict.starts_with("stopped")
     }
 
-    /// The test it records, as the words that asked for it said.
+    /// The trial it records, as the words that asked for it said.
     pub fn spec(&self) -> Result<Spec, String> {
         let words = [&self.kind, &self.settings, &self.challenger, &self.champion, &self.limit];
-        Spec::parse(&words.map(String::clone)).map_err(|message| format!("test {}: {message}", self.number))
+        Spec::parse(&words.map(String::clone)).map_err(|message| format!("trial {}: {message}", self.number))
     }
 
     fn line(&self) -> String {
@@ -518,19 +519,19 @@ impl Record {
 }
 
 fn log_path(dir: &str) -> String {
-    format!("{dir}/tests.tsv")
+    format!("{dir}/trials.tsv")
 }
 
-/// Test `number`'s pairs, beside which its games are (`test-NNNN.pgn`).
+/// Trial `number`'s pairs, beside which its games are (`trial-NNNN.pgn`).
 pub fn pairs_path(dir: &str, number: u32) -> String {
-    format!("{dir}/test-{number:04}.tsv")
+    format!("{dir}/trial-{number:04}.tsv")
 }
 
 fn games_path(dir: &str, number: u32) -> String {
-    format!("{dir}/test-{number:04}.pgn")
+    format!("{dir}/trial-{number:04}.pgn")
 }
 
-/// The logged tests in `dir`, oldest first; an unreadable line skipped.
+/// The logged trials in `dir`, oldest first; an unreadable line skipped.
 pub fn read_log(dir: &str) -> Vec<Record> {
     let Ok(text) = std::fs::read_to_string(log_path(dir)) else {
         return Vec::new();
@@ -538,7 +539,7 @@ pub fn read_log(dir: &str) -> Vec<Record> {
     text.lines().skip(1).filter_map(Record::parse).collect()
 }
 
-/// The numbers of the tests with files in `dir`, a test stopped before it was logged among them.
+/// The numbers of the trials with files in `dir`, a trial stopped before it was logged among them.
 fn numbers_on_disk(dir: &str) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -548,19 +549,19 @@ fn numbers_on_disk(dir: &str) -> Vec<u32> {
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
             let stem = name.strip_suffix(".tsv").or_else(|| name.strip_suffix(".pgn"))?;
-            stem.strip_prefix("test-")?.parse().ok()
+            stem.strip_prefix("trial-")?.parse().ok()
         })
         .collect()
 }
 
-/// The next test's number: past every test logged or with files.
+/// The next trial's number: past every trial logged or with files.
 pub fn next_number(dir: &str) -> u32 {
     let logged = read_log(dir).iter().map(|record| record.number).max().unwrap_or(0);
     let on_disk = numbers_on_disk(dir).into_iter().max().unwrap_or(0);
     logged.max(on_disk) + 1
 }
 
-/// Keeps the latest `keep` tests in `dir`, logged or with files: every older one's line, pairs and
+/// Keeps the latest `keep` trials in `dir`, logged or with files: every older one's line, pairs and
 /// games removed together.
 pub fn prune(dir: &str, keep: usize) -> Result<(), String> {
     let records = read_log(dir);
@@ -592,7 +593,7 @@ pub fn prune(dir: &str, keep: usize) -> Result<(), String> {
     std::fs::write(log_path(dir), text).map_err(|error| format!("{}: {error}", log_path(dir)))
 }
 
-/// Puts `record` in the log in `dir`: in place of the line of its number, a resumed test's, else
+/// Puts `record` in the log in `dir`: in place of the line of its number, a resumed trial's, else
 /// after the others; the log rewritten whole, a few lines.
 pub fn put(dir: &str, record: &Record) -> Result<(), String> {
     let mut records = read_log(dir);
@@ -653,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn a_test_s_words_read_back() {
+    fn a_trial_s_words_read_back() {
         let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@search-tuned pesto@untuned", "clock 10+0.1")).unwrap();
         assert_eq!(spec.kind, Kind::Sprt { elo0: 0.0, elo1: 5.0 });
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
@@ -757,7 +758,7 @@ mod tests {
         }
     }
 
-    /// A test's start line reads as stopped, so a test that dies unended stays resumable; its end
+    /// A trial's start line reads as stopped, so a trial that dies unended stays resumable; its end
     /// replaces it.
     #[test]
     fn an_interrupted_line_is_resumable_and_replaced_by_the_end() {
@@ -777,8 +778,8 @@ mod tests {
     }
 
     #[test]
-    fn the_log_keeps_the_latest_tests_with_their_games() {
-        let dir = std::env::temp_dir().join(format!("fattorini-smithy-matches-{}", std::process::id())).display().to_string();
+    fn the_log_keeps_the_latest_trials_with_their_games() {
+        let dir = std::env::temp_dir().join(format!("fattorini-smithy-trials-{}", std::process::id())).display().to_string();
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         for number in 1..=4 {
@@ -786,7 +787,7 @@ mod tests {
             std::fs::write(pairs_path(&dir, number), "").unwrap();
             std::fs::write(games_path(&dir, number), "").unwrap();
         }
-        // Test 5 stopped before it was logged: it counts, by its files.
+        // Trial 5 stopped before it was logged: it counts, by its files.
         std::fs::write(games_path(&dir, 5), "").unwrap();
         assert_eq!(next_number(&dir), 6);
         assert_eq!(read_log(&dir)[0], record(1), "a line reads back");
@@ -797,7 +798,7 @@ mod tests {
         assert!(std::path::Path::new(&games_path(&dir, 4)).exists() && std::path::Path::new(&games_path(&dir, 5)).exists());
         assert_eq!(next_number(&dir), 6);
 
-        // Test 4 stopped, then resumed to its verdict: its line replaced, not added.
+        // Trial 4 stopped, then resumed to its verdict: its line replaced, not added.
         let stopped = Record { verdict: "stopped: no games yet".to_string(), ..record(4) };
         put(&dir, &stopped).unwrap();
         assert!(read_log(&dir)[0].stopped());

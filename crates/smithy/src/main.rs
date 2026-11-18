@@ -39,7 +39,6 @@ mod freeze;
 mod history;
 mod lease;
 mod lockstep;
-mod matches;
 mod net_config;
 mod nnue_network;
 mod pesto;
@@ -65,6 +64,7 @@ mod transformer_vocab;
 mod tree;
 mod buckets;
 mod tasks;
+mod trials;
 mod tune;
 mod value_head;
 

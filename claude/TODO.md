@@ -195,9 +195,6 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
 - **The Tests form's network select, with the lambda grid** (the developer, 2026-11-08): once a
   generation trains the polyline's one arm alone, "winner (lpolyline)" chooses among one, so the
   select goes when the grid goes, not before.
-- **"Test" renamed "trial" for engine duels** (the developer, 2026-11-18, when there is a chance):
-  what the smithy and the arenas call a test (an SPRT or a fixed match, the Tests form, a test's
-  verdict) is a trial, Italian's "collaudo"; `cargo test` and the frozen test set keep their names.
 
 ## Written, not yet seen working for real
 

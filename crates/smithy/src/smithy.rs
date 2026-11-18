@@ -66,7 +66,7 @@ use fattorini::bench::loaded_bench;
 use fattorini::pipeline::spsa::TuneKind;
 use fattorini::search::{SearchParameters, TimeParameters};
 
-use super::matches;
+use super::trials;
 use super::rounds_display;
 use super::sprt::{Sprt, Verdict};
 use super::tune::{self, Tune};
@@ -687,7 +687,7 @@ enum Work {
     /// Pairs: for each pairing, `(challenger, teacher)` by name (`publish`), `wanted` pairs each, every result
     /// appended to `record` as `pairing<TAB>r<TAB>chore<TAB>session<TAB>seq`, its games to the PGN
     /// beside it (`Dirs::games_of`). `sides`, what the challenger and the teacher play in a gate or a
-    /// round robin (a test's sides play `Shared::test`'s).
+    /// round robin (a trial's sides play `Shared::trial`'s).
     Pairs { pairings: Vec<(String, String)>, wanted: u32, record: String, sides: [SearchParameters; 2] },
     /// A tune (`Shared::tune`) of the player whose network is `network`, by name or `PESTO`:
     /// one pair per `k`, each with its own parameters.
@@ -823,9 +823,9 @@ struct Shared {
     /// Pair results received this phase, by pairing, in arrival order.
     pairs: Vec<Vec<i32>>,
     /// Each of `pairs`' wins, losses and draws, aligned with it: read from the record
-    /// (`recorded_wdl`) and kept as each comes; `None` for a pair recorded before they were. A test's
+    /// (`recorded_wdl`) and kept as each comes; `None` for a pair recorded before they were. A trial's
     /// card shows their sum.
-    pair_wdl: Vec<Vec<Option<matches::Wdl>>>,
+    pair_wdl: Vec<Vec<Option<trials::Wdl>>>,
     /// The record's times, UTC Unix seconds, in order: each start of dealing (`false`) and each pair's
     /// arrival (`true`), read from the record (`recorded_times`) and kept as each comes: the phase's
     /// elapsed time, rate and ETA (`play_time`).
@@ -833,9 +833,9 @@ struct Shared {
     /// The tune `Work::Tune` deals, and the smithy's speed with its network under a clock.
     tune: Option<Tune>,
     reference_nps: Option<f64>,
-    /// A test's limit and its two sides' parameters, which its pair chores carry; none for a forge's
+    /// A trial's limit and its two sides' parameters, which its pair chores carry; none for a forge's
     /// pairs, at the forge's depth with their `Work::Pairs::sides`.
-    test: Option<TestDealing>,
+    trial: Option<TrialDealing>,
     /// The book's scoring `Work::Score` deals.
     score: Option<ScoreDealing>,
     /// The running forge's depth (`GenConfig::depth`), scaled for a scaled run;
@@ -860,10 +860,10 @@ struct Shared {
     token: String,
 }
 
-/// How a test's pairs are played: its limit, and the challenger's and the champion's parameters, each
+/// How a trial's pairs are played: its limit, and the challenger's and the champion's parameters, each
 /// given in full, the defaults or its tune; and their time parameters, each its time tune in full, or
 /// `None` for the default clock.
-struct TestDealing {
+struct TrialDealing {
     limit: Limit,
     parameters: [SearchParameters; 2],
     time: [Option<TimeParameters>; 2],
@@ -951,7 +951,7 @@ enum View {
     /// The gate, its SPRT at `elo_d`.
     Gate { elo_d: f64 },
     /// A test (`matches.rs`), its time from its record.
-    Test { number: u32, spec: matches::Spec },
+    Trial { number: u32, spec: trials::Spec },
 }
 
 /// Where the page reads a forge's phases: its run directory, its config, and the rates' schedule its
@@ -1012,8 +1012,8 @@ impl Shared {
             (Work::Pairs { .. }, View::Gate { elo_d }) => {
                 gate_view(*elo_d, self.pairs.first().map_or(&[][..], Vec::as_slice), &self.pair_times, self.depth())
             }
-            (Work::Pairs { .. }, View::Test { number, spec }) => {
-                test_view(
+            (Work::Pairs { .. }, View::Trial { number, spec }) => {
+                trial_view(
                     *number,
                     spec,
                     self.pairs.first().map_or(&[][..], Vec::as_slice),
@@ -1324,16 +1324,16 @@ impl Shared {
             }
             Work::Pairs { pairings, .. } if pairings.len() > 1 => return self.deal_tournament(session, size, &pairings),
             Work::Pairs { pairings, sides, .. } => {
-                // A gate's or a test's one pairing, while it wants more.
+                // A gate's or a trial's one pairing, while it wants more.
                 let pairing = (0..pairings.len())
                     .filter(|&p| self.wanted(Some(p)) > 0)
                     .min_by_key(|&p| self.pairs.get(p).map_or(0, Vec::len) as u64 + self.outstanding(p))?;
                 let (challenger, teacher) = pairings[pairing].clone();
-                // A test's sides play the parameters it gives them, under its limit; a gate's its
+                // A trial's sides play the parameters it gives them, under its limit; a gate's its
                 // `sides`, at the forge's depth.
-                // A test's sides also play their time tunes; a gate plays a depth, no clock.
-                let (limit, [first, second], [first_time, second_time]) = match &self.test {
-                    Some(test) => (test.limit.clone(), test.parameters.map(Some), test.time),
+                // A trial's sides also play their time tunes; a gate plays a depth, no clock.
+                let (limit, [first, second], [first_time, second_time]) = match &self.trial {
+                    Some(trial) => (trial.limit.clone(), trial.parameters.map(Some), trial.time),
                     None => (Limit::Depth(self.depth()), sides.map(Some), [None; 2]),
                 };
                 let players = vec![
@@ -1344,7 +1344,7 @@ impl Shared {
             }
         };
         let id = self.next_chore_id();
-        // Under a clock, the speed each arena scales it by: a test's (`test_job`), set beside its limit.
+        // Under a clock, the speed each arena scales it by: a trial's (`trial_job`), set beside its limit.
         let reference_nps = if matches!(limit, Limit::Clock(_)) { self.reference_nps } else { None };
         let chore = Chore {
             id: id.clone(),
@@ -1647,7 +1647,7 @@ impl Shared {
                 // The challenger is White in the first game and Black in the second.
                 let score = (2.0 * games[0].result - 1.0) + (2.0 * (1.0 - games[1].result) - 1.0);
                 let r = score.round() as i32;
-                let wdl = matches::Wdl::of_pair(games[0].result, games[1].result);
+                let wdl = trials::Wdl::of_pair(games[0].result, games[1].result);
                 append(&Dirs::games_of(&record), text)?;
                 // Its arrival, then its wins, losses and draws: the fields older records lack.
                 let arrived = unix_now();
@@ -1945,19 +1945,19 @@ struct Catalog {
     pesto: PlayerEntry,
     /// The sources, lc0 and pesto, each its corpus's state.
     sources: Vec<SourceEntry>,
-    /// Every player a test may name: PeSTO, then each run's networks, by config, run and generation.
+    /// Every player a trial may name: PeSTO, then each run's networks, by config, run and generation.
     networks: Vec<NetworkEntry>,
-    /// The tests logged, oldest first (`matches::read_log`).
-    tests: Vec<KeptTest>,
+    /// The trials logged, oldest first (`trials::read_log`).
+    trials: Vec<KeptTrial>,
     /// The books' sources on the remote, by name, each as far as its stages have gone.
     books: Vec<book::SourceView>,
 }
 
-/// A test logged, with its block as it was drawn while it played.
+/// A trial logged, with its block as it was drawn while it played.
 #[derive(Serialize)]
-struct KeptTest {
+struct KeptTrial {
     #[serde(flatten)]
-    record: matches::Record,
+    record: trials::Record,
     view: Option<WorkView>,
 }
 
@@ -1979,9 +1979,9 @@ struct NetworkEntry {
     time_tuned: bool,
 }
 
-/// Every network a test may name, PeSTO first: in each run's generations, the winner of each
+/// Every network a trial may name, PeSTO first: in each run's generations, the winner of each
 /// generation that passed its gate, then the generation's candidates, by lambda.
-fn test_networks(runs: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
+fn trial_networks(runs: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
     let tuned = |name: &str| {
         players::FattoriniPlayer::resolve(name)
             .and_then(|player| player.own_tuning())
@@ -2174,31 +2174,31 @@ fn catalog() -> Catalog {
             (run.name.clone(), generations, winners)
         })
         .collect();
-    let networks = test_networks(&runs);
-    let dir = matches::TESTS_DIR;
-    let tests = matches::read_log(dir)
+    let networks = trial_networks(&runs);
+    let dir = trials::TRIALS_DIR;
+    let trials = trials::read_log(dir)
         .into_iter()
         .map(|mut record| {
-            // Its live block once more, rebuilt from its record, so an ended test keeps it.
-            let path = matches::pairs_path(dir, record.number);
+            // Its live block once more, rebuilt from its record, so an ended trial keeps it.
+            let path = trials::pairs_path(dir, record.number);
             let view = match (record.spec(), recorded_pairs(&path, 1)) {
                 (Ok(spec), Ok(mut pairs)) => {
                     let pairs = pairs.remove(0);
                     // An interrupted line holds the counts of its start: its pairs say what was played.
-                    if record.verdict == matches::INTERRUPTED {
-                        let judged = matches::judge(spec.kind, &pairs);
+                    if record.verdict == trials::INTERRUPTED {
+                        let judged = trials::judge(spec.kind, &pairs);
                         record.games = judged.games;
                         record.challenger_points = judged.challenger_points;
                     }
                     let wdl = recorded_wdl(&path, 1).remove(0);
-                    Some(test_view(record.number, &spec, &pairs, &wdl, &recorded_times(&path)))
+                    Some(trial_view(record.number, &spec, &pairs, &wdl, &recorded_times(&path)))
                 }
                 _ => None,
             };
-            KeptTest { record, view }
+            KeptTrial { record, view }
         })
         .collect();
-    Catalog { configs, pesto: player_entry(PESTO.to_string()), sources, networks, tests, books: book::sources() }
+    Catalog { configs, pesto: player_entry(PESTO.to_string()), sources, networks, trials, books: book::sources() }
 }
 
 /// `player`'s tune, as its config's `tune:` says: pesto's `pesto::CONFIG_PATH`, a network player's
@@ -2211,7 +2211,7 @@ fn network_scale(player: &str) -> Option<u64> {
     load_run_config(&parsed.run()).ok()?.0.scale
 }
 
-/// `player`, unless it is a scaled run's network: one is never a side of a test, its
+/// `player`, unless it is a scaled run's network: one is never a side of a trial, its
 /// strength meaning nothing outside its run, whose round robin and gate alone play it.
 fn unscaled(player: &str) -> Result<(), String> {
     match network_scale(player) {
@@ -2986,7 +2986,7 @@ enum WorkView {
     /// `time` from its record's arrivals (`pairs_eta`); `limit` its games' search, `depth <d>`.
     RoundRobin { pairings: usize, wanted: u32, standings: Vec<StandingView>, time: PlayTime, limit: String },
     /// The gate in champion and challenger's words: the champion is the generation's teacher, the
-    /// challenger the round robin's winner; `challenger_share` its points over the games, as a test's. Its time as
+    /// challenger the round robin's winner; `challenger_share` its points over the games, as a trial's. Its time as
     /// the round robin's, with no ETA: its SPRT ends whenever its evidence is enough. `limit` as the
     /// round robin's.
     Gate {
@@ -3006,23 +3006,23 @@ enum WorkView {
     /// `time` from its pairs' arrivals since it began dealing (`pairs_eta`); none once it no longer
     /// deals, `pair_times` then perhaps another phase's.
     Tune { player: String, done: u32, pairs: u32, reference_nps: Option<f64>, theta: Vec<ParameterView>, time: Option<PlayTime> },
-    /// A test as its pairs have it so far (`matches::judge`); its number, which its screen is.
-    Test {
+    /// A trial as its pairs have it so far (`trials::judge`); its number, which its screen is.
+    Trial {
         number: u32,
-        test: String,
+        trial: String,
         settings: String,
-        /// Each side as a player, its parameters in its name (`matches::Side::text`).
+        /// Each side as a player, its parameters in its name (`trials::Side::text`).
         challenger: String,
         champion: String,
         mixed: bool,
         limit: String,
         games: u64,
         challenger_points: f64,
-        /// The champion's wins, losses and draws over the same games (`matches::Wdl`); none when a
+        /// The champion's wins, losses and draws over the same games (`trials::Wdl`); none when a
         /// pair was recorded without them.
-        wdl: Option<matches::Wdl>,
+        wdl: Option<trials::Wdl>,
         status: String,
-        gauge: matches::Gauge,
+        gauge: trials::Gauge,
         verdict: Option<String>,
         /// A match's games in all, or a duel's projection; none for an SPRT.
         expected_games: Option<u64>,
@@ -4288,17 +4288,17 @@ fn gate_view(elo_d: f64, pairs: &[i32], times: &[(u64, bool)], depth: u32) -> Wo
 /// Test `number` as the page shows it: `spec`, judged over `pairs`, its wins, losses and draws from
 /// `wdl` (aligned with `pairs`) over the same pairs the verdict counts, its time from `times`; its
 /// ETA toward its expected games, none without them (an SPRT).
-fn test_view(number: u32, spec: &matches::Spec, pairs: &[i32], wdl: &[Option<matches::Wdl>], times: &[(u64, bool)]) -> WorkView {
-    let judged = matches::judge(spec.kind, pairs);
-    let wdl = matches::Wdl::sum(wdl, judged.pairs);
+fn trial_view(number: u32, spec: &trials::Spec, pairs: &[i32], wdl: &[Option<trials::Wdl>], times: &[(u64, bool)]) -> WorkView {
+    let judged = trials::judge(spec.kind, pairs);
+    let wdl = trials::Wdl::sum(wdl, judged.pairs);
     let pairs_left = judged.expected_games.map_or(0, |expected| expected.saturating_sub(judged.games) / 2);
     let time = pairs_eta(times, pairs_left);
-    WorkView::Test {
+    WorkView::Trial {
         number,
         expected_games: judged.expected_games,
         // An SPRT, with no expected length, has no ETA.
         time: PlayTime { eta_seconds: judged.expected_games.and(time.eta_seconds), ..time },
-        test: spec.kind.name().to_string(),
+        trial: spec.kind.name().to_string(),
         settings: spec.kind.settings(),
         challenger: spec.challenger.text(),
         champion: spec.champion.text(),
@@ -4316,13 +4316,13 @@ fn test_view(number: u32, spec: &matches::Spec, pairs: &[i32], wdl: &[Option<mat
 /// Each pair's wins, losses and draws that `record` holds, by pairing, of `count` pairings, aligned
 /// with `recorded_pairs`: its seventh field, `None` for a line written before it was; none without
 /// the file.
-fn recorded_wdl(record: &str, count: usize) -> Vec<Vec<Option<matches::Wdl>>> {
+fn recorded_wdl(record: &str, count: usize) -> Vec<Vec<Option<trials::Wdl>>> {
     let mut wdl = vec![Vec::new(); count];
     if let Ok(text) = std::fs::read_to_string(record) {
         for line in text.lines().filter(|line| !line.starts_with('#')) {
             let fields: Vec<&str> = line.split('\t').collect();
             if let Some(pairing) = fields.first().and_then(|pairing| pairing.parse::<usize>().ok()).filter(|&pairing| pairing < count) {
-                wdl[pairing].push(fields.get(6).and_then(|field| matches::Wdl::parse(field)));
+                wdl[pairing].push(fields.get(6).and_then(|field| trials::Wdl::parse(field)));
             }
         }
     }
@@ -4780,21 +4780,21 @@ fn job_name(args: &[String]) -> Result<String, String> {
             let (side, depth) = score_book_words(source, side, depth)?;
             Ok(format!("the scores of {source}, {}, depth {depth}", side.text()))
         }
-        [mode, words @ ..] if mode == TEST => Ok(format!("test: {}", matches::Spec::parse(words)?.name())),
-        [mode, number] if mode == RESUME_TEST => Ok(format!("test {number}, resumed")),
+        [mode, words @ ..] if mode == TRIAL => Ok(format!("trial: {}", trials::Spec::parse(words)?.name())),
+        [mode, number] if mode == RESUME_TRIAL => Ok(format!("trial {number}, resumed")),
         _ => Err(format!(
-            "a job is --forge <config> <run number or new>, {TUNE} <player>, {TIME_TUNE} <player>, {TEST} <test>, {PLAY} {PESTO}, {CONVERT} lc0, {BOOK} <source> \
+            "a job is --forge <config> <run number or new>, {TUNE} <player>, {TIME_TUNE} <player>, {TRIAL} <trial>, {PLAY} {PESTO}, {CONVERT} lc0, {BOOK} <source> \
              or {SCORE_BOOK} <source> <network>@<suffix> <depth>"
         )),
     }
 }
 
-/// A test's job word (`matches::Spec::parse` reads the words after it).
-const TEST: &str = "--test";
-/// A stopped test's resume, by its number.
-const RESUME_TEST: &str = "--resume-test";
-/// The page's screen of the tests, and the config a test's job is of, so the page shows it there.
-const TESTS_SCREEN: &str = "tests";
+/// A trial's job word (`trials::Spec::parse` reads the words after it).
+const TRIAL: &str = "--trial";
+/// A stopped trial's resume, by its number.
+const RESUME_TRIAL: &str = "--resume-trial";
+/// The page's screen of the trials, and the config a trial's job is of, so the page shows it there.
+const TRIALS_SCREEN: &str = "trials";
 
 /// PeSTO's Play job's word: its self-play played into its corpus, in the arena slot.
 const PLAY: &str = "--play";
@@ -4809,11 +4809,11 @@ const BOOKS_SCREEN: &str = "books";
 /// (`book_scores`), in the arena slot.
 const SCORE_BOOK: &str = "--score-book";
 
-/// A score job's words checked: a source with a graph's name, a side as a test's, a depth from 1 to
+/// A score job's words checked: a source with a graph's name, a side as a trial's, a depth from 1 to
 /// `MAX_SCORE_DEPTH`.
-fn score_book_words(source: &str, side: &str, depth: &str) -> Result<(matches::Side, u32), String> {
+fn score_book_words(source: &str, side: &str, depth: &str) -> Result<(trials::Side, u32), String> {
     book::check_source(source)?;
-    let side = matches::Side::parse(side)?;
+    let side = trials::Side::parse(side)?;
     let depth = depth.parse::<u32>().ok().filter(|depth| (1..=MAX_SCORE_DEPTH).contains(depth)).ok_or(format!("{SCORE_BOOK}: the depth is 1 to {MAX_SCORE_DEPTH}, not {depth:?}"))?;
     Ok((side, depth))
 }
@@ -4831,7 +4831,7 @@ fn job_config(args: &[String]) -> Option<String> {
         [mode, player] if tune_kind(mode).is_some() => players::parse_network_name(player).ok().map(|parsed| parsed.config),
         [mode, source] if mode == PLAY || mode == CONVERT => Some(source.clone()),
         [mode, ..] if mode == BOOK || mode == SCORE_BOOK => Some(BOOKS_SCREEN.to_string()),
-        [mode, ..] if mode == TEST || mode == RESUME_TEST => Some(TESTS_SCREEN.to_string()),
+        [mode, ..] if mode == TRIAL || mode == RESUME_TRIAL => Some(TRIALS_SCREEN.to_string()),
         _ => None,
     }
 }
@@ -4846,7 +4846,7 @@ fn run_job(status: &Status, args: &[String]) {
     let kind = match args.first().map(String::as_str) {
         Some("--forge") => "a forge",
         Some(PLAY) => "a source's corpus",
-        Some(TEST | RESUME_TEST) => "a test",
+        Some(TRIAL | RESUME_TRIAL) => "a trial",
         Some(SCORE_BOOK) => "a book's scoring",
         _ => "a tune",
     };
@@ -4927,8 +4927,8 @@ fn job(status: &Status, args: &[String]) -> Result<String, String> {
         [mode, config, run, scaled] if mode == "--forge" && scaled == SCALED => forge(status, config, run, Some(scale::DEFAULT)),
         [mode, player] if tune_kind(mode).is_some() => tune_job(status, player, tune_kind(mode).expect("a tune's word, checked above")),
         [mode, source] if mode == PLAY && source == PESTO => play_pesto(status),
-        [mode, words @ ..] if mode == TEST => test_job(status, words),
-        [mode, number] if mode == RESUME_TEST => resume_test_job(status, number),
+        [mode, words @ ..] if mode == TRIAL => trial_job(status, words),
+        [mode, number] if mode == RESUME_TRIAL => resume_trial_job(status, number),
         [mode, source, side, depth] if mode == SCORE_BOOK => score_book_job(status, source, side, depth),
         _ => Err(job_name(args).err().unwrap_or_else(|| format!("{} is no job of the arena slot", args.join(" ")))),
     }
@@ -5081,10 +5081,10 @@ fn tune_job(status: &Status, player: &str, kind: TuneKind) -> Result<String, Str
     run_tune(&status.shared, tune, &status.job_stop)
 }
 
-/// One side of a test as its chores name it: its network by its name on the remote (`publish`) or
+/// One side of a trial as its chores name it: its network by its name on the remote (`publish`) or
 /// `PESTO`, the parameters it plays with in full, its time parameters in full (`None`, the default
 /// clock), and its network loaded, for the bench.
-struct TestPlayer {
+struct TrialPlayer {
     name: String,
     parameters: SearchParameters,
     time: Option<TimeParameters>,
@@ -5093,7 +5093,7 @@ struct TestPlayer {
 
 /// `side` resolved: a forge run's network or PeSTO, with the tunes its suffix names, which it must
 /// then have (the developer, 2026-11-13: refused, never the defaults quietly).
-fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
+fn trial_player(side: &trials::Side) -> Result<TrialPlayer, String> {
     let player = players::FattoriniPlayer::resolve(&side.player)?;
     let parameters = match (side.tuning.search_tuned(), player.own_tuning()?) {
         (false, _) => SearchParameters::DEFAULT,
@@ -5112,7 +5112,7 @@ fn test_player(side: &matches::Side) -> Result<TestPlayer, String> {
         }
         None => (PESTO.to_string(), None),
     };
-    Ok(TestPlayer { name, parameters, time, network })
+    Ok(TrialPlayer { name, parameters, time, network })
 }
 
 /// How often a scoring's file is copied to the remote, beside its end.
@@ -5135,7 +5135,7 @@ fn score_book_job(status: &Status, source: &str, side: &str, depth: &str) -> Res
     if commit == "unknown" || commit.contains("(modified)") {
         return Err(format!("this build is {commit}: commit first, so the scores name the code that made them"));
     }
-    let player = test_player(&side)?;
+    let player = trial_player(&side)?;
     let (graph_header, moves) = book::book_moves(source)?;
     let graph_value = |name: &str| graph_header.iter().find(|(held, _)| held == name).map_or(String::new(), |(_, value)| value.clone());
     log::info!("benching {} at depth {}, one thread: every arena's search must count the same nodes", side.text(), fattorini::bench::BENCH_DEPTH);
@@ -5231,50 +5231,50 @@ fn score_book_job(status: &Status, source: &str, side: &str, depth: &str) -> Res
     Ok(if complete { said } else { format!("stopped, {said}; start it again to go on") })
 }
 
-/// The time of day a test's log records, in UTC.
+/// The time of day a trial's log records, in UTC.
 fn log_time() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", now.year(), u8::from(now.month()), now.day(), now.hour(), now.minute())
 }
 
-/// `--test <words>`: a new test, numbered past every kept one, the oldest past `matches::KEPT`
-/// going with their games first (`play_test`).
-fn test_job(status: &Status, words: &[String]) -> Result<String, String> {
-    let spec = matches::Spec::parse(words)?;
+/// `--trial <words>`: a new trial, numbered past every kept one, the oldest past `trials::KEPT`
+/// going with their games first (`play_trial`).
+fn trial_job(status: &Status, words: &[String]) -> Result<String, String> {
+    let spec = trials::Spec::parse(words)?;
     unscaled(&spec.challenger.player)?;
     unscaled(&spec.champion.player)?;
-    let dir = matches::TESTS_DIR.to_string();
+    let dir = trials::TRIALS_DIR.to_string();
     std::fs::create_dir_all(&dir).map_err(|error| format!("{dir}: {error}"))?;
     // Room for this one among the kept.
-    matches::prune(&dir, matches::KEPT - 1)?;
-    let number = matches::next_number(&dir);
-    play_test(status, &dir, &spec, number, log_time(), Vec::new())
+    trials::prune(&dir, trials::KEPT - 1)?;
+    let number = trials::next_number(&dir);
+    play_trial(status, &dir, &spec, number, log_time(), Vec::new())
 }
 
-/// `--resume-test <number>`: a stopped test still kept, from its recorded pairs, under its own number
+/// `--resume-trial <number>`: a stopped trial still kept, from its recorded pairs, under its own number
 /// and start; its log line replaced when it ends.
-fn resume_test_job(status: &Status, number: &str) -> Result<String, String> {
-    let number: u32 = number.parse().map_err(|_| format!("{number:?} is no test's number"))?;
-    let dir = matches::TESTS_DIR.to_string();
-    let record = matches::read_log(&dir).into_iter().find(|record| record.number == number).ok_or_else(|| format!("test {number} is not kept"))?;
+fn resume_trial_job(status: &Status, number: &str) -> Result<String, String> {
+    let number: u32 = number.parse().map_err(|_| format!("{number:?} is no trial's number"))?;
+    let dir = trials::TRIALS_DIR.to_string();
+    let record = trials::read_log(&dir).into_iter().find(|record| record.number == number).ok_or_else(|| format!("trial {number} is not kept"))?;
     if !record.stopped() {
-        return Err(format!("test {number} ended: {}; only a stopped test resumes", record.verdict));
+        return Err(format!("trial {number} ended: {}; only a stopped trial resumes", record.verdict));
     }
     let spec = record.spec()?;
-    let pairs = recorded_pairs(&matches::pairs_path(&dir, number), 1)?.remove(0);
-    play_test(status, &dir, &spec, number, record.started, pairs)
+    let pairs = recorded_pairs(&trials::pairs_path(&dir, number), 1)?.remove(0);
+    play_trial(status, &dir, &spec, number, record.started, pairs)
 }
 
 /// Test `number` of `spec` (`matches.rs`), in `dir`, started at `started`, from `pairs` already
 /// played: its pairs dealt to the arenas as a gate's are, one pairing, the challenger first, until its
 /// rule decides or it is stopped; then logged, its line replacing any it had. A stopped test is logged
 /// as stopped, with what it had, and may be resumed while it is kept.
-fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, started: String, pairs: Vec<i32>) -> Result<String, String> {
+fn play_trial(status: &Status, dir: &str, spec: &trials::Spec, number: u32, started: String, pairs: Vec<i32>) -> Result<String, String> {
     let resumed_games = 2 * pairs.len() as u64;
     // The arenas read the networks from the remote.
     remote::check_mounted().map_err(|error| error.to_string())?;
-    let challenger = test_player(&spec.challenger)?;
-    let champion = test_player(&spec.champion)?;
+    let challenger = trial_player(&spec.challenger)?;
+    let champion = trial_player(&spec.champion)?;
     let reference_nps = match spec.limit {
         Limit::Clock(_) => {
             let threads = (std::thread::available_parallelism().map_or(1, |cores| cores.get()) / 2).max(1);
@@ -5285,18 +5285,18 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         }
         Limit::Depth(_) => None,
     };
-    let record = matches::pairs_path(dir, number);
+    let record = trials::pairs_path(dir, number);
     begin(&status.shared, &format!("{dir}/chores.txt"), None)?;
     mark_start(&record)?;
-    // Logged at once as interrupted, replaced by its final line when it ends: a test that dies
+    // Logged at once as interrupted, replaced by its final line when it ends: a trial that dies
     // without ending (a power cut, a crash) stays listed and resumable, and `prune` never removes
     // its files unseen.
-    let at_start = matches::judge(spec.kind, &pairs);
-    matches::put(dir, &test_record(spec, number, &started, at_start.games, at_start.challenger_points, matches::INTERRUPTED.to_string()))?;
+    let at_start = trials::judge(spec.kind, &pairs);
+    trials::put(dir, &trial_record(spec, number, &started, at_start.games, at_start.challenger_points, trials::INTERRUPTED.to_string()))?;
     let mixed = if spec.mixed() { ", the two sides tuned differently" } else { "" };
     let resumed = if resumed_games > 0 { format!(", resumed at {} games", progress::grouped(resumed_games)) } else { String::new() };
     log::info!(
-        "test {number}: {} ({}), {} against {}, {}{mixed}{resumed}",
+        "trial {number}: {} ({}), {} against {}, {}{mixed}{resumed}",
         spec.kind.name(),
         spec.kind.settings(),
         spec.challenger.text(),
@@ -5306,12 +5306,12 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
     {
         let mut shared = status.lock();
         shared.reference_nps = reference_nps;
-        shared.test = Some(TestDealing {
+        shared.trial = Some(TrialDealing {
             limit: spec.limit.clone(),
             parameters: [challenger.parameters, champion.parameters],
             time: [challenger.time, champion.time],
         });
-        shared.view = View::Test { number, spec: spec.clone() };
+        shared.view = View::Trial { number, spec: spec.clone() };
         shared.epoch += 1;
         shared.pairs = vec![pairs];
         shared.pair_wdl = recorded_wdl(&record, 1);
@@ -5323,10 +5323,10 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
             sides: [challenger.parameters, champion.parameters],
         });
     }
-    // Its progress, bar and gauge, is the page's, drawn from its view (`test_view`).
+    // Its progress, bar and gauge, is the page's, drawn from its view (`trial_view`).
     let (judged, stopped) = loop {
         let pairs = status.lock().pairs.first().cloned().unwrap_or_default();
-        let judged = matches::judge(spec.kind, &pairs);
+        let judged = trials::judge(spec.kind, &pairs);
         if judged.verdict.is_some() {
             break (judged, false);
         }
@@ -5339,25 +5339,25 @@ fn play_test(status: &Status, dir: &str, spec: &matches::Spec, number: u32, star
         let mut shared = status.lock();
         shared.work = Some(Work::Idle);
         shared.epoch += 1;
-        shared.test = None;
+        shared.trial = None;
     }
     let verdict = match (&judged.verdict, stopped) {
         (Some(verdict), _) => verdict.clone(),
         // A duel's status is its bounds alone, named here as its column names them on the page.
-        (None, _) if spec.kind == matches::Kind::Duel => format!("stopped: thresholds {}", judged.status),
+        (None, _) if spec.kind == trials::Kind::Duel => format!("stopped: thresholds {}", judged.status),
         (None, _) => format!("stopped: {}", judged.status),
     };
-    matches::put(dir, &test_record(spec, number, &started, judged.games, judged.challenger_points, verdict.clone()))?;
+    trials::put(dir, &trial_record(spec, number, &started, judged.games, judged.challenger_points, verdict.clone()))?;
     Ok(format!(
-        "test {number}: {verdict}, after {} games, the champion {} of them{mixed}",
+        "trial {number}: {verdict}, after {} games, the champion {} of them{mixed}",
         judged.games,
         points_text(judged.games as f64 - judged.challenger_points)
     ))
 }
 
 /// Test `number`'s log line, ended now.
-fn test_record(spec: &matches::Spec, number: u32, started: &str, games: u64, challenger_points: f64, verdict: String) -> matches::Record {
-    matches::Record {
+fn trial_record(spec: &trials::Spec, number: u32, started: &str, games: u64, challenger_points: f64, verdict: String) -> trials::Record {
+    trials::Record {
         number,
         started: started.to_string(),
         ended: log_time(),
@@ -5932,8 +5932,8 @@ mod tests {
     }
 
     #[test]
-    fn a_test_s_wins_losses_and_draws_are_its_records_seventh_field_over_the_counted_pairs() {
-        use matches::Wdl;
+    fn a_trial_s_wins_losses_and_draws_are_its_records_seventh_field_over_the_counted_pairs() {
+        use trials::Wdl;
         let dir = scratch("recorded-wdl");
         let record = format!("{dir}/pairs.tsv");
         // An older line without the field, then two with it, a start between.
@@ -5946,15 +5946,15 @@ mod tests {
         assert_eq!(read, vec![vec![None, Some(Wdl { wins: 2, losses: 0, draws: 0 }), Some(Wdl { wins: 1, losses: 0, draws: 1 })]]);
         assert_eq!(read[0].len(), recorded_pairs(&record, 1).unwrap()[0].len(), "aligned with the pairs");
         assert!(recorded_wdl(&format!("{dir}/none.tsv"), 1)[0].is_empty());
-        let spec = matches::Spec::parse(&["match", "3", "aa@untuned", "bb@untuned", "depth 9"].map(str::to_string)).unwrap();
+        let spec = trials::Spec::parse(&["match", "3", "aa@untuned", "bb@untuned", "depth 9"].map(str::to_string)).unwrap();
         let wdl_of = |view: WorkView| match view {
-            WorkView::Test { wdl, .. } => wdl,
-            _ => panic!("a test's view"),
+            WorkView::Trial { wdl, .. } => wdl,
+            _ => panic!("a trial's view"),
         };
         // The older line's pair unknown: no sum.
-        assert_eq!(wdl_of(test_view(1, &spec, &[0, 2, 1], &read[0], &[])), None);
+        assert_eq!(wdl_of(trial_view(1, &spec, &[0, 2, 1], &read[0], &[])), None);
         // Its pairs all known: their sum.
-        assert_eq!(wdl_of(test_view(1, &spec, &[2, 1], &read[0][1..], &[])), Some(Wdl { wins: 3, losses: 0, draws: 1 }));
+        assert_eq!(wdl_of(trial_view(1, &spec, &[2, 1], &read[0][1..], &[])), Some(Wdl { wins: 3, losses: 0, draws: 1 }));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -6491,14 +6491,14 @@ mod tests {
     }
 
     #[test]
-    fn a_test_s_chore_carries_its_limit_and_each_side_s_parameters() {
-        let dir = scratch("test-chore");
+    fn a_trial_s_chore_carries_its_limit_and_each_side_s_parameters() {
+        let dir = scratch("trial-chore");
         let tuned = SearchParameters { razoring_margin: -7, ..SearchParameters::DEFAULT };
         let shared = Mutex::new(Shared::default());
         {
             let mut shared = shared.lock().unwrap();
             shared.reference_nps = Some(1_000_000.0);
-            shared.test = Some(TestDealing {
+            shared.trial = Some(TrialDealing {
                 limit: Limit::Clock("10+0.1".to_string()),
                 parameters: [tuned, SearchParameters::DEFAULT],
                 time: [Some(TimeParameters { pv_min: 0.6, ..TimeParameters::DEFAULT }), None],
@@ -6517,7 +6517,7 @@ mod tests {
         assert_eq!(parameters, [Some(tuned), Some(SearchParameters::DEFAULT)], "both given in full, the defaults too");
         let time: Vec<Option<TimeParameters>> = dealt.entries[0].players.iter().map(|player| player.time).collect();
         assert_eq!(time, [Some(TimeParameters { pv_min: 0.6, ..TimeParameters::DEFAULT }), None], "a time tune in full, else none");
-        assert_eq!(dealt.entries[0].count, 3, "never past what the test may play");
+        assert_eq!(dealt.entries[0].count, 3, "never past what the trial may play");
         std::fs::remove_dir_all(&dir).ok();
     }
 

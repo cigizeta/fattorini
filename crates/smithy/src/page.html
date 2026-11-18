@@ -59,12 +59,12 @@
   td .at { min-width: 5ch; text-align: right; }
   td .of { min-width: 5ch; text-align: left; }
   th { color: var(--muted); font-weight: 600; }
-  /* The tests' log fits the page: its long cells (what was played, the verdict) wrap, never scroll. */
+  /* The trials' log fits the page: its long cells (what was played, the verdict) wrap, never scroll. */
   .log table { width: 100%; }
   .log td { white-space: normal; vertical-align: top; }
   .log td:nth-child(3), .log td:nth-child(7) { min-width: 18ch; text-align: left; }
   .log td:first-child { white-space: nowrap; }
-  /* A test's number right-aligned in a slot of its own, so 9 sits under 10's units and the buttons
+  /* A trial's number right-aligned in a slot of its own, so 9 sits under 10's units and the buttons
      after it stay in one column. */
   .log .number { display: inline-block; min-width: 3ch; text-align: right; }
   tr:last-child td { border-bottom: none; }
@@ -173,12 +173,12 @@ function duration(seconds) {
   return h > 0 ? `${h}h ${mm}m` : `${m}m`;
 }
 
-// A test's title: its kind and settings, then its two sides by role, the champion first as on the
+// A trial's title: its kind and settings, then its two sides by role, the champion first as on the
 // form and the gauge, each a player whose name says what it plays (`@untuned`, `@search-tuned`,
 // `@search-time-tuned`).
-function testTitle(view) {
-  const settings = view.test === "match" ? ` of ${view.settings} pairs` : view.test === "sprt" ? ` [${view.settings.replace(",", ", ")}]` : "";
-  return `${view.test}${settings}: champion ${view.champion} against challenger ${view.challenger}`;
+function trialTitle(view) {
+  const settings = view.trial === "match" ? ` of ${view.settings} pairs` : view.trial === "sprt" ? ` [${view.settings.replace(",", ", ")}]` : "";
+  return `${view.trial}${settings}: champion ${view.champion} against challenger ${view.challenger}`;
 }
 
 // Sets `element`'s html, keeping the horizontal scroll of it and of each section in it, by position: a
@@ -199,7 +199,7 @@ function table(headers, rows, muted = []) {
 }
 
 // A games-a-second rate as the text bars write it: games a second from one a second, seconds a game
-// below, so a slow test under a clock reads as a number rather than `0.0 games/s`.
+// below, so a slow trial under a clock reads as a number rather than `0.0 games/s`.
 // `unit` the thing its line counts, `game` or `pair`, so a line never counts one and paces the other.
 function rate(perSecond, unit = "game") {
   return perSecond >= 1 ? `${number(perSecond, 1)} ${unit}s/s` : `${number(1 / perSecond, 1)} s/${unit}`;
@@ -215,7 +215,7 @@ function times(view, pairs = false) {
     + (t.eta_seconds === null ? "" : `, ETA about ${duration(t.eta_seconds)}`);
 }
 
-// `stop`, a test's Stop beside its title, while it runs on its own screen.
+// `stop`, a trial's Stop beside its title, while it runs on its own screen.
 function work(view, waiting, stop = "") {
   switch (view.kind) {
     case "self_play": {
@@ -252,35 +252,35 @@ function work(view, waiting, stop = "") {
       // Its search, then its time, the leading comma of `times` dropped: no count before it.
       return `<h2>Gate</h2><div class="muted">${escape(view.limit)}${times(view).replace(/^, /, "; ")}</div>`
         + gauge(view.llr, view.lower, view.upper)
-        // Both sides' points and shares, as a test's.
+        // Both sides' points and shares, as a trial's.
         + table(["champion", "challenger", "games", "LLR", "bounds"],
           [[`${number(view.champion_points, 1)} (${percent(1 - view.challenger_share)})`,
             `${number(view.challenger_points, 1)} (${percent(view.challenger_share)})`, whole(view.games),
             number(view.llr, 2), `${number(view.lower, 2)} to ${number(view.upper, 2)}`]]);
-    case "test": {
+    case "trial": {
       // A match knows its length and a duel projects it: a bar of its games with its ETA. A duel's and
       // an SPRT's gauge too, which end whenever the evidence is enough: a duel's starting at an even
       // score, an SPRT's at zero; a match's would only repeat its bar.
       const length = view.expected_games === null ? ""
-        : `<div>${whole(view.games)} of ${view.test === "duel" ? "about " : ""}${whole(view.expected_games)} games`
+        : `<div>${whole(view.games)} of ${view.trial === "duel" ? "about " : ""}${whole(view.expected_games)} games`
           + ` (${percent(view.expected_games > 0 ? view.games / view.expected_games : 0)})${times(view)}</div>`
           + bar(view.games, view.expected_games);
-      const evidence = view.test === "match" ? ""
-        : gauge(view.gauge.value, view.gauge.lower, view.gauge.upper, view.gauge.left, view.gauge.right, view.test === "duel" ? 0.5 : 0,
+      const evidence = view.trial === "match" ? ""
+        : gauge(view.gauge.value, view.gauge.lower, view.gauge.upper, view.gauge.left, view.gauge.right, view.trial === "duel" ? 0.5 : 0,
           view.verdict === "won by the challenger" ? "challenger" : view.verdict === "won by the champion" ? "champion" : null);
       const progress = length + evidence;
       // A side's points and their share of the games: `452.0 (48.5%)`.
       const side = (points) => `${number(points, 1)} (${percent(view.games > 0 ? points / view.games : 0.5)})`;
       const mixed = view.mixed ? `<div class="bad">mixed: the two sides tuned differently</div>` : "";
-      const title = `<h2>${escape(testTitle(view))}</h2>`;
+      const title = `<h2>${escape(trialTitle(view))}</h2>`;
       return (stop ? `<div class="row">${title}${stop}</div>` : title) + `<div class="muted">${escape(view.limit)}</div>${mixed}`
         + progress
         // Both sides' points and shares, so neither reads as the score: one alone was ambiguous.
         // Wins, losses and draws from the champion's side, as the server counts them and the arena's
-        // command line says them (`matches::Wdl`): + the champion's wins, - the challenger's. Headed
-        // "results" (the developer, 2026-11-16), a word neutral between the sides. Blank for a test
+        // command line says them (`trials::Wdl`): + the champion's wins, - the challenger's. Headed
+        // "results" (the developer, 2026-11-16), a word neutral between the sides. Blank for a trial
         // with pairs recorded before they were counted.
-        + table(["games", "champion", "challenger", "results", view.test === "duel" ? "thresholds" : "state"],
+        + table(["games", "champion", "challenger", "results", view.trial === "duel" ? "thresholds" : "state"],
           [[whole(view.games), side(view.games - view.challenger_points), side(view.challenger_points),
             view.wdl ? `+${view.wdl.wins} -${view.wdl.losses} =${view.wdl.draws}` : "", view.status]])
         + (view.verdict ? `<div><b>${escape(view.verdict)}</b></div>` : "");
@@ -288,7 +288,7 @@ function work(view, waiting, stop = "") {
     case "pairs":
       return `<h2>Pairs: ${whole(view.played)} played, ${view.pairings} pairings of ${view.wanted}</h2>`;
     case "tune":
-      // As a test's: the count and its time above the bar, the time only while it deals; in games,
+      // As a trial's: the count and its time above the bar, the time only while it deals; in games,
       // two a pair (the developer, 2026-11-13).
       return `<h2>Tune of ${escape(view.player)}</h2>`
         + `<div>${whole(2 * view.done)} of ${whole(2 * view.pairs)} games (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
@@ -552,20 +552,20 @@ let currentRun = null;
 // New run pressed: its config and how many runs it had, so the page opens the new run's screen once
 // the catalog lists it; the job is named `<config>, a new run` until then.
 let pendingNew = null;
-// Start pressed on New test: the test's screen opens once it plays and its number is known.
-let pendingTest = false;
+// Start pressed on New trial: the trial's screen opens once it plays and its number is known.
+let pendingTrial = false;
 // The boxes' sections, one a source, in this order, each its source's box first, then the forges
 // trained on it; a forge of no source known here, last, under Other.
 const SECTIONS = [["pesto", "PeSTO"], ["lc0", "Lc0"]];
 // The sources, each with its own box beside the forges: lc0's Convert runs in the source slot,
 // beside the arena job; pesto's Play in the arena slot.
 const SOURCES = ["lc0", "pesto"];
-// The tests' screen, and the config a test's job is of (the smithy's `TESTS_SCREEN`).
-const TESTS = "tests";
+// The trials' screen, and the config a trial's job is of (the smithy's `TRIALS_SCREEN`).
+const TRIALS = "trials";
 // The books' screen, and the config a book job is of (the smithy's `BOOKS_SCREEN`).
 const BOOKS = "books";
-// The New test form's choices, kept across its redraws.
-const testForm = {
+// The New trial form's choices, kept across its redraws.
+const trialForm = {
   kind: "duel", pairs: "500", elo0: "0", elo1: "5", challenger: "", champion: "pesto",
   challengerParameters: "untuned", championParameters: "untuned",  limit: "depth", depth: "9",
   // The clock, in labelled fields: no notation to remember (`clockText` writes it). Each kind keeps
@@ -584,7 +584,7 @@ const CLOCK_PRESETS = [
 // The clock's notation from the form's fields (arena's `TimeControl`: `<base>+<inc>`,
 // `<moves>/<base>` or `<moves>/<base>+<inc>`, in seconds), or why the fields are not a clock.
 function clockText() {
-  const f = testForm;
+  const f = trialForm;
   const seconds = (text, name, positive) => {
     const value = Number(text.trim());
     if (text.trim() === "" || !Number.isFinite(value) || (positive ? value <= 0 : value < 0)) {
@@ -637,8 +637,8 @@ const tuneScreen = (player) => `tune of ${player}`;
 function jobScreen() {
   if (!state || !state.job || !catalog) return null;
   if (state.job.startsWith("tune of ")) return state.job;
-  // A test's, by its number, while it plays: `#tests/<number>`.
-  if (state.config === TESTS) return state.work && state.work.kind === "test" ? String(state.work.number) : null;
+  // A trial's, by its number, while it plays: `#trials/<number>`.
+  if (state.config === TRIALS) return state.work && state.work.kind === "trial" ? String(state.work.number) : null;
   const config = catalog.configs.find((c) => c.name === state.config);
   if (!config) return null;
   if (state.job === `${config.name}, a new run`) {
@@ -685,7 +685,7 @@ function runWhere(run) {
 }
 
 // ", scaled 1/<s>" after a scaled run's name `name`, as the catalog has its scale; nothing for any
-// other name, a full run's, a test's or a tune's.
+// other name, a full run's, a trial's or a tune's.
 function scaledMark(name) {
   if (!catalog) return "";
   for (const config of catalog.configs) {
@@ -740,7 +740,7 @@ function boxSections() {
   const forges = (source) => catalog.configs.filter((config) => config.source === source).map((config) => config.name).sort();
   const sections = SECTIONS.map(([source, title]) => [title, [source, ...forges(source)]]);
   const other = catalog.configs.filter((config) => !known.includes(config.source)).map((config) => config.name).sort();
-  return [...sections, ...(other.length > 0 ? [["Other", other]] : []), ["Books", [BOOKS]], ["Tests", [TESTS]]];
+  return [...sections, ...(other.length > 0 ? [["Other", other]] : []), ["Books", [BOOKS]], ["Trials", [TRIALS]]];
 }
 
 // Whether Lc0's Convert holds the source slot, beside the arena job.
@@ -777,9 +777,9 @@ function boxLine(name) {
     const where = state.phase ? `: generation ${state.generation}, ${phaseName(state.phase)}` : "";
     return `<span class="tag">running</span> ${escape(state.job || "")}${escape(where)}`;
   }
-  if (name === TESTS) {
-    const last = catalog.tests[catalog.tests.length - 1];
-    return last ? `last: ${escape(last.kind)}, ${escape(last.verdict)}` : `<span class="muted">no test yet</span>`;
+  if (name === TRIALS) {
+    const last = catalog.trials[catalog.trials.length - 1];
+    return last ? `last: ${escape(last.kind)}, ${escape(last.verdict)}` : `<span class="muted">no trial yet</span>`;
   }
   if (SOURCES.includes(name)) {
     const line = escape(source(name).summary);
@@ -827,14 +827,14 @@ function drawConfig() {
   if (text === catalogDrawn) return;
   catalogDrawn = text;
   const element = document.getElementById("config");
-  if (current === TESTS && currentRun !== null) {
-    element.innerHTML = testScreen();
-    bindTestForm(element);
+  if (current === TRIALS && currentRun !== null) {
+    element.innerHTML = trialScreen();
+    bindTrialForm(element);
   } else if (currentRun !== null) {
     element.innerHTML = runScreen();
-  } else if (current === TESTS) {
-    element.innerHTML = testsScreen();
-    bindTestForm(element);
+  } else if (current === TRIALS) {
+    element.innerHTML = trialsScreen();
+    bindTrialForm(element);
   } else if (current === BOOKS) {
     element.innerHTML = booksScreen();
   } else if (current === "pesto") {
@@ -1024,8 +1024,8 @@ function cascade(level, value, network) {
 // latest winner below it (`cascade`); then its parameters, tuned only where it has a tune.
 function sideRow(label, side) {
   // A choice no longer offered (its network gone) falls back to PeSTO, the catalog's first.
-  const network = catalog.networks.find((n) => n.name === testForm[side]) || catalog.networks[0];
-  testForm[side] = network.name;
+  const network = catalog.networks.find((n) => n.name === trialForm[side]) || catalog.networks[0];
+  trialForm[side] = network.name;
   const trained = catalog.networks.filter((n) => n.run !== null);
   const step = (level, choices) => `<select data-cascade="${side}" data-level="${level}">${choices}</select>`;
   const configs = option("pesto", "PeSTO", network.run === null)
@@ -1048,29 +1048,29 @@ function sideRow(label, side) {
   // Each suffix offered only when the network has its tunes: `search-tuned` with a search tune,
   // `search-time-tuned` with both.
   const offered = ["untuned"].concat(network.tuned ? ["search-tuned"] : [], network.time_tuned ? ["search-time-tuned"] : []);
-  if (!offered.includes(testForm[side + "Parameters"])) testForm[side + "Parameters"] = "untuned";
-  const parameters = offered.map((suffix) => option(suffix, suffix, testForm[side + "Parameters"] === suffix)).join("");
+  if (!offered.includes(trialForm[side + "Parameters"])) trialForm[side + "Parameters"] = "untuned";
+  const parameters = offered.map((suffix) => option(suffix, suffix, trialForm[side + "Parameters"] === suffix)).join("");
   return `<div class="row"><label>${label}</label>${steps}<select data-field="${side}Parameters">${parameters}</select></div>`;
 }
 
-// The job's words for the form's test (`matches::Spec::parse`).
-function testWords() {
-  const f = testForm;
+// The job's words for the form's trial (`trials::Spec::parse`).
+function trialWords() {
+  const f = trialForm;
   const settings = f.kind === "match" ? f.pairs.trim() : f.kind === "sprt" ? `${f.elo0.trim()},${f.elo1.trim()}` : "-";
   const limit = f.limit === "depth" ? `depth ${f.depth.trim()}` : `clock ${clockText().text}`;
   // Each side a player, its suffix after its `@`: `untuned`, `search-tuned` or `search-time-tuned`.
   const side = (name) => `${f[name]}@${f[name + "Parameters"]}`;
-  return ["--test", f.kind, settings, side("challenger"), side("champion"), limit];
+  return ["--trial", f.kind, settings, side("challenger"), side("champion"), limit];
 }
 
-// The tests' screen: New test (on this machine alone), then the log, newest first.
-function testsScreen() {
+// The trials' screen: New trial (on this machine alone), then the log, newest first.
+function trialsScreen() {
   // The challenger, at first, the winner of the latest config's latest run's latest generation.
-  if (!testForm.challenger) {
+  if (!trialForm.challenger) {
     const configs = distinct(catalog.networks.filter((n) => n.run !== null), configOf);
-    testForm.challenger = configs.length > 0 ? cascade("config", configs[configs.length - 1]) : "pesto";
+    trialForm.challenger = configs.length > 0 ? cascade("config", configs[configs.length - 1]) : "pesto";
   }
-  const f = testForm;
+  const f = trialForm;
   const kinds = [["duel", "duel"], ["match", "match"], ["sprt", "SPRT"]].map(([value, label]) => option(value, label, f.kind === value)).join("");
   const settings = f.kind === "match"
     ? `<div class="row"><label>Pairs</label><input data-field="pairs" size="6" value="${escape(f.pairs)}"></div>`
@@ -1098,52 +1098,52 @@ function testsScreen() {
   const mixed = f.challengerParameters !== f.championParameters && f.challenger !== f.champion
     ? `<div class="bad">mixed: the two sides tuned differently</div>` : "";
   const form = token
-    ? `<section><h2>New test</h2><form onsubmit="return false">`
+    ? `<section><h2>New trial</h2><form onsubmit="return false">`
       + `<div class="row"><label>Kind</label><select data-field="kind">${kinds}</select></div>${settings}`
       + sideRow("Champion", "champion") + sideRow("Challenger", "challenger") + limit + mixed
-      + `<div class="row"><button id="startTest"${running ? " disabled" : ""}>Start</button><span class="said bad"></span></div>`
+      + `<div class="row"><button id="startTrial"${running ? " disabled" : ""}>Start</button><span class="said bad"></span></div>`
       + `</form></section>`
     : "";
-  const rows = [...catalog.tests].reverse().map((t) => [
-    // A stopped test, still kept, resumes from its pairs, on this machine: first, where it is seen.
+  const rows = [...catalog.trials].reverse().map((t) => [
+    // A stopped trial, still kept, resumes from its pairs, on this machine: first, where it is seen.
     { html: `<span class="number">${t.number}</span> <button class="plain" data-screen-open="${t.number}">View</button>`
-      + `${token && t.verdict.startsWith("stopped") ? ` <button data-resume-test="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span>` : ""}` },
+      + `${token && t.verdict.startsWith("stopped") ? ` <button data-resume-trial="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span>` : ""}` },
     t.ended,
-    testTitle({ test: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion }),
+    trialTitle({ trial: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion }),
     t.limit, whole(t.games), t.games > 0 ? percent(t.challenger_points / t.games) : "", (t.mixed ? "mixed; " : "") + t.verdict,
   ]);
-  const log = rows.length > 0 ? `<div class="log">${table(["test", "ended", "what", "search", "games", "challenger", "verdict"], rows)}</div>` : `<div class="muted">no test yet</div>`;
-  return form + `<section><h2>Tests</h2>${log}<div class="muted">the latest 20 are kept, each with its games; a stopped one may be resumed while it is kept</div></section>`;
+  const log = rows.length > 0 ? `<div class="log">${table(["trial", "ended", "what", "search", "games", "challenger", "verdict"], rows)}</div>` : `<div class="muted">no trial yet</div>`;
+  return form + `<section><h2>Trials</h2>${log}<div class="muted">the latest 20 are kept, each with its games; a stopped one may be resumed while it is kept</div></section>`;
 }
 
-// A test's own screen, `#tests/<number>`: while it plays, its live card alone (`drawLive`); else the
+// A trial's own screen, `#trials/<number>`: while it plays, its live card alone (`drawLive`); else the
 // same card from its record, its log line, and Resume for a stopped one.
-function testScreen() {
+function trialScreen() {
   if (jobHere()) return "";
-  const t = catalog.tests.find((test) => String(test.number) === currentRun);
-  if (!t) return running ? "" : `<section class="muted">test ${escape(currentRun)} is not kept</section>`;
-  const view = { test: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion };
+  const t = catalog.trials.find((trial) => String(trial.number) === currentRun);
+  if (!t) return running ? "" : `<section class="muted">trial ${escape(currentRun)} is not kept</section>`;
+  const view = { trial: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion };
   const resume = token && t.verdict.startsWith("stopped")
-    ? `<div class="row"><button data-resume-test="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span></div>` : "";
+    ? `<div class="row"><button data-resume-trial="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span></div>` : "";
   // Its block as it played, rebuilt from its record, then its dates and Resume.
   if (t.view) {
     return `<section>${work(t.view)}</section>`
       + `<section><div class="muted">started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
-      // A stopped test has no verdict in its block: its stop is said here.
+      // A stopped trial has no verdict in its block: its stop is said here.
       + (t.verdict.startsWith("stopped") ? `<div><b>stopped</b></div>` : "") + `${resume}</section>`;
   }
   const score = t.games > 0 ? `, the champion ${percent(1 - t.challenger_points / t.games)}` : "";
-  return `<section><h2>${escape(testTitle(view))}</h2><div class="muted">${escape(t.limit)}; started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
+  return `<section><h2>${escape(trialTitle(view))}</h2><div class="muted">${escape(t.limit)}; started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
     + (t.mixed ? `<div class="bad">mixed: the two sides tuned differently</div>` : "")
     + `<div>${whole(t.games)} games${score}</div><div><b>${escape(t.verdict)}</b></div>${resume}</section>`;
 }
 
-// The New test form's fields write their choice into `testForm`; a change that alters the form redraws it.
-function bindTestForm(element) {
+// The New trial form's fields write their choice into `trialForm`; a change that alters the form redraws it.
+function bindTrialForm(element) {
   element.querySelectorAll("[data-field]").forEach((field) => {
     field.oninput = field.onchange = () => {
       const redraw = field.tagName === "SELECT";
-      testForm[field.dataset.field] = field.value;
+      trialForm[field.dataset.field] = field.value;
       if (redraw) {
         catalogDrawn = "";
         drawConfig();
@@ -1154,8 +1154,8 @@ function bindTestForm(element) {
   element.querySelectorAll("[data-cascade]").forEach((select) => {
     select.onchange = () => {
       const side = select.dataset.cascade;
-      const network = catalog.networks.find((n) => n.name === testForm[side]);
-      testForm[side] = cascade(select.dataset.level, select.value, network);
+      const network = catalog.networks.find((n) => n.name === trialForm[side]);
+      trialForm[side] = cascade(select.dataset.level, select.value, network);
       catalogDrawn = "";
       drawConfig();
     };
@@ -1164,26 +1164,26 @@ function bindTestForm(element) {
   element.querySelectorAll("[data-clock-preset]").forEach((preset) => {
     preset.onclick = () => {
       const { label, ...fields } = CLOCK_PRESETS[Number(preset.dataset.clockPreset)];
-      Object.assign(testForm, fields);
+      Object.assign(trialForm, fields);
       catalogDrawn = "";
       drawConfig();
     };
   });
-  const button = document.getElementById("startTest");
-  // A new test's number is known once it plays: its screen opens then (`draw`). A clock its fields
+  const button = document.getElementById("startTrial");
+  // A new trial's number is known once it plays: its screen opens then (`draw`). A clock its fields
   // do not make is refused here, beside the button: the smithy passes the clock's text on unread.
   if (button) button.onclick = () => {
-    const clock = testForm.limit === "clock" ? clockText() : {};
+    const clock = trialForm.limit === "clock" ? clockText() : {};
     if (clock.error) {
       button.parentElement.querySelector(".said").textContent = clock.error;
       return;
     }
-    pendingTest = true;
-    start(testWords(), button);
+    pendingTrial = true;
+    start(trialWords(), button);
   };
-  element.querySelectorAll("[data-resume-test]").forEach((resume) => {
-    resume.dataset.screen = resume.dataset.resumeTest;
-    resume.onclick = () => start(["--resume-test", resume.dataset.resumeTest], resume);
+  element.querySelectorAll("[data-resume-trial]").forEach((resume) => {
+    resume.dataset.screen = resume.dataset.resumeTrial;
+    resume.onclick = () => start(["--resume-trial",resume.dataset.resumeTrial], resume);
   });
 }
 
@@ -1298,10 +1298,10 @@ function drawJob() {
     return;
   }
   const section = document.getElementById("job");
-  const here = currentRun !== null ? jobHere() : Boolean((SOURCES.includes(current) || current === TESTS) && state.job && state.config === current && !jobScreen());
+  const here = currentRun !== null ? jobHere() : Boolean((SOURCES.includes(current) || current === TRIALS) && state.job && state.config === current && !jobScreen());
   const elsewhere = currentRun === null && !here && state.running && state.config === current && jobScreen() !== null;
-  // A test's own screen has no box: its card names the players and holds its Stop.
-  const shown = (here && !(current === TESTS && currentRun !== null)) || elsewhere;
+  // A trial's own screen has no box: its card names the players and holds its Stop.
+  const shown = (here && !(current === TRIALS && currentRun !== null)) || elsewhere;
   section.classList.toggle("hidden", !shown);
   if (!shown) return;
   const where = state.phase ? `generation ${state.generation}, phase ${phaseName(state.phase)}` : "";
@@ -1327,7 +1327,7 @@ function drawJob() {
   bindStop();
 }
 
-// The job's Stop, on this machine alone: its box's, or a test's card's.
+// The job's Stop, on this machine alone: its box's, or a trial's card's.
 function stopButton() {
   if (!token) return "";
   const stopping = state.job_stopping;
@@ -1344,14 +1344,14 @@ function bindStop() {
 function drawLive() {
   const section = document.getElementById("work");
   const shown = currentRun !== null
-    ? jobHere() && (state.work.kind === "tune" || state.work.kind === "test")
+    ? jobHere() && (state.work.kind === "tune" || state.work.kind === "trial")
     : Boolean(current === "pesto" && state.job && state.config === "pesto" && !jobScreen() && state.work.kind === "self_play");
-  const stop = shown && state.work.kind === "test" && state.running ? stopButton() : "";
+  const stop = shown && state.work.kind === "trial" && state.running ? stopButton() : "";
   redraw(section, shown ? work(state.work, state.waiting, stop) : "");
   bindStop();
   section.classList.toggle("hidden", !shown);
-  // A running test's section is its phase under way, as a forge's is.
-  section.classList.toggle("current", shown && state.work.kind === "test");
+  // A running trial's section is its phase under way, as a forge's is.
+  section.classList.toggle("current", shown && state.work.kind === "trial");
   redraw(document.getElementById("forge"), jobHere() && state.running && state.forge ? forge(state.forge, true) : "");
 }
 
@@ -1374,16 +1374,16 @@ function draw() {
     return;
   }
   document.getElementById("pageTitle").textContent =
-    currentRun === null ? current : current === TESTS ? `test ${currentRun}` : currentRun + scaledMark(currentRun);
-  // New test pressed: its screen, once it plays; forgotten if it never did.
-  if (pendingTest && catalog) {
-    const screen = state.config === TESTS ? jobScreen() : null;
+    currentRun === null ? current : current === TRIALS ? `trial ${currentRun}` : currentRun + scaledMark(currentRun);
+  // New trial pressed: its screen, once it plays; forgotten if it never did.
+  if (pendingTrial && catalog) {
+    const screen = state.config === TRIALS ? jobScreen() : null;
     if (screen !== null) {
-      pendingTest = false;
-      location.hash = screenHash(TESTS, screen);
+      pendingTrial = false;
+      location.hash = screenHash(TRIALS, screen);
       return;
     }
-    if (!state.running) pendingTest = false;
+    if (!state.running) pendingTrial = false;
   }
   // On the job's own screen its state alone: the screen's title and boxes name it.
   const own = jobHere() ? (!state.running ? "ended" : state.job_stopping ? "stopping" : "running") : status;
@@ -1511,9 +1511,9 @@ async function pollLive() {
     // steps that have none.
     const html = bars.map(liveLine).join("");
     // Not on a forge config's own screen: its job's screen shows them.
-    // Not on the tests' screens either: a test draws its own bar on its own. On a run's screen, only
+    // Not on the trials' screens either: a trial draws its own bar on its own. On a run's screen, only
     // the running job's own: on another run's, viewed while it runs, they would read as that run's.
-    const shown = html !== "" && current !== TESTS && (current === null || (currentRun !== null && jobHere()) || SOURCES.includes(current));
+    const shown = html !== "" && current !== TRIALS && (current === null || (currentRun !== null && jobHere()) || SOURCES.includes(current));
     for (const section of document.querySelectorAll("section.live")) {
       redraw(section, html);
       section.classList.toggle("hidden", !shown);
