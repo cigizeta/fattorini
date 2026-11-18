@@ -226,6 +226,12 @@ Each to confirm the first time it happens:
   (fixed-budget-schedule-implementation.md). **Implemented 2026-11-18**, a scaled smoke run end to
   end; next, `lc0-halfk-threats-screlu-hidden-budget` on the training machine, against
   screlu-hidden at 256 under patience.
+- **A batch of 8192, a candidate when the corpus grows to 4 * 1024^3 positions** (the developer,
+  2026-11-18). Measured on 2026-11-18 with one network training (`-hidden-512`, batch 4096): the GPU
+  85 to 88% busy, steadily, at about 70% of its power limit and most of its memory free, so the feed
+  is not the bound and a larger batch is the way to fill it. At 4 passes, about 4.3B positions are
+  about 4.2M steps at 4096 against 2.1M at 8192; the rate schedule's endpoints to be checked at the
+  new size, and the change judged by duels, not by speed alone.
 - **Another learning-rate rule, much later** (the developer, 2026-11-17): the fixed budget above
   replaces patience; the adaptive rules stay shelved.
   Schedule-free AdamW, gentle rate steps, a sign-driven rule and a slope test were discussed and
