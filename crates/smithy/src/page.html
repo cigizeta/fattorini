@@ -382,15 +382,16 @@ function stageProgress(r, round) {
     + `ETA about ${duration(Math.round(left * pace))}; ${bound}</div>${bar(r.round, total, r.round)}`;
 }
 
-// A budgeted run's progress: its rounds of the budget's, its ETA the rounds left at the latest round's
-// pace. No line for the round under way (the developer, 2026-11-18): the budget's own line says it.
+// A budgeted run's progress: its rounds of the budget's, its ETA the rounds left at the average pace of
+// the rounds done, not the latest round's (the developer, 2026-11-19): a budget's rounds are alike.
+// No line for the round under way (the developer, 2026-11-18): the budget's own line says it.
 function budgetProgress(r) {
   const total = r.schedule.total_rounds;
   const elapsed = `elapsed ${duration(Math.round(r.elapsed_seconds))}`;
-  const pace = r.train_seconds + r.test_seconds;
-  // Round 0 only tests, so its seconds are no round's pace: no ETA until a round has trained.
+  // Round 0 only tests: no ETA until a round has trained.
   const left = Math.max(0, total - r.round);
-  const eta = !r.finished && r.train_seconds > 0 && left > 0 ? `, ETA about ${duration(Math.round(left * pace))}` : "";
+  const pace = r.round > 0 ? r.elapsed_seconds / r.round : 0;
+  const eta = !r.finished && r.round > 0 && left > 0 ? `, ETA about ${duration(Math.round(left * pace))}` : "";
   return `<div>round ${whole(r.round)} of ${whole(total)} (${percent(r.round / Math.max(1, total))}), `
     + `${elapsed}${eta}</div>${bar(r.round, total, r.round)}`;
 }
