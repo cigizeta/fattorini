@@ -26,7 +26,8 @@ code and candidate names (`-r2`) keep "run" until renamed, if ever.
 
    Both: batch 8192, `schedule: budget`, 4 epochs, 1 warmup round, the nine candidates and their
    round robin as fixed-budget-schedule.md. Width 256 may never run (the developer); its configs
-   `-hidden-budget-8` and `-10` (halfk-king-buckets-implementation.md, step 8) stay unscheduled.
+   `-hidden-8-budget` and `-10-budget` (halfk-king-buckets-implementation.md, step 8, renamed the same
+   day) stay unscheduled.
 
 ## What the attempts can tell
 

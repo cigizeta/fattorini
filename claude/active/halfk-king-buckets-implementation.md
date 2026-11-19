@@ -88,8 +88,9 @@ edits than an `Option`); `QuantizedPsqNetwork::halfk` is the `Option<Layout>`. T
    of an 8-bucket training net evaluates as the trained net does (the export test, per layout).
 7. **The census:** the layout as an option (`--king-buckets 8`), the counts a `Vec`, the boards
    printing each bucket's share on its squares.
-8. **The configs:** `lc0-halfk-threats-screlu-hidden-budget-8.yaml` and `...-budget-10.yaml`, the
-   budget config with `king_buckets` set, nothing else changed.
+8. **The configs:** `lc0-halfk-threats-screlu-hidden-8-budget.yaml` and `...-10-budget.yaml`, the
+   budget config with `king_buckets` set, nothing else changed (renamed from `-budget-8` and
+   `-budget-10` on 2026-11-19, the developer: the king buckets before `-budget`).
 9. **Run:** `cargo test` for both crates, clippy; a scaled run of the 8 to its gate; the bench of
    32, 8 and 10. Then the experiments, on the full corpus (lc0-position-cap.md).
 
