@@ -15,8 +15,8 @@ and an ETA of 0.
 - The conversion's rate is that ratio, `None` until the run's first tar is converted.
 - The current tar's ETA is its whole conversion at that rate less the time already spent on it, so a
   seal at 100% still counts down; `None` once that is spent, never a negative or a false 0.
-- `Line` gains `stage`, set while a segment is sealed (`sealing segment 01`) and shown on the
-  page's line, so a tar at 100% reads as still at work.
+- Nothing names a seal on the page (the developer, 2026-11-19: too technical); the ETA still
+  counting down at 100% says enough.
 - The corpus line is unchanged: its rate is sealed positions over the run's wall time, seals
   included already.
 
@@ -24,4 +24,4 @@ and an ETA of 0.
 
 - `cargo test -p smithy`
 - On the page, the converting line shows no rate for the first tar, then one near the log's pace
-  between tars, and `sealing segment NN` at each seal.
+  between tars, and an ETA still counting down while a tar at 100% is sealed.
