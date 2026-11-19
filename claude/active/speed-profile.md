@@ -77,5 +77,7 @@ In order of gain over effort, each designed before it is written:
    2.42M (no gain) and searched 35,673,689 nodes against 27,589,863 (+29%): many quiets share a
    score, and the sort's stable generation order breaks those ties better than swapping leaves.
    Reverted.
-3. Incremental threats (finding 1): up to 16%, the largest and the hardest.
+3. Incremental threats (finding 1): **stays closed** (the developer, 2026-11-19): today's threats are
+   simplified and sparse, so there is little to make incremental and perhaps no real gain, as the
+   two experiments above showed for shares of a profile. Reopened only with richer threats.
 4. The halfk network's profile, for refreshes and its wider transform.
