@@ -20,7 +20,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fattorini::pipeline::protocol::{JOBS_PATH, SMITHY_PORT};
-use fattorini::pipeline::remote;
+use fattorini::pipeline::{home, remote};
 
 /// The lease's former file in a job's remote directory, now the last part of its key; an old one
 /// left there is ignored, and never copied (`tree.rs`, `tune.rs`).
@@ -209,7 +209,8 @@ pub(crate) struct Lease {
 /// Takes the lease at `path`, a job's former remote `lease.txt`, as `job`, the job's name in
 /// messages, after asking the other machines (`judge`).
 pub(crate) fn take(path: &str, job: &str) -> Result<Lease, String> {
-    let peers = PEERS.get().map(ask).unwrap_or_default();
+    // Away from the home network no other machine is asked: one there named as ours is a stranger.
+    let peers = if home::at_home() { PEERS.get().map(ask).unwrap_or_default() } else { Vec::new() };
     take_as(&key_of(path), job, &peers)
 }
 

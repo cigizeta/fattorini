@@ -6,3 +6,8 @@
 # should play). Between two jobs of the same kind, full or scaled, the smithy ranked higher keeps the
 # arenas; a smithy on a machine not listed ranks after every listed one.
 machines: [firstname, secondname]
+
+# The home router's MAC address, as `arp -a <default gateway>` prints it (the gateway from
+# `ipconfig`). On any other network the smithy and the arena talk to their own machine alone. The
+# placeholder below is refused: write the real one on Drive only, never in the repository.
+router: 00-00-00-00-00-00

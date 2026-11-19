@@ -27,9 +27,13 @@ shakmaty.workspace = true
 # `mmap`: the tables are read through memory maps (`tablebase.rs`), not one system call per read.
 shakmaty-syzygy = { version = "0.28.1", features = ["mmap"] }
 # The machine's memory (`pipeline/system_memory.rs`), and `--lichess`'s core groups, reserved by named
-# mutexes (`core_pinning.rs`, which needs `Win32_Foundation` and `Win32_Security` for `CreateMutexW`).
+# mutexes (`core_pinning.rs`, which needs `Win32_Foundation` and `Win32_Security` for `CreateMutexW`),
+# and the default gateway's MAC address (`pipeline/home.rs`, IpHelper with Ndis and WinSock).
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",

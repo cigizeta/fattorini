@@ -35,9 +35,10 @@ use std::time::{Duration, Instant};
 use fattorini::bench::loaded_bench;
 use fattorini::nnue::Network;
 use lan_http::{self as http, Listener, Reply, Request};
+use fattorini::pipeline::{home, remote};
 use fattorini::pipeline::protocol::{
     self, parse_entries, task_body, Alive, Chore, Claim, Entry, Hello, HelloReply, Limit, Player, ScoreRecord, TaskKind,
-    ALIVE_PATH, ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, LOOPBACK, PESTO, RELEASE_AFTER,
+    ALIVE_PATH, ARENA_CONTROL_PORT, ARENA_PORT, CHORE_PATH, CHORE_TAG, CLAIM_PATH, HELLO_PATH, LOOPBACK, MACHINES_PATH, PESTO, RELEASE_AFTER,
     RELEASE_PATH, SCORE_FEN_TAG, SCORE_MOVE_TAG, SCORE_PARENT_TAG, SEQ_TAG, SESSION_TAG, SMITHY_PORT, STATUS_PATH, STOP_PATH,
     TASK_PATH,
 };
@@ -102,15 +103,23 @@ pub(crate) fn run(verb: &str, rest: &[String]) {
 fn start() {
     progress::log_events();
     let machine = machine::load(machine::MACHINE_CONFIG_PATH).unwrap_or_else(|message| fail(message));
+    // The home router, from the machines' one copy on Drive: away from it, this arena serves this
+    // machine's smithy alone.
+    let machines = remote::check_mounted()
+        .map_err(|error| error.to_string())
+        .and_then(|_| protocol::machines(&remote::remote_path(MACHINES_PATH)))
+        .unwrap_or_else(|message| fail(message));
+    home::set_router(&machines.router).unwrap_or_else(|message| fail(message));
     // Taken, the port means an arena already runs here: two would share the machine's cores.
     let control = Listener::bind(LOOPBACK, ARENA_CONTROL_PORT).unwrap_or_else(|message| {
         fail(format!("{message}: is an arena already running on this machine? arena status says"))
     });
     // Claimed over the LAN by a smithy on any machine, `127.0.0.1` kept for this machine's own.
     // Without the LAN's, only this machine's smithy can claim it.
-    let mut claim_listeners = vec![Listener::bind(LOOPBACK, ARENA_PORT).unwrap_or_else(|message| fail(message))];
+    // Each with whether it is the LAN's, refused away from the home network.
+    let mut claim_listeners = vec![(Listener::bind(LOOPBACK, ARENA_PORT).unwrap_or_else(|message| fail(message)), false)];
     match Listener::bind(&machine, ARENA_PORT) {
-        Ok(listener) => claim_listeners.push(listener),
+        Ok(listener) => claim_listeners.push((listener, true)),
         Err(message) => log::warn!("{message}: claimed over {LOOPBACK} alone, by a smithy on this machine"),
     }
     let workers = std::thread::available_parallelism().map_or(1, |cores| cores.get());
@@ -135,9 +144,16 @@ fn start() {
         let (arena, control_done) = (Arc::clone(&arena), Arc::clone(&control_done));
         std::thread::spawn(move || control.serve(&|request: &Request| answer_control(&arena, request), &control_done))
     }];
-    for listener in claim_listeners {
+    for (listener, lan) in claim_listeners {
         let (arena, control_done) = (Arc::clone(&arena), Arc::clone(&control_done));
-        threads.push(std::thread::spawn(move || listener.serve(&|request: &Request| answer_claim(&arena, request), &control_done)));
+        let answer = move |request: &Request| {
+            // Away from the home network, a smithy there named as one of ours is a stranger.
+            if lan && !home::at_home() {
+                return Reply::error(403, "this arena is away from the home network: its own machine's smithy alone");
+            }
+            answer_claim(&arena, request)
+        };
+        threads.push(std::thread::spawn(move || listener.serve(&answer, &control_done)));
     }
     let result = arena.run();
     control_done.store(true, Ordering::SeqCst);
@@ -456,6 +472,11 @@ impl Arena {
     }
 
     fn post(&self, host: &str, path: &str, token: Option<&str>, body: &[u8]) -> Result<(String, Vec<u8>), String> {
+        // A claim taken at home names its smithy by machine name; away, that name may be a
+        // stranger's, so nothing is sent but to this machine. The claim lapses unpolled meanwhile.
+        if host != LOOPBACK && !home::at_home() {
+            return Err(format!("{host}: not reached, away from the home network"));
+        }
         self.exchange(http::post(&http::url(host, SMITHY_PORT, path), token, body, REQUEST_TIMEOUT))
     }
 

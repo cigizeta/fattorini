@@ -54,7 +54,7 @@ use fattorini::pipeline::protocol::{
 use fattorini::pipeline::preprocessing_config;
 use fattorini::pipeline::preprocessing_config::{lambdas_text, ArmLambda};
 use fattorini::pipeline::segments::{self, SegmentMeta, META_SUFFIX};
-use fattorini::pipeline::{generation, players, remote};
+use fattorini::pipeline::{generation, home, players, remote};
 
 use super::archive::{self, Archiver};
 use super::{attempt_config, lease, tree};
@@ -2354,6 +2354,9 @@ struct Claims {
     /// Each target whose claims fail: what the last failure was, the wait it now has, and when it is
     /// tried again.
     backoff: Mutex<HashMap<String, Backoff>>,
+    /// Whether the last round was on the home network (`home::at_home`). Away, only this machine's
+    /// own arena is claimed, over `127.0.0.1`, and it reaches this smithy there.
+    home: AtomicBool,
 }
 
 /// Why a claim's request failed, from `Claims::post`'s error `message` for the claim at `url`: an
@@ -2393,7 +2396,13 @@ impl Claims {
             held: Mutex::new(HashMap::new()),
             notes: Mutex::new(HashMap::new()),
             backoff: Mutex::new(HashMap::new()),
+            home: AtomicBool::new(true),
         }
+    }
+
+    /// Where `target` is reached: by its name at home; away, this machine's own over `127.0.0.1`.
+    fn host_of<'a>(&self, target: &'a str) -> &'a str {
+        if !self.home.load(Ordering::SeqCst) && target == self.claim.smithy { LOOPBACK } else { target }
     }
 
     fn backoff(&self) -> std::sync::MutexGuard<'_, HashMap<String, Backoff>> {
@@ -2427,7 +2436,7 @@ impl Claims {
     }
 
     fn post(&self, target: &str, path: &str, body: &[u8]) -> Result<(String, String), String> {
-        let reply = lan_http::post(&lan_http::url(target, self.port, path), None, body, CLAIM_TIMEOUT)?;
+        let reply = lan_http::post(&lan_http::url(self.host_of(target), self.port, path), None, body, CLAIM_TIMEOUT)?;
         let (word, body) =
             lan_http::status_of(&reply).ok_or_else(|| format!("HTTP {}: {}", reply.code, String::from_utf8_lossy(&reply.body).trim()))?;
         Ok((word, String::from_utf8_lossy(&body).to_string()))
@@ -2454,7 +2463,22 @@ impl Claims {
                 self.release_idle(shared);
             }
         }
+        // Moving between networks changes where each arena is reached, and where it reaches this
+        // smithy: every arena held is let go, and claimed again as the new network allows.
+        let home = home::at_home();
+        if self.home.swap(home, Ordering::SeqCst) != home {
+            let lost: Vec<(String, String)> = self.held().drain().map(|(target, arena)| (target, arena.hello.machine)).collect();
+            for (target, machine) in lost {
+                self.note(&target, format!("{machine} let go: this machine changed networks"));
+                shared.lock().expect("the lock should not be poisoned").lose(&machine);
+            }
+            self.backoff().clear();
+        }
         for target in &self.targets {
+            if !home && *target != self.claim.smithy {
+                self.note(target, "not claimed: this smithy is away from the home network".to_string());
+                continue;
+            }
             let held = self.held().get(target).map(|held| held.hello.machine.clone());
             match held {
                 Some(machine) => self.poll(shared, target, &machine, now),
@@ -2515,7 +2539,8 @@ impl Claims {
     }
 
     fn claim_one(&self, target: &str, scaled: bool, now: Instant) {
-        let claim = Claim { scaled, ..self.claim.clone() };
+        let host = self.host_of(&self.claim.host).to_string();
+        let claim = Claim { scaled, host, ..self.claim.clone() };
         match self.post(target, CLAIM_PATH, claim.text().as_bytes()) {
             Ok((word, body)) if word == "OK" => match Hello::parse(&body) {
                 Ok(hello) => {
@@ -3560,6 +3585,10 @@ fn serve(listener: Listener, status: Arc<Status>, control_here: bool, stop: Arc<
     let answer = |request: &Request| -> Reply {
         if control_here && !is_loopback_host(request.host.as_deref(), port) {
             return Reply::error(403, "the smithy's own machine reaches it as 127.0.0.1 or localhost only");
+        }
+        // Away from the home network, a machine there named as one of ours is a stranger.
+        if !control_here && !home::at_home() {
+            return Reply::error(403, "this smithy is away from the home network: its own machine alone");
         }
         if let Some(reply) = page(&status, request, control_here) {
             return reply;
@@ -4687,6 +4716,7 @@ fn start() {
     }
     let machine = machine_name().unwrap_or_else(|message| fail(message));
     let machines = arenas_to_claim().unwrap_or_else(|message| fail(message));
+    home::set_router(&machines.router).unwrap_or_else(|message| fail(message));
     let rank = machines.rank(&machine);
     match rank {
         Some(rank) => log::info!("this smithy ranks {} of {} in {MACHINES_PATH}", rank + 1, machines.machines.len()),

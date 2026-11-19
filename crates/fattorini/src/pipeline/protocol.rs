@@ -102,6 +102,8 @@ pub const SEQ_TAG: &str = "Seq";
 #[serde(deny_unknown_fields)]
 pub struct Machines {
     pub machines: Vec<String>,
+    /// The home router's MAC address (`home.rs`): away from it, every machine talks to itself alone.
+    pub router: String,
 }
 
 impl Machines {
@@ -115,12 +117,13 @@ impl Machines {
 /// how to write it.
 pub fn machines(path: &str) -> Result<Machines, String> {
     let how = "write it as `machines: [<name>, ...]`, every machine by its data/machine.yaml name, highest rank first, \
-               as examples/machines.yaml does";
+               and `router: <the home router's MAC address>`, as examples/machines.yaml does";
     let text = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}; {how}"))?;
     let config: Machines = serde_yaml::from_str(&text).map_err(|error| format!("{path}: {error}; {how}"))?;
     if config.machines.is_empty() {
         return Err(format!("{path}: no machine; {how}"));
     }
+    super::home::parse_mac(&config.router).map_err(|error| format!("{path}: {error}; {how}"))?;
     for (index, name) in config.machines.iter().enumerate() {
         validate_machine_name(name).map_err(|error| format!("{path}: {error}; {how}"))?;
         if config.machines[..index].contains(name) {
@@ -705,24 +708,30 @@ mod tests {
         let how = "`machines: [<name>, ...]`";
         let missing = fixture("missing", None);
         assert!(machines(&missing).unwrap_err().contains(how));
-        let listed = fixture("listed", Some("machines: [beta, alpha, gamma]\n"));
-        let expected = Machines { machines: vec!["beta".to_string(), "alpha".to_string(), "gamma".to_string()] };
+        let listed = fixture("listed", Some("machines: [beta, alpha, gamma]\nrouter: 0a-bc-00-12-ef-ff\n"));
+        let expected = Machines {
+            machines: vec!["beta".to_string(), "alpha".to_string(), "gamma".to_string()],
+            router: "0a-bc-00-12-ef-ff".to_string(),
+        };
         assert_eq!(machines(&listed).as_ref(), Ok(&expected));
         assert_eq!((expected.rank("beta"), expected.rank("gamma"), expected.rank("delta")), (Some(0), Some(2), None));
         std::fs::remove_file(&listed).ok();
         for (name, contents) in [
-            ("bad-name", "machines: [Beta-1]\n"),
+            ("bad-name", "machines: [Beta-1]\nrouter: 0a-bc-00-12-ef-ff\n"),
             ("old-shape", "smithy: beta\narenas: [beta]\n"),
             ("old-arenas", "arenas: [beta]\n"),
-            ("unknown-key", "machines: [beta]\nport: 1\n"),
-            ("none", "machines: []\n"),
+            ("unknown-key", "machines: [beta]\nrouter: 0a-bc-00-12-ef-ff\nport: 1\n"),
+            ("none", "machines: []\nrouter: 0a-bc-00-12-ef-ff\n"),
+            ("no-router", "machines: [beta]\n"),
+            ("placeholder-router", "machines: [beta]\nrouter: 00-00-00-00-00-00\n"),
+            ("bad-router", "machines: [beta]\nrouter: home\n"),
             ("empty", ""),
         ] {
             let path = fixture(name, Some(contents));
             assert!(machines(&path).unwrap_err().contains(how), "{contents:?}");
             std::fs::remove_file(&path).ok();
         }
-        let twice = fixture("twice", Some("machines: [gamma, gamma]\n"));
+        let twice = fixture("twice", Some("machines: [gamma, gamma]\nrouter: 0a-bc-00-12-ef-ff\n"));
         assert!(machines(&twice).unwrap_err().contains("gamma twice"));
         std::fs::remove_file(&twice).ok();
     }

@@ -207,7 +207,18 @@ Its shape is `examples/machines.yaml`'s:
 cp examples/machines.yaml "/g/My Drive/fattorini/data/machines.yaml"
 ```
 
-Then the names in that copy edited. A local `data/machines.yaml` is no longer read; the older
+Then the names in that copy edited, and `router` set to the home router's MAC address, as Git Bash
+shows it on the home network (the default gateway, then its address):
+
+```bash
+ipconfig | grep -i "default gateway"
+```
+
+```bash
+arp -a <default gateway>
+```
+
+The address goes on Drive only, never in the repository; the placeholder is refused. A local `data/machines.yaml` is no longer read; the older
 `smithy:` and `arenas:` are refused, the smithy saying the form to write.
 
 The smithy, in its own terminal, left running: it starts with no job, and claims every listed
@@ -267,9 +278,15 @@ Any browser on the local network shows the job as it goes, read-only, at the smi
 address on that port, `http://<machine>:47821/` (`smithy status` prints it). Only `smithy stop` or Ctrl+C ends the smithy.
 
 The smithy listens on TCP port 47821, an arena on 47823, each on `127.0.0.1` and on its machine's
-LAN address. Every machine's firewall must allow both, once, below. An arena listens on its
-machine's LAN address as it was at `arena start`: after the machine changes network, stop and start
-it again.
+LAN address. Every machine's firewall must allow both, once, below. Each listens on its machine's
+LAN address as it was at its start: after the machine changes network, stop and start it again to
+reach the other machines.
+
+Both serve the LAN only on the home network, recognized by its router (`machines.yaml`'s
+`router`), looked at again every 10 s. Away, on any other network, where a machine may by chance be
+named as one of ours, they talk to their own machine alone: the LAN listeners refuse every request,
+no other machine is claimed or asked for a lease, and the smithy claims its own machine's arena over
+`127.0.0.1`. Back home, the other machines are claimed again.
 
 A stopped attempt resumes where it stopped with its Resume, on this smithy or any other: several
 smithies may run at once, on any machines, but a job runs in one only. A forge attempt, a tune, PeSTO's

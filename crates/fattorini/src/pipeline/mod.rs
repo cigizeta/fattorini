@@ -4,6 +4,7 @@
 
 pub mod data_root;
 pub mod generation;
+pub mod home;
 pub mod lan;
 pub mod players;
 pub mod preprocessing_config;
