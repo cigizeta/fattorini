@@ -395,8 +395,9 @@ changes).
   (the shared table, memory, all-core clocks).
 - **The UCI `nodes` and `nps` undercount with several threads** (found 2026-11-19): only thread 0
   prints `info` lines (`uci.rs`, `go_search`), with its own nodes, so 8 threads report about 2M nps
-  where engines that sum their threads report about 16M; testers and GUIs read the low figure. The
-  helpers' nodes to be summed into the line: small, a reporting change, designed first.
+  where engines that sum their threads report about 16M; testers and GUIs read the low figure.
+  **Fixed 2026-11-19** (threaded-node-count.md): the helpers' nodes summed into thread 0's line, the
+  arena left alone. To see on the next snapshot: about 16M nps at 8 threads.
 - **An SPSA of time management, after the search's** (the developer, 2026-11-11): the time rules
   depend on the search's curves (a depth's cost, how often the best move changes, the score's
   swings), so they are tuned against the search that ships. Only after Split's verdict

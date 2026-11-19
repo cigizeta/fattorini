@@ -9,14 +9,14 @@ use crate::movegen::legal::legal_moves;
 use crate::nnue::Network;
 use crate::perft::perft;
 use crate::search::{
-    choose_best_move_multipv_with_progress, choose_best_move_with_parameters, choose_best_move_with_progress,
+    choose_best_move_multipv_with_progress, choose_best_move_threaded,
     root_reported_score, select_best_result, single_move_limit, time_limit, IterationReport, PonderState,
     SearchParameters, TimeParameters, DEFAULT_MOVE_OVERHEAD_MS, MATE_SCORE, MAX_PLY,
 };
 use crate::tablebase::{SyzygyTablebase, TbResult};
 use crate::tt::TranspositionTable;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -1006,6 +1006,9 @@ impl Engine {
         let multipv = self.multipv;
         let stop_signal = Arc::new(AtomicBool::new(false));
         let running_stop_signal = Arc::clone(&stop_signal);
+        // The helper threads' nodes, which thread 0 adds to its own in every `info` line
+        // (`choose_best_move_threaded`); 0 throughout with one thread.
+        let helper_nodes = Arc::new(AtomicU64::new(0));
         let stdout_lock = Arc::clone(&self.stdout_lock);
         let last_search_output = Arc::clone(&self.last_search_output);
         let offers_ponder_move = self.ponder;
@@ -1025,6 +1028,7 @@ impl Engine {
             let tablebase = &tablebase;
             let evaluator = evaluator.as_deref();
             let stop_signal = &*stop_signal;
+            let helper_nodes = &*helper_nodes;
             let ponder_state = ponder_state.as_deref();
             // The root's tablebase result, once per search, for the scores shown
             // (`root_reported_score`); `None` outside the tables.
@@ -1046,7 +1050,7 @@ impl Engine {
                             let stdout_lock = Arc::clone(&stdout_lock);
                             let last_search_output = Arc::clone(&last_search_output);
                             scope.spawn(move || run_main_thread(stop_signal, || {
-                                // multipv <= 1 keeps calling choose_best_move_with_progress
+                                // multipv <= 1 keeps calling choose_best_move_threaded
                                 // exactly as before this option existed -- MultiPV search adds a
                                 // real, extra cost (one full-window search per additional rank),
                                 // so the common, default case pays nothing for a feature it isn't
@@ -1083,9 +1087,9 @@ impl Engine {
                                         },
                                     )
                                 } else {
-                                    choose_best_move_with_progress(
+                                    choose_best_move_threaded(
                                         board, target_depth, limit, ancestors, tt, tablebase, evaluator,
-                                        Some(parameters), thread_idx, stop_signal, ponder_state,
+                                        Some(parameters), thread_idx, stop_signal, helper_nodes, ponder_state,
                                         move |report| {
                                             let line = format_info_line(report, root_tablebase, tt.hashfull());
                                             // Pushed before the print, not after -- see
@@ -1112,9 +1116,9 @@ impl Engine {
                             }))
                         } else {
                             scope.spawn(move || {
-                                choose_best_move_with_parameters(
-                                    board, target_depth, limit, ancestors, tt, tablebase, evaluator, parameters,
-                                    thread_idx, stop_signal,
+                                choose_best_move_threaded(
+                                    board, target_depth, limit, ancestors, tt, tablebase, evaluator, Some(parameters),
+                                    thread_idx, stop_signal, helper_nodes, None, |_| {},
                                 )
                             })
                         }

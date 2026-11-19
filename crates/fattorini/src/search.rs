@@ -17,7 +17,7 @@ use crate::movegen::see::{attackers_to, see_ge};
 use crate::nnue::Network;
 use crate::tablebase::{SyzygyTablebase, TbResult};
 use crate::tt::{Bound, TranspositionTable};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 mod move_picker;
@@ -1348,6 +1348,10 @@ struct Search<'a> {
     /// today, this is still always present (never `None`) but never actually observed as `true`
     /// from anywhere but the same thread that set it.
     stop_signal: &'a AtomicBool,
+    /// The nodes every helper thread of this `go` has searched, a helper's (thread above 0) only:
+    /// it adds `CHECK_INTERVAL` at each checkpoint, so thread 0's `info` lines can report every
+    /// thread's nodes (`choose_best_move_threaded`). `None` for thread 0 and every single search.
+    helper_nodes: Option<&'a AtomicU64>,
     /// A ponder search's state, thread 0 only: while pondering, `deadline` is not enforced. `None`
     /// for every other search.
     ponder: Option<&'a PonderState>,
@@ -1564,6 +1568,8 @@ fn new_search<'a>(
         parameters: SearchParameters::DEFAULT,
         eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
         stop_signal,
+        // Set by `search_root_limited` for a helper thread, as `tablebase` above is.
+        helper_nodes: None,
         excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
         scores: Vec::new(),
         quiets: Vec::new(),
@@ -1825,6 +1831,9 @@ impl<'a> Search<'a> {
         // waiting on this one's return, will hit the unconditional check above on its own very
         // next call and bail the same way.
         if self.nodes.is_multiple_of(CHECK_INTERVAL) {
+            if let Some(helper_nodes) = self.helper_nodes {
+                helper_nodes.fetch_add(CHECK_INTERVAL, Ordering::Relaxed);
+            }
             // Checked first, regardless of thread: this is how every thread other than 0 ever
             // learns time is up at all, since only thread 0's `deadline` is ever `Some` (see
             // that field's own doc comment). For thread 0 this is almost always a no-op (it's
@@ -2850,6 +2859,9 @@ impl<'a> Search<'a> {
         crate::node_stats::quiescence_node();
 
         if self.nodes.is_multiple_of(CHECK_INTERVAL) {
+            if let Some(helper_nodes) = self.helper_nodes {
+                helper_nodes.fetch_add(CHECK_INTERVAL, Ordering::Relaxed);
+            }
             if self.stop_signal.load(Ordering::Relaxed) {
                 self.stopped = true;
                 return alpha;
@@ -3997,20 +4009,22 @@ fn search_root_pondering(
 ) -> RootResult {
     search_root_limited(
         board, depth, deadline, None, ancestors, killers, history, continuation_history, correction_history, tt, tablebase,
-        evaluator, parameters, previous_score, thread_idx, stop_signal, excluded_root_moves, ponder,
+        evaluator, parameters, previous_score, thread_idx, stop_signal, None, excluded_root_moves, ponder,
     )
 }
 
-/// `search_root_pondering` with a node budget for the iteration (`Search::node_limit`).
+/// `search_root_pondering` with a node budget for the iteration (`Search::node_limit`), and for a
+/// helper thread the counter of the helpers' nodes (`Search::helper_nodes`).
 #[allow(clippy::too_many_arguments)]
-fn search_root_limited(
+fn search_root_limited<'a>(
     board: &Board, depth: u32, deadline: Option<Instant>, node_limit: Option<u64>, ancestors: Vec<u64>,
     killers: Vec<[Option<Move>; 2]>, history: [[i32; 64]; 12], continuation_history: Vec<i32>,
-    correction_history: Vec<i32>, tt: &TranspositionTable, tablebase: &SyzygyTablebase, evaluator: Option<&Network>,
-    parameters: Option<SearchParameters>, previous_score: Option<i32>, thread_idx: u32, stop_signal: &AtomicBool,
-    excluded_root_moves: &[Move], ponder: Option<&PonderState>,
+    correction_history: Vec<i32>, tt: &'a TranspositionTable, tablebase: &SyzygyTablebase, evaluator: Option<&Network>,
+    parameters: Option<SearchParameters>, previous_score: Option<i32>, thread_idx: u32, stop_signal: &'a AtomicBool,
+    helper_nodes: Option<&'a AtomicU64>, excluded_root_moves: &[Move], ponder: Option<&PonderState>,
 ) -> RootResult {
     let mut search = new_search(depth, deadline, ancestors, killers, history, continuation_history, tt, stop_signal);
+    search.helper_nodes = helper_nodes;
     search.node_limit = node_limit;
     search.correction_history = correction_history;
     search.ponder = ponder;
@@ -4250,8 +4264,26 @@ pub fn choose_best_move_with_progress(
     ponder: Option<&PonderState>, mut on_iteration: impl FnMut(&IterationReport),
 ) -> (Vec<IterationReport>, Option<Move>) {
     iterate(
-        board, max_depth, limit, None, ancestors, tt, tablebase, evaluator, parameters, thread_idx, stop_signal, ponder,
+        board, max_depth, limit, None, ancestors, tt, tablebase, evaluator, parameters, thread_idx, stop_signal, None, ponder,
         |report, _| on_iteration(report),
+    )
+}
+
+/// `choose_best_move_with_progress` for one thread of a multi-threaded `go`, every thread of it
+/// given the same `helper_nodes`: a helper (`thread_idx` above 0) adds its nodes to it as it
+/// searches, and thread 0 adds it to its own in each report, so the `info` lines it prints count
+/// every thread's nodes, as engines that sum their threads report them. The search itself, its
+/// time management and its node limits are unchanged; with one thread the counter stays 0.
+#[allow(clippy::too_many_arguments)]
+pub fn choose_best_move_threaded(
+    board: &Board, max_depth: u32, limit: Option<TimeLimit>, ancestors: &[u64], tt: &TranspositionTable,
+    tablebase: &SyzygyTablebase, evaluator: Option<&Network>, parameters: Option<SearchParameters>, thread_idx: u32,
+    stop_signal: &AtomicBool, helper_nodes: &AtomicU64, ponder: Option<&PonderState>,
+    mut on_iteration: impl FnMut(&IterationReport),
+) -> (Vec<IterationReport>, Option<Move>) {
+    iterate(
+        board, max_depth, limit, None, ancestors, tt, tablebase, evaluator, parameters, thread_idx, stop_signal,
+        Some(helper_nodes), ponder, |report, _| on_iteration(report),
     )
 }
 
@@ -4264,7 +4296,7 @@ pub fn choose_best_move_capped(
     evaluator: Option<&Network>, parameters: SearchParameters, stop_signal: &AtomicBool,
 ) -> (Vec<IterationReport>, Option<Move>) {
     iterate(
-        board, max_depth, None, Some(max_nodes), &[], tt, tablebase, evaluator, Some(parameters), 0, stop_signal, None,
+        board, max_depth, None, Some(max_nodes), &[], tt, tablebase, evaluator, Some(parameters), 0, stop_signal, None, None,
         |_, _| {},
     )
 }
@@ -4277,20 +4309,24 @@ pub fn choose_best_move_probing(
     parameters: SearchParameters, stop_signal: &AtomicBool, mut on_depth: impl FnMut(&IterationReport, Option<TimeFactors>),
 ) -> (Vec<IterationReport>, Option<Move>) {
     iterate(
-        board, max_depth, None, None, &[], tt, tablebase, evaluator, Some(parameters), 0, stop_signal, None,
+        board, max_depth, None, None, &[], tt, tablebase, evaluator, Some(parameters), 0, stop_signal, None, None,
         |report, manager| on_depth(report, manager.factors()),
     )
 }
 
 /// `choose_best_move_with_progress`'s loop, `on_iteration` also shown the time manager; `node_cap`,
-/// the nodes of every depth together, each depth after the first given what is left of it.
+/// the nodes of every depth together, each depth after the first given what is left of it;
+/// `helper_nodes`, the helpers' nodes of a multi-threaded `go` (`choose_best_move_threaded`).
 #[allow(clippy::too_many_arguments)]
 fn iterate(
     board: &Board, max_depth: u32, limit: Option<TimeLimit>, node_cap: Option<u64>, ancestors: &[u64], tt: &TranspositionTable,
     tablebase: &SyzygyTablebase, evaluator: Option<&Network>, parameters: Option<SearchParameters>, thread_idx: u32,
-    stop_signal: &AtomicBool,
+    stop_signal: &AtomicBool, helper_nodes: Option<&AtomicU64>,
     ponder: Option<&PonderState>, mut on_iteration: impl FnMut(&IterationReport, &TimeManager),
 ) -> (Vec<IterationReport>, Option<Move>) {
+    // A helper adds its nodes to the counter; thread 0 reads it.
+    let adds_to = helper_nodes.filter(|_| thread_idx != 0);
+    let reads = helper_nodes.filter(|_| thread_idx == 0);
     let started = Instant::now();
     let mut time_manager = TimeManager::new(limit, started, evaluator.map_or(100, Network::pawn_percent));
     let mut reports = Vec::new();
@@ -4357,8 +4393,12 @@ fn iterate(
             root_stats,
         ) = search_root_limited(
             board, depth, deadline, node_limit, ancestors.to_vec(), killers, history, continuation_history, correction_history,
-            tt, tablebase, evaluator, parameters, previous_score, thread_idx, stop_signal, &excluded, ponder,
+            tt, tablebase, evaluator, parameters, previous_score, thread_idx, stop_signal, adds_to, &excluded, ponder,
         );
+        // The nodes past the iteration's last checkpoint, which the checkpoints did not add.
+        if let Some(counter) = adds_to {
+            counter.fetch_add(nodes % CHECK_INTERVAL, Ordering::Relaxed);
+        }
         // Kept even when `stopped` -- see `search_root`'s own doc comment for why a killer or
         // history entry stays trustworthy evidence regardless of whether the iteration that
         // recorded it finished. The correction history learns only from nodes that finished.
@@ -4378,7 +4418,10 @@ fn iterate(
         time_manager.record_root_stats(&root_stats, nodes);
         time_manager.record_iteration(pv[0], score);
         let time_ms = started.elapsed().as_millis() as u64;
-        reports.push(IterationReport { depth, seldepth, score, nodes: total_nodes, pv, time_ms });
+        // Thread 0's report counts the helpers' nodes too, for the `info` line alone: its own
+        // `total_nodes` stays its own, for the node cap.
+        let reported_nodes = total_nodes + reads.map_or(0, |counter| counter.load(Ordering::Relaxed));
+        reports.push(IterationReport { depth, seldepth, score, nodes: reported_nodes, pv, time_ms });
         // Right after the push, not before: on_iteration's whole point is observing a depth
         // that's now actually part of reports, not one about to be discarded by some later
         // check this function doesn't have (there is none after this point today, but the
@@ -5613,6 +5656,7 @@ mod tests {
             node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
+            helper_nodes: None,
             ponder: None,
             ancestors: Vec::new(),
             tt: &tt,
@@ -5659,6 +5703,7 @@ mod tests {
             node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
+            helper_nodes: None,
             ponder: None,
             ancestors: Vec::new(),
             tt: &tt,
@@ -5704,6 +5749,7 @@ mod tests {
             node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
+            helper_nodes: None,
             ponder: None,
             ancestors: Vec::new(),
             tt: &tt,
@@ -5775,6 +5821,7 @@ mod tests {
             node_limit: None,
             null_move_in_progress: false,
             stop_signal: &stop_signal,
+            helper_nodes: None,
             ponder: None,
             ancestors: Vec::new(),
             tt: &tt,
@@ -5815,6 +5862,7 @@ mod tests {
             node_limit: None,
             null_move_in_progress: false,
             stop_signal,
+            helper_nodes: None,
             ponder: None,
             ancestors: Vec::new(),
             tt,
@@ -7622,6 +7670,36 @@ mod tests {
         let score_with = with_tablebase.quiescence(&board, 1, -INFINITY, INFINITY, None);
 
         assert_eq!(score_with, score_without);
+    }
+
+    #[test]
+    fn a_helpers_nodes_reach_the_counter_and_thread_0_reports_them_with_its_own() {
+        let (board, _) = Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10").unwrap();
+        let search = |thread_idx: u32, counter: &AtomicU64| {
+            choose_best_move_threaded(
+                &board, 6, None, &[], &TranspositionTable::new(16), &SyzygyTablebase::new(), None, None, thread_idx,
+                &AtomicBool::new(false), counter, None, |_| {},
+            )
+            .0
+        };
+        // A helper, no clock and nothing stopping it: every node it searched, checkpoints and
+        // remainders together, and its own report its own nodes alone.
+        let counter = AtomicU64::new(0);
+        let helper = search(1, &counter);
+        assert_eq!(counter.load(Ordering::Relaxed), helper.last().unwrap().nodes);
+        // Thread 0 adds the counter to its own nodes, and adds nothing to it.
+        let alone = choose_best_move_with_progress(
+            &board, 6, None, &[], &TranspositionTable::new(16), &SyzygyTablebase::new(), None, None, 0,
+            &AtomicBool::new(false), None, |_| {},
+        )
+        .0;
+        let counter = AtomicU64::new(1000);
+        let main = search(0, &counter);
+        assert_eq!(counter.load(Ordering::Relaxed), 1000);
+        assert_eq!(main.len(), alone.len());
+        for (main, alone) in main.iter().zip(&alone) {
+            assert_eq!(main.nodes, alone.nodes + 1000, "depth {}", main.depth);
+        }
     }
 
     #[test]
