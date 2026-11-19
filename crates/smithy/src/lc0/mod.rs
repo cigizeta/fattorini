@@ -964,16 +964,28 @@ fn remote_size(url: &str) -> u64 {
     length.unwrap_or_else(|| fail(format!("{url} gave no Content-Length")))
 }
 
-/// `curl.exe`'s output, or a stop with its error.
+/// `curl.exe`'s output, or a stop with its error once `RETRIES` retries, `RETRY_DELAY` apart, failed
+/// too: storage.lczero.org sometimes answers a single request with a Cloudflare 525 (its origin's
+/// TLS handshake failed, 2026-11-19) and the next one normally, and one such answer to a tar's size
+/// query used to end the whole run.
 fn curl_text(args: &[&str]) -> String {
-    let output = Command::new("curl.exe")
-        .args(args)
-        .output()
-        .unwrap_or_else(|error| fail(format!("failed to run curl.exe: {error}")));
-    if !output.status.success() {
-        fail(format!("curl.exe {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr)));
+    let mut failures = 0;
+    loop {
+        let output = Command::new("curl.exe")
+            .args(args)
+            .output()
+            .unwrap_or_else(|error| fail(format!("failed to run curl.exe: {error}")));
+        if output.status.success() {
+            return String::from_utf8_lossy(&output.stdout).into_owned();
+        }
+        let error = format!("curl.exe {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim_end());
+        failures += 1;
+        if failures > RETRIES {
+            fail(error);
+        }
+        println!("{error}; retry {failures} of {RETRIES} in {} s", RETRY_DELAY.as_secs());
+        std::thread::sleep(RETRY_DELAY);
     }
-    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 /// Downloads `url`, a tar of `tar_bytes` dated `date`, to `path`, through `{path}.tmp`, with curl
