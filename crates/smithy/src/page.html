@@ -1464,7 +1464,8 @@ function convertLine(what, line) {
   const eta = line.eta_seconds === null ? "" : `, ETA about ${duration(Math.round(line.eta_seconds))}`;
   const tar = line.tar ? ` ${line.tar}` : "";
   const of = line.tar ? "of" : "of max";
-  return `<div>${escape(`${what}${tar}: ${count(line.done)} ${of} ${count(line.total)} (${percent(line.done / Math.max(1, line.total))})${rate}${eta}`)}</div>`;
+  const stage = line.stage ? `, ${line.stage}` : "";
+  return `<div>${escape(`${what}${tar}: ${count(line.done)} ${of} ${count(line.total)} (${percent(line.done / Math.max(1, line.total))})${stage}${rate}${eta}`)}</div>`;
 }
 
 // Lc0's Convert in its Corpus section, while it runs, in fixed places so the page keeps its height:

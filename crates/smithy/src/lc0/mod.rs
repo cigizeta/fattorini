@@ -323,6 +323,9 @@ struct Line {
     total: u64,
     rate: Option<f64>,
     eta_seconds: Option<f64>,
+    /// What the place does beside its bytes, as `sealing segment 01`; `None` for none.
+    #[serde(default)]
+    stage: Option<String>,
 }
 
 /// One place's counts: `done` of `total` bytes, `from` where they stood at `started`.
@@ -343,19 +346,44 @@ impl Flow {
         let (observed, seconds) = (self.done.saturating_sub(self.from), self.started.elapsed().as_secs_f64());
         let rate = (observed > 0 && seconds > 0.0).then(|| observed as f64 / seconds);
         let eta_seconds = rate.map(|rate| self.total.saturating_sub(self.done) as f64 / rate);
-        Line { tar: self.tar.clone(), done: self.done, total: self.total, rate, eta_seconds }
+        Line { tar: self.tar.clone(), done: self.done, total: self.total, rate, eta_seconds, stage: None }
+    }
+
+    /// The conversion's line: its bytes read, but its rate the run's whole tars' (`converted_bytes`
+    /// over `converting`), seals and uploads included. The bytes read alone ran three times faster
+    /// than whole tars (2026-11-19): a seal reads no byte, and a tar's last one runs at 100%. The ETA
+    /// is the tar's whole conversion at that rate less the time spent on it, `None` once spent.
+    fn conversion_line(&self, converted_bytes: u64, converting: Duration, stage: Option<String>) -> Line {
+        let seconds = converting.as_secs_f64();
+        let rate = (converted_bytes > 0 && seconds > 0.0).then(|| converted_bytes as f64 / seconds);
+        let eta_seconds = rate
+            .map(|rate| self.total as f64 / rate - self.started.elapsed().as_secs_f64())
+            .filter(|eta| *eta > 0.0);
+        Line { tar: self.tar.clone(), done: self.done, total: self.total, rate, eta_seconds, stage }
     }
 }
 
 /// The counts behind the child's `Lc0Live`: each worker writes its own download's place, the
-/// converter the conversion's and the cap's, the training positions the cap rule counts.
+/// converter the conversion's and the cap's, the training positions the cap rule counts, and the
+/// run's whole tars converted (`converted_bytes`) in `converting`, and what the converter does
+/// beside reading (`stage`).
 struct Board {
     downloads: [Option<Flow>; CONNECTIONS],
     conversion: Option<Flow>,
     cap: Option<Flow>,
+    converted_bytes: u64,
+    converting: Duration,
+    stage: Option<String>,
 }
 
-static BOARD: Mutex<Board> = Mutex::new(Board { downloads: [const { None }; CONNECTIONS], conversion: None, cap: None });
+static BOARD: Mutex<Board> = Mutex::new(Board {
+    downloads: [const { None }; CONNECTIONS],
+    conversion: None,
+    cap: None,
+    converted_bytes: 0,
+    converting: Duration::ZERO,
+    stage: None,
+});
 
 fn board() -> std::sync::MutexGuard<'static, Board> {
     BOARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -366,7 +394,7 @@ fn board_live() -> Option<Lc0Live> {
     let board = board();
     Some(Lc0Live {
         downloads: board.downloads.iter().map(|flow| flow.as_ref().map(Flow::line)).collect(),
-        conversion: board.conversion.as_ref().map(Flow::line),
+        conversion: board.conversion.as_ref().map(|flow| flow.conversion_line(board.converted_bytes, board.converting, board.stage.clone())),
         cap: board.cap.as_ref()?.line(),
     })
 }
@@ -1152,15 +1180,19 @@ fn convert_tar(
         segment.games += 1;
         segment.positions += converted.positions;
         if segment.positions >= config.segment {
-            seal_and_upload(&local_dir, &remote_dir, &format!("{stem}-{:02}", row.segments), &mut segment, &mut row);
+            seal_on_board(&local_dir, &remote_dir, &format!("{stem}-{:02}", row.segments), &mut segment, &mut row);
             sealed(row.positions);
         }
     }
     if segment.games > 0 {
-        seal_and_upload(&local_dir, &remote_dir, &format!("{stem}-{:02}", row.segments), &mut segment, &mut row);
+        seal_on_board(&local_dir, &remote_dir, &format!("{stem}-{:02}", row.segments), &mut segment, &mut row);
         sealed(row.positions);
     }
-    board().conversion = None;
+    let mut board = board();
+    board.converted_bytes += tar_bytes;
+    let spent = board.conversion.take().map_or(Duration::ZERO, |flow| flow.started.elapsed());
+    board.converting += spent;
+    drop(board);
     fs::remove_file(&tar_path).unwrap_or_else(|error| fail(format!("failed to remove {tar_path}: {error}")));
     row
 }
@@ -1182,6 +1214,13 @@ struct Segment {
 /// Compresses `segment` into `{local_dir}/{name}.pgn.zst` beside its `.meta`, uploads the two to
 /// `remote_dir`, `.meta` last as on every segment, removes them locally, adds them to `row`, and
 /// empties `segment`.
+/// `seal_and_upload`, its segment named on the board's conversion line meanwhile.
+fn seal_on_board(local_dir: &str, remote_dir: &str, name: &str, segment: &mut Segment, row: &mut TarRow) {
+    board().stage = Some(format!("sealing segment {:02}", row.segments));
+    seal_and_upload(local_dir, remote_dir, name, segment, row);
+    board().stage = None;
+}
+
 fn seal_and_upload(local_dir: &str, remote_dir: &str, name: &str, segment: &mut Segment, row: &mut TarRow) {
     let segment_path = format!("{local_dir}/{name}.pgn.zst");
     let tmp_path = format!("{segment_path}.tmp");
