@@ -46,7 +46,8 @@ buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no
 2. **Speed: the profile: done 2026-11-19** (speed-profile.md). The network 437 ns a node, PeSTO
    226: evaluation 38.7% (finding the threats 16.5%), accumulator updates 11.8% (half of it
    `ChangedRows::between` diffing the boards), move picking 16.3% (whole-list sorting 6.3%, PeSTO's
-   too). Next, each designed first: `between` from the move, partial sorting, incremental threats.
+   too). `between` from the move: kept, exact, no measurable gain; partial sorting: no gain and a
+   29% larger tree, reverted (speed-profile.md). Left: incremental threats, bounded first.
 3. **Lazy SMP, measured** ("Search"): nodes/s and time to a fixed depth, 1 thread against 8, on an
    idle machine with enough physical cores.
 4. **The test's Stop that did nothing** ("Data and tools"): `bindStop` read against `poll`'s

@@ -72,6 +72,10 @@ before designing it.
 In order of gain over effort, each designed before it is written:
 
 1. `between` from the move (finding 2): done 2026-11-19, exact, no measurable gain.
-2. Partial move sorting (finding 3): up to 6%, PeSTO included.
+2. Partial move sorting (finding 3): **closed 2026-11-19.** The experiment, the best move swapped in
+   only when read instead of the whole list sorted, ran 2.48M nodes/s against the sort's 2.56M and
+   2.42M (no gain) and searched 35,673,689 nodes against 27,589,863 (+29%): many quiets share a
+   score, and the sort's stable generation order breaks those ties better than swapping leaves.
+   Reverted.
 3. Incremental threats (finding 1): up to 16%, the largest and the hardest.
 4. The halfk network's profile, for refreshes and its wider transform.
