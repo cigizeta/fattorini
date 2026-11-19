@@ -279,10 +279,11 @@ function work(view, waiting, stop = "") {
         // Wins, losses and draws from the champion's side, as the server counts them and the arena's
         // command line says them (`trials::Wdl`): + the champion's wins, - the challenger's. Headed
         // "results" (the developer, 2026-11-16), a word neutral between the sides. Blank for a trial
-        // with pairs recorded before they were counted.
-        + table(["games", "champion", "challenger", "results", view.trial === "duel" ? "thresholds" : "state"],
-          [[whole(view.games), side(view.games - view.challenger_points), side(view.challenger_points),
-            view.wdl ? `+${view.wdl.wins} -${view.wdl.losses} =${view.wdl.draws}` : "", view.status]])
+        // with pairs recorded before they were counted. Second, beside the games they split (the
+        // developer, 2026-11-19).
+        + table(["games", "results", "champion", "challenger", view.trial === "duel" ? "thresholds" : "state"],
+          [[whole(view.games), view.wdl ? `+${view.wdl.wins} -${view.wdl.losses} =${view.wdl.draws}` : "",
+            side(view.games - view.challenger_points), side(view.challenger_points), view.status]])
         + (view.verdict ? `<div><b>${escape(view.verdict)}</b></div>` : "");
     }
     case "pairs":
