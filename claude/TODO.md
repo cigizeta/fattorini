@@ -18,8 +18,7 @@ In this order:
 
 **The trials renamed on disk (trial-rename.md): done 2026-11-18** on the machine training
 `lc0-halfk-threats-screlu-hidden-512`, while its smithy (the old build) trained: 16 trials, `trials.tsv`
-and its `.bak`. No trial started from that smithy until it restarts on the new build; then
-trial-rename.md to done/ once its Trials section lists all 16.
+and its `.bak`; trial-rename.md to done/ 2026-11-19 (the developer).
 
 **`-hidden-512` run 1 ended 2026-11-19** at round 268, its best test loss 0.616992 at round 262
 (width 256's best: 0.617875); its gate passed (46 games, 89.3%). Its duels against `-hidden-g1-r1`,
@@ -39,7 +38,7 @@ buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no
    idle machine with enough physical cores.
 4. **The test's Stop that did nothing** ("Data and tools"): `bindStop` read against `poll`'s
    redraw, then reproduced.
-5. **Won endgames** ("Evaluation"): a few games into won endings on a free CPU.
+5. **Won endgames: dropped 2026-11-19** (the developer): endgames are now better on Lichess.
 
 **Then, more of Lc0's data (the developer, 2026-11-18):** once `-hidden-512` run 1 ends and its
 duels are played (its gate, then against `lc0-halfk-threats-screlu-hidden-g1-r1` at depth 9 and
@@ -181,10 +180,6 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
 
 ## Before the release or CCRL
 
-- **The tablebase score at the root: implemented 2026-11-10** (root-tablebase-score.md), every test
-  passing, on Lichess since 2026-11-11. The bug: in KQ vs KN with tables, `fattorini-bot` reported
-  +1.59, since the root's DTZ ranking never set the reported score. Left: its step 5, the score seen
-  right in a Lichess tablebase ending; then the doc goes to `done/`.
 - **The 8-thread, repeating-control and Move Overhead checks: passed 2026-11-11**
   (release-checks.md), cutechess-cli smoke tests on the dry run's `.exe`, no failure of any kind.
 - **Clock safety at default settings: answered on `bartolomeo` (2026-11-17)** by Reckless's time
@@ -360,8 +355,6 @@ changes).
 
 - **X-rays and pins in the threats:** a features experiment of its own, its inference cost timed.
 - **Width 512** (psq-threats-screlu-512.md): its state is there.
-- **Won endgames:** does a trained network still shuffle once well ahead? Play today's network into
-  won endings once a CPU is free.
 - **The transformer track, later** (rotor-transformer.md): not before the NNUEs are its baseline; MCTS,
   PUCT with certainty propagation; a policy head (lc0-policy.md, mcts-nnue.md). Its code stays as
   it is until then.
@@ -421,24 +414,6 @@ changes).
   included, so the page could not say which. **Written 2026-11-18:** an HTTP error reads "the arena
   answered HTTP <code>: <body>", no answer "no arena answering: <the transport's reason>", and
   `CLAIM_BACKOFF_CAP` is 1 min. To see working on the next failed claim, then this item goes.
-
-- **The smithy's bench on an idle machine, as the arenas' is** (the developer, 2026-11-09): to
-  design, after the current tune (it changes how a tune's games are timed). The tune of
-  `lc0-psq-threats-screlu-g1-r1` showed it: the smithy benched its machine at 841,150 nodes/s per
-  thread, while the arena on that same machine benched 1.15M to 1.34M by the same method
-  (`loaded_bench`, half the threads at once). The arena holds a lock so its own workers wait; the
-  smithy benches when the tune job starts, whatever else the machine is doing. Every arena's clock
-  is scaled to the smithy's figure, so the tune played at about 6+0.06 on a quiet machine, not
-  10+0.1. To decide: how the smithy makes sure its machine is idle (no chore dealt and every arena
-  on it between chores, or the bench refused while anything runs), whether to take the best of a
-  few runs, and whether the page warns when the arena on the smithy's machine and the smithy differ
-  by more than the dead band. **Seen again 2026-11-13:** test 5 (180+2, Classic against Reckless),
-  started with the arena on the smithy's machine playing, dealt clocks of 87.129+0.968 and
-  120.122+1.335: about 90 to 120 s blitz at an idle machine's depth, not 180+2. The smithy's
-  machine was idle then: the gap is between the processes, most likely the allocator (the arena's
-  `mimalloc`, the smithy's system heap). **Fixed 2026-11-13 (smithy-bench.md):** the smithy on
-  `mimalloc` and one `loaded_bench`, the fastest of five runs; the two benches now agree within 2%.
-  This item goes once that doc is in `done/`.
 
 - **The GPU's idle 12 to 15% in training** (2026-11-18, `-hidden-512`, one network, batch 4096): busy
   85 to 88% steadily, no dips, so the feed is not starving it; the gap is between kernels. A profile
