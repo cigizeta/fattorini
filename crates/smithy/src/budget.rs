@@ -66,10 +66,10 @@ impl Budget {
         self.total_steps / self.steps_per_round
     }
 
-    /// One pass over the training set in rounds, fractional: a pass rarely ends at a round's end. The
-    /// page's loss chart draws a line where each later pass begins.
-    pub fn rounds_per_epoch(&self) -> f64 {
-        self.steps_per_epoch as f64 / self.steps_per_round as f64
+    /// Every candidate's round, whole since a candidate is taken at a round end. The page's loss chart
+    /// draws a line at each, the last included, so its lines match the round robin's table one to one.
+    pub fn candidate_rounds(&self) -> Vec<u64> {
+        self.candidate_steps().into_iter().map(|step| step / self.steps_per_round).collect()
     }
 
     /// The rate step `step` trains at, the first update being step 1: the warmup's ramp to `start`,
@@ -171,10 +171,13 @@ mod tests {
     }
 
     #[test]
-    fn an_epoch_in_rounds_is_fractional() {
+    fn the_candidates_rounds_are_nine_the_last_at_the_end() {
         let budget = full();
-        assert!((budget.rounds_per_epoch() - 292_968.0 / 4096.0).abs() < 1e-12);
-        assert!(budget.rounds_per_epoch() * budget.epochs <= budget.total_rounds() as f64, "every pass ends inside the budget");
+        let rounds = budget.candidate_rounds();
+        assert_eq!(rounds.len(), 9);
+        assert_eq!(rounds.first(), Some(&144), "half of four epochs of 292,968 steps, at the next round end");
+        assert_eq!(rounds.last(), Some(&budget.total_rounds()));
+        assert!(rounds.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
