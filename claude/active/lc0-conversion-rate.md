@@ -18,7 +18,8 @@ and an ETA of 0.
 - The converting line gives the tar's size alone and its percentage by time, the time spent on it
   over its whole conversion at the run's rate, held at 99% until done (the developer, 2026-11-19: a
   byte count beside a time percentage would contradict it). Before the first tar's rate, the size
-  alone.
+  alone. The rate itself is not shown (the developer, 2026-11-19): the run's average, it read as
+  the tar's live speed beside the downloads'.
 - Nothing names a seal on the page (the developer, 2026-11-19: too technical); the ETA still
   counting down at 100% says enough.
 - The corpus line is unchanged: its rate is sealed positions over the run's wall time, seals
