@@ -8,7 +8,9 @@ A complete corpus is never extended: while `data/lc0/complete.txt` is on the rem
 says done, and while it is not, no full run trains on Lc0 (new or resumed). The code may go live
 any time: training does not read the cap. Then:
 
-1. The budget validation run, and any Lc0 run still going, finish on today's 1.2 billion.
+1. Any Lc0 run still going finishes on today's 1.2 billion. **No budget validation run on it**
+   (the developer, 2026-11-19): the scaled runs proved the code end to end, and the budget runs train
+   on the expanded corpus alone.
 2. `complete.txt` deleted by hand on the remote; the Convert started from the page.
 3. At the cap the Convert writes `complete.txt` again, and Lc0 runs may start. Scaled runs train
    meanwhile, so the king buckets' code is smoke-tested then.

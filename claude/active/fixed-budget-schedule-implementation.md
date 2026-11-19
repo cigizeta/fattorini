@@ -173,7 +173,8 @@ cargo clippy --workspace --all-targets
     **The validation run:** `lc0-halfk-threats-screlu-hidden-budget` on the training machine (about 3.6
     hours), against screlu-hidden at 256 under patience: final losses, the round robin's curve over
     epochs 2 to 4, a depth-9 duel of the two winners. Then the 512 pair, once the patience 512 run is
-    in.
+    in. **Dropped 2026-11-19 (the developer):** the scaled runs proved the code, and the budget runs
+    train on the expanded corpus (lc0-position-cap.md) instead, with no patience run on it to compare.
 13. **Docs:** this plan's progress; fixed-budget-schedule.md's open points closed; TODO.md.
 
 ## Open, to settle while implementing
