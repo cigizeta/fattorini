@@ -51,8 +51,8 @@ buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no
    too). `between` from the move: kept, exact, no measurable gain; partial sorting: no gain and a
    29% larger tree, reverted (speed-profile.md). Incremental threats stay closed for today's
    simplified threats (the developer). Left: the halfk network's profile.
-3. **Lazy SMP, measured** ("Search"): nodes/s and time to a fixed depth, 1 thread against 8, on an
-   idle machine with enough physical cores.
+3. **Lazy SMP, measured: done 2026-11-19** ("Search"): 2.86 times faster to depth 22 at 8 threads,
+   each thread 15% slower than alone. Nothing to optimize; the UCI node count undercounts.
 4. **The test's Stop that did nothing** ("Data and tools"): `bindStop` read against `poll`'s
    redraw, then reproduced.
 5. **Won endgames: dropped 2026-11-19** (the developer): endgames are now better on Lichess.
@@ -387,7 +387,16 @@ changes).
   (about 2 to 3 times faster at 8 is typical; less means the helpers repeat the main thread's
   work). Then the fixes it points to: helper threads diversified (depth offsets, skipped
   iterations), shared counters and histories made per-thread, and a duel at a longer control,
-  8 threads against 1, as the measure.
+  8 threads against 1, as the measure. **Measured 2026-11-19, nothing to fix:** the 2026-11-16
+  snapshot through UCI, six positions (the start, Kiwipete, three middlegames, an endgame) to depth
+  22, Hash 256, a new game each, on an idle machine with enough physical cores: 1 thread 21.0 s
+  (49.6M nodes, 2.36M nodes/s, twice within 0.5%), 8 threads 7.31 s and 7.36 s, **2.86 times faster
+  to depth**, the top of Lazy SMP's usual 2 to 3; each thread about 2.0M nodes/s, 15% below alone
+  (the shared table, memory, all-core clocks).
+- **The UCI `nodes` and `nps` undercount with several threads** (found 2026-11-19): only thread 0
+  prints `info` lines (`uci.rs`, `go_search`), with its own nodes, so 8 threads report about 2M nps
+  where engines that sum their threads report about 16M; testers and GUIs read the low figure. The
+  helpers' nodes to be summed into the line: small, a reporting change, designed first.
 - **An SPSA of time management, after the search's** (the developer, 2026-11-11): the time rules
   depend on the search's curves (a depth's cost, how often the best move changes, the score's
   swings), so they are tuned against the search that ships. Only after Split's verdict
