@@ -17,8 +17,10 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 Done: code, page and documents renamed, every `data/` and Drive migrated, the one-off command
 removed, `lc0-halfk-threats-screlu-hidden-budget-8/` (two small attempts under the config's old name)
 deleted; lichess-bot's config pointed at the renamed snapshot.
-**To check:** those two small attempts had about 2M positions, a scaled attempt's, but no `scale:` in
-their frozen `config.yaml`, which `snapshot.rs` reads to refuse a scaled network.
+**Checked 2026-11-19, no bug:** those two small attempts seemed to lack `scale:` in their frozen
+`config.yaml`, but `forge` takes a scale only for a new attempt, in a fresh directory, and
+`freeze_attempt_config` always appends it; their 4,096 test positions (1/1024 of the frozen set) say
+they ran scaled, so read it there. Most likely the search for it, a glob over subfolders, missed.
 
 ## Next (the developer, 2026-11-06)
 
