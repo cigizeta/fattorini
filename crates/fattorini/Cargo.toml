@@ -11,6 +11,9 @@ publish = false
 autobenches = false
 
 [dependencies]
+# `pipeline/home.rs`'s change of network, logged with the smithy's and the arena's timestamps. The
+# engine installs no logger, so it prints nothing there.
+log.workspace = true
 num_enum.workspace = true
 # The pipeline contract's YAML files (`pipeline/preprocessing_config.rs`, `pipeline/self_config.rs`).
 # A real YAML library rather than a hand-rolled parser, deliberately: unlike FEN (this project's own

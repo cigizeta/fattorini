@@ -62,9 +62,9 @@ pub fn at_home() -> bool {
     let answer = gateway_mac() == Some(home.router);
     if last.map(|(_, before)| before) != Some(answer) {
         if answer {
-            println!("on the home network: the other machines are reached");
+            log::info!("on the home network: the other machines are reached");
         } else {
-            println!("away from the home network: this machine alone, on 127.0.0.1");
+            log::info!("away from the home network: this machine alone, on 127.0.0.1");
         }
     }
     *last = Some((Instant::now(), answer));
