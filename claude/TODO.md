@@ -22,8 +22,11 @@ and its `.bak`. No trial started from that smithy until it restarts on the new b
 trial-rename.md to done/ once its Trials section lists all 16.
 
 **`-hidden-512` run 1 ended 2026-11-19** at round 268, its best test loss 0.616992 at round 262
-(width 256's best: 0.617875); its gate passed (46 games, 89.3%). Its duels against `-hidden-g1-r1`
-next.
+(width 256's best: 0.617875); its gate passed (46 games, 89.3%). Its duels against `-hidden-g1-r1`,
+both drawn and curtailed: trial 17, depth 9, 52.5% for 512 (about +17 Elo, the better evaluation);
+trial 18, 10+0.1, 49.3% (its slower evaluation gives the gain back). So width 512 does not pay on
+1.2B positions. **Next (the developer, 2026-11-19): more data, then 8 king buckets**
+(halfk-king-buckets.md), at width 256.
 
 **Then, more of Lc0's data (the developer, 2026-11-18):** once `-hidden-512` run 1 ends and its
 duels are played (its gate, then against `lc0-halfk-threats-screlu-hidden-g1-r1` at depth 9 and
