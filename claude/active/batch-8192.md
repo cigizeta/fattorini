@@ -19,8 +19,10 @@ code and candidate names (`-r2`) keep "run" until renamed, if ever.
    test passes and checkpoints count steps). Over 4 epochs of ~4.3B: about 2.1M steps, about 256
    rounds.
 4. **The first two attempts, at width 512 with 8 king buckets:**
-   1. `lc0-halfk-threats-screlu-hidden-512-budget-8`
-   2. `lc0-halfk-threats-pairwise-hidden-512-budget-8`
+   1. `lc0-halfk-threats-screlu-hidden-512-8-budget`
+   2. `lc0-halfk-threats-pairwise-hidden-512-8-budget`
+
+   The king buckets before `-budget` (the developer, 2026-11-19): `-512-8-budget`, not `-512-budget-8`.
 
    Both: batch 8192, `schedule: budget`, 4 epochs, 1 warmup round, the nine candidates and their
    round robin as fixed-budget-schedule.md. Width 256 may never run (the developer); its configs
@@ -50,11 +52,11 @@ the count of updates, and the fix the endpoints, not the batch.
 
 ## Plan
 
-1. **`configs/lc0-halfk-threats-screlu-hidden-512-budget-8.yaml`:** a copy of
+1. **`configs/lc0-halfk-threats-screlu-hidden-512-8-budget.yaml`:** a copy of
    `lc0-halfk-threats-screlu-hidden-512-budget.yaml` with `king_buckets: 8` and
    `training_batch_size: 8192`; its header comment saying what it differs by, and why, and the
    network line's row counts for 8 buckets at 512.
-2. **`configs/lc0-halfk-threats-pairwise-hidden-512-budget-8.yaml`:** from
+2. **`configs/lc0-halfk-threats-pairwise-hidden-512-8-budget.yaml`:** from
    `lc0-halfk-threats-pairwise-hidden.yaml`'s architecture (`kind: halfk_threats_pairwise_hidden`)
    with `embedding_dim: 512`, `king_buckets: 8`, and the training block of step 1; differing from
    step 1's config by its kind alone.

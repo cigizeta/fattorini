@@ -1,0 +1,47 @@
+# lc0-halfk-threats-screlu-hidden-512-budget in 8 king buckets, at batch 8192 (2026-11-19): the first
+# attempt on Lc0's larger corpus, about 4.3B positions. Differs from
+# lc0-halfk-threats-screlu-hidden-512-budget by its king buckets (the king's 32 squares merged into 8,
+# so that each bucket's rows see more positions) and its batch: 4096 suited 1.2B positions, the larger
+# corpus affords 8192, which fills a GPU that 4096 left 12 to 15% idle. The rate is not scaled with
+# the batch, and a round stays 4096 steps. Its twin with pairwise:
+# lc0-halfk-threats-pairwise-hidden-512-8-budget, differing by its kind alone.
+
+# The forge. Lambda by progress: each generation trains one arm, each position labelled at the
+# polyline measured on its corpus. A budget trains one arm: polyline only.
+lambda: polyline
+# From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
+# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+training_positions: 1073741824
+# From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
+test_positions: 4194304
+# The grid's: a budget's round robin plays about 2,000 games a candidate, 125 pairs a pairing for nine.
+round_robin_pairs: 400
+gate_elo_d: 35
+
+# The tune of each generation that passed its gate, started by hand, at 10+0.1: the default
+# length, 32,768 pairs, from its teacher's tune (generation 1's from the defaults); the next
+# generation's self-play plays it.
+tune:
+  length: default
+  control: 10+0.1
+
+# The network: (9728 -> 512) x 2, each lane squared after the clip, -> 16 -> 32 -> 1; in training
+# 10432 rows, halfk's and the factor's.
+labels: lc0
+
+architecture:
+  kind: halfk_threats_screlu_hidden
+  king_buckets: 8
+  embedding_dim: 512
+  value_head:
+    hidden_dim: [16, 32]
+
+training:
+  training_batch_size: 8192
+  test_batch_size: 16384
+  steps_per_round: 4096
+  # From 1e-3 to 1e-5, as at batch 4096: the rate is chosen regardless of the batch.
+  schedule: budget
+  epochs: 4
+  learning_rate: [1.0e-3, 1.0e-5]
+  warmup_rounds: 1

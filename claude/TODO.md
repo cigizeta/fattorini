@@ -26,7 +26,7 @@ both drawn and curtailed: trial 17, depth 9, 52.5% for 512 (about +17 Elo, the b
 trial 18, 10+0.1, 49.3% (its slower evaluation gives the gain back). So width 512 does not pay on
 1.2B positions. **Next (the developer, 2026-11-19, batch-8192.md): more data, then two attempts**
 (an attempt is a training run, from 2026-11-19), at width 512 with 8 king buckets (halfk-king-buckets.md),
-batch 8192: `lc0-halfk-threats-screlu-hidden-512-budget-8`, then `lc0-halfk-threats-pairwise-hidden-512-budget-8`.
+batch 8192: `lc0-halfk-threats-screlu-hidden-512-8-budget`, then `lc0-halfk-threats-pairwise-hidden-512-8-budget`.
 Width 256 may never run.
 
 **While Lc0's Convert runs (the developer, 2026-11-19):** about 2 days left then, the 8 king
