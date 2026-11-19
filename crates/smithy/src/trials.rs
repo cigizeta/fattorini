@@ -655,16 +655,16 @@ mod tests {
 
     #[test]
     fn a_trial_s_words_read_back() {
-        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-a1-l0.03-r1@search-tuned pesto@untuned", "clock 10+0.1")).unwrap();
+        let spec = Spec::parse(&words("sprt 0,5 lc0-psq-g1-l0.03-a1@search-tuned pesto@untuned", "clock 10+0.1")).unwrap();
         assert_eq!(spec.kind, Kind::Sprt { elo0: 0.0, elo1: 5.0 });
         assert_eq!(spec.limit, Limit::Clock("10+0.1".to_string()));
         assert_eq!(
             spec.challenger,
-            Side { player: "lc0-psq-g1-a1-l0.03-r1".to_string(), tuning: TuningSuffix::SearchTuned }
+            Side { player: "lc0-psq-g1-l0.03-a1".to_string(), tuning: TuningSuffix::SearchTuned }
         );
         assert_eq!(
             (spec.challenger.text(), spec.champion.text()),
-            ("lc0-psq-g1-a1-l0.03-r1@search-tuned".to_string(), "pesto@untuned".to_string())
+            ("lc0-psq-g1-l0.03-a1@search-tuned".to_string(), "pesto@untuned".to_string())
         );
         assert!(spec.mixed());
         assert!(!Spec::parse(&words("duel - aa@search-tuned aa@untuned", "clock 10+0.1")).unwrap().mixed(), "a tune measured against its own defaults");

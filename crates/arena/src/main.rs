@@ -12,6 +12,8 @@
 //!   into Drive's `data/snapshots/` (`snapshot.rs`). Hidden: not in the usage.
 //! - `arena release <player>@<suffix> [--dry-run]`: a binary release at a tag, built here and
 //!   drafted on GitHub with `gh` (`release.rs`). Hidden: not in the usage.
+//! - `arena rename-attempts [--apply]`: the one-off migration of names from runs to attempts
+//!   (`rename_attempts.rs`). Hidden: not in the usage.
 //! - `arena <tournament-id>`: fitness-selection phase 1 scope only, a single pairing -- round
 //!   1's first real (bye-free) match, per proper bracket seeding -- rather than a full bracket. The
 //!   bracket scheduler is not built yet.
@@ -43,6 +45,7 @@ mod pgn;
 mod player;
 mod random_book;
 mod release;
+mod rename_attempts;
 mod results_db;
 mod runner;
 mod score;
@@ -86,6 +89,7 @@ fn main() {
         "start" | "stop" | "status" => chores::run(&first, &args.collect::<Vec<String>>()),
         "snapshot" => snapshot::command(&args.collect::<Vec<String>>()),
         "release" => release::command(&args.collect::<Vec<String>>()),
+        "rename-attempts" => rename_attempts::command(&args.collect::<Vec<String>>()),
         "match" | "sprt" | "duel" => {
             let rest: Vec<String> = args.collect();
             let versus = parse_versus_args(&first, &rest).unwrap_or_else(|message| {
@@ -122,8 +126,8 @@ fn print_usage_and_exit() -> ! {
     eprintln!("                    together must stay under half the machine's RAM");
     eprintln!("  games are played in colour-reversed pairs");
     eprintln!("  a player is stockfish-<level> (0 to 20), stockfish-elo-<rating> (1320 to 3190), an engine of");
-    eprintln!("  data/engines.yaml, or a Fattorini player: pesto, <config>-g<g>-r<n>, generation g's winner in run n,");
-    eprintln!("  or <config>-g<g>-l<lambda>-r<n>, that lambda's candidate in generation g");
+    eprintln!("  data/engines.yaml, or a Fattorini player: pesto, <config>-g<g>-a<n>, generation g's winner in attempt n,");
+    eprintln!("  or <config>-g<g>-l<lambda>-a<n>, that lambda's candidate in generation g");
     eprintln!("  a Fattorini player is always followed by what it plays with: @untuned, the defaults; @search-tuned,");
     eprintln!("  its search tune; or @search-time-tuned, its search and time tunes; against an external engine it");
     eprintln!("  plays over UCI, built first with them embedded");
@@ -441,8 +445,8 @@ mod tests {
 
     #[test]
     fn each_command_takes_the_champion_then_the_challenger_its_value_and_one_control() {
-        let versus = parsed("sprt", &["stockfish-elo-1500", "amanda-g1-r1@search-tuned", "35", "--time", "3+2"]);
-        assert_eq!((versus.champion.as_str(), versus.challenger.as_str()), ("stockfish-elo-1500", "amanda-g1-r1@search-tuned"));
+        let versus = parsed("sprt", &["stockfish-elo-1500", "amanda-g1-a1@search-tuned", "35", "--time", "3+2"]);
+        assert_eq!((versus.champion.as_str(), versus.challenger.as_str()), ("stockfish-elo-1500", "amanda-g1-a1@search-tuned"));
         assert_eq!(versus.rule, Rule::Sprt(config::SprtSpec { elo_d: 35.0 }));
         assert_eq!(versus.control.text, "3+2");
         assert_eq!(versus.hash_mb, 16, "the default");

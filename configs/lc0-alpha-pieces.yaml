@@ -1,11 +1,11 @@
 # The alpha_pieces transformer on Lc0's corpus, value head only (2026-11-18):
 # trained exactly as the NNUEs are, on the scattered buckets grouped by piece count, labelled by the
 # polyline, under the fixed budget, judged on the same frozen test set. Compared with an NNUE by
-# test loss alone: the engine cannot play a transformer, so the run ends at its training, with no
-# round robin, no gate and no tune. A scaled run first, its scale chosen at New run, beside an NNUE
-# baseline at the same scale.
+# test loss alone: the engine cannot play a transformer, so the attempt ends at its training, with no
+# round robin, no gate and no tune. A scaled attempt first, its scale chosen at New attempt, beside an
+# NNUE baseline at the same scale.
 
-# The forge. Lambda by progress, as every budgeted run: one arm, labelled at the polyline measured
+# The forge. Lambda by progress, as every budgeted attempt: one arm, labelled at the polyline measured
 # on its corpus.
 lambda: polyline
 # Unused by a transformer, which plays no game; required by the forge, and kept as the budgeted

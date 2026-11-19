@@ -12,6 +12,15 @@ Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Ka
 with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
 and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
+## Run renamed attempt (2026-11-19, attempt-rename.md)
+
+Code, page and documents renamed, `arena rename-attempts --apply` run on one machine and on Drive,
+`lc0-halfk-threats-screlu-hidden-budget-8/` (two small attempts under the config's old name) deleted.
+Left: `bin/arena rename-attempts --apply` on every other machine holding a `data/`; lichess-bot's
+config pointed at the renamed snapshot; then the command removed and attempt-rename.md to done/.
+**To check:** those two small attempts had about 2M positions, a scaled attempt's, but no `scale:` in
+their frozen `config.yaml`, which `snapshot.rs` reads to refuse a scaled network.
+
 ## Next (the developer, 2026-11-06)
 
 In this order:

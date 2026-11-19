@@ -27,12 +27,12 @@
 //! Usage: `cargo bench --bench nnue_bench`, optionally with a real network to time instead of a
 //! randomly generated one, and optionally with a search depth:
 //!
-//! `cargo bench --bench nnue_bench -- data/networks/pesto-psq/run-1/gen-1/lambda-0.95/candidate.nnue --depth 9`
+//! `cargo bench --bench nnue_bench -- data/networks/pesto-psq/attempt-1/gen-1/lambda-0.95/candidate.nnue --depth 9`
 //!
-//! A relative path is read from the repository root. A forge run's player can also be named, from
-//! this machine's runs (`players::resolve_network_file`):
+//! A relative path is read from the repository root. A forge attempt's player can also be named, from
+//! this machine's attempts (`players::resolve_network_file`):
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --depth 9`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --depth 9`
 //!
 //! A `.nnue` is recognized by its own feature-set tag. Without one, the random network is a psq
 //! one (`--psq`, the default), whose shape defaults to self-psq's, (780 -> 256) x 2 -> 1,
@@ -160,26 +160,26 @@
 //! and reports the machine's total rate; `--syzygy` loads the four Syzygy sets from the data root,
 //! as the replay does, instead of searching without tables:
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --search-only --threads 20 --syzygy`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --search-only --threads 20 --syzygy`
 //!
 //! `--games <dir or .pgn> [--sample N]` searches N whole games (40 by default) of those under `dir`,
 //! or in one PGN file such as a replayed chunk, instead
 //! of the 49, as the replay searches them: every position in order with the game's history, one
 //! 16 MB table per game. The same games for every evaluator:
 //!
-//! `cargo bench --bench nnue_bench -- --search-only --pesto --games data/networks/pesto-psq/run-1/gen-1`
+//! `cargo bench --bench nnue_bench -- --search-only --pesto --games data/networks/pesto-psq/attempt-1/gen-1`
 //!
 //! Under the `node-stats` feature, a single-threaded `--search-only` also counts the accumulator
 //! updates, how many an evaluation ever reads, and the evaluations of positions the TT holds:
 //!
-//! `cargo bench --bench nnue_bench --features node-stats -- --network pesto-psq-g1-r1 --search-only`
+//! `cargo bench --bench nnue_bench --features node-stats -- --network pesto-psq-g1-a1 --search-only`
 //!
 //! `--eval-scale <dir>` compares the network's static evaluation with the PeSTO one over every
 //! position (not in check) of the games under `dir`, such as a generation's round robin:
 //! percentiles, how often each clears 1 to 6 pawns, and the slope of one on the other. Whether the
 //! search's margins, set in the PeSTO pawn, fit the network:
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --eval-scale data/networks/pesto-psq/run-1/gen-1`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --eval-scale data/networks/pesto-psq/attempt-1/gen-1`
 //!
 //! `--residuals [dir] [--max-depth D] [--sample N]` measures how far `d` plies of a plain search
 //! (no pruning, no TT) move the evaluator's static evaluation, for `d` = 0 to `D` (4 by default),
@@ -188,7 +188,7 @@
 //! bets on, beside today's margin. With `--pesto`, the PeSTO evaluation instead of the
 //! network:
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --residuals`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --residuals`
 //!
 //! Each depth is also printed split into quiet and noisy positions (`is_noisy`: a winning capture or
 //! a promotion to play), the same split for every evaluator: whether a network trained on quiet
@@ -210,12 +210,12 @@
 //! and compares its evaluation with the f32 one over the games under `dir`, such as a duel against
 //! PeSTO: the accumulator's scale and headroom, and the differences in centipawns.
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --quantization data/matches/pesto-vs-self-psq-0001`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --quantization data/matches/pesto-vs-self-psq-0001`
 //!
 //! `--weights` prints how the first hidden layer's weights sit against `127 / 64`, the range an `i8`
 //! layer at a fixed scale of 64 holds: what clipping in training would cut.
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --weights`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --weights`
 //!
 //! `--i8 <dir>` asks whether the first hidden layer is worth running in `i8`: its precision with
 //! `i8` weights against today's `i16` (both per-row scales, both against f32, over the positions of
@@ -223,7 +223,7 @@
 //! `maddubs` (AVX2) and `i8` `dpbusd` (AVX-VNNI, when the CPU has it). The kernels are this bench's
 //! own copies: the engine is not changed by it. A network with exactly one hidden layer only.
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-r1 --i8 data/matches/pesto-vs-self-psq-0001`
+//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --i8 data/matches/pesto-vs-self-psq-0001`
 //!
 //! Weight *values* should not affect the per-evaluation timing, but "should not" is not "do not" --
 //! a ReLU is a data-dependent branch and denormals are real -- so timing a genuine trained network
@@ -391,14 +391,14 @@ fn from_repository(path: &str) -> String {
     format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The network a forge run's player plays with, e.g. `pesto-psq-g2-r1`, from this machine's runs
-/// (`players::resolve_network_file`), read from the repository root; from the run's copy on the
-/// remote when this machine's has no such network, a run trained on another machine (its local
-/// folder may exist without the network, holding only what a duel or a resume left there).
+/// The network a forge attempt's player plays with, e.g. `pesto-psq-g2-a1`, from this machine's
+/// attempts (`players::resolve_network_file`), read from the repository root; from the attempt's copy
+/// on the remote when this machine's has no such network, an attempt trained on another machine (its
+/// local folder may exist without the network, holding only what a duel or a resume left there).
 fn player_path(name: &str) -> String {
-    use fattorini::pipeline::players::{resolve_network_file_in, run_dir};
-    let local = |run: &str| -> Result<String, String> { Ok(from_repository(&run_dir(run)?)) };
-    let remote = |run: &str| -> Result<String, String> { Ok(fattorini::pipeline::remote::remote_path(&run_dir(run)?)) };
+    use fattorini::pipeline::players::{attempt_dir, resolve_network_file_in};
+    let local = |attempt: &str| -> Result<String, String> { Ok(from_repository(&attempt_dir(attempt)?)) };
+    let remote = |attempt: &str| -> Result<String, String> { Ok(fattorini::pipeline::remote::remote_path(&attempt_dir(attempt)?)) };
     resolve_network_file_in(name, &local)
         .or_else(|on_local| resolve_network_file_in(name, &remote).map_err(|on_remote| format!("{on_local}; nor on the remote: {on_remote}")))
         .unwrap_or_else(|message| panic!("{message}"))
@@ -1920,7 +1920,7 @@ fn main() {
     let path = arguments
         .iter()
         .position(|argument| argument == "--network")
-        .map(|at| player_path(arguments.get(at + 1).expect("--network takes a forge run's player, <run>-NNNN")))
+        .map(|at| player_path(arguments.get(at + 1).expect("--network takes a forge attempt's player, <config>-g<g>-a<n>")))
         .or_else(|| arguments.iter().find(|argument| argument.ends_with(".nnue")).map(|path| from_repository(path)));
     let embedding_dim = arguments
         .iter()

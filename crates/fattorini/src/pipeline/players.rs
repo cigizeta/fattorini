@@ -1,12 +1,16 @@
 //! What a network player's name means, for both binaries: `arena` plays it and takes its snapshot,
 //! the smithy trains and tunes it, and neither may read a name differently from the other.
 //!
-//! - `<config>-g<g>-l<lambda>-r<n>` and `<config>-g<g>-r<n>` (`NetworkName`), of run `<n>` of
-//!   `<config>` (`run_name`: `<config>-r<n>`) in `data/networks/<config>/run-<n>/`: that lambda's
-//!   candidate in generation `g`, or the generation's winner as its `generations.tsv` records it.
+//! - `<config>-g<g>-l<lambda>-a<n>` and `<config>-g<g>-a<n>` (`NetworkName`), of attempt `<n>` of
+//!   `<config>` (`attempt_name`: `<config>-a<n>`) in `data/networks/<config>/attempt-<n>/`: that
+//!   lambda's candidate in generation `g`, or the generation's winner as its `generations.tsv` records
+//!   it.
 //!
-//! This machine's copy of a run first, then the remote's (`remote::remote_path`): a run's closed
-//! generations move there, and every machine reads them where they are.
+//! A training run is an attempt (2026-11-19): names spelled `-r<n>` and directories `run-<n>/` from
+//! before are refused, and `arena rename-attempts` migrates them.
+//!
+//! This machine's copy of an attempt first, then the remote's (`remote::remote_path`): an attempt's
+//! closed generations move there, and every machine reads them where they are.
 
 use std::path::Path;
 
@@ -125,7 +129,7 @@ impl FattoriniPlayer {
         // Only a generation's winner is tuned (the developer, 2026-10-24), in its generation's
         // folder. A candidate has no tune of its own: the parameter files beside it exist only when
         // it is the winner, and are then the winner's, so it points at the winner's folders too.
-        let generation = format!("{}/{}", run_dir(&parsed.run())?, generation_dir_name(parsed.generation));
+        let generation = format!("{}/{}", attempt_dir(&parsed.attempt())?, generation_dir_name(parsed.generation));
         Ok(FattoriniPlayer {
             search_parameters_path: nnue::search_parameters_file_beside(&network),
             time_parameters_path: nnue::time_parameters_file_beside(&network),
@@ -162,104 +166,108 @@ impl FattoriniPlayer {
     }
 }
 
-/// Where the smithy's forges keep their runs, one directory per config holding one per run, relative
-/// to the repository root every binary runs from.
-pub const RUNS_ROOT: &str = "data/networks";
+/// Where the smithy's forges keep their attempts, one directory per config holding one per attempt,
+/// relative to the repository root every binary runs from.
+pub const ATTEMPTS_ROOT: &str = "data/networks";
 
-/// A forge run's name: `<config>-r<n>` for the config's n-th run, the first included, so that a run's
-/// name never reads as its config's.
-pub fn run_name(config: &str, number: u32) -> String {
-    format!("{config}-r{number}")
+/// An attempt's directory in its config's, `attempt-<n>`; the prefix alone for reading them back.
+const ATTEMPT_DIR_PREFIX: &str = "attempt-";
+
+/// A forge attempt's name: `<config>-a<n>` for the config's n-th attempt, the first included, so that
+/// an attempt's name never reads as its config's.
+pub fn attempt_name(config: &str, number: u32) -> String {
+    format!("{config}-a{number}")
 }
 
-/// `run_name` read back: the config and the run's number. A config never ends in `-r<digits>`
-/// (`is_run_suffixed`), so the reading is never ambiguous. A bare config is refused: it names no run,
-/// as it did for run 1 before every run had its number.
-pub fn parse_run(run: &str) -> Result<(&str, u32), String> {
-    // Spelled exactly as `run_name` writes it: digits only, no leading zero, from 1.
-    if let Some((config, digits)) = run.rsplit_once("-r") {
+/// `attempt_name` read back: the config and the attempt's number. A config never ends in
+/// `-a<digits>` (`is_attempt_suffixed`), so the reading is never ambiguous. A bare config is refused:
+/// it names no attempt.
+pub fn parse_attempt(attempt: &str) -> Result<(&str, u32), String> {
+    // Spelled exactly as `attempt_name` writes it: digits only, no leading zero, from 1.
+    if let Some((config, digits)) = attempt.rsplit_once("-a") {
         let canonical = !config.is_empty() && !digits.starts_with('0') && digits.bytes().all(|b| b.is_ascii_digit());
         if let Some(number) = digits.parse::<u32>().ok().filter(|&number| canonical && number >= 1) {
             return Ok((config, number));
         }
     }
-    Err(format!("{run:?} is no forge run's name: a run is <config>-r<n>, the first {run}-r1"))
+    Err(format!("{attempt:?} is no forge attempt's name: an attempt is <config>-a<n>, the first {attempt}-a1"))
 }
 
-/// Whether `config` ends in `-r<digits>`, which a run's name would read as a run number: such a
-/// config name is refused.
-pub fn is_run_suffixed(config: &str) -> bool {
-    config.rsplit_once("-r").is_some_and(|(head, digits)| !head.is_empty() && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+/// Whether `config` ends in `-a<digits>`, which an attempt's name would read as an attempt number:
+/// such a config name is refused.
+pub fn is_attempt_suffixed(config: &str) -> bool {
+    config.rsplit_once("-a").is_some_and(|(head, digits)| !head.is_empty() && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// A generation's directory in its run's, `gen-<g>`, unpadded as `run-<n>` is.
+/// A generation's directory in its attempt's, `gen-<g>`, unpadded as `attempt-<n>` is.
 pub fn generation_dir_name(generation: u32) -> String {
     format!("gen-{generation}")
 }
 
-/// A config's directory, holding its runs.
+/// A config's directory, holding its attempts.
 pub fn config_dir(config: &str) -> String {
-    format!("{RUNS_ROOT}/{config}")
+    format!("{ATTEMPTS_ROOT}/{config}")
 }
 
-/// A forge run's directory, from its name (`run_name`): `data/networks/<config>/run-<n>`.
-pub fn run_dir(run: &str) -> Result<String, String> {
-    let (config, number) = parse_run(run)?;
-    Ok(format!("{}/run-{number}", config_dir(config)))
+/// A forge attempt's directory, from its name (`attempt_name`): `data/networks/<config>/attempt-<n>`.
+pub fn attempt_dir(attempt: &str) -> Result<String, String> {
+    let (config, number) = parse_attempt(attempt)?;
+    Ok(format!("{}/{ATTEMPT_DIR_PREFIX}{number}", config_dir(config)))
 }
 
-/// The numbers of `config`'s runs on disk, ascending.
-pub fn runs_of(config: &str) -> Vec<u32> {
-    runs_in(&config_dir(config))
+/// The numbers of `config`'s attempts on disk, ascending.
+pub fn attempts_of(config: &str) -> Vec<u32> {
+    attempts_in(&config_dir(config))
 }
 
-/// The numbers of the runs in `config_dir`, a config's directory wherever it is, ascending.
-pub fn runs_in(config_dir: &str) -> Vec<u32> {
+/// The numbers of the attempts in `config_dir`, a config's directory wherever it is, ascending.
+pub fn attempts_in(config_dir: &str) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir(config_dir) else {
         return Vec::new();
     };
-    let mut numbers: Vec<u32> =
-        entries.filter_map(|entry| entry.ok()?.file_name().into_string().ok()?.strip_prefix("run-")?.parse().ok()).collect();
+    let mut numbers: Vec<u32> = entries
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok()?.strip_prefix(ATTEMPT_DIR_PREFIX)?.parse().ok())
+        .collect();
     numbers.sort_unstable();
     numbers
 }
 
-/// A forge run's network, as its name says: the config, the run's number, the generation, and for one
-/// lambda's candidate its lambda. A generation's winner has none: a generation has at most one, so
-/// `g<g>` alone names it.
+/// A forge attempt's network, as its name says: the config, the attempt's number, the generation, and
+/// for one lambda's candidate its lambda. A generation's winner has none: a generation has at most
+/// one, so `g<g>` alone names it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkName {
     pub config: String,
-    pub run_number: u32,
+    pub attempt_number: u32,
     pub generation: u32,
     /// The candidate's lambda; `None` for the generation's winner.
     pub candidate: Option<ArmLambda>,
 }
 
 impl NetworkName {
-    /// Its run's name (`run_name`).
-    pub fn run(&self) -> String {
-        run_name(&self.config, self.run_number)
+    /// Its attempt's name (`attempt_name`).
+    pub fn attempt(&self) -> String {
+        attempt_name(&self.config, self.attempt_number)
     }
 
-    /// Its name: `<config>-g<g>-l<lambda>-r<n>` for a candidate, `<config>-g<g>-r<n>` for a winner,
-    /// each part marked by its letter and the run last. The lambda is spelled as its directory
+    /// Its name: `<config>-g<g>-l<lambda>-a<n>` for a candidate, `<config>-g<g>-a<n>` for a winner,
+    /// each part marked by its letter and the attempt last. The lambda is spelled as its directory
     /// spells it, with two decimals (`preprocessing_config::lambda_text`).
     pub fn text(&self) -> String {
-        let (config, run, generation) = (&self.config, self.run_number, self.generation);
+        let (config, attempt, generation) = (&self.config, self.attempt_number, self.generation);
         match self.candidate {
-            Some(lambda) => format!("{config}-g{generation}-l{}-r{run}", preprocessing_config::lambda_text(lambda)),
-            None => format!("{config}-g{generation}-r{run}"),
+            Some(lambda) => format!("{config}-g{generation}-l{}-a{attempt}", preprocessing_config::lambda_text(lambda)),
+            None => format!("{config}-g{generation}-a{attempt}"),
         }
     }
 }
 
-/// The name of run `run`'s network (`NetworkName::text`) in generation `generation`: its winner when
-/// `candidate` is `None`, else its candidate at that lambda. `run` is a run's name, as `run_name`
-/// writes it; anything else is a bug, and panics.
-pub fn network_player_name(run: &str, generation: u32, candidate: Option<ArmLambda>) -> String {
-    let (config, run_number) = parse_run(run).unwrap_or_else(|message| panic!("{message}"));
-    NetworkName { config: config.to_string(), run_number, generation, candidate }.text()
+/// The name of attempt `attempt`'s network (`NetworkName::text`) in generation `generation`: its
+/// winner when `candidate` is `None`, else its candidate at that lambda. `attempt` is an attempt's
+/// name, as `attempt_name` writes it; anything else is a bug, and panics.
+pub fn network_player_name(attempt: &str, generation: u32, candidate: Option<ArmLambda>) -> String {
+    let (config, attempt_number) = parse_attempt(attempt).unwrap_or_else(|message| panic!("{message}"));
+    NetworkName { config: config.to_string(), attempt_number, generation, candidate }.text()
 }
 
 /// `part` as `<letter><n>`, `n` from 1 spelled with no leading zero, so a name has one spelling.
@@ -280,20 +288,21 @@ fn lambda_part(part: &str) -> Option<ArmLambda> {
     (in_range && preprocessing_config::lambda_text(lambda) == text).then_some(lambda)
 }
 
-/// `NetworkName::text` read back, by its letters from the right, not by counting hyphens: `r<n>`
+/// `NetworkName::text` read back, by its letters from the right, not by counting hyphens: `a<n>`
 /// last, then either `l<lambda>` and `g<g>`, or `g<g>` alone; the config is what is left. Any other
-/// spelling, the old `<run>-NNNN[-<lambda>]` and `-g<g>-a<a>-l<lambda>-` among them, is refused.
+/// spelling, the old `-r<n>` before attempts and `<run>-NNNN[-<lambda>]` among them, is refused.
 pub fn parse_network_name(name: &str) -> Result<NetworkName, String> {
     let not_a_player = || {
         format!(
             "{name:?} is not a player: pesto, stockfish-<level>, stockfish-elo-<rating>, an engine of \
-             data/engines.yaml, <config>-g<g>-r<n> (generation g's winner in run n) or \
-             <config>-g<g>-l<lambda>-r<n> (that lambda's candidate in generation g)"
+             data/engines.yaml, <config>-g<g>-a<n> (generation g's winner in attempt n) or \
+             <config>-g<g>-l<lambda>-a<n> (that lambda's candidate in generation g); a name in -r<n> \
+             is from before attempts, migrated by arena rename-attempts"
         )
     };
     let parse = || -> Option<NetworkName> {
-        let (rest, run) = name.rsplit_once('-')?;
-        let run_number = numbered(run, 'r')?;
+        let (rest, attempt) = name.rsplit_once('-')?;
+        let attempt_number = numbered(attempt, 'a')?;
         let (rest, last) = rest.rsplit_once('-')?;
         let (rest, generation_part, candidate) = match lambda_part(last) {
             Some(lambda) => {
@@ -304,55 +313,55 @@ pub fn parse_network_name(name: &str) -> Result<NetworkName, String> {
         };
         let generation = numbered(generation_part, 'g')?;
         // A config whose last part reads as a name's own part would make a name read two ways:
-        // `betty-l0.70-g2-r1`, the lambda out of place, is refused, not read as config `betty-l0.70`.
+        // `betty-l0.70-g2-a1`, the lambda out of place, is refused, not read as config `betty-l0.70`.
         let ends_as_a_part =
             rest.rsplit_once('-').is_some_and(|(_, tail)| lambda_part(tail).is_some() || numbered(tail, 'g').is_some());
-        if rest.is_empty() || is_run_suffixed(rest) || ends_as_a_part {
+        if rest.is_empty() || is_attempt_suffixed(rest) || ends_as_a_part {
             return None;
         }
-        Some(NetworkName { config: rest.to_string(), run_number, generation, candidate })
+        Some(NetworkName { config: rest.to_string(), attempt_number, generation, candidate })
     };
     parse().ok_or_else(not_a_player)
 }
 
-/// The engine file the network player `name` plays with, a forge run's: this machine's copy of the run
-/// when it holds the file, else the remote's, where a closed generation moves.
+/// The engine file the network player `name` plays with, a forge attempt's: this machine's copy of the
+/// attempt when it holds the file, else the remote's, where a closed generation moves.
 pub fn resolve_network_file(name: &str) -> Result<String, String> {
     resolve_network_file_under(name, &|path| path.to_string())
 }
 
-/// `resolve_network_file`, this machine's runs placed by `local` (`FattoriniPlayer::resolve_under`).
+/// `resolve_network_file`, this machine's attempts placed by `local` (`FattoriniPlayer::resolve_under`).
 fn resolve_network_file_under(name: &str, local: &dyn Fn(&str) -> String) -> Result<String, String> {
     // A name that is no network's is said once, not looked for twice.
     parse_network_name(name)?;
-    match resolve_network_file_in(name, &|run| Ok(local(&run_dir(run)?))) {
+    match resolve_network_file_in(name, &|attempt| Ok(local(&attempt_dir(attempt)?))) {
         Ok(path) => Ok(path),
-        Err(local) => resolve_network_file_in(name, &|run| Ok(remote::remote_path(&run_dir(run)?)))
+        Err(local) => resolve_network_file_in(name, &|attempt| Ok(remote::remote_path(&attempt_dir(attempt)?)))
             .map_err(|on_remote| format!("{local}; nor on the remote: {on_remote}")),
     }
 }
 
-/// `resolve_network_file`, with where a run's directory is, so the tests can use temporary ones; an
-/// error from `run_dir` for a name that is no run's.
-pub fn resolve_network_file_in(name: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<String, String> {
+/// `resolve_network_file`, with where an attempt's directory is, so the tests can use temporary ones;
+/// an error from `attempt_dir` for a name that is no attempt's.
+pub fn resolve_network_file_in(name: &str, attempt_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<String, String> {
     let parsed = parse_network_name(name)?;
-    let run = parsed.run();
-    let dir = run_dir(&run).map_err(|message| format!("{name:?}: {message}"))?;
+    let attempt = parsed.attempt();
+    let dir = attempt_dir(&attempt).map_err(|message| format!("{name:?}: {message}"))?;
     if !Path::new(&dir).is_dir() {
-        return Err(format!("{name:?}: {run} is no forge run on this machine, {dir}"));
+        return Err(format!("{name:?}: {attempt} is no forge attempt on this machine, {dir}"));
     }
-    run_network_path(&dir, parsed.generation, parsed.candidate).map_err(|message| format!("{name:?}: {message}"))
+    attempt_network_path(&dir, parsed.generation, parsed.candidate).map_err(|message| format!("{name:?}: {message}"))
 }
 
-/// The engine file a server run's player plays with, in `run_dir`:
+/// The engine file an attempt's player plays with, in `attempt_dir`:
 ///
 /// - a candidate named, its lambda: that lambda's candidate in generation `generation_number`;
-/// - none: the generation's winner, as `generations.tsv` records it (`run_winner`).
-pub fn run_network_path(run_dir: &str, generation_number: u32, candidate: Option<ArmLambda>) -> Result<String, String> {
-    let generation_dir = format!("{run_dir}/{}", generation_dir_name(generation_number));
+/// - none: the generation's winner, as `generations.tsv` records it (`attempt_winner`).
+pub fn attempt_network_path(attempt_dir: &str, generation_number: u32, candidate: Option<ArmLambda>) -> Result<String, String> {
+    let generation_dir = format!("{attempt_dir}/{}", generation_dir_name(generation_number));
     let lambda = match candidate {
         Some(lambda) => lambda,
-        None => run_winner(run_dir, generation_number)?,
+        None => attempt_winner(attempt_dir, generation_number)?,
     };
     let path = generation::candidate_network_path(&generation::lambda_dir(&generation_dir, lambda));
     if !Path::new(&path).exists() {
@@ -361,24 +370,24 @@ pub fn run_network_path(run_dir: &str, generation_number: u32, candidate: Option
     Ok(path)
 }
 
-/// Generation `generation_number`'s winner in `run_dir`'s `generations.tsv`, its lambda: the row for
-/// it whose `passed` is `true`. A failed gate's winner is never the generation's. A constant, or the
-/// polyline (`ArmLambda::parse`).
-pub fn run_winner(run_dir: &str, generation_number: u32) -> Result<ArmLambda, String> {
-    let path = format!("{run_dir}/generations.tsv");
+/// Generation `generation_number`'s winner in `attempt_dir`'s `generations.tsv`, its lambda: the row
+/// for it whose `passed` is `true`. A failed gate's winner is never the generation's. A constant, or
+/// the polyline (`ArmLambda::parse`).
+pub fn attempt_winner(attempt_dir: &str, generation_number: u32) -> Result<ArmLambda, String> {
+    let path = format!("{attempt_dir}/generations.tsv");
     let text = std::fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
     let rows: Vec<&str> = text.lines().skip(1).collect();
     for line in rows.into_iter().rev() {
         let fields: Vec<&str> = line.split('\t').collect();
         let &[generation, winner, _, _, passed] = fields.as_slice() else {
-            return Err(format!("{path}: malformed line {line:?} (a run from before attempts were removed is migrated by hand)"));
+            return Err(format!("{path}: malformed line {line:?} (a log of six columns, from before 2026-11-02, is migrated by hand)"));
         };
         if generation.parse::<u32>() == Ok(generation_number) && passed == "true" {
             return ArmLambda::parse(winner).map_err(|_| format!("{path}: malformed line {line:?}"));
         }
     }
     Err(format!(
-        "generation {generation_number} of {run_dir} has no winner yet: its round robin or its gate has not finished"
+        "generation {generation_number} of {attempt_dir} has no winner yet: its round robin or its gate has not finished"
     ))
 }
 
@@ -387,41 +396,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_run_name_reads_back_and_a_bare_config_names_no_run() {
-        assert_eq!(run_name("gen-psq", 1), "gen-psq-r1");
-        assert_eq!(run_name("gen-psq", 2), "gen-psq-r2");
-        assert_eq!(parse_run("gen-psq-r1"), Ok(("gen-psq", 1)));
-        assert_eq!(parse_run("gen-psq-r2"), Ok(("gen-psq", 2)));
-        assert_eq!(parse_run("gen-psq-r12"), Ok(("gen-psq", 12)));
-        for odd in ["gen-psq", "gen-psq-r0", "gen-psq-r02", "gen-psq-r", "gen-psq-rx", "-r2"] {
-            assert!(parse_run(odd).is_err(), "{odd:?} names no run");
+    fn an_attempt_name_reads_back_and_a_bare_config_names_no_attempt() {
+        assert_eq!(attempt_name("gen-psq", 1), "gen-psq-a1");
+        assert_eq!(attempt_name("gen-psq", 2), "gen-psq-a2");
+        assert_eq!(parse_attempt("gen-psq-a1"), Ok(("gen-psq", 1)));
+        assert_eq!(parse_attempt("gen-psq-a2"), Ok(("gen-psq", 2)));
+        assert_eq!(parse_attempt("gen-psq-a12"), Ok(("gen-psq", 12)));
+        for odd in ["gen-psq", "gen-psq-a0", "gen-psq-a02", "gen-psq-a", "gen-psq-ax", "-a2", "gen-psq-r1"] {
+            assert!(parse_attempt(odd).is_err(), "{odd:?} names no attempt");
         }
-        assert_eq!(run_dir("gen-psq-r1"), Ok("data/networks/gen-psq/run-1".to_string()));
-        assert_eq!(run_dir("gen-psq-r3"), Ok("data/networks/gen-psq/run-3".to_string()));
-        assert!(run_dir("gen-psq").is_err(), "run 1's old, bare name");
-        assert!(is_run_suffixed("gen-psq-r2") && is_run_suffixed("x-r1"));
-        assert!(!is_run_suffixed("gen-psq") && !is_run_suffixed("gen-psq-rx") && !is_run_suffixed("lc0-psq-direct"));
+        assert_eq!(attempt_dir("gen-psq-a1"), Ok("data/networks/gen-psq/attempt-1".to_string()));
+        assert_eq!(attempt_dir("gen-psq-a3"), Ok("data/networks/gen-psq/attempt-3".to_string()));
+        assert!(attempt_dir("gen-psq").is_err(), "a bare config");
+        assert!(is_attempt_suffixed("gen-psq-a2") && is_attempt_suffixed("x-a1"));
+        assert!(!is_attempt_suffixed("gen-psq") && !is_attempt_suffixed("gen-psq-ax") && !is_attempt_suffixed("lc0-psq-alpha"));
     }
 
-    fn named(config: &str, run_number: u32, generation: u32, candidate: Option<f64>) -> NetworkName {
-        NetworkName { config: config.to_string(), run_number, generation, candidate: candidate.map(ArmLambda::Constant) }
+    #[test]
+    fn attempts_are_read_from_attempt_directories_alone() {
+        let root = root("attempts-in");
+        for dir in ["attempt-2", "attempt-1", "run-3", "attempt-x"] {
+            std::fs::create_dir_all(format!("{root}/{dir}")).unwrap();
+        }
+        assert_eq!(attempts_in(&root), vec![1, 2], "run-3 is from before attempts, never read");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn named(config: &str, attempt_number: u32, generation: u32, candidate: Option<f64>) -> NetworkName {
+        NetworkName { config: config.to_string(), attempt_number, generation, candidate: candidate.map(ArmLambda::Constant) }
     }
 
     #[test]
     fn a_network_name_reads_back() {
         let constant = |lambda: f64| Some(ArmLambda::Constant(lambda));
-        assert_eq!(network_player_name("betty-r1", 2, constant(0.75)), "betty-g2-l0.75-r1");
-        assert_eq!(network_player_name("betty-r1", 2, constant(0.7)), "betty-g2-l0.70-r1");
-        assert_eq!(network_player_name("betty-r12", 2, None), "betty-g2-r12");
-        assert_eq!(network_player_name("betty-r1", 2, Some(ArmLambda::Polyline)), "betty-g2-lpolyline-r1");
-        assert_eq!(parse_network_name("betty-g2-l0.70-r1"), Ok(named("betty", 1, 2, Some(0.7))));
-        assert_eq!(parse_network_name("betty-g2-lpolyline-r1").unwrap().candidate, Some(ArmLambda::Polyline));
-        assert_eq!(parse_network_name("betty-g2-r12"), Ok(named("betty", 12, 2, None)));
-        assert_eq!(parse_network_name("betty-g2-r12").unwrap().run(), "betty-r12");
+        assert_eq!(network_player_name("betty-a1", 2, constant(0.75)), "betty-g2-l0.75-a1");
+        assert_eq!(network_player_name("betty-a1", 2, constant(0.7)), "betty-g2-l0.70-a1");
+        assert_eq!(network_player_name("betty-a12", 2, None), "betty-g2-a12");
+        assert_eq!(network_player_name("betty-a1", 2, Some(ArmLambda::Polyline)), "betty-g2-lpolyline-a1");
+        assert_eq!(parse_network_name("betty-g2-l0.70-a1"), Ok(named("betty", 1, 2, Some(0.7))));
+        assert_eq!(parse_network_name("betty-g2-lpolyline-a1").unwrap().candidate, Some(ArmLambda::Polyline));
+        assert_eq!(parse_network_name("betty-g2-a12"), Ok(named("betty", 12, 2, None)));
+        assert_eq!(parse_network_name("betty-g2-a12").unwrap().attempt(), "betty-a12");
         // A config named by its labels and architecture, hyphens and all, as the experiments are.
-        assert_eq!(parse_network_name("lc0-psq-threats-g1-l0.03-r1"), Ok(named("lc0-psq-threats", 1, 1, Some(0.03))));
-        assert_eq!(parse_network_name("lc0-psq-threats-g10-r2"), Ok(named("lc0-psq-threats", 2, 10, None)));
-        for name in ["lc0-psq-threats-g1-l0.03-r1", "lc0-psq-threats-g10-r2", "pesto-psq-g3-l1.00-r1", "pesto-psq-g3-lpolyline-r1"] {
+        assert_eq!(parse_network_name("lc0-psq-threats-g1-l0.03-a1"), Ok(named("lc0-psq-threats", 1, 1, Some(0.03))));
+        assert_eq!(parse_network_name("lc0-psq-threats-g10-a2"), Ok(named("lc0-psq-threats", 2, 10, None)));
+        for name in ["lc0-psq-threats-g1-l0.03-a1", "lc0-psq-threats-g10-a2", "pesto-psq-g3-l1.00-a1", "pesto-psq-g3-lpolyline-a1"] {
             assert_eq!(parse_network_name(name).unwrap().text(), name, "one spelling, read and written");
         }
         for name in [
@@ -430,31 +449,32 @@ mod tests {
             "betty-0002-0.70",
             "lc0-psq-r1-0001",
             "lc0-psq-r1-0001-0.03",
+            // From before attempts (2026-11-19): migrated, never read.
+            "betty-g2-r1",
+            "betty-g2-l0.70-r1",
             // A part missing, misspelled or out of place.
             "betty",
             "betty-g2",
-            "betty-r1",
-            "-g2-r1",
-            "betty-g0-r1",
-            "betty-g02-r1",
-            "betty-g2-r0",
-            "betty-g2-r01",
-            "betty-g2-l0.7-r1",
-            "betty-g2-l1.50-r1",
-            "betty-l0.70-g2-r1",
-            "betty-g2-r1-l0.70",
-            // The attempt, gone from the names (2026-11-02).
-            "betty-g2-a1-l0.70-r1",
-            "betty-g2-a1-r1",
-            // A config that reads as a run.
-            "betty-r1-g2-r1",
+            "betty-a1",
+            "-g2-a1",
+            "betty-g0-a1",
+            "betty-g02-a1",
+            "betty-g2-a0",
+            "betty-g2-a01",
+            "betty-g2-l0.7-a1",
+            "betty-g2-l1.50-a1",
+            "betty-l0.70-g2-a1",
+            "betty-g2-a1-l0.70",
+            // A config that reads as an attempt.
+            "betty-a1-g2-a1",
         ] {
             assert!(parse_network_name(name).is_err(), "{name:?}");
         }
+        assert!(parse_network_name("betty-g2-r1").unwrap_err().contains("arena rename-attempts"));
         assert!(resolve_network_file("gen-psq-0001").unwrap_err().contains("is not a player"));
     }
 
-    /// A fresh temporary root named after `test`, with its network and run directory functions.
+    /// A fresh temporary root named after `test`.
     fn root(test: &str) -> String {
         let root = std::env::temp_dir().join(format!("fattorini-players-{test}-{}", std::process::id()));
         let root = root.to_str().unwrap().to_string();
@@ -468,32 +488,33 @@ mod tests {
     }
 
     #[test]
-    fn a_server_runs_player_is_a_lambda_of_its_generation_or_the_generations_winner() {
-        let root = root("run");
-        let runs = |run: &str| -> Result<String, String> { Ok(format!("{root}/runs/{run}")) };
-        let candidate = |generation: u32, lambda: &str| format!("{root}/runs/fine-r1/gen-{generation}/lambda-{lambda}/candidate.nnue");
+    fn an_attempts_player_is_a_lambda_of_its_generation_or_the_generations_winner() {
+        let root = root("attempt");
+        let attempts = |attempt: &str| -> Result<String, String> { Ok(format!("{root}/attempts/{attempt}")) };
+        let candidate =
+            |generation: u32, lambda: &str| format!("{root}/attempts/fine-a1/gen-{generation}/lambda-{lambda}/candidate.nnue");
         for (generation, lambda) in [(1, "0.04"), (1, "0.06"), (2, "0.05")] {
             touch(&candidate(generation, lambda));
         }
         let header = "generation\twinner\tgate_games\tgate_share\tpassed\n";
-        let log = format!("{root}/runs/fine-r1/generations.tsv");
-        let resolve = |name: &str| resolve_network_file_in(name, &runs);
+        let log = format!("{root}/attempts/fine-a1/generations.tsv");
+        let resolve = |name: &str| resolve_network_file_in(name, &attempts);
 
-        assert!(resolve("other-g1-r1").unwrap_err().contains("no forge run"));
+        assert!(resolve("other-g1-a1").unwrap_err().contains("no forge attempt"));
         std::fs::write(&log, header).unwrap();
-        assert_eq!(resolve("fine-g1-l0.06-r1"), Ok(candidate(1, "0.06")));
-        assert_eq!(resolve("fine-g2-l0.05-r1"), Ok(candidate(2, "0.05")));
-        assert!(resolve("fine-g2-l0.04-r1").unwrap_err().contains("does not exist"), "not in generation 2");
-        assert!(resolve("fine-g1-r1").unwrap_err().contains("no winner yet"));
+        assert_eq!(resolve("fine-g1-l0.06-a1"), Ok(candidate(1, "0.06")));
+        assert_eq!(resolve("fine-g2-l0.05-a1"), Ok(candidate(2, "0.05")));
+        assert!(resolve("fine-g2-l0.04-a1").unwrap_err().contains("does not exist"), "not in generation 2");
+        assert!(resolve("fine-g1-a1").unwrap_err().contains("no winner yet"));
 
         // Generation 1 passed its gate, generation 2 failed its: only the first has a winner.
         std::fs::write(&log, format!("{header}1\t0.06\t300\t0.5600\ttrue\n2\t0.05\t200\t0.4800\tfalse\n")).unwrap();
-        assert_eq!(resolve("fine-g1-r1"), Ok(candidate(1, "0.06")));
-        assert!(resolve("fine-g2-r1").unwrap_err().contains("no winner yet"));
+        assert_eq!(resolve("fine-g1-a1"), Ok(candidate(1, "0.06")));
+        assert!(resolve("fine-g2-a1").unwrap_err().contains("no winner yet"));
 
-        // A log from before attempts were removed, its six columns: said, not misread.
+        // A log from before 2026-11-02, its six columns: said, not misread.
         std::fs::write(&log, "generation\tattempt\twinner\tgate_games\tgate_share\tpassed\n1\t1\t0.06\t300\t0.5600\ttrue\n").unwrap();
-        assert!(resolve("fine-g1-r1").unwrap_err().contains("migrated by hand"));
+        assert!(resolve("fine-g1-a1").unwrap_err().contains("migrated by hand"));
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -501,18 +522,18 @@ mod tests {
     fn only_the_winner_has_a_tune_folder() {
         let root = root("tune");
         let local = |path: &str| format!("{root}/{path}");
-        let generation_dir = local("data/networks/fine/run-1/gen-1");
+        let generation_dir = local("data/networks/fine/attempt-1/gen-1");
         touch(&format!("{generation_dir}/lambda-0.03/candidate.nnue"));
         std::fs::write(
-            local("data/networks/fine/run-1/generations.tsv"),
+            local("data/networks/fine/attempt-1/generations.tsv"),
             "generation\twinner\tgate_games\tgate_share\tpassed\n1\t0.03\t300\t0.5600\ttrue\n",
         )
         .unwrap();
         let player = |name: &str| FattoriniPlayer::resolve_under(name, &local).unwrap();
-        assert_eq!(player("fine-g1-r1").search_tune_dir, format!("{generation_dir}/search-tune"), "the winner's, its generation's");
-        assert_eq!(player("fine-g1-r1").time_tune_dir, format!("{generation_dir}/time-tune"));
-        assert_eq!(player("fine-g1-l0.03-r1").search_tune_dir, format!("{generation_dir}/search-tune"), "a candidate has none of its own");
-        assert_eq!(player("fine-g1-r1").tune_paths(TuneKind::Time).1, format!("{generation_dir}/time-tune"));
+        assert_eq!(player("fine-g1-a1").search_tune_dir, format!("{generation_dir}/search-tune"), "the winner's, its generation's");
+        assert_eq!(player("fine-g1-a1").time_tune_dir, format!("{generation_dir}/time-tune"));
+        assert_eq!(player("fine-g1-l0.03-a1").search_tune_dir, format!("{generation_dir}/search-tune"), "a candidate has none of its own");
+        assert_eq!(player("fine-g1-a1").tune_paths(TuneKind::Time).1, format!("{generation_dir}/time-tune"));
         std::fs::remove_dir_all(&root).ok();
     }
 }

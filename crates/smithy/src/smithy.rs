@@ -3,7 +3,7 @@
 //! that file's `arenas` lists that answers, unclaimed, and polls those it holds
 //! (`keep_claims`). Its jobs are started and stopped from its page. A job of the arena slot, one at a time,
 //! is a tune (`--tune <player>`, `tune.rs`), PeSTO's Play (`--play pesto`, its corpus, `pesto.rs`), or
-//! a forge (`--forge <config> <run>`), a run of a config: the simplified self-training route, whole
+//! a forge (`--forge <config> <attempt>`), an attempt of a config: the simplified self-training route, whole
 //! generations run unattended. Beside it, the source slot holds Lc0's Convert (`--convert lc0`,
 //! `lc0/`) or a book job (`--book <source> [--weights counts]`, `book.rs`), one at a time: neither
 //! needs the arenas nor the GPU, and both stream large files through the remote. A generation:
@@ -17,20 +17,20 @@
 //! 3. **Round robin** among the 9 candidates.
 //! 4. **Gate:** the winner against the teacher, an SPRT.
 //! 5. **Decide:** a pass promotes the winner and centres the next grid on its lambda, the next
-//!    generation waiting for the developer's Resume; a fail stops the run (`Phase::Stopped`), a new
-//!    run starting over. A generation has one training set, no retry with more data (the developer,
+//!    generation waiting for the developer's Resume; a fail stops the attempt (`Phase::Stopped`), a new
+//!    attempt starting over. A generation has one training set, no retry with more data (the developer,
 //!    2026-11-02).
 //!
-//! Each run lives in the repository's `data/networks/<config>/run-<n>/` (`players::run_dir`), with its
+//! Each attempt lives in the repository's `data/networks/<config>/attempt-<n>/` (`players::attempt_dir`), with its
 //! own frozen copy of its config, local to the smithy; every phase resumes from its files. Its files
 //! reach Drive, the remote (`remote::remote_path`), whole, never written there piece by piece: the
-//! files that change along the run copied at every phase boundary (`Run::mirror_living`), every
+//! files that change along the attempt copied at every phase boundary (`Attempt::mirror_living`), every
 //! network as soon as it is made (`publish`), the arenas reading each by its name there, and a closed
 //! generation moved whole (`archive.rs`). `smithy stop` and `status` reach a running smithy over
 //! `127.0.0.1` alone.
 //!
-//! A smithy runs on any machine. A full run trains only where CUDA is (`has_gpu`); a scaled run
-//! (`GenConfig::scale`, `scale.rs`) is a run like any other, on Drive, at `1/s` of its volumes and
+//! A smithy runs on any machine. A full attempt trains only where CUDA is (`has_gpu`); a scaled
+//! attempt (`GenConfig::scale`, `scale.rs`) is an attempt like any other, on Drive, at `1/s` of its volumes and
 //! work, and trains on the CPU.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -57,7 +57,7 @@ use fattorini::pipeline::segments::{self, SegmentMeta, META_SUFFIX};
 use fattorini::pipeline::{generation, players, remote};
 
 use super::archive::{self, Archiver};
-use super::{lease, tree};
+use super::{attempt_config, lease, tree};
 use super::scale;
 use super::cache::CacheRecord;
 use fattorini::nnue::Tuning;
@@ -141,7 +141,7 @@ struct GenConfig {
     #[serde(default)]
     lambda: LambdaMode,
     /// Generation 1's grid centre; later ones centre on the previous winner. A grid's alone: a
-    /// polyline run has none.
+    /// polyline attempt has none.
     #[serde(default)]
     grid_center: Option<f64>,
     /// Training positions a self-play generation plays, from generation 2 on: generation 1 trains on
@@ -154,9 +154,9 @@ struct GenConfig {
     gate_elo_d: f64,
     /// The tune of each generation whose challenger passed its gate, started by hand from the page.
     tune: tune::TuneConfig,
-    /// A scaled run's `s`, its volumes and work `1/s` of a full run's (`scale_forge`): written into
-    /// the run's own copy of its config at New run (`freeze_run_config`), never in `configs/`, so a
-    /// run is scaled or not for its whole life.
+    /// A scaled attempt's `s`, its volumes and work `1/s` of a full attempt's (`scale_forge`): written
+    /// into the attempt's own copy of its config at New attempt (`freeze_attempt_config`), never in
+    /// `configs/`, so an attempt is scaled or not for its whole life.
     #[serde(default)]
     scale: Option<u64>,
     /// The source generation 1 trains on, from the file's `labels:`: set by `load_config`, never
@@ -183,7 +183,7 @@ impl GenConfig {
         self.gate_elo_d
     }
 
-    /// The source generation `generation` trains on: a sourced run's first, gated against PeSTO;
+    /// The source generation `generation` trains on: a sourced attempt's first, gated against PeSTO;
     /// every later one is self-play taught by its predecessor's winner.
     fn on_source(&self, generation: u32) -> Option<Source> {
         self.source.filter(|_| generation == 1)
@@ -259,7 +259,7 @@ impl Source {
         }
     }
 
-    /// Why a run cannot start on it yet: its corpus incomplete, and the job that completes it.
+    /// Why an attempt cannot start on it yet: its corpus incomplete, and the job that completes it.
     fn incomplete(self) -> String {
         let job = match self {
             Source::Lc0 => "Convert, on the lc0 page",
@@ -317,7 +317,7 @@ fn load_config(path: &str) -> Result<(GenConfig, NetConfig), String> {
         return Err(format!("{path}: schedule: budget trains one arm, so it needs lambda: polyline"));
     }
     if config.scale.is_some() && path == preprocessing_config::net_config_path(&config_name_of(path)) {
-        return Err(format!("{path}: scale: is a run's, chosen at New run, never a config's"));
+        return Err(format!("{path}: scale: is an attempt's, chosen at New attempt, never a config's"));
     }
     if config.scale == Some(0) {
         return Err(format!("{path}: scale must be a whole number from 1"));
@@ -333,7 +333,7 @@ fn config_name_of(path: &str) -> String {
     Path::new(path).file_stem().map_or(String::new(), |stem| stem.to_string_lossy().into_owned())
 }
 
-/// `config` and its network shrunk by a scaled run's `s` (`scale.rs`): its data volumes and its
+/// `config` and its network shrunk by a scaled attempt's `s` (`scale.rs`): its data volumes and its
 /// work a round by `1/s`, its pairs by `sqrt(s)`, its shape kept.
 fn scale_forge(config: &mut GenConfig, net: &mut NetConfig, s: u64) {
     let training = &mut net.training;
@@ -349,7 +349,7 @@ fn scale_forge(config: &mut GenConfig, net: &mut NetConfig, s: u64) {
     config.round_robin_pairs = scale::games(config.round_robin_pairs, s, scale::MIN_PAIRS);
 }
 
-/// A budget's epochs in a run scaled by `s`, so that it keeps the full run's count of rounds, as
+/// A budget's epochs in an attempt scaled by `s`, so that it keeps the full attempt's count of rounds, as
 /// patience keeps its own: a round's rows go from `full_round` to the scaled batch times the scaled
 /// round, the training set's rows by `1/s`, so the epochs scale by `s` times the round's ratio. That is
 /// `1/s` when both shrink by `s`, more once the batch stops at `scale::MIN_BATCH` (found 2026-11-18: at
@@ -360,7 +360,7 @@ fn scaled_epochs(epochs: f64, s: u64, full_round: f64, scaled: &net_config::Trai
 }
 
 impl GenConfig {
-    /// The depth a run's games are searched at: `generation::SEARCH_DEPTH`, scaled for a scaled run
+    /// The depth an attempt's games are searched at: `generation::SEARCH_DEPTH`, scaled for a scaled attempt
     /// (`scale::depth`). The chore carries it, so an arena plays whatever it is told.
     fn depth(&self) -> u32 {
         match self.scale {
@@ -370,24 +370,24 @@ impl GenConfig {
     }
 }
 
-/// Run `run`'s local directory: `players::run_dir`. `run` is a run's name already: made by
-/// `players::run_name`, or one from outside read by `players::parse_run` first, where it enters
-/// (`generation_view`, `tune_args`).
-fn run_dir(run: &str) -> String {
-    players::run_dir(run).expect("a run's name, checked where it entered")
+/// Attempt `attempt`'s local directory: `players::attempt_dir`. `attempt` is an attempt's name
+/// already: made by `players::attempt_name`, or one from outside read by `players::parse_attempt`
+/// first, where it enters (`generation_view`, `tune_args`).
+fn attempt_dir(attempt: &str) -> String {
+    players::attempt_dir(attempt).expect("an attempt's name, checked where it entered")
 }
 
-/// `players::run_dir` on the remote, for a run's name already checked as `run_dir`'s.
-fn remote_run_dir(run: &str) -> String {
-    remote::remote_path(&players::run_dir(run).expect("a run's name, checked where it entered"))
+/// `players::attempt_dir` on the remote, for an attempt's name already checked as `attempt_dir`'s.
+fn remote_attempt_dir(attempt: &str) -> String {
+    remote::remote_path(&players::attempt_dir(attempt).expect("an attempt's name, checked where it entered"))
 }
 
-/// The numbers of `config`'s runs here, ascending, as `run_dir` places them.
-fn runs_of(config: &str) -> Vec<u32> {
-    players::runs_in(&players::config_dir(config))
+/// The numbers of `config`'s attempts here, ascending, as `attempt_dir` places them.
+fn attempts_of(config: &str) -> Vec<u32> {
+    players::attempts_in(&players::config_dir(config))
 }
 
-/// A scaled run's share of a source's training `files`: the first of them, in their fixed order, until
+/// A scaled attempt's share of a source's training `files`: the first of them, in their fixed order, until
 /// they hold `1/s` of the corpus's positions (`scale::volume`), at least one file. The same files every
 /// time, so the share's buckets are made once.
 fn scaled_share(files: Vec<StreamFile>, s: u64) -> Vec<StreamFile> {
@@ -403,62 +403,62 @@ fn scaled_share(files: Vec<StreamFile>, s: u64) -> Vec<StreamFile> {
         .collect()
 }
 
-/// A new run's number: past every run here and every run on the remote.
-fn next_run_number(local: &[u32], remote: &[u32]) -> u32 {
+/// A new attempt's number: past every attempt here and every attempt on the remote.
+fn next_attempt_number(local: &[u32], remote: &[u32]) -> u32 {
     local.iter().chain(remote).max().map_or(1, |last| last + 1)
 }
 
-/// A run's frozen copy of its config.
-const RUN_CONFIG: &str = "config.yaml";
+/// An attempt's frozen copy of its config.
+const ATTEMPT_CONFIG: &str = "config.yaml";
 
-/// The config run `run` trains by: the copy frozen into its directory as it started, so editing
-/// `configs/` changes only new runs; `configs/`' own for a run moved there by hand without one,
-/// until `freeze_run_config` writes it.
-fn load_run_config(run: &str) -> Result<(GenConfig, NetConfig), String> {
-    // A run started in another smithy may be on the remote alone, its frozen copy there.
-    match frozen_config(&[run_dir(run), remote_run_dir(run)]) {
+/// The config attempt `attempt` trains by: the copy frozen into its directory as it started, so
+/// editing `configs/` changes only new attempts; `configs/`' own for an attempt moved there by hand
+/// without one, until `freeze_attempt_config` writes it.
+fn load_attempt_config(attempt: &str) -> Result<(GenConfig, NetConfig), String> {
+    // An attempt started in another smithy may be on the remote alone, its frozen copy there.
+    match frozen_config(&[attempt_dir(attempt), remote_attempt_dir(attempt)]) {
         Some(frozen) => load_config(&frozen),
-        None => load_config(&preprocessing_config::net_config_path(players::parse_run(run)?.0)),
+        None => load_config(&preprocessing_config::net_config_path(players::parse_attempt(attempt)?.0)),
     }
 }
 
-/// The first of `roots`, run directories in order of preference, holding a frozen config: its path.
+/// The first of `roots`, attempt directories in order of preference, holding a frozen config: its path.
 fn frozen_config(roots: &[String]) -> Option<String> {
-    roots.iter().map(|root| format!("{root}/{RUN_CONFIG}")).find(|frozen| Path::new(frozen).is_file())
+    roots.iter().map(|root| format!("{root}/{ATTEMPT_CONFIG}")).find(|frozen| Path::new(frozen).is_file())
 }
 
-/// Where run `run`'s whole-run files (`state.txt`, `generations.tsv`) are read: this machine's copy
-/// while it has one, else the remote's, for a run started in another smithy.
-fn run_home(run: &str) -> Dirs {
-    home_of(Dirs { root: run_dir(run) }, Dirs { root: remote_run_dir(run) })
+/// Where attempt `attempt`'s whole-attempt files (`state.txt`, `generations.tsv`) are read: this
+/// machine's copy while it has one, else the remote's, for an attempt started in another smithy.
+fn attempt_home(attempt: &str) -> Dirs {
+    home_of(Dirs { root: attempt_dir(attempt) }, Dirs { root: remote_attempt_dir(attempt) })
 }
 
-/// `local` when it holds a run's state, else `remote`.
+/// `local` when it holds an attempt's state, else `remote`.
 fn home_of(local: Dirs, remote: Dirs) -> Dirs {
     if Path::new(&local.state()).is_file() { local } else { remote }
 }
 
-/// The numbers of `config`'s runs here and on the remote, ascending: one started in another smithy
-/// is listed, viewed and tuned here too.
-fn known_runs(config: &str) -> Vec<u32> {
-    let mut numbers = runs_of(config);
-    numbers.extend(players::runs_in(&remote::remote_path(&players::config_dir(config))));
+/// The numbers of `config`'s attempts here and on the remote, ascending: one started in another
+/// smithy is listed, viewed and tuned here too.
+fn known_attempts(config: &str) -> Vec<u32> {
+    let mut numbers = attempts_of(config);
+    numbers.extend(players::attempts_in(&remote::remote_path(&players::config_dir(config))));
     numbers.sort_unstable();
     numbers.dedup();
     numbers
 }
 
-/// Copies `configs/<config>.yaml` into run `run`'s directory, the run's own from then on, with
-/// `scale:` appended for a scaled run; a copy already there is kept.
-fn freeze_run_config(run: &str, config: &str, scale: Option<u64>) -> Result<(), String> {
-    let frozen = format!("{}/{RUN_CONFIG}", run_dir(run));
+/// Copies `configs/<config>.yaml` into attempt `attempt`'s directory, the attempt's own from then on,
+/// with `scale:` appended for a scaled attempt; a copy already there is kept.
+fn freeze_attempt_config(attempt: &str, config: &str, scale: Option<u64>) -> Result<(), String> {
+    let frozen = format!("{}/{ATTEMPT_CONFIG}", attempt_dir(attempt));
     if Path::new(&frozen).is_file() {
         return Ok(());
     }
     let source = preprocessing_config::net_config_path(config);
     let mut text = std::fs::read_to_string(&source).map_err(|error| format!("{source}: {error}"))?;
     if let Some(s) = scale {
-        text.push_str(&format!("\n# A scaled run, chosen at New run: its volumes and work 1/{s} of a full run's.\nscale: {s}\n"));
+        text.push_str(&format!("\n# A scaled attempt, chosen at New attempt: its volumes and work 1/{s} of a full attempt's.\nscale: {s}\n"));
     }
     std::fs::write(&frozen, text).map_err(|error| format!("{frozen}: {error}"))
 }
@@ -493,7 +493,7 @@ fn lambda_of(hundredths: i32) -> f64 {
     f64::from(hundredths) / 100.0
 }
 
-// -- The run's state --------------------------------------------------------------------------------
+// -- The attempt's state ----------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -501,7 +501,7 @@ enum Phase {
     Train,
     RoundRobin,
     Gate,
-    /// A run of a network the engine cannot play, its training over: no round robin, no gate. Every
+    /// An attempt at a network the engine cannot play, its training over: no round robin, no gate. Every
     /// other lineage ends by a failed gate instead, and never reaches it.
     Done,
     /// A lineage ended by its generation's failed gate, or by a generation that learned nothing: a
@@ -563,7 +563,7 @@ impl GenState {
     fn parse(text: &str) -> Result<GenState, String> {
         let map = lan::fields(text);
         if map.contains_key("attempt") || map.contains_key("failed_gates") {
-            return Err("a state from before attempts were removed (attempt, failed_gates): migrate the run by hand".to_string());
+            return Err("a state from before 2026-11-02 (attempt, failed_gates): migrate it by hand".to_string());
         }
         Ok(GenState {
             generation: lan::field(&map, "generation", "state")?,
@@ -575,7 +575,7 @@ impl GenState {
     }
 }
 
-/// The run's paths.
+/// The attempt's paths.
 struct Dirs {
     root: String,
 }
@@ -665,7 +665,7 @@ enum Work {
     /// evaluation, all but each game's final one, as training and the freezer keep them: counting
     /// the final ones too left a corpus short of its test set. `before`, the positions each set held
     /// when this play began (test, training):
-    /// the page shows the run's totals, a resume moving their start and never their total, its rate
+    /// the page shows the attempt's totals, a resume moving their start and never their total, its rate
     /// and ETA this play's alone. `targets`, each set's whole target (test, training), as the page
     /// shows it: a set already past its target, its last game overshooting, has none left, and
     /// `before` plus what is left would show the overshoot as the target. `parameters`, what the
@@ -718,12 +718,12 @@ fn required_tune(player: &str, needed_by: &str) -> Result<SearchParameters, Stri
     finished_tune(player)?.ok_or_else(|| format!("{player} has no finished tune, which {needed_by}: tune {player} first, from the page"))
 }
 
-/// The player that taught generation `generation` of `run`: generation g - 1's winner, or for
-/// generation 1 its source's player, PeSTO for a PeSTO run; `None` for an Lc0 run's generation 1,
-/// Lc0 being no Fattorini player.
-fn teacher_player(run: &str, generation: u32, source: Option<Source>) -> Option<String> {
+/// The player that taught generation `generation` of `attempt`: generation g - 1's winner, or for
+/// generation 1 its source's player, PeSTO for a PeSTO attempt; `None` for an Lc0 attempt's generation
+/// 1, Lc0 being no Fattorini player.
+fn teacher_player(attempt: &str, generation: u32, source: Option<Source>) -> Option<String> {
     if generation > 1 {
-        Some(players::network_player_name(run, generation - 1, None))
+        Some(players::network_player_name(attempt, generation - 1, None))
     } else if source == Some(Source::Pesto) {
         Some(PESTO.to_string())
     } else {
@@ -834,10 +834,10 @@ struct Shared {
     trial: Option<TrialDealing>,
     /// The book's scoring `Work::Score` deals.
     score: Option<ScoreDealing>,
-    /// The running forge's depth (`GenConfig::depth`), scaled for a scaled run;
+    /// The running forge's depth (`GenConfig::depth`), scaled for a scaled attempt;
     /// `generation::SEARCH_DEPTH` without a forge.
     forge_depth: Option<u32>,
-    /// Whether the job is a scaled one (a scaled run's forge or its network's tune), whose claims give
+    /// Whether the job is a scaled one (a scaled attempt's forge or its network's tune), whose claims give
     /// way to a full job's (`Claim::outranks`).
     scaled_job: bool,
     /// What the running phase knows beyond the work it deals, for the status page.
@@ -850,7 +850,7 @@ struct Shared {
     job: Option<String>,
     /// The config the job is of (`job_config`), whose page shows it.
     config: Option<String>,
-    /// A training run's `state.txt`, for the page; none for a tune.
+    /// An attempt's `state.txt`, for the page; none for a tune.
     state_path: Option<String>,
     /// The token every arena request carries, new with each job (`run_job`).
     token: String,
@@ -950,7 +950,7 @@ enum View {
     Trial { number: u32, spec: trials::Spec },
 }
 
-/// Where the page reads a forge's phases: its run directory, its config, and the rates' schedule its
+/// Where the page reads a forge's phases: its attempt directory, its config, and the rates' schedule its
 /// lambdas' stages are replayed by.
 #[derive(Clone)]
 struct ForgeFiles {
@@ -975,7 +975,7 @@ impl ForgeFiles {
             }),
             rates: training.learning_rate.clone(),
         };
-        ForgeFiles { root: run_dir(name), config: config.clone(), schedule }
+        ForgeFiles { root: attempt_dir(name), config: config.clone(), schedule }
     }
 }
 
@@ -994,7 +994,7 @@ impl Shared {
         match (self.work(), &self.view) {
             (Work::SelfPlay { teacher, test_left, train_left, before, targets, .. }, _) => WorkView::SelfPlay {
                 teacher,
-                // The run's totals: what each set held when this play began, and this play's on top.
+                // The attempt's totals: what each set held when this play began, and this play's on top.
                 test_got: before.0 + self.test_got,
                 test_wanted: targets.0,
                 train_got: before.1 + self.train_got,
@@ -1776,7 +1776,7 @@ impl SegmentWriter {
         if (dir == "data" || dir.starts_with("data/"))
             && let Err(message) = upload_segment(&segment, &dir, &remote::remote_path(&dir))
         {
-            log::warn!("{segment} not copied to the remote, the next copy of the run takes it: {message}");
+            log::warn!("{segment} not copied to the remote, the next copy of the attempt takes it: {message}");
         }
         Ok(())
     }
@@ -1932,8 +1932,8 @@ fn control(status: &Status, request: &Request) -> Option<Reply> {
     }
 }
 
-/// Everything the page lists, read from the files: every forge config with every run of it, each
-/// run's generations, and the tunes. Internal to the page, as `Snapshot`.
+/// Everything the page lists, read from the files: every forge config with every attempt of it, each
+/// attempt's generations, and the tunes. Internal to the page, as `Snapshot`.
 #[derive(Serialize)]
 struct Catalog {
     configs: Vec<ConfigEntry>,
@@ -1941,7 +1941,7 @@ struct Catalog {
     pesto: PlayerEntry,
     /// The sources, lc0 and pesto, each its corpus's state.
     sources: Vec<SourceEntry>,
-    /// Every player a trial may name: PeSTO, then each run's networks, by config, run and generation.
+    /// Every player a trial may name: PeSTO, then each attempt's networks, by config, attempt and generation.
     networks: Vec<NetworkEntry>,
     /// The trials logged, oldest first (`trials::read_log`).
     trials: Vec<KeptTrial>,
@@ -1961,8 +1961,8 @@ struct KeptTrial {
 struct NetworkEntry {
     /// Its player name (`players::network_player_name`), or `pesto`.
     name: String,
-    /// Its run, `None` for PeSTO, and its generation, which the page groups the networks by.
-    run: Option<String>,
+    /// Its attempt, `None` for PeSTO, and its generation, which the page groups the networks by.
+    attempt: Option<String>,
     generation: Option<u32>,
     /// Whether it is the generation's winner, rather than its candidate at one lambda.
     winner: bool,
@@ -1975,9 +1975,9 @@ struct NetworkEntry {
     time_tuned: bool,
 }
 
-/// Every network a trial may name, PeSTO first: in each run's generations, the winner of each
+/// Every network a trial may name, PeSTO first: in each attempt's generations, the winner of each
 /// generation that passed its gate, then the generation's candidates, by lambda.
-fn trial_networks(runs: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
+fn trial_networks(attempts: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
     let tuned = |name: &str| {
         players::FattoriniPlayer::resolve(name)
             .and_then(|player| player.own_tuning())
@@ -1988,7 +1988,7 @@ fn trial_networks(runs: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
     };
     let pesto = NetworkEntry {
         name: PESTO.to_string(),
-        run: None,
+        attempt: None,
         generation: None,
         winner: false,
         lambda: None,
@@ -1996,25 +1996,25 @@ fn trial_networks(runs: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
         time_tuned: time_tuned(PESTO),
     };
     let mut networks = vec![pesto];
-    for (run, generations, winners) in runs {
+    for (attempt, generations, winners) in attempts {
         for &generation in generations {
             let entry = |name: String, winner: bool, lambda: ArmLambda| NetworkEntry {
                 tuned: tuned(&name),
                 time_tuned: time_tuned(&name),
                 name,
-                run: Some(run.clone()),
+                attempt: Some(attempt.clone()),
                 generation: Some(generation),
                 winner,
                 lambda: Some(lambda),
             };
             if winners.contains(&generation)
-                && let Ok(winner) = players::run_winner(&run_dir(run), generation) {
-                    networks.push(entry(players::network_player_name(run, generation, None), true, winner));
+                && let Ok(winner) = players::attempt_winner(&attempt_dir(attempt), generation) {
+                    networks.push(entry(players::network_player_name(attempt, generation, None), true, winner));
                 }
-            let dirs = readable_dirs(run, generation);
+            let dirs = readable_dirs(attempt, generation);
             for arm in generation_arms(&dirs, generation) {
                 if Path::new(&generation::candidate_network_path(&dirs.arm(generation, arm))).is_file() {
-                    networks.push(entry(players::network_player_name(run, generation, Some(arm)), false, arm));
+                    networks.push(entry(players::network_player_name(attempt, generation, Some(arm)), false, arm));
                 }
             }
         }
@@ -2039,19 +2039,19 @@ struct ConfigEntry {
     name: String,
     /// The source its generation 1 trains on, `lc0` or `pesto`, which the page groups its box under.
     source: Option<&'static str>,
-    runs: Vec<RunEntry>,
+    attempts: Vec<AttemptEntry>,
 }
 
 #[derive(Serialize)]
-struct RunEntry {
+struct AttemptEntry {
     number: u32,
-    /// Its name (`players::run_name`), which its players start with.
+    /// Its name (`players::attempt_name`), which its players start with.
     name: String,
-    /// Where its state stands; none for a run created and never started.
+    /// Where its state stands; none for an attempt created and never started.
     generation: Option<u32>,
     phase: Option<&'static str>,
     finished: bool,
-    /// A scaled run's `s` (`GenConfig::scale`), which the page marks it with.
+    /// A scaled attempt's `s` (`GenConfig::scale`), which the page marks it with.
     scale: Option<u64>,
     generations: Vec<GenerationEntry>,
 }
@@ -2060,7 +2060,7 @@ struct RunEntry {
 struct GenerationEntry {
     generation: u32,
     /// Whether a challenger of it passed its gate: its winner then has a player name, and a tune
-    /// once the run is finished.
+    /// once the attempt is finished.
     passed: bool,
     player: PlayerEntry,
 }
@@ -2086,21 +2086,21 @@ fn config_names() -> Vec<String> {
 }
 
 /// Whether `name` is a forge config in `configs/`: one that reads as one, named for its source
-/// (`check_forge_name`), never named as a run.
+/// (`check_forge_name`), never named as an attempt.
 fn is_forge_config(name: &str) -> bool {
-    !players::is_run_suffixed(name)
+    !players::is_attempt_suffixed(name)
         && load_config(&preprocessing_config::net_config_path(name)).is_ok_and(|(config, _)| check_forge_name(name, config.source).is_ok())
 }
 
-/// A run's state, `None` before it starts or when it cannot be read.
-fn run_state(dirs: &Dirs) -> Option<GenState> {
+/// An attempt's state, `None` before it starts or when it cannot be read.
+fn attempt_state(dirs: &Dirs) -> Option<GenState> {
     std::fs::read_to_string(dirs.state()).ok().and_then(|text| GenState::parse(&text).ok())
 }
 
-/// Whether run `run`, at `state`, has ended: done, or stopped by a failed gate. A run whose config
-/// cannot be read counts as ended, never resumed; one never started has not.
-fn run_finished(run: &str, state: Option<&GenState>) -> bool {
-    match (state, load_run_config(run)) {
+/// Whether attempt `attempt`, at `state`, has ended: done, or stopped by a failed gate. An attempt
+/// whose config cannot be read counts as ended, never resumed; one never started has not.
+fn attempt_finished(attempt: &str, state: Option<&GenState>) -> bool {
+    match (state, load_attempt_config(attempt)) {
         (Some(state), Ok(_)) => matches!(state.phase, Phase::Done | Phase::Stopped),
         (Some(_), Err(_)) => true,
         (None, _) => false,
@@ -2119,20 +2119,20 @@ fn catalog() -> Catalog {
         .iter()
         .filter(|name| is_forge_config(name))
         .map(|name| {
-            // Every run here and on the remote: one started in another smithy is resumed here too.
-            let runs = known_runs(name)
+            // Every attempt here and on the remote: one started in another smithy is resumed here too.
+            let attempts = known_attempts(name)
                 .into_iter()
                 .map(|number| {
-                    let run = players::run_name(name, number);
-                    let dirs = Dirs { root: run_dir(&run) };
-                    let state = run_state(&dirs).or_else(|| run_state(&Dirs { root: remote_run_dir(&run) }));
-                    let winners = run_winners(&run_home(&run));
+                    let attempt = players::attempt_name(name, number);
+                    let dirs = Dirs { root: attempt_dir(&attempt) };
+                    let state = attempt_state(&dirs).or_else(|| attempt_state(&Dirs { root: remote_attempt_dir(&attempt) }));
+                    let winners = attempt_winners(&attempt_home(&attempt));
                     let last = state.map_or(0, |state| state.generation);
                     let generations = (1..=last)
                         .filter_map(|generation| {
                             // A generation shows once it has trained something: a lambda's directory.
-                            let trained = !generation_arms(&readable_dirs(&run, generation), generation).is_empty();
-                            let player = players::network_player_name(&run, generation, None);
+                            let trained = !generation_arms(&readable_dirs(&attempt, generation), generation).is_empty();
+                            let player = players::network_player_name(&attempt, generation, None);
                             trained.then(|| GenerationEntry {
                                 generation,
                                 passed: winners.contains(&generation),
@@ -2140,11 +2140,11 @@ fn catalog() -> Catalog {
                             })
                         })
                         .collect();
-                    RunEntry {
+                    AttemptEntry {
                         number,
-                        finished: run_finished(&run, state.as_ref()),
-                        scale: load_run_config(&run).ok().and_then(|(config, _)| config.scale),
-                        name: run,
+                        finished: attempt_finished(&attempt, state.as_ref()),
+                        scale: load_attempt_config(&attempt).ok().and_then(|(config, _)| config.scale),
+                        name: attempt,
                         generation: state.map(|state| state.generation),
                         phase: state.map(|state| state.phase.name()),
                         generations,
@@ -2152,25 +2152,25 @@ fn catalog() -> Catalog {
                 })
                 .collect();
             let source = load_config(&preprocessing_config::net_config_path(name)).ok().and_then(|(config, _)| config.source).map(Source::name);
-            ConfigEntry { name: name.clone(), source, runs }
+            ConfigEntry { name: name.clone(), source, attempts }
         })
         .collect();
     let sources = vec![
         SourceEntry { name: Source::Lc0.name(), complete: lc0::is_complete(), summary: lc0::summary(), cap: lc0::cap_positions() },
         SourceEntry { name: Source::Pesto.name(), complete: Source::Pesto.is_complete(), summary: pesto::summary(), cap: None },
     ];
-    let runs: Vec<(String, Vec<u32>, Vec<u32>)> = configs
+    let attempts: Vec<(String, Vec<u32>, Vec<u32>)> = configs
         .iter()
-        .flat_map(|config| config.runs.iter())
-        // A scaled run's networks play in their run alone (`network_scale`).
-        .filter(|run| run.scale.is_none())
-        .map(|run| {
-            let generations = run.generations.iter().map(|entry| entry.generation).collect();
-            let winners = run.generations.iter().filter(|entry| entry.passed).map(|entry| entry.generation).collect();
-            (run.name.clone(), generations, winners)
+        .flat_map(|config| config.attempts.iter())
+        // A scaled attempt's networks play in their attempt alone (`network_scale`).
+        .filter(|attempt| attempt.scale.is_none())
+        .map(|attempt| {
+            let generations = attempt.generations.iter().map(|entry| entry.generation).collect();
+            let winners = attempt.generations.iter().filter(|entry| entry.passed).map(|entry| entry.generation).collect();
+            (attempt.name.clone(), generations, winners)
         })
         .collect();
-    let networks = trial_networks(&runs);
+    let networks = trial_networks(&attempts);
     let dir = trials::TRIALS_DIR;
     let trials = trials::read_log(dir)
         .into_iter()
@@ -2198,20 +2198,20 @@ fn catalog() -> Catalog {
 }
 
 /// `player`'s tune, as its config's `tune:` says: pesto's `pesto::CONFIG_PATH`, a network player's
-/// its run's frozen config, every one from the default parameters. Refused unless `player` is pesto, or the winner of a generation whose challenger passed its gate,
-/// in a run that has ended.
-/// The scale of the run whose network `player` names (`GenConfig::scale`): none for a full run's,
-/// PeSTO, an engine, or a run whose config cannot be read here.
+/// its attempt's frozen config, every one from the default parameters. Refused unless `player` is pesto, or the winner of a generation whose challenger passed its gate,
+/// in an attempt that has ended.
+/// The scale of the attempt whose network `player` names (`GenConfig::scale`): none for a full
+/// attempt's, PeSTO, an engine, or an attempt whose config cannot be read here.
 fn network_scale(player: &str) -> Option<u64> {
     let parsed = players::parse_network_name(player).ok()?;
-    load_run_config(&parsed.run()).ok()?.0.scale
+    load_attempt_config(&parsed.attempt()).ok()?.0.scale
 }
 
-/// `player`, unless it is a scaled run's network: one is never a side of a trial, its
-/// strength meaning nothing outside its run, whose round robin and gate alone play it.
+/// `player`, unless it is a scaled attempt's network: one is never a side of a trial, its
+/// strength meaning nothing outside its attempt, whose round robin and gate alone play it.
 fn unscaled(player: &str) -> Result<(), String> {
     match network_scale(player) {
-        Some(s) => Err(format!("{player} is a scaled run's network (1/{s}): it plays in its own run alone")),
+        Some(s) => Err(format!("{player} is a scaled attempt's network (1/{s}): it plays in its own attempt alone")),
         None => Ok(()),
     }
 }
@@ -2259,38 +2259,38 @@ fn search_tune_args(player: &str) -> Result<tune::TuneArgs, String> {
         return tune::args_of(&pesto::load()?.tune, player).map_err(|message| format!("{}: {message}", pesto::CONFIG_PATH));
     }
     let parsed = players::parse_network_name(player)?;
-    let (run, generation) = (parsed.run(), parsed.generation);
+    let (attempt, generation) = (parsed.attempt(), parsed.generation);
     if parsed.candidate.is_some() {
         return Err(format!(
             "{player} is one lambda's candidate: a tune takes a generation's winner, {}",
-            players::network_player_name(&run, generation, None)
+            players::network_player_name(&attempt, generation, None)
         ));
     }
-    if !known_runs(&parsed.config).contains(&parsed.run_number) {
-        return Err(format!("{run} is no forge run, here or on the remote"));
+    if !known_attempts(&parsed.config).contains(&parsed.attempt_number) {
+        return Err(format!("{attempt} is no forge attempt, here or on the remote"));
     }
-    // Any winner that passed its gate, started by hand, the run ended or waiting (the developer,
-    // 2026-11-02): one job at a time already keeps a tune and its run's next generation apart.
-    let winners = run_winners(&run_home(&run));
+    // Any winner that passed its gate, started by hand, the attempt ended or waiting (the developer,
+    // 2026-11-02): one job at a time already keeps a tune and its attempt's next generation apart.
+    let winners = attempt_winners(&attempt_home(&attempt));
     if !winners.contains(&generation) {
-        return Err(format!("generation {generation} of {run} has no challenger that passed its gate"));
+        return Err(format!("generation {generation} of {attempt} has no challenger that passed its gate"));
     }
-    let (config, _) = load_run_config(&run)?;
-    let mut args = tune::args_of(&config.tune, player).map_err(|message| format!("{run}'s {RUN_CONFIG}: {message}"))?;
-    // A scaled network's tune is scaled as its run, for debugging the tune alone.
+    let (config, _) = load_attempt_config(&attempt)?;
+    let mut args = tune::args_of(&config.tune, player).map_err(|message| format!("{attempt}'s {ATTEMPT_CONFIG}: {message}"))?;
+    // A scaled network's tune is scaled as its attempt, for debugging the tune alone.
     args.scale = config.scale;
     // It goes on from its teacher's tune (the developer, 2026-11-08), refused while the teacher has
-    // none; an Lc0 run's generation 1, taught by no Fattorini player, from the defaults.
-    args.start = match teacher_player(&run, generation, config.source) {
+    // none; an Lc0 attempt's generation 1, taught by no Fattorini player, from the defaults.
+    args.start = match teacher_player(&attempt, generation, config.source) {
         Some(teacher) => Some(required_tune(&teacher, &format!("{player}'s tune starts from"))?),
         None => None,
     };
     Ok(args)
 }
 
-/// The generations of the run in `dirs` that have a winner, as its `generations.tsv` records them:
+/// The generations of the attempt in `dirs` that have a winner, as its `generations.tsv` records them:
 /// a generation that passed its gate.
-fn run_winners(dirs: &Dirs) -> Vec<u32> {
+fn attempt_winners(dirs: &Dirs) -> Vec<u32> {
     let Ok(text) = std::fs::read_to_string(dirs.log()) else {
         return Vec::new();
     };
@@ -2307,7 +2307,7 @@ fn run_winners(dirs: &Dirs) -> Vec<u32> {
     generations
 }
 
-/// What `smithy status` and the status page show: the job, a training run's state as it was last
+/// What `smithy status` and the status page show: the job, an attempt's state as it was last
 /// written, what is dealt, and the arenas; and what the smithy and its page's controls share.
 struct Status {
     shared: Arc<Mutex<Shared>>,
@@ -2855,7 +2855,7 @@ struct Schedule {
 
 impl Schedule {
     /// The rule an arm in `arm_dir` trains by: a budget's figures need the rows it trains on, which
-    /// its frozen `run_config.txt` records; none before that file exists.
+    /// its frozen `attempt_config.txt` records; none before that file exists.
     fn rule(&self, arm_dir: &str) -> Option<lockstep::Rule> {
         let Some((epochs, training_batch_size)) = self.budget else {
             return Some(lockstep::Rule::Patience {
@@ -2864,7 +2864,7 @@ impl Schedule {
                 stage_count: self.stage_count,
             });
         };
-        let text = std::fs::read_to_string(format!("{arm_dir}/run_config.txt")).ok()?;
+        let text = std::fs::read_to_string(format!("{arm_dir}/{}", attempt_config::FILE)).ok()?;
         let train_rows: u64 = text.lines().find_map(|line| line.strip_prefix("train_rows\t"))?.trim().parse().ok()?;
         Budget::checked(train_rows, training_batch_size, self.steps_per_round, self.warmup_rounds, epochs, &self.rates)
             .ok()
@@ -2877,11 +2877,11 @@ const PAGE: &str = include_str!("page.html");
 const PAGE_PATH: &str = "/";
 const STATE_PATH: &str = "/state.json";
 /// The smithy's live bars, drawn nowhere but here (`progress::live`), polled four times a second: kept
-/// apart from `/state.json`, which reads the run's files.
+/// apart from `/state.json`, which reads the attempt's files.
 const PROGRESS_PATH: &str = "/progress.json";
-/// Every forge config with its runs, and the tunes (`catalog`): read-only, on every listener.
+/// Every forge config with its attempts, and the tunes (`catalog`): read-only, on every listener.
 const CATALOG_PATH: &str = "/catalog.json";
-/// One generation of a run, `/view/<run>/<generation>` (`Status::generation_view`).
+/// One generation of an attempt, `/view/<attempt>/<generation>` (`Status::generation_view`).
 const VIEW_PREFIX: &str = "/view/";
 
 /// A lambda's latest round, a row of the page's training table.
@@ -2914,7 +2914,7 @@ enum ScheduleRow {
         stage: Option<usize>,
         stages: usize,
         /// The round the current stage began at, its latest switch's; 0 in the first stage. The page's
-        /// estimate of a one-arm run's length.
+        /// estimate of a one-arm attempt's length.
         stage_round: u64,
         /// Rounds without a new best, of `patience`.
         waiting: u64,
@@ -2955,15 +2955,15 @@ struct Snapshot {
     /// Whether the job deals games with no arena held: every arena free of it is another smithy's, or
     /// none answers, and the job waits.
     no_arena: bool,
-    /// Whether this machine can train a full run (`has_gpu`): the page disables its buttons without
-    /// it, never a scaled run's.
+    /// Whether this machine can train a full attempt (`has_gpu`): the page disables its buttons without
+    /// it, never a scaled attempt's.
     gpu: bool,
     /// The source slot, beside the arena job.
     slot: SlotView,
 }
 
 /// A forge's generation, phase by phase: `None` for a phase that has not started, or that this kind
-/// of run does not have.
+/// of attempt does not have.
 #[derive(Serialize)]
 struct ForgeView {
     play: Option<WorkView>,
@@ -2972,7 +2972,7 @@ struct ForgeView {
     round: Option<rounds_display::RoundPassView>,
     round_robin: Option<WorkView>,
     gate: Option<WorkView>,
-    /// A polyline run's ten values once measured (`polyline::show`), shown beside its training.
+    /// A polyline attempt's ten values once measured (`polyline::show`), shown beside its training.
     polyline: Option<String>,
 }
 
@@ -3239,7 +3239,7 @@ impl Status {
             (shared.work_view(), shared.forge.clone(), shared.finished.clone(), shared.wait_reason(), arenas)
         };
         let slot_job = self.slot.job.lock().expect("the lock should not be poisoned").clone();
-        // Read outside the lock: a training run's files are the phase's, not the requests'.
+        // Read outside the lock: an attempt's files are the phase's, not the requests'.
         let forge = match (forge, &state) {
             (Some(files), Some(state)) => {
                 let lambdas = arms_of(&files.config, state);
@@ -3254,8 +3254,8 @@ impl Status {
                 };
                 let round = if state.phase == Phase::Train { rounds_display::current_pass() } else { None };
                 let view = self.forge_view(&files, state.generation, &lambdas, &work);
-                // A new run's training, before its first round: every lambda listed as not started, so
-                // the box is drawn whole from the frozen test set's read on, as a resumed run's is.
+                // A new attempt's training, before its first round: every lambda listed as not started,
+                // so the box is drawn whole from the frozen test set's read on, as a resumed attempt's is.
                 let training = view.training.or_else(|| {
                     (state.phase == Phase::Train).then(|| lambdas.iter().map(|&lambda| LambdaView { lambda, last: None, curve: Vec::new() }).collect())
                 });
@@ -3295,18 +3295,18 @@ impl Status {
         };
     }
 
-    /// Generation `generation` of run `run`, as the page's View draws it: from its files, its running
-    /// phase from memory when it is the running forge's own generation.
-    fn generation_view(&self, run: &str, generation: u32) -> Result<ForgeView, String> {
-        let (config, number) = players::parse_run(run)?;
+    /// Generation `generation` of attempt `attempt`, as the page's View draws it: from its files, its
+    /// running phase from memory when it is the running forge's own generation.
+    fn generation_view(&self, attempt: &str, generation: u32) -> Result<ForgeView, String> {
+        let (config, number) = players::parse_attempt(attempt)?;
         let plain = config.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
-        if !plain || !is_forge_config(config) || !known_runs(config).contains(&number) {
-            return Err(format!("{run} is no forge run"));
+        if !plain || !is_forge_config(config) || !known_attempts(config).contains(&number) {
+            return Err(format!("{attempt} is no forge attempt"));
         }
-        let (gen_config, net) = load_run_config(run)?;
-        let current = run_state(&run_home(run)).filter(|state| state.generation == generation);
+        let (gen_config, net) = load_attempt_config(attempt)?;
+        let current = attempt_state(&attempt_home(attempt)).filter(|state| state.generation == generation);
         // A closed generation is read where the mover put it.
-        let files = ForgeFiles { root: readable_dirs(run, generation).root, ..ForgeFiles::of(run, &gen_config, &net) };
+        let files = ForgeFiles { root: readable_dirs(attempt, generation).root, ..ForgeFiles::of(attempt, &gen_config, &net) };
         let dirs = Dirs { root: files.root.clone() };
         // The running generation's lambdas are its grid's, before any has a directory; an earlier
         // generation's, those it trained.
@@ -3357,7 +3357,7 @@ impl Status {
             WorkView::RoundRobin { .. } => Some(live.clone()),
             _ => {
                 // Its players as the round robin chose them: a budget's, its arm's checkpoints in
-                // `candidates.txt`; a grid's, its constants that learned. A polyline run under patience
+                // `candidates.txt`; a grid's, its constants that learned. A polyline attempt under patience
                 // has none.
                 let (labels, wanted) = if files.schedule.budget.is_some() {
                     let listed = lambdas
@@ -3504,13 +3504,13 @@ fn page(status: &Status, request: &Request, control_here: bool) -> Option<Reply>
         path => {
             let rest = path.strip_prefix(VIEW_PREFIX)?;
             let parts: Vec<&str> = rest.split('/').collect();
-            let [run, generation] = parts.as_slice() else {
-                return Some(Reply::error(404, "a view is /view/<run>/<generation>"));
+            let [attempt, generation] = parts.as_slice() else {
+                return Some(Reply::error(404, "a view is /view/<attempt>/<generation>"));
             };
             let Ok(generation) = generation.parse::<u32>() else {
                 return Some(Reply::error(404, "a view's generation is a number"));
             };
-            Some(match status.generation_view(run, generation) {
+            Some(match status.generation_view(attempt, generation) {
                 Ok(view) => json(serde_json::to_vec(&view), "the view"),
                 Err(message) => Reply::error(404, &message),
             })
@@ -3543,8 +3543,8 @@ fn arms_of(config: &GenConfig, state: &GenState) -> Vec<ArmLambda> {
 }
 
 /// Where generation `generation`'s polyline is kept: beside its source's corpus on the remote for a
-/// full run, shared by every full run of it as its frozen test set is; in the generation's directory
-/// in self-play and for a scaled run, which uses only its own data, so no other run inherits a
+/// full attempt, shared by every full attempt of it as its frozen test set is; in the generation's
+/// directory in self-play and for a scaled attempt, which uses only its own data, so no other attempt inherits a
 /// polyline or a test set drawn from a share.
 fn polyline_path(config: &GenConfig, dirs: &Dirs, generation: u32) -> String {
     match config.on_source(generation) {
@@ -3589,8 +3589,8 @@ fn is_loopback_host(host: Option<&str>, port: u16) -> bool {
 
 // -- The phases ------------------------------------------------------------------------------------
 
-struct Run<'a> {
-    /// The run's name (`players::run_name`), which its players start with.
+struct Attempt<'a> {
+    /// The attempt's name (`players::attempt_name`), which its players start with.
     name: String,
     config: &'a GenConfig,
     net: &'a NetConfig,
@@ -3607,21 +3607,21 @@ enum Ended {
     Stopped,
 }
 
-impl Run<'_> {
-    /// A phase boundary: the state saved, the files that change along the run copied to the remote
+impl Attempt<'_> {
+    /// A phase boundary: the state saved, the files that change along the attempt copied to the remote
     /// (`mirror_living`), and the mover asked for a pass, so a generation just closed moves and a
     /// pending move is tried again.
     fn boundary(&self, state: &GenState) -> Result<(), String> {
         write_state(&self.dirs, state)?;
         if let Err(message) = self.mirror_living(state.generation) {
-            // A copy, not the run's own record: said, and the run goes on.
-            log::warn!("the run's files not copied to {}: {message}", remote::this_root());
+            // A copy, not the attempt's own record: said, and the attempt goes on.
+            log::warn!("the attempt's files not copied to {}: {message}", remote::this_root());
         }
         self.archiver.poke();
         Ok(())
     }
 
-    /// The run's top-level files and its open generation `generation`, each copied to the remote
+    /// The attempt's top-level files and its open generation `generation`, each copied to the remote
     /// when new or changed (`tree::copy`): its training state, histories, self-play segments, games
     /// and frozen set, so another smithy resumes it where it is. At its release and every
     /// `COPY_UP_EVERY` of training. Self-play segments go up as they close (`SegmentWriter::close`),
@@ -3632,7 +3632,7 @@ impl Run<'_> {
         }
         let generation_dir = players::generation_dir_name(generation);
         let keep = |relative: &str| tree::in_open_generation(relative, &generation_dir, lease::FILE);
-        let remote_root = remote_run_dir(&self.name);
+        let remote_root = remote_attempt_dir(&self.name);
         let (files, bytes) = tree::copy(&self.dirs.root, &remote_root, &keep, false)?;
         if files > 0 {
             log::info!("{}: {} files, {} bytes copied to the remote", self.name, progress::grouped(files), progress::grouped(bytes));
@@ -3644,7 +3644,7 @@ impl Run<'_> {
         Ok(())
     }
 
-    /// The run's files that change along it, each copied whole to the remote, replacing the last copy:
+    /// The attempt's files that change along it, each copied whole to the remote, replacing the last copy:
     /// its state, its log, its chores' counter, its config and corpus records, and every record of
     /// generation `generation` (each lambda's `history.tsv`, the round robin's and the gate's
     /// results). The remote never holds one being written or appended to, and a dead local disk loses
@@ -3652,7 +3652,7 @@ impl Run<'_> {
     fn mirror_living(&self, generation: u32) -> Result<(), String> {
         let root = &self.dirs.root;
         let mut files: Vec<String> =
-            ["state.txt", "generations.tsv", "chores.txt", RUN_CONFIG, "corpus.txt"].iter().map(|name| format!("{root}/{name}")).collect();
+            ["state.txt", "generations.tsv", "chores.txt", ATTEMPT_CONFIG, "corpus.txt"].iter().map(|name| format!("{root}/{name}")).collect();
         files.push(self.dirs.round_robin(generation));
         files.push(self.dirs.gate(generation));
         for arm in generation_arms(&self.dirs, generation) {
@@ -3692,7 +3692,7 @@ impl Run<'_> {
     fn play(&self, state: &GenState) -> Result<Ended, String> {
         let generation = state.generation;
         let (test_dir, train_dir) = (self.dirs.test(generation), self.dirs.train(generation));
-        // The files a stopped run left open count too: their whole games are kept.
+        // The files a stopped attempt left open count too: their whole games are kept.
         let (test_segment, train_segment) = (SegmentWriter::open(&test_dir)?, SegmentWriter::open(&train_dir)?);
         // Counted as training and the freezer keep them, the searched positions, from the `.meta` files.
         let before = (searched_in(&test_dir, &test_segment)?, searched_in(&train_dir, &train_segment)?);
@@ -3742,7 +3742,7 @@ impl Run<'_> {
         if Path::new(&teacher_nnue).exists() {
             refuse_atan_teacher(&teacher_nnue)?;
         }
-        // Self-play trains on the generation's own games, a sourced run's generation 1 on its source's
+        // Self-play trains on the generation's own games, a sourced attempt's generation 1 on its source's
         // whole corpus; both are judged on the generation's frozen `TestSet`, frozen here the first time.
         let on_source = self.config.on_source(generation);
         let (mut files, source) = match on_source {
@@ -3762,7 +3762,7 @@ impl Run<'_> {
             Some(on) => on.curve()?,
             None => LOGISTIC,
         };
-        // A scaled run on a source reads a `1/s` share of its corpus, so it starts in minutes on any
+        // A scaled attempt on a source reads a `1/s` share of its corpus, so it starts in minutes on any
         // machine, never scattering the whole corpus first; its own games, self-play's, are scaled
         // already.
         let share = on_source.and(self.config.scale);
@@ -3773,29 +3773,29 @@ impl Run<'_> {
         let config = self.net;
         let transformer = matches!(config.architecture.kind, ArchitectureKind::Transformer { .. });
         // Every architecture trains on its training set fully shuffled (`buckets.rs`), scattered here first: once for
-        // a source's corpus, shared by every forge of that source; per generation for self-play. A disposable local cache, outside the run's directory, so
-        // the archive never moves it; a run's older generations' buckets go.
+        // a source's corpus, shared by every forge of that source; per generation for self-play. A disposable local cache, outside the attempt's directory, so
+        // the archive never moves it; an attempt's older generations' buckets go.
         let bucket_dir = if let Some(on) = on_source {
             // A scaled share has buckets of its own: the full corpus's are never mixed with it.
             let scaled = share.map_or(String::new(), |s| format!("-s{s}"));
             format!("{BUCKETS_ROOT}/{}{scaled}", source_buckets(on))
         } else {
-            let run_buckets = format!("{BUCKETS_ROOT}/{}", self.name);
+            let attempt_buckets = format!("{BUCKETS_ROOT}/{}", self.name);
             let current = players::generation_dir_name(generation);
-            for entry in std::fs::read_dir(&run_buckets).into_iter().flatten().flatten() {
+            for entry in std::fs::read_dir(&attempt_buckets).into_iter().flatten().flatten() {
                 if entry.file_name().to_string_lossy() != current {
                     std::fs::remove_dir_all(entry.path()).ok();
                 }
             }
-            format!("{run_buckets}/{current}")
+            format!("{attempt_buckets}/{current}")
         };
         let scattered: u64 = match buckets::prepare(&bucket_dir, &files, threads, &self.stop, &say, curve)? {
             Prepared::Done(records) => records,
             Prepared::Stopped => return Ok(Ended::Stopped),
         };
         // The polyline, measured from the buckets just scattered, so the corpus is read once: a
-        // source's beside its corpus on the remote, shared by every full run of it as its frozen test
-        // set is; a self-play generation's and a scaled run's in the generation's directory. The
+        // source's beside its corpus on the remote, shared by every full attempt of it as its frozen test
+        // set is; a self-play generation's and a scaled attempt's in the generation's directory. The
         // frozen test set's polyline labels need it, so that set comes after.
         let polyline = if arms.contains(&ArmLambda::Polyline) {
             let path = polyline_path(self.config, &self.dirs, generation);
@@ -4384,7 +4384,7 @@ const BUDGET_GAMES_A_CANDIDATE: u32 = 2000;
 
 /// Pairs a pairing among `count` candidates of a budget's round robin, each candidate meeting the
 /// `count - 1` others two games a pair, `BUDGET_GAMES_A_CANDIDATE` in all: 125 for nine. Not
-/// `round_robin_pairs`, the grid's. A scaled run's shrunk as that one is (`scale::games`).
+/// `round_robin_pairs`, the grid's. A scaled attempt's shrunk as that one is (`scale::games`).
 fn budget_pairs(count: usize, scale: Option<u64>) -> u32 {
     let opponents = (count.max(2) - 1) as u32;
     let pairs = (BUDGET_GAMES_A_CANDIDATE / 2).div_ceil(opponents);
@@ -4423,15 +4423,15 @@ fn minutes(started: Instant) -> String {
 
 /// Generation `generation`'s test set (`freeze.rs`): where it is frozen, the games it is drawn from,
 /// and its positions, drawn from the searched ones, as training keeps them. On a source's corpus (a
-/// sourced run's generation 1), `<root>/frozen` on the remote, drawn from the source's test split at
-/// the source's size, shared by every run of that source; in self-play, `gen-<g>/frozen`, drawn from the test games the arenas played for
-/// the generation, at the run's `test_positions`. `train` and the inspectors both find it here, so they
+/// sourced attempt's generation 1), `<root>/frozen` on the remote, drawn from the source's test split at
+/// the source's size, shared by every attempt of that source; in self-play, `gen-<g>/frozen`, drawn from the test games the arenas played for
+/// the generation, at the attempt's `test_positions`. `train` and the inspectors both find it here, so they
 /// never measure against different positions.
 struct TestSet {
     frozen: String,
     games: String,
     source: Option<Source>,
-    /// The positions the run reads, and those the set is frozen at.
+    /// The positions the attempt reads, and those the set is frozen at.
     rows: u64,
     frozen_rows: u64,
 }
@@ -4440,7 +4440,7 @@ impl TestSet {
     fn of(config: &GenConfig, dirs: &Dirs, generation: u32) -> Result<TestSet, String> {
         if let Some(source) = config.on_source(generation) {
             let frozen_rows = source.test_positions()?;
-            // A scaled run uses only its own data: frozen in its own generation, at its scaled size.
+            // A scaled attempt uses only its own data: frozen in its own generation, at its scaled size.
             if let Some(s) = config.scale {
                 let rows = scale::volume(frozen_rows, s, scale::MIN_BATCH);
                 return Ok(TestSet {
@@ -4477,9 +4477,9 @@ impl TestSet {
                 None => game_files(&self.games),
             }
         };
-        // A source's set is on the remote, shared by every run of the source: one smithy at a time
+        // A source's set is on the remote, shared by every attempt of the source: one smithy at a time
         // writes it, under a lease taken only when there is something to write, so a resume waits
-        // for no sync. A run's own set is written under its run's lease.
+        // for no sync. An attempt's own set is written under its attempt's lease.
         let _lease = match self.source {
             Some(_) if !freeze::is_complete(&self.frozen, self.frozen_rows, labelling) => {
                 let path = format!("{}/{}", self.frozen, lease::FILE);
@@ -4503,14 +4503,15 @@ impl TestSet {
 fn refuse_atan_teacher(path: &str) -> Result<(), String> {
     if fattorini::nnue::file_version(path)? == fattorini::nnue::ATAN_VERSION {
         return Err(format!(
-            "{path} was trained under the old atan curve: it may still play, but neither teaches nor is trained further; start a new run"
+            "{path} was trained under the old atan curve: it may still play, but neither teaches nor is trained further; start a new attempt"
         ));
     }
     Ok(())
 }
 
-/// What a sourced run's generation 1 trained on, `corpus.txt` in its directory, written at its first
-/// training and kept: the source's size may grow later, and the record says which size this run had.
+/// What a sourced attempt's generation 1 trained on, `corpus.txt` in its directory, written at its
+/// first training and kept: the source's size may grow later, and the record says which size this
+/// attempt had.
 fn record_corpus(dirs: &Dirs, source: Source, training_positions: u64, test_positions: u64) -> Result<(), String> {
     let path = format!("{}/corpus.txt", dirs.root);
     if Path::new(&path).exists() {
@@ -4576,10 +4577,10 @@ fn publish(path: &str) -> Result<String, String> {
 }
 
 
-/// Where generation `generation` of run `run` is read (`readable_of`): this machine's copy while it
-/// has one, else the remote's, where a closed generation moves (`archive.rs`).
-fn readable_dirs(run: &str, generation: u32) -> Dirs {
-    readable_of(Dirs { root: run_dir(run) }, Dirs { root: remote_run_dir(run) }, generation)
+/// Where generation `generation` of attempt `attempt` is read (`readable_of`): this machine's copy
+/// while it has one, else the remote's, where a closed generation moves (`archive.rs`).
+fn readable_dirs(attempt: &str, generation: u32) -> Dirs {
+    readable_of(Dirs { root: attempt_dir(attempt) }, Dirs { root: remote_attempt_dir(attempt) }, generation)
 }
 
 /// `local`'s generation while it has a folder, unless that folder trained nothing (no `lambda-*`)
@@ -4602,8 +4603,8 @@ fn copy(from: &str, to: &str) -> Result<(), String> {
     std::fs::rename(&partial, to).map_err(|error| format!("{to}: {error}"))
 }
 
-/// Writes `state`, its `boundary` one past the last written: the count of the run's states ever
-/// written, which tells a run's newest copy, here or on the remote (`sync_down`).
+/// Writes `state`, its `boundary` one past the last written: the count of the attempt's states ever
+/// written, which tells an attempt's newest copy, here or on the remote (`sync_down`).
 fn write_state(dirs: &Dirs, state: &GenState) -> Result<(), String> {
     let next = std::fs::read_to_string(dirs.state()).map_or(0, |text| boundary_of(&text)) + 1;
     lan::write_whole(&dirs.state(), &format!("{}boundary\t{next}\n", state.text()))
@@ -4614,12 +4615,12 @@ fn boundary_of(text: &str) -> u64 {
     lan::fields(text).get("boundary").and_then(|value| value.parse().ok()).unwrap_or(0)
 }
 
-/// Brings run `run`'s newest copy here before it resumes: when the remote's `state.txt` is past this
-/// machine's (`boundary_of`), or this machine has none, the remote's top-level files and its open
-/// generation copied down over the local ones, all of them, since the local ones are an older run's.
-/// Closed generations stay on the remote, the mover's. Nothing when the remote has no state.
-fn sync_down(run: &str) -> Result<(), String> {
-    let (local, remote_dir) = (run_dir(run), remote_run_dir(run));
+/// Brings attempt `attempt`'s newest copy here before it resumes: when the remote's `state.txt` is
+/// past this machine's (`boundary_of`), or this machine has none, the remote's top-level files and its
+/// open generation copied down over the local ones, all of them, since the local ones are an older
+/// copy's. Closed generations stay on the remote, the mover's. Nothing when the remote has no state.
+fn sync_down(attempt: &str) -> Result<(), String> {
+    let (local, remote_dir) = (attempt_dir(attempt), remote_attempt_dir(attempt));
     let Ok(remote_text) = std::fs::read_to_string(format!("{remote_dir}/state.txt")) else {
         return Ok(());
     };
@@ -4629,17 +4630,17 @@ fn sync_down(run: &str) -> Result<(), String> {
         return Ok(());
     }
     let generation_dir = players::generation_dir_name(remote_state.generation);
-    log::info!("{run}: the remote holds its newest state, copying it here");
+    log::info!("{attempt}: the remote holds its newest state, copying it here");
     let keep = |relative: &str| tree::in_open_generation(relative, &generation_dir, lease::FILE);
     let (files, bytes) = tree::copy(&remote_dir, &local, &keep, true)?;
-    log::info!("{run}: {} files, {} bytes copied from the remote", progress::grouped(files), progress::grouped(bytes));
+    log::info!("{attempt}: {} files, {} bytes copied from the remote", progress::grouped(files), progress::grouped(bytes));
     Ok(())
 }
 
-/// `run`'s closed generations still on this machine, for the mover: every one below its state's
+/// `attempt`'s closed generations still on this machine, for the mover: every one below its state's
 /// (promoted), and its state's own once the lineage has stopped.
-fn closed_generations(run: &str) -> Result<Vec<u32>, String> {
-    let dirs = Dirs { root: run_dir(run) };
+fn closed_generations(attempt: &str) -> Result<Vec<u32>, String> {
+    let dirs = Dirs { root: attempt_dir(attempt) };
     let text = std::fs::read_to_string(dirs.state()).map_err(|error| format!("{}: {error}", dirs.state()))?;
     let state = GenState::parse(&text).map_err(|message| format!("{}: {message}", dirs.state()))?;
     let stopped = state.phase == Phase::Stopped;
@@ -4682,7 +4683,7 @@ fn control_request(path: &str) -> Result<String, String> {
 fn start() {
     progress::log_events();
     if !has_gpu() {
-        log::warn!("{NO_GPU}: every job but a full run's training runs, scaled runs train on the CPU");
+        log::warn!("{NO_GPU}: every job but a full attempt's training runs, scaled attempts train on the CPU");
     }
     let machine = machine_name().unwrap_or_else(|message| fail(message));
     let machines = arenas_to_claim().unwrap_or_else(|message| fail(message));
@@ -4774,17 +4775,17 @@ fn arenas_to_claim() -> Result<protocol::Machines, String> {
     protocol::machines(&remote::remote_path(MACHINES_PATH))
 }
 
-/// The name the page and the arenas know a job by, from the words that ask for it: a forge's run's
-/// name (`players::run_name`), a new run's said so until it has a number; a tune's player's; a
-/// source's job's.
+/// The name the page and the arenas know a job by, from the words that ask for it: a forge's
+/// attempt's name (`players::attempt_name`), a new attempt's said so until it has a number; a tune's
+/// player's; a source's job's.
 fn job_name(args: &[String]) -> Result<String, String> {
     match args {
-        [mode, config, run] if mode == "--forge" => Ok(match run.parse::<u32>() {
-            Ok(number) => players::run_name(config, number),
-            Err(_) => format!("{config}, a new run"),
+        [mode, config, attempt] if mode == "--forge" => Ok(match attempt.parse::<u32>() {
+            Ok(number) => players::attempt_name(config, number),
+            Err(_) => format!("{config}, a new attempt"),
         }),
-        [mode, config, run, scaled] if mode == "--forge" && run == "new" && scaled == SCALED => {
-            Ok(format!("{config}, a new run scaled 1/{}", scale::DEFAULT))
+        [mode, config, attempt, scaled] if mode == "--forge" && attempt == "new" && scaled == SCALED => {
+            Ok(format!("{config}, a new attempt scaled 1/{}", scale::DEFAULT))
         }
         [mode, player] if mode == TUNE => Ok(format!("tune of {player}")),
         [mode, player] if mode == TIME_TUNE => Ok(format!("tune of {player}, time")),
@@ -4801,7 +4802,7 @@ fn job_name(args: &[String]) -> Result<String, String> {
         [mode, words @ ..] if mode == TRIAL => Ok(format!("trial: {}", trials::Spec::parse(words)?.name())),
         [mode, number] if mode == RESUME_TRIAL => Ok(format!("trial {number}, resumed")),
         _ => Err(format!(
-            "a job is --forge <config> <run number or new>, {TUNE} <player>, {TIME_TUNE} <player>, {TRIAL} <trial>, {PLAY} {PESTO}, {CONVERT} lc0, {BOOK} <source> \
+            "a job is --forge <config> <attempt number or new>, {TUNE} <player>, {TIME_TUNE} <player>, {TRIAL} <trial>, {PLAY} {PESTO}, {CONVERT} lc0, {BOOK} <source> \
              or {SCORE_BOOK} <source> <network>@<suffix> <depth>"
         )),
     }
@@ -4841,7 +4842,7 @@ fn score_book_words(source: &str, side: &str, depth: &str) -> Result<(trials::Si
 const MAX_SCORE_DEPTH: u32 = 30;
 
 /// The config the job `args` asks for is of: a forge's own; pesto for pesto's tune and its Play;
-/// lc0 for its Convert; the books' screen for a book job; for a network's tune, its run's config.
+/// lc0 for its Convert; the books' screen for a book job; for a network's tune, its attempt's config.
 fn job_config(args: &[String]) -> Option<String> {
     match args {
         [mode, config, ..] if mode == "--forge" => Some(config.clone()),
@@ -4875,7 +4876,7 @@ fn run_job(status: &Status, args: &[String]) {
         Ok(message) => message,
         Err(message) => format!("failed: {message}"),
     };
-    // A new run is named once it has a number.
+    // A new attempt is named once it has a number.
     let name = status.lock().job.clone().unwrap_or(name);
     log::info!("job {name}: {line}");
     {
@@ -4890,8 +4891,8 @@ fn run_job(status: &Status, args: &[String]) {
 /// The last job started, kept for the page of the next smithy: its words, one a line.
 const LAST_JOB_PATH: &str = "data/smithy-last.txt";
 
-/// Records `words` as the last job: a forge's with its run's number, a new run's once it has one, so
-/// the next smithy's page shows that run. The page's memory only, so a failure to write it is said
+/// Records `words` as the last job: a forge's with its attempt's number, a new attempt's once it has one, so
+/// the next smithy's page shows that attempt. The page's memory only, so a failure to write it is said
 /// and nothing more.
 fn remember_job(words: &[String]) {
     if let Err(error) = std::fs::write(LAST_JOB_PATH, words.join("\n") + "\n") {
@@ -4919,7 +4920,7 @@ fn last_job() -> Shared {
         };
     match args.as_slice() {
         [mode, _, _] if mode == "--forge" => {
-            let Ok((config, net)) = load_run_config(&name) else {
+            let Ok((config, net)) = load_attempt_config(&name) else {
                 return fresh();
             };
             let files = ForgeFiles::of(&name, &config, &net);
@@ -4937,12 +4938,12 @@ fn last_job() -> Shared {
     shared
 }
 
-/// One job of the arena slot, `--forge <config> <run>`, `--tune <player>` or `--play pesto`, until it
-/// ends or `Status::job_stop` is raised.
+/// One job of the arena slot, `--forge <config> <attempt>`, `--tune <player>` or `--play pesto`, until
+/// it ends or `Status::job_stop` is raised.
 fn job(status: &Status, args: &[String]) -> Result<String, String> {
     match args {
-        [mode, config, run] if mode == "--forge" => forge(status, config, run, None),
-        [mode, config, run, scaled] if mode == "--forge" && scaled == SCALED => forge(status, config, run, Some(scale::DEFAULT)),
+        [mode, config, attempt] if mode == "--forge" => forge(status, config, attempt, None),
+        [mode, config, attempt, scaled] if mode == "--forge" && scaled == SCALED => forge(status, config, attempt, Some(scale::DEFAULT)),
         [mode, player] if tune_kind(mode).is_some() => tune_job(status, player, tune_kind(mode).expect("a tune's word, checked above")),
         [mode, source] if mode == PLAY && source == PESTO => play_pesto(status),
         [mode, words @ ..] if mode == TRIAL => trial_job(status, words),
@@ -5038,8 +5039,8 @@ fn settle_segments(root: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The job's chore counter and state file: chore ids continue from `chores_path`, and a training
-/// run's state is read from `state_path` for the page.
+/// The job's chore counter and state file: chore ids continue from `chores_path`, and an attempt's
+/// state is read from `state_path` for the page.
 fn begin(shared: &Mutex<Shared>, chores_path: &str, state_path: Option<String>) -> Result<(), String> {
     let next_chore = match std::fs::read_to_string(chores_path) {
         Ok(text) => text.trim().parse().map_err(|_| format!("{chores_path}: {text:?} is not a chore number"))?,
@@ -5109,7 +5110,7 @@ struct TrialPlayer {
     network: Option<fattorini::nnue::Network>,
 }
 
-/// `side` resolved: a forge run's network or PeSTO, with the tunes its suffix names, which it must
+/// `side` resolved: a forge attempt's network or PeSTO, with the tunes its suffix names, which it must
 /// then have (the developer, 2026-11-13: refused, never the defaults quietly).
 fn trial_player(side: &trials::Side) -> Result<TrialPlayer, String> {
     let player = players::FattoriniPlayer::resolve(&side.player)?;
@@ -5451,21 +5452,22 @@ fn run_tune(shared: &Arc<Mutex<Shared>>, tune: Tune, stop: &AtomicBool) -> Resul
 }
 
 /// Whether libtorch sees a CUDA device here, probed once. Training would otherwise fall back to the
-/// CPU without a word (`Device::cuda_if_available`), so a full run, which trains every generation,
-/// is refused without one; a scaled run trains on the CPU, as every other job runs anywhere.
+/// CPU without a word (`Device::cuda_if_available`), so a full attempt, which trains every
+/// generation, is refused without one; a scaled attempt trains on the CPU, as every other job runs
+/// anywhere.
 fn has_gpu() -> bool {
     static GPU: OnceLock<bool> = OnceLock::new();
     *GPU.get_or_init(tch::Cuda::is_available)
 }
 
-/// Whether a run of `scale` (`GenConfig::scale`) needs the GPU this machine lacks: a full one.
+/// Whether an attempt of `scale` (`GenConfig::scale`) needs the GPU this machine lacks: a full one.
 fn lacks_gpu(scale: Option<u64>) -> bool {
     scale.is_none() && !has_gpu()
 }
 
-/// Whether a run of `scale` at `phase` needs the GPU this machine lacks (`gpu` false): a full run's
-/// training alone. Self-play, the round robin and the gate are played by the arenas on `.nnue` files,
-/// so they run anywhere, and a run can play here and train elsewhere.
+/// Whether an attempt of `scale` at `phase` needs the GPU this machine lacks (`gpu` false): a full
+/// attempt's training alone. Self-play, the round robin and the gate are played by the arenas on
+/// `.nnue` files, so they run anywhere, and an attempt can play here and train elsewhere.
 fn needs_gpu_now(scale: Option<u64>, phase: Phase, gpu: bool) -> bool {
     scale.is_none() && phase == Phase::Train && !gpu
 }
@@ -5473,97 +5475,98 @@ fn needs_gpu_now(scale: Option<u64>, phase: Phase, gpu: bool) -> bool {
 /// Why a forge is refused on a machine without `has_gpu`, as the page says it too.
 const NO_GPU: &str = "no CUDA GPU on this machine: training is not available here";
 
-/// How often a training's state is copied to the remote (`Run::copy_up`): a crash loses at most
+/// How often a training's state is copied to the remote (`Attempt::copy_up`): a crash loses at most
 /// this much, and nine lambdas' weights and optimizers every round would be much for a home upload.
 const COPY_UP_EVERY: Duration = Duration::from_secs(30 * 60);
 
-/// The word after `--forge <config> new` that asks for a scaled run, at `scale::DEFAULT`.
+/// The word after `--forge <config> new` that asks for a scaled attempt, at `scale::DEFAULT`.
 const SCALED: &str = "scaled";
 
-/// Run `run`'s lease key (`lease.rs`), `run` a run's name.
-fn run_lease_path(run: &str) -> String {
-    remote::remote_path(&format!("{}/{}", run_dir(run), lease::FILE))
+/// Attempt `attempt`'s lease key (`lease.rs`), `attempt` an attempt's name.
+fn attempt_lease_path(attempt: &str) -> String {
+    remote::remote_path(&format!("{}/{}", attempt_dir(attempt), lease::FILE))
 }
 
-/// Run `run` of config `name`, a number or `new`; `scale`, a new run's `1/s` (`GenConfig::scale`),
-/// none for a full one and for an existing run, which keeps the scale it started with.
-fn forge(status: &Status, name: &str, run: &str, scale: Option<u64>) -> Result<String, String> {
-    // A full run needs the GPU; a scaled one trains on the CPU, that being what it is for.
-    if run == "new" && lacks_gpu(scale) {
+/// Attempt `attempt` of config `name`, a number or `new`; `scale`, a new attempt's `1/s`
+/// (`GenConfig::scale`), none for a full one and for an existing attempt, which keeps the scale it
+/// started with.
+fn forge(status: &Status, name: &str, attempt: &str, scale: Option<u64>) -> Result<String, String> {
+    // A full attempt needs the GPU; a scaled one trains on the CPU, that being what it is for.
+    if attempt == "new" && lacks_gpu(scale) {
         return Err(NO_GPU.to_string());
     }
-    if scale.is_some() && run != "new" {
-        return Err(format!("{name} run {run}: a run keeps the scale it started with, so only a new run takes one"));
+    if scale.is_some() && attempt != "new" {
+        return Err(format!("{name} attempt {attempt}: an attempt keeps the scale it started with, so only a new attempt takes one"));
     }
     if scale == Some(0) {
         return Err("a scale is a whole number from 1".to_string());
     }
-    if players::is_run_suffixed(name) {
-        return Err(format!("{name}: a config's name may not end in -r<digits>, which reads as a run's number; rename it"));
+    if players::is_attempt_suffixed(name) {
+        return Err(format!("{name}: a config's name may not end in -a<digits>, which reads as an attempt's number; rename it"));
     }
-    // A new run is refused before its directory is made, so a refusal leaves no empty run behind.
-    if run == "new" {
+    // A new attempt is refused before its directory is made, so a refusal leaves no empty attempt behind.
+    if attempt == "new" {
         let (config, _) = load_config(&preprocessing_config::net_config_path(name))?;
         check_forge_name(name, config.source)?;
-        // A scaled run reads a share of its source, so starts on what is there.
+        // A scaled attempt reads a share of its source, so starts on what is there.
         if let Some(source) = config.source.filter(|source| scale.is_none() && !source.is_complete()) {
             return Err(source.incomplete());
         }
     }
-    // The arenas read every network from the remote, and the run's files go there.
+    // The arenas read every network from the remote, and the attempt's files go there.
     remote::check_mounted().map_err(|error| error.to_string())?;
-    // A run started in another smithy may be on the remote alone, and a new one never takes its number.
-    let (runs, remote_runs) = (runs_of(name), players::runs_in(&remote::remote_path(&players::config_dir(name))));
-    let number = match run {
-        "new" => next_run_number(&runs, &remote_runs),
+    // An attempt started in another smithy may be on the remote alone, and a new one never takes its number.
+    let (attempts, remote_attempts) = (attempts_of(name), players::attempts_in(&remote::remote_path(&players::config_dir(name))));
+    let number = match attempt {
+        "new" => next_attempt_number(&attempts, &remote_attempts),
         number => number
             .parse::<u32>()
             .ok()
-            .filter(|number| runs.contains(number) || remote_runs.contains(number))
-            .ok_or(format!("{name} has no run {number}"))?,
+            .filter(|number| attempts.contains(number) || remote_attempts.contains(number))
+            .ok_or(format!("{name} has no attempt {number}"))?,
     };
-    let run_name = players::run_name(name, number);
-    let dirs = Dirs { root: run_dir(&run_name) };
-    // Held until the job ends: no other smithy runs this run meanwhile (`lease.rs`). Taken before
+    let attempt_name = players::attempt_name(name, number);
+    let dirs = Dirs { root: attempt_dir(&attempt_name) };
+    // Held until the job ends: no other smithy runs this attempt meanwhile (`lease.rs`). Taken before
     // anything is read, so nothing read is another smithy's half-written state.
-    let _lease = lease::take(&run_lease_path(&run_name), &run_name)?;
-    if run != "new" {
-        sync_down(&run_name)?;
+    let _lease = lease::take(&attempt_lease_path(&attempt_name), &attempt_name)?;
+    if attempt != "new" {
+        sync_down(&attempt_name)?;
     }
-    // A run's state is written as it starts, so one without it, here and on the remote, has lost it:
-    // starting it over at generation 1 would overwrite what it had, here and, through the mover, on
+    // An attempt's state is written as it starts, so one without it, here and on the remote, has lost
+    // it: starting it over at generation 1 would overwrite what it had, here and, through the mover, on
     // the remote.
-    if run != "new" && !Path::new(&dirs.state()).is_file() {
+    if attempt != "new" && !Path::new(&dirs.state()).is_file() {
         return Err(format!(
-            "{run_name} has no {}, here or on the remote: refused rather than started over at generation 1; delete its directory to start afresh",
+            "{attempt_name} has no {}, here or on the remote: refused rather than started over at generation 1; delete its directory to start afresh",
             dirs.state()
         ));
     }
-    if run != "new"
-        && let Some(state) = run_state(&dirs)
-        && needs_gpu_now(load_run_config(&run_name)?.0.scale, state.phase, has_gpu())
+    if attempt != "new"
+        && let Some(state) = attempt_state(&dirs)
+        && needs_gpu_now(load_attempt_config(&attempt_name)?.0.scale, state.phase, has_gpu())
     {
         return Err(NO_GPU.to_string());
     }
     std::fs::create_dir_all(&dirs.root).map_err(|error| format!("{}: {error}", dirs.root))?;
-    freeze_run_config(&run_name, name, scale)?;
-    let (config, net) = load_run_config(&run_name)?;
+    freeze_attempt_config(&attempt_name, name, scale)?;
+    let (config, net) = load_attempt_config(&attempt_name)?;
     check_forge_name(name, config.source)?;
     {
         let mut shared = status.lock();
         shared.forge_depth = Some(config.depth());
         shared.scaled_job = config.scale.is_some();
     }
-    // A sourced run's generation 1 trains on its source's whole corpus: refused until it is complete.
-    // A scaled run reads a share of it, so starts on what is there.
-    if let Some(source) = config.source.filter(|_| run_state(&dirs).is_none_or(|state| state.generation == 1))
+    // A sourced attempt's generation 1 trains on its source's whole corpus: refused until it is complete.
+    // A scaled attempt reads a share of it, so starts on what is there.
+    if let Some(source) = config.source.filter(|_| attempt_state(&dirs).is_none_or(|state| state.generation == 1))
         && config.scale.is_none()
         && !source.is_complete() {
             return Err(source.incomplete());
         }
-    status.lock().job = Some(run_name.clone());
+    status.lock().job = Some(attempt_name.clone());
     remember_job(&["--forge".to_string(), name.to_string(), number.to_string()]);
-    log::info!("run {number} of {name}, {run_name}, in {}", dirs.root);
+    log::info!("attempt {number} of {name}, {attempt_name}, in {}", dirs.root);
     let mut state = match std::fs::read_to_string(dirs.state()) {
         Ok(text) => GenState::parse(&text).map_err(|message| format!("{}: {message}", dirs.state()))?,
         Err(_) => {
@@ -5571,7 +5574,7 @@ fn forge(status: &Status, name: &str, run: &str, scale: Option<u64>) -> Result<S
                 generation: 1,
                 // Generation 1 trains on its source's corpus, already made.
                 phase: Phase::Train,
-                // A polyline run has no grid: its centre is never read.
+                // A polyline attempt has no grid: its centre is never read.
                 center_hundredths: (config.grid_center.unwrap_or(0.5) * 100.0).round() as i32,
                 step_hundredths: STEP_HUNDREDTHS,
             };
@@ -5582,13 +5585,13 @@ fn forge(status: &Status, name: &str, run: &str, scale: Option<u64>) -> Result<S
         }
     };
     begin(&status.shared, &dirs.chores(), Some(dirs.state()))?;
-    status.lock().forge = Some(ForgeFiles::of(&run_name, &config, &net));
+    status.lock().forge = Some(ForgeFiles::of(&attempt_name, &config, &net));
 
-    // Every run's closed generations, not only this one's: a lineage stopped long ago is moved by
-    // whichever run starts next.
+    // Every attempt's closed generations, not only this one's: a lineage stopped long ago is moved by
+    // whichever attempt starts next.
     let archiver = Archiver::start(archive::Hooks { closed: closed_generations, say }, Arc::clone(&status.job_stop));
-    let run = Run {
-        name: run_name,
+    let attempt = Attempt {
+        name: attempt_name,
         config: &config,
         net: &net,
         dirs,
@@ -5596,25 +5599,25 @@ fn forge(status: &Status, name: &str, run: &str, scale: Option<u64>) -> Result<S
         stop: Arc::clone(&status.job_stop),
         archiver: &archiver,
     };
-    let result = run_generations(&run, &mut state);
+    let result = attempt_generations(&attempt, &mut state);
     // Before the lease goes, everything another smithy needs to go on: a planned move loses nothing.
-    if let Err(message) = run.copy_up(state.generation) {
-        log::warn!("{}: its files not all copied to {}: {message}", run.name, remote::this_root());
+    if let Err(message) = attempt.copy_up(state.generation) {
+        log::warn!("{}: its files not all copied to {}: {message}", attempt.name, remote::this_root());
     }
-    drop(run);
+    drop(attempt);
     // With nothing left to do, the move under way is let finish, else a stopped lineage would never
     // be moved by itself.
     archiver.finish(say);
     result
 }
 
-fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
+fn attempt_generations(attempt: &Attempt, state: &mut GenState) -> Result<String, String> {
     let stopped = || "stopped; start it again to resume".to_string();
     loop {
-        if state.phase == Phase::Done && !engine_plays(run.net) {
+        if state.phase == Phase::Done && !engine_plays(attempt.net) {
             return Ok(
-                "this run is finished: the engine cannot play a transformer yet, so it has no round robin; compare its \
-                 lambdas' history.tsv, or train it again as a new run"
+                "this attempt is finished: the engine cannot play a transformer yet, so it has no round robin; compare its \
+                 lambdas' history.tsv, or train it again as a new attempt"
                     .to_string(),
             );
         }
@@ -5622,25 +5625,25 @@ fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
         // log it twice.
         if state.phase == Phase::Stopped {
             return Ok(format!(
-                "generation {}: the lineage stopped at its failed gate (generations.tsv has it); start a new run to begin again",
+                "generation {}: the lineage stopped at its failed gate (generations.tsv has it); start a new attempt to begin again",
                 state.generation
             ));
         }
-        // A polyline run trains one arm every generation; a grid run its grid's.
-        let arms = arms_of(run.config, state);
-        let training_set = if let Some(source) = run.config.on_source(state.generation) {
+        // A polyline attempt trains one arm every generation; a grid attempt its grid's.
+        let arms = arms_of(attempt.config, state);
+        let training_set = if let Some(source) = attempt.config.on_source(state.generation) {
             source.corpus().to_string()
         } else {
-            format!("{} positions", progress::grouped(run.config.training_positions()))
+            format!("{} positions", progress::grouped(attempt.config.training_positions()))
         };
         log::info!("generation {}: lambda {}, {training_set}", state.generation, lambdas_text(&arms));
         if state.phase == Phase::Play {
-            if let Ended::Stopped = run.play(state)? {
+            if let Ended::Stopped = attempt.play(state)? {
                 return Ok(stopped());
             }
             state.phase = Phase::Train;
-            run.boundary(state)?;
-            if needs_gpu_now(run.config.scale, state.phase, has_gpu()) {
+            attempt.boundary(state)?;
+            if needs_gpu_now(attempt.config.scale, state.phase, has_gpu()) {
                 return Ok(format!(
                     "generation {}: self-play done; training waits for Resume on a machine with CUDA",
                     state.generation
@@ -5648,12 +5651,12 @@ fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
             }
         }
         if state.phase == Phase::Train {
-            if let Ended::Stopped = run.train(state, &arms)? {
+            if let Ended::Stopped = attempt.train(state, &arms)? {
                 return Ok(stopped());
             }
             // A network the engine cannot play ends at its training: no round robin, no winner.
-            state.phase = if engine_plays(run.net) { Phase::RoundRobin } else { Phase::Done };
-            run.boundary(state)?;
+            state.phase = if engine_plays(attempt.net) { Phase::RoundRobin } else { Phase::Done };
+            attempt.boundary(state)?;
             if state.phase == Phase::Done {
                 continue;
             }
@@ -5663,7 +5666,7 @@ fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
         // of the teacher would only add noise, and a winner among them would meet itself at the gate;
         // with none left, the generation learned nothing, a failed gate without a game (the developer,
         // 2026-10-30).
-        let learned = learned_arms(&run.dirs, state.generation, &arms);
+        let learned = learned_arms(&attempt.dirs, state.generation, &arms);
         let (winner, pass, share, gate_games) = if learned.is_empty() {
             log::warn!(
                 "generation {}: every lambda fell back to the teacher, its best checkpoint step 0; no round robin, no gate",
@@ -5675,10 +5678,10 @@ fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
             if fell_back > 0 {
                 log::info!("{fell_back} of {} lambdas fell back to the teacher and play no round robin", arms.len());
             }
-            let winner = if run.net.training.schedule == net_config::Schedule::Budget {
+            let winner = if attempt.net.training.schedule == net_config::Schedule::Budget {
                 // A budget's one arm (`load_config`), its round robin among its own checkpoints, the
                 // winner exported as its candidate. Step 0 is never one: `learned_arms` keeps the arm.
-                if let Ended::Stopped = run.budget_round_robin(state, learned[0])? {
+                if let Ended::Stopped = attempt.budget_round_robin(state, learned[0])? {
                     return Ok(stopped());
                 }
                 learned[0]
@@ -5686,78 +5689,78 @@ fn run_generations(run: &Run, state: &mut GenState) -> Result<String, String> {
                 log::info!("one lambda learned, {}: no round robin, straight to the gate", learned[0]);
                 learned[0]
             } else {
-                // Two arms or more are a grid's: a polyline run trains one.
+                // Two arms or more are a grid's: a polyline attempt trains one.
                 let constants: Vec<f64> = learned.iter().map(|arm| arm.constant().expect("a grid's arm is a constant")).collect();
-                let (ended, winner) = run.grid_round_robin(state, &constants)?;
+                let (ended, winner) = attempt.grid_round_robin(state, &constants)?;
                 if let Ended::Stopped = ended {
                     return Ok(stopped());
                 }
                 ArmLambda::Constant(winner)
             };
             state.phase = Phase::Gate;
-            run.boundary(state)?;
-            let (ended, pass, share) = run.gate(state, winner)?;
+            attempt.boundary(state)?;
+            let (ended, pass, share) = attempt.gate(state, winner)?;
             if let Ended::Stopped = ended {
                 return Ok(stopped());
             }
-            let gate_games = std::fs::read_to_string(run.dirs.gate(state.generation))
+            let gate_games = std::fs::read_to_string(attempt.dirs.gate(state.generation))
                 .map_or(0, |text| text.lines().filter(|line| !line.starts_with('#')).count() * 2);
             (Some(winner), pass, share, gate_games)
         };
         let winner_text = winner.map_or("none".to_string(), |winner| winner.to_string());
         std::fs::OpenOptions::new()
             .append(true)
-            .open(run.dirs.log())
+            .open(attempt.dirs.log())
             .and_then(|mut file| writeln!(file, "{}\t{winner_text}\t{gate_games}\t{share:.4}\t{pass}", state.generation))
-            .map_err(|error| format!("{}: {error}", run.dirs.log()))?;
+            .map_err(|error| format!("{}: {error}", attempt.dirs.log()))?;
 
-        // A scaled run checks the pipeline, not strength: a network trained on a sliver of the data may
+        // A scaled attempt checks the pipeline, not strength: a network trained on a sliver of the data may
         // well lose its gate, so its winner teaches the next generation all the same, the failure
         // recorded in generations.tsv (the developer, 2026-10-30). A generation that learned nothing
         // has no winner to promote.
-        let scaled_on = !pass && run.config.scale.is_some() && winner.is_some();
+        let scaled_on = !pass && attempt.config.scale.is_some() && winner.is_some();
         let nothing_learned = winner.is_none();
         let winner = winner.unwrap_or(ArmLambda::Constant(0.0));
         if pass || scaled_on {
             // The winner becomes the next generation's teacher: its candidate network, and the
             // checkpoint it was exported from, for the next generation's warm start.
-            let lambda_dir = run.dirs.arm(state.generation, winner);
+            let lambda_dir = attempt.dirs.arm(state.generation, winner);
             let step = candidates::read_candidate_step(&lambda_dir)?;
             let checkpoint = checkpoint_store::checkpoint_path(&format!("{lambda_dir}/checkpoints"), step);
             let next = state.generation + 1;
-            std::fs::create_dir_all(run.dirs.generation(next)).map_err(|error| format!("{}: {error}", run.dirs.generation(next)))?;
-            copy(&checkpoint, &run.dirs.teacher_vs(next))?;
-            copy(&generation::candidate_network_path(&lambda_dir), &run.dirs.teacher_nnue(next))?;
+            std::fs::create_dir_all(attempt.dirs.generation(next)).map_err(|error| format!("{}: {error}", attempt.dirs.generation(next)))?;
+            copy(&checkpoint, &attempt.dirs.teacher_vs(next))?;
+            copy(&generation::candidate_network_path(&lambda_dir), &attempt.dirs.teacher_nnue(next))?;
             // The new teacher on the remote at once, where the arenas will read it.
-            publish(&run.dirs.teacher_nnue(next))?;
+            publish(&attempt.dirs.teacher_nnue(next))?;
             log::info!("generation {} promoted: lambda {winner} teaches generation {next}", state.generation);
-            // A polyline run has no grid to move: its state's centre stays, never read.
+            // A polyline attempt has no grid to move: its state's centre stays, never read.
             let (center_hundredths, step_hundredths) = match winner.constant() {
-                Some(winner) => next_grid(run.config.on_source(state.generation).is_some(), winner),
+                Some(winner) => next_grid(attempt.config.on_source(state.generation).is_some(), winner),
                 None => (state.center_hundredths, state.step_hundredths),
             };
             *state = GenState { generation: next, phase: Phase::Play, center_hundredths, step_hundredths };
         } else {
             // A generation has one training set, so a failed gate leaves nothing to try: the lineage
-            // stops, a new run starting over (the developer, 2026-11-02). The boundary that closes the
+            // stops, a new attempt starting over (the developer, 2026-11-02). The boundary that closes the
             // generation: the mover takes it from here.
             state.phase = Phase::Stopped;
-            run.boundary(state)?;
+            attempt.boundary(state)?;
             let why = if nothing_learned {
                 "learned nothing, every lambda falling back to the teacher".to_string()
-            } else if let Some(source) = run.config.on_source(state.generation) {
+            } else if let Some(source) = attempt.config.on_source(state.generation) {
                 format!("on {} failed its gate against {PESTO}, so the network is wrong", source.corpus())
             } else {
                 "failed its gate".to_string()
             };
-            return Ok(format!("generation {} {why}: the run stops here (generations.tsv has its gate)", state.generation));
+            return Ok(format!("generation {} {why}: the attempt stops here (generations.tsv has its gate)", state.generation));
         }
         // A promotion ends the job: the next generation plays a new training set, so the developer
         // starts it, by Resume, once the gate has been read.
-        run.boundary(state)?;
+        attempt.boundary(state)?;
         return Ok(if scaled_on {
             format!(
-                "generation {} failed its gate, promoted all the same in a scaled run, lambda {winner}: generation {} waits for Resume",
+                "generation {} failed its gate, promoted all the same in a scaled attempt, lambda {winner}: generation {} waits for Resume",
                 state.generation - 1,
                 state.generation
             )
@@ -5798,8 +5801,8 @@ mod tests {
     }
 
     #[test]
-    fn a_run_s_files_are_read_here_first_then_on_the_remote() {
-        let scratch = std::env::temp_dir().join(format!("smithy-run-home-{}", std::process::id()));
+    fn an_attempt_s_files_are_read_here_first_then_on_the_remote() {
+        let scratch = std::env::temp_dir().join(format!("smithy-attempt-home-{}", std::process::id()));
         std::fs::remove_dir_all(&scratch).ok();
         let root = scratch.to_str().unwrap().replace('\\', "/");
         let (local, remote) = (format!("{root}/local"), format!("{root}/remote"));
@@ -5809,13 +5812,13 @@ mod tests {
         let home = || home_of(Dirs { root: local.clone() }, Dirs { root: remote.clone() }).root;
         // On the remote alone: its frozen config and its home are there.
         assert_eq!(frozen_config(&roots), None);
-        std::fs::write(format!("{remote}/{RUN_CONFIG}"), "").unwrap();
-        assert_eq!(frozen_config(&roots), Some(format!("{remote}/{RUN_CONFIG}")));
+        std::fs::write(format!("{remote}/{ATTEMPT_CONFIG}"), "").unwrap();
+        assert_eq!(frozen_config(&roots), Some(format!("{remote}/{ATTEMPT_CONFIG}")));
         assert_eq!(home(), remote);
         // Here too: this machine's copy first.
-        std::fs::write(format!("{local}/{RUN_CONFIG}"), "").unwrap();
+        std::fs::write(format!("{local}/{ATTEMPT_CONFIG}"), "").unwrap();
         std::fs::write(Dirs { root: local.clone() }.state(), "").unwrap();
-        assert_eq!(frozen_config(&roots), Some(format!("{local}/{RUN_CONFIG}")));
+        assert_eq!(frozen_config(&roots), Some(format!("{local}/{ATTEMPT_CONFIG}")));
         assert_eq!(home(), local);
         std::fs::remove_dir_all(&scratch).ok();
     }
@@ -5843,7 +5846,7 @@ mod tests {
         assert_eq!(scaled.scale, Some(1024));
         assert!(scaled.training_positions < full.training_positions);
         assert!(scaled_net.training.steps_per_round < full_net.training.steps_per_round);
-        assert!(scaled.depth() < full.depth(), "a scaled run searches shallower");
+        assert!(scaled.depth() < full.depth(), "a scaled attempt searches shallower");
         std::fs::write(&path, format!("{text}\nscale: 0\n")).unwrap();
         assert!(load_config(&path).is_err(), "a scale of 0");
         std::fs::remove_dir_all(&dir).ok();
@@ -5903,10 +5906,10 @@ mod tests {
 
     #[test]
     fn a_new_run_is_numbered_past_every_run_here_and_on_the_remote() {
-        assert_eq!(next_run_number(&[], &[]), 1);
-        assert_eq!(next_run_number(&[1, 2], &[1]), 3);
-        // Run 3 lives on the remote alone, its local directory gone: a new run must not take its number.
-        assert_eq!(next_run_number(&[1, 2], &[1, 2, 3]), 4);
+        assert_eq!(next_attempt_number(&[], &[]), 1);
+        assert_eq!(next_attempt_number(&[1, 2], &[1]), 3);
+        // Attempt 3 lives on the remote alone, its local directory gone: a new attempt must not take its number.
+        assert_eq!(next_attempt_number(&[1, 2], &[1, 2, 3]), 4);
     }
 
     #[test]
@@ -6112,9 +6115,10 @@ mod tests {
         assert_eq!(job_name(&words("--convert lc0")), Ok("Lc0's conversion".to_string()));
         assert_eq!(job_config(&words("--play pesto")), Some("pesto".to_string()));
         assert_eq!(job_config(&words("--convert lc0")), Some("lc0".to_string()));
-        assert_eq!(job_config(&words("--tune pesto-psq-g3-r2")), Some("pesto-psq".to_string()));
-        assert_eq!(job_config(&words("--tune pesto-psq-g1-r1")), Some("pesto-psq".to_string()));
+        assert_eq!(job_config(&words("--tune pesto-psq-g3-a2")), Some("pesto-psq".to_string()));
+        assert_eq!(job_config(&words("--tune pesto-psq-g1-a1")), Some("pesto-psq".to_string()));
         assert_eq!(job_config(&words("--tune pesto-psq-r1-0001")), None, "the old form");
+        assert_eq!(job_config(&words("--tune pesto-psq-g1-r1")), None, "from before attempts");
         for wrong in ["--play lc0", "--convert pesto", "--play"] {
             assert!(job_name(&words(wrong)).is_err(), "{wrong}");
         }
@@ -6132,8 +6136,8 @@ mod tests {
             Ok("the book of elite, softmax 20 scores-n-tuned-d20.txt".to_string())
         );
         assert_eq!(
-            job_name(&words("--score-book elite lc0-psq-threats-screlu-g1-r1@search-tuned 20")),
-            Ok("the scores of elite, lc0-psq-threats-screlu-g1-r1@search-tuned, depth 20".to_string())
+            job_name(&words("--score-book elite lc0-psq-threats-screlu-g1-a1@search-tuned 20")),
+            Ok("the scores of elite, lc0-psq-threats-screlu-g1-a1@search-tuned, depth 20".to_string())
         );
         assert_eq!(job_config(&words("--score-book elite n@search-tuned 20")), Some(BOOKS_SCREEN.to_string()));
         assert_eq!(SlotJob::of(&words("--score-book elite n@search-tuned 20")), None, "the arena slot's");
@@ -6234,7 +6238,7 @@ mod tests {
         let bad_tune = format!("{without_tune}tune:\n  length: 10\ntraining_positions: 7\n{network}");
         assert!(load("bad-tune", bad_tune).unwrap_err().contains("pairs"), "tune: is checked as the words it stands for");
 
-        // The grid is the default; a polyline run has no grid centre, a grid run needs one.
+        // The grid is the default; a polyline attempt has no grid centre, a grid attempt needs one.
         assert_eq!(config.lambda, LambdaMode::Grid);
         let rest = forge.strip_prefix("grid_center: 0.05\n").unwrap();
         let (polyline, _) = load("polyline", format!("lambda: polyline\n{rest}training_positions: 7\n{network}")).unwrap();
@@ -6637,10 +6641,10 @@ mod tests {
 
     #[test]
     fn a_generation_s_teacher_is_the_previous_winner_or_its_source_s_player() {
-        assert_eq!(teacher_player("lc0-psq-r1", 2, Some(Source::Lc0)).as_deref(), Some("lc0-psq-g1-r1"));
-        assert_eq!(teacher_player("pesto-psq-r2", 3, Some(Source::Pesto)).as_deref(), Some("pesto-psq-g2-r2"));
-        assert_eq!(teacher_player("pesto-psq-r2", 1, Some(Source::Pesto)).as_deref(), Some(PESTO), "PeSTO taught a PeSTO run's first");
-        assert_eq!(teacher_player("lc0-psq-r1", 1, Some(Source::Lc0)), None, "Lc0 is no Fattorini player: the defaults");
+        assert_eq!(teacher_player("lc0-psq-a1", 2, Some(Source::Lc0)).as_deref(), Some("lc0-psq-g1-a1"));
+        assert_eq!(teacher_player("pesto-psq-a2", 3, Some(Source::Pesto)).as_deref(), Some("pesto-psq-g2-a2"));
+        assert_eq!(teacher_player("pesto-psq-a2", 1, Some(Source::Pesto)).as_deref(), Some(PESTO), "PeSTO taught a PeSTO attempt's first");
+        assert_eq!(teacher_player("lc0-psq-a1", 1, Some(Source::Lc0)), None, "Lc0 is no Fattorini player: the defaults");
     }
 
     #[test]
@@ -6733,8 +6737,8 @@ mod tests {
             },
         );
         let (last, _) = status.arm_rounds(&path, &schedule);
-        assert!(last.is_none(), "no run_config.txt yet, so no budget to read the round by");
-        std::fs::write(format!("{dir}/run_config.txt"), "schedule\tbudget\ntrain_rows\t1000\n").unwrap();
+        assert!(last.is_none(), "no attempt_config.txt yet, so no budget to read the round by");
+        std::fs::write(format!("{dir}/{}", attempt_config::FILE), "schedule\tbudget\ntrain_rows\t1000\n").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
         super::super::history::append(
             &path,
@@ -6793,7 +6797,7 @@ mod tests {
         assert_eq!(budget_pairs(9, None), 125);
         assert_eq!(budget_pairs(9, None) * 2 * 8, 2000);
         assert_eq!(budget_pairs(2, None), 1000);
-        assert!(budget_pairs(9, Some(64)) < 125, "a scaled run's fewer");
+        assert!(budget_pairs(9, Some(64)) < 125, "a scaled attempt's fewer");
     }
 
     fn test_claim() -> Claim {

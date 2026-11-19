@@ -1,37 +1,41 @@
-//! What a run was started with, frozen on its first invocation and verified on every later one.
+//! What an attempt was started with, frozen on its first invocation and verified on every later one,
+//! in each lambda's `attempt_config.txt`.
 //!
-//! A run's configuration is read-only once it has started, and this is where that is enforced. The
-//! reason is that the NNUE track derives, rather than persists, everything it can: the training
+//! An attempt's configuration is read-only once it has started, and this is where that is enforced.
+//! The reason is that the NNUE track derives, rather than persists, everything it can: the training
 //! stream's read position is `training_batch_size * optimizer.step_count()` taken modulo the train
-//! cache's row count, how far into the current round a resumed run is is `step_count %
+//! cache's row count, how far into the current round a resumed attempt is is `step_count %
 //! steps_per_round`, and which rate of its list it trains at is replayed from `history.tsv` with
 //! `warmup_rounds` and `patience_rounds`. Deriving beats persisting -- a second counter beside the step count can only
 //! ever disagree with it -- but it makes the derivation's inputs load-bearing *across* invocations.
-//! Lower `steps_per_round` between two runs of one job and the persisted step count is reinterpreted
-//! into a different position in a different round; change `training_batch_size` and the same step
-//! count names a different row of the cache. `game_labels::RoundProgress`'s own doc comment records
-//! what that costs when it happens: a `steps_per_eval` lowered between two runs left a stale, larger
-//! persisted count already past the new round size, and the next round completed with zero further
-//! training.
+//! Lower `steps_per_round` between two invocations of one job and the persisted step count is
+//! reinterpreted into a different position in a different round; change `training_batch_size` and the
+//! same step count names a different row of the cache. `game_labels::RoundProgress`'s own doc comment
+//! records what that costs when it happens: a `steps_per_eval` lowered between two invocations left a
+//! stale, larger persisted count already past the new round size, and the next round completed with
+//! zero further training.
 //!
 //! So the fields the derivation and the two boundaries depend on, plus the ones that identify the
 //! dataset and the model, are written once beside `model.vs` and compared field by field from then
-//! on. A mismatch is fatal and names the field, what the run recorded and what the configuration says
-//! now.
+//! on. A mismatch is fatal and names the field, what the attempt recorded and what the configuration
+//! says now.
 //!
-//! Plain text, not the magic-bytes-plus-version binary format the other state files in a run
+//! Plain text, not the magic-bytes-plus-version binary format the other state files in an attempt's
 //! directory use, and human-ordered rather than sorted: its entire purpose is to be read by a
 //! developer who has just been told that one of its fields disagrees.
 
 use std::fs;
 use std::path::Path;
 
-/// Writes `fields` to `path` if this is the run's first invocation, or verifies that `path` already
-/// records exactly them if it is not.
+/// The file each lambda's directory freezes its fields in.
+pub const FILE: &str = "attempt_config.txt";
+
+/// Writes `fields` to `path` if this is the attempt's first invocation, or verifies that `path`
+/// already records exactly them if it is not.
 ///
 /// Panics on any disagreement, naming the field. Deliberately not a `Result`: there is no way for a
-/// caller to carry on usefully past "this run is not the run you are resuming", and continuing would
-/// corrupt a checkpoint series rather than fail it.
+/// caller to carry on usefully past "this attempt is not the attempt you are resuming", and continuing
+/// would corrupt a checkpoint series rather than fail it.
 pub fn freeze_or_verify(path: &str, fields: &[(&str, String)]) {
     let rendered = render(fields);
 
@@ -52,30 +56,30 @@ pub fn freeze_or_verify(path: &str, fields: &[(&str, String)]) {
         let Some((_, recorded_value)) = recorded.iter().find(|(recorded_name, _)| recorded_name.as_str() == *name)
         else {
             panic!(
-                "{path} does not record {name}, so this run was started by a build that froze a different set of \
-                 fields. Delete the directory holding {path} and start the run over."
+                "{path} does not record {name}, so this attempt was started by a build that froze a different set of \
+                 fields. Delete the directory holding {path} and start the attempt over."
             );
         };
         assert!(
             recorded_value == value,
-            "{path}: this run was started with {name} = {recorded_value}, but the configuration now says \
-             {name} = {value}. A run's configuration is read-only once it has started: the training cursor and the \
+            "{path}: this attempt was started with {name} = {recorded_value}, but the configuration now says \
+             {name} = {value}. An attempt's configuration is read-only once it has started: the training cursor and the \
              round boundary are derived from the persisted step count, and the current rate from the recorded \
              losses, so changing this would reinterpret every step already taken. Restore the old value, or delete the directory \
-             holding {path} and start the run over."
+             holding {path} and start the attempt over."
         );
     }
     for (name, _) in &recorded {
         assert!(
             fields.iter().any(|(current, _)| *current == name.as_str()),
             "{path} records {name}, which this build no longer freezes. Delete the directory holding {path} and \
-             start the run over."
+             start the attempt over."
         );
     }
 
     panic!("{path} disagrees with the current configuration field for field in no single field -- it is reordered \
             or holds a duplicate name, so it was not written by this build. Delete the directory holding {path} \
-            and start the run over.");
+            and start the attempt over.");
 }
 
 /// One `name<TAB>value` line per field, in the order given. Tab-separated for the same reason
@@ -111,7 +115,7 @@ mod tests {
     use super::*;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("smithy-run-config-{}-{name}.txt", std::process::id()))
+        std::env::temp_dir().join(format!("smithy-attempt-config-{}-{name}.txt", std::process::id()))
     }
 
     fn fields(batch_size: u64) -> Vec<(&'static str, String)> {
@@ -132,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "this run was started with training_batch_size = 1024")]
+    #[should_panic(expected = "this attempt was started with training_batch_size = 1024")]
     fn a_changed_field_is_rejected_by_name() {
         let path = temp_path("changed");
         std::fs::remove_file(&path).ok();

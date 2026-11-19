@@ -1,4 +1,4 @@
-//! The mover: keeps the smithy's disk bounded. Every run's closed generations (promoted, or their
+//! The mover: keeps the smithy's disk bounded. Every attempt's closed generations (promoted, or their
 //! lineage stopped) move to the remote, Google Drive (`remote::remote_path`): each file copied whole under the same relative path, then deleted here. A file is made
 //! here, used here while its generation may still read it, and only then moved, so Drive receives
 //! finished files only, never one being written or appended to.
@@ -72,17 +72,17 @@ pub(crate) fn move_dir(local_dir: &str, remote_dir: &str) -> Result<(usize, u64)
     Ok((files.len(), bytes))
 }
 
-/// The runs here, every config's run directories holding a `state.txt`, by name
-/// (`players::run_name`).
-fn runs() -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(players::RUNS_ROOT) else { return Vec::new() };
+/// The attempts here, every config's attempt directories holding a `state.txt`, by name
+/// (`players::attempt_name`).
+fn attempts() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(players::ATTEMPTS_ROOT) else { return Vec::new() };
     let mut names: Vec<String> = Vec::new();
     for config in entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()) {
-        for number in players::runs_in(&players::config_dir(&config)) {
-            let run = players::run_name(&config, number);
-            let Ok(dir) = players::run_dir(&run) else { continue };
+        for number in players::attempts_in(&players::config_dir(&config)) {
+            let attempt = players::attempt_name(&config, number);
+            let Ok(dir) = players::attempt_dir(&attempt) else { continue };
             if Path::new(&dir).join("state.txt").is_file() {
-                names.push(run);
+                names.push(attempt);
             }
         }
     }
@@ -90,9 +90,9 @@ fn runs() -> Vec<String> {
     names
 }
 
-/// Moves generation `generation` of `run` to the remote, its directory gone here.
-fn move_generation(run: &str, generation: u32) -> Result<(usize, u64), String> {
-    let dir = format!("{}/{}", players::run_dir(run)?, players::generation_dir_name(generation));
+/// Moves generation `generation` of `attempt` to the remote, its directory gone here.
+fn move_generation(attempt: &str, generation: u32) -> Result<(usize, u64), String> {
+    let dir = format!("{}/{}", players::attempt_dir(attempt)?, players::generation_dir_name(generation));
     move_dir(&dir, &remote::remote_path(&dir))
 }
 
@@ -103,33 +103,33 @@ fn gigabytes(bytes: u64) -> String {
 /// What a pass needs from the smithy.
 #[derive(Clone, Copy)]
 pub(crate) struct Hooks {
-    /// A run's closed generations still here, from its state and config.
+    /// An attempt's closed generations still here, from its state and config.
     pub closed: fn(&str) -> Result<Vec<u32>, String>,
     /// Prints a line without breaking the smithy's live display.
     pub say: fn(String),
 }
 
-/// One pass: every run's closed generations still here moved, oldest first, until done, the remote
+/// One pass: every attempt's closed generations still here moved, oldest first, until done, the remote
 /// fails to take one, or `stop`.
 fn pass(hooks: Hooks, stop: &AtomicBool) {
     let say = hooks.say;
     let mut pending = Vec::new();
-    for run in runs() {
-        match (hooks.closed)(&run) {
-            Ok(generations) => pending.extend(generations.into_iter().map(|generation| (run.clone(), generation))),
-            Err(message) => say(format!("move: WARNING: {run}: {message}, so none of it is moved")),
+    for attempt in attempts() {
+        match (hooks.closed)(&attempt) {
+            Ok(generations) => pending.extend(generations.into_iter().map(|generation| (attempt.clone(), generation))),
+            Err(message) => say(format!("move: WARNING: {attempt}: {message}, so none of it is moved")),
         }
     }
-    for (index, (run, generation)) in pending.iter().enumerate() {
+    for (index, (attempt, generation)) in pending.iter().enumerate() {
         if stop.load(Ordering::SeqCst) {
             return;
         }
         let started = Instant::now();
-        match move_generation(run, *generation) {
+        match move_generation(attempt, *generation) {
             Ok((files, bytes)) => {
                 let seconds = started.elapsed().as_secs();
                 say(format!(
-                    "move: {run} gen-{generation} moved to {}, {files} files, {}, in {}m{:02}s",
+                    "move: {attempt} gen-{generation} moved to {}, {files} files, {}, in {}m{:02}s",
                     remote::this_root(),
                     gigabytes(bytes),
                     seconds / 60,
@@ -137,7 +137,7 @@ fn pass(hooks: Hooks, stop: &AtomicBool) {
                 ));
             }
             Err(message) => {
-                say(format!("move: {run} gen-{generation}: {message}; {} generations pending", pending.len() - index));
+                say(format!("move: {attempt} gen-{generation}: {message}; {} generations pending", pending.len() - index));
                 return;
             }
         }

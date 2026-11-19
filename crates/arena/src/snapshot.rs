@@ -113,7 +113,7 @@ pub(crate) fn parameter_files(
 }
 
 /// Whether `file` is another snapshot of the player and suffix `prefix` names: the prefix, then a
-/// stamp alone (`YYYYMMDD-HHMM.exe`), so `pesto-untuned-` never matches `pesto-psq-g1-r1-untuned-`'s
+/// stamp alone (`YYYYMMDD-HHMM.exe`), so `pesto-untuned-` never matches `pesto-psq-g1-a1-untuned-`'s
 /// files. Not `stem` itself, the one just written.
 fn is_older_snapshot(file: &str, prefix: &str, stem: &str) -> bool {
     let Some(rest) = file.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(".exe")) else { return false };
@@ -125,8 +125,8 @@ fn is_older_snapshot(file: &str, prefix: &str, stem: &str) -> bool {
 }
 
 /// Whether `player` may be snapshotted (the developer, 2026-10-29, kept 2026-11-06): pesto, or a full
-/// run's generation winner, one that passed its gate; never a candidate nor a scaled run's network,
-/// whose strength means nothing outside its run.
+/// attempt's generation winner, one that passed its gate; never a candidate nor a scaled attempt's
+/// network, whose strength means nothing outside its attempt.
 /// A release follows the same rule.
 pub(crate) fn may_snapshot(player: &str) -> Result<(), String> {
     if player == protocol::PESTO {
@@ -136,18 +136,18 @@ pub(crate) fn may_snapshot(player: &str) -> Result<(), String> {
     if parsed.candidate.is_some() {
         return Err(format!("{player} is a candidate: only pesto or a generation's winner is snapshotted"));
     }
-    let local = players::run_dir(&parsed.run())?;
+    let local = players::attempt_dir(&parsed.attempt())?;
     let homes = [local.clone(), remote::remote_path(&local)];
-    if homes.iter().all(|home| players::run_winner(home, parsed.generation).is_err()) {
+    if homes.iter().all(|home| players::attempt_winner(home, parsed.generation).is_err()) {
         return Err(format!("{player} has no winner that passed its gate: only a generation's winner is snapshotted"));
     }
     if let Some(scale) = homes.iter().find_map(|home| scale_of(&format!("{home}/config.yaml"))) {
-        return Err(format!("{player} is a scaled run's network (1/{scale}): it plays in its own run alone"));
+        return Err(format!("{player} is a scaled attempt's network (1/{scale}): it plays in its own attempt alone"));
     }
     Ok(())
 }
 
-/// The `scale:` of the frozen run config at `path`, `None` for a full run's or no file.
+/// The `scale:` of the frozen attempt config at `path`, `None` for a full attempt's or no file.
 fn scale_of(path: &str) -> Option<u64> {
     let text = std::fs::read_to_string(path).ok()?;
     let config: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
@@ -164,7 +164,7 @@ pub(crate) fn describe(player: &str, commit: &str, taken: &str) -> String {
 }
 
 /// A release's description: the tag, written whole, where a snapshot says the commit, as
-/// `lc0-psq-threats-screlu-g1-r1@search-tuned v0.1.0 2026-11-20 10:00 UTC`.
+/// `lc0-psq-threats-screlu-g1-a1@search-tuned v0.1.0 2026-11-20 10:00 UTC`.
 pub(crate) fn describe_release(player: &str, tag: &str, built: &str) -> String {
     format!("{player} {tag} {built}")
 }
@@ -272,19 +272,19 @@ mod tests {
             !is_older_snapshot("fattorini-pesto-search-time-tuned-20261105-0900.exe", "fattorini-pesto-search-tuned-", stem),
             "each suffix its own"
         );
-        assert!(!is_older_snapshot("fattorini-pesto-psq-g1-r1-untuned-20261105-0900.exe", "fattorini-pesto-", stem));
+        assert!(!is_older_snapshot("fattorini-pesto-psq-g1-a1-untuned-20261105-0900.exe", "fattorini-pesto-", stem));
         assert!(!is_older_snapshot("fattorini-pesto-untuned-20261105-0900.exe.partial", prefix, stem));
     }
 
     #[test]
     fn only_pesto_or_a_generations_winner_is_snapshotted() {
         assert!(may_snapshot("pesto").is_ok());
-        assert!(may_snapshot("fine-g1-l0.05-r1").unwrap_err().contains("candidate"));
+        assert!(may_snapshot("fine-g1-l0.05-a1").unwrap_err().contains("candidate"));
         assert!(may_snapshot("stockfish-5").is_err());
     }
 
     #[test]
-    fn a_scaled_run_says_its_scale_in_its_frozen_config() {
+    fn a_scaled_attempt_says_its_scale_in_its_frozen_config() {
         let dir = std::env::temp_dir().join(format!("arena-snapshot-scale-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.yaml").to_str().unwrap().to_string();

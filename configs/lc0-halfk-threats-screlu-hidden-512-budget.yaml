@@ -9,7 +9,7 @@
 # polyline measured on its corpus. A budget trains one arm: polyline only.
 lambda: polyline
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
-# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+# gate ends the attempt. Generation 1's are Lc0's corpus (lc0.yaml).
 training_positions: 1073741824
 # From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
 test_positions: 4194304
@@ -38,7 +38,7 @@ training:
   training_batch_size: 4096
   test_batch_size: 16384
   steps_per_round: 4096
-  # From 1e-3 to 1e-5 (the developer, 2026-11-17): 3e-3 was too high, the 512 run's loss rising after
+  # From 1e-3 to 1e-5 (the developer, 2026-11-17): 3e-3 was too high, the 512 attempt's loss rising after
   # 9 rounds at it. The candidates span about 1e-4 (epoch 2) to 1e-5 (epoch 4).
   schedule: budget
   epochs: 4

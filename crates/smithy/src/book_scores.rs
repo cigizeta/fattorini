@@ -375,10 +375,10 @@ mod tests {
 
     #[test]
     fn a_scores_file_is_named_after_its_scoring() {
-        let name = file_name("lc0-psq-threats-screlu-g1-r1", fattorini::pipeline::players::TuningSuffix::SearchTuned, 20);
-        assert_eq!(name, "scores-lc0-psq-threats-screlu-g1-r1-search-tuned-d20.txt");
+        let name = file_name("lc0-psq-threats-screlu-g1-a1", fattorini::pipeline::players::TuningSuffix::SearchTuned, 20);
+        assert_eq!(name, "scores-lc0-psq-threats-screlu-g1-a1-search-tuned-d20.txt");
         assert!(is_scores_file(&name));
-        assert_eq!(stem(&name), "lc0-psq-threats-screlu-g1-r1-search-tuned-d20");
+        assert_eq!(stem(&name), "lc0-psq-threats-screlu-g1-a1-search-tuned-d20");
         for other in ["graph.txt", "scores-x-d.txt", "scores-x-dz.txt", "book-n9-points.txt"] {
             assert!(!is_scores_file(other), "{other}");
         }

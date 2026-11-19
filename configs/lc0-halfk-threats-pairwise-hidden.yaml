@@ -10,7 +10,7 @@
 # polyline measured on its corpus.
 lambda: polyline
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
-# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+# gate ends the attempt. Generation 1's are Lc0's corpus (lc0.yaml).
 training_positions: 1073741824
 # From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
 test_positions: 4194304

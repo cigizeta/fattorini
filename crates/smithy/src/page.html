@@ -93,10 +93,10 @@
   button.preset { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
   .hidden { display: none; }
   .row h2 { margin: 0; }
-  .run { padding: 6px 0; border-bottom: 1px solid var(--line); }
-  .run:last-of-type { border-bottom: none; }
+  .attempt { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .attempt:last-of-type { border-bottom: none; }
   .tunes { padding-left: 24px; margin-top: 6px; display: grid; gap: 6px; }
-  .newrun { margin-top: 12px; }
+  .newattempt { margin-top: 12px; }
   section.current { border-color: var(--accent); }
   #viewBody section { border: none; padding: 8px 0 0; margin: 0; }
   .boxes { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
@@ -314,13 +314,13 @@ function work(view, waiting, stop = "") {
   }
 }
 
-// The training's progress in patience rounds: a lambda's run ends when patience runs out at its last
+// The training's progress in patience rounds: a lambda's training ends when patience runs out at its last
 // stage, so it stands at (stage - 1) x patience + waiting of stages x patience, a finished one at all of
 // it, one yet to record a round at none; summed over the grid. A new best resets a lambda's patience,
 // so the bar steps back, never below the start of its stage: training is then still improving.
 function trainingProgress(lambdas, round) {
   const shape = lambdas.map((l) => l.last).find(Boolean);
-  // A fresh run, no round recorded: its first round's pass alone.
+  // A fresh attempt, no round recorded: its first round's pass alone.
   if (!shape) return roundLine(round);
   // A budget: its length known from the start. One arm: its length estimated from its stages. A grid
   // keeps the patience rounds below.
@@ -354,7 +354,7 @@ function trainingProgress(lambdas, round) {
 }
 
 // One arm's progress by its stages (the developer, 2026-11-16). The stages done took `stage_round`
-// rounds, so the run takes about `stages` times their average; never less than the minimum, the
+// rounds, so the attempt takes about `stages` times their average; never less than the minimum, the
 // current stage's patience left plus every later stage's whole patience, no round improving again.
 // Rounds left: the larger. In the first stage nothing has ended to average: the minimum alone, as a
 // bound, with no ETA and no bar. The pace: the latest round's.
@@ -382,7 +382,7 @@ function stageProgress(r, round) {
     + `ETA about ${duration(Math.round(left * pace))}; ${bound}</div>${bar(r.round, total, r.round)}`;
 }
 
-// A budgeted run's progress: its rounds of the budget's, its ETA the rounds left at the average pace of
+// A budgeted attempt's progress: its rounds of the budget's, its ETA the rounds left at the average pace of
 // the rounds done, not the latest round's (the developer, 2026-11-19): a budget's rounds are alike.
 // No line for the round under way (the developer, 2026-11-18): the budget's own line says it.
 function budgetProgress(r) {
@@ -412,7 +412,7 @@ function lambdaText(lambda) {
   return typeof lambda === "string" ? lambda : number(lambda, 2);
 }
 
-// The training's lambdas, each at its latest round, and a polyline run's ten values once measured.
+// The training's lambdas, each at its latest round, and a polyline attempt's ten values once measured.
 function training(list, round = null, polyline = null) {
   // Rows by lambda, so each stays put, ranked by best loss; lambdas yet to record a round unranked.
   // The polyline after every constant.
@@ -492,7 +492,7 @@ function lossChart(curve, last, budget = false) {
   // after it trains, so the first round at the new rate already shows its drop, which starts here.
   const stages = rows.filter((c, i) => !budget && i + 1 < rows.length && c[3] !== rows[i + 1][3])
     .map((c) => `<line class="stage" x1="${x(c[0]).toFixed(1)}" x2="${x(c[0]).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
-  // A budget's candidates: one line at each, a scaled run's too.
+  // A budget's candidates: one line at each, a scaled attempt's too.
   const candidates = plan && Array.isArray(plan.candidate_rounds) ? plan.candidate_rounds : [];
   const passes = candidates
     .map((round) => `<line class="stage" x1="${x(round).toFixed(1)}" x2="${x(round).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
@@ -524,7 +524,7 @@ function lossChart(curve, last, budget = false) {
 }
 
 // A phase as the page words it, as its section's heading does; the state file's name ("train",
-// "round-robin") stays as it is, since earlier runs are read back by it.
+// "round-robin") stays as it is, since earlier attempts are read back by it.
 function phaseName(phase) {
   return { play: "playing", train: "training", "round-robin": "round robin", stopped: "stopped by its gate" }[phase] || phase;
 }
@@ -562,15 +562,15 @@ let catalog = null;
 let catalogDrawn = "";
 // The latest poll's state.
 let state = null;
-// The run being viewed and its generation; null when none is.
+// The attempt being viewed and its generation; null when none is.
 let viewing = null;
 // The config whose page is open, from the address's `#<config>`; null on the main page.
 let current = null;
-// The run whose screen is open, from the address's `#<config>/<run>`, or a tune's job (`tuneScreen`);
-// null on the config's own screen.
-let currentRun = null;
-// New run pressed: its config and how many runs it had, so the page opens the new run's screen once
-// the catalog lists it; the job is named `<config>, a new run` until then.
+// The attempt whose screen is open, from the address's `#<config>/<attempt>`, or a tune's job
+// (`tuneScreen`); null on the config's own screen.
+let currentAttempt = null;
+// New attempt pressed: its config and how many attempts it had, so the page opens the new attempt's
+// screen once the catalog lists it; the job is named `<config>, a new attempt` until then.
 let pendingNew = null;
 // Start pressed on New trial: the trial's screen opens once it plays and its number is known.
 let pendingTrial = false;
@@ -644,16 +644,16 @@ async function start(words, button) {
   if (button.dataset.screen) location.hash = screenHash(current, button.dataset.screen);
 }
 
-// The address of a config's screen, or of one of its runs' screens.
-function screenHash(config, run) {
-  return "#" + encodeURIComponent(config) + (run ? "/" + encodeURIComponent(run) : "");
+// The address of a config's screen, or of one of its attempts' screens.
+function screenHash(config, attempt) {
+  return "#" + encodeURIComponent(config) + (attempt ? "/" + encodeURIComponent(attempt) : "");
 }
 
 // A tune's screen: its job's name, as the smithy names it.
 const tuneScreen = (player) => `tune of ${player}`;
 
-// The screen of the smithy's job: its run's name, a tune's job name; null for a source's job (Play,
-// Convert), shown on its source's own screen, and for a new run not yet in the catalog.
+// The screen of the smithy's job: its attempt's name, a tune's job name; null for a source's job
+// (Play, Convert), shown on its source's own screen, and for a new attempt not yet in the catalog.
 function jobScreen() {
   if (!state || !state.job || !catalog) return null;
   if (state.job.startsWith("tune of ")) return state.job;
@@ -661,9 +661,9 @@ function jobScreen() {
   if (state.config === TRIALS) return state.work && state.work.kind === "trial" ? String(state.work.number) : null;
   const config = catalog.configs.find((c) => c.name === state.config);
   if (!config) return null;
-  if (state.job === `${config.name}, a new run`) {
-    const last = config.runs[config.runs.length - 1];
-    const listed = last && !(pendingNew && pendingNew.config === config.name && config.runs.length <= pendingNew.runs);
+  if (state.job === `${config.name}, a new attempt`) {
+    const last = config.attempts[config.attempts.length - 1];
+    const listed = last && !(pendingNew && pendingNew.config === config.name && config.attempts.length <= pendingNew.attempts);
     return listed ? last.name : null;
   }
   return state.job;
@@ -671,7 +671,7 @@ function jobScreen() {
 
 // Whether the open screen is the job's own.
 function jobHere() {
-  return currentRun !== null && state.config === current && jobScreen() === currentRun;
+  return currentAttempt !== null && state.config === current && jobScreen() === currentAttempt;
 }
 
 function tuneText(tune) {
@@ -697,26 +697,26 @@ function tuneRow(player) {
   return search + time;
 }
 
-function runWhere(run) {
-  const scaled = run.scale ? `scaled 1/${run.scale}, ` : "";
-  if (run.generation === null) return `${scaled}not started`;
-  const where = `generation ${run.generation}, ${phaseName(run.phase)}`;
-  return scaled + (run.finished ? `ended at ${where}` : where);
+function attemptWhere(attempt) {
+  const scaled = attempt.scale ? `scaled 1/${attempt.scale}, ` : "";
+  if (attempt.generation === null) return `${scaled}not started`;
+  const where = `generation ${attempt.generation}, ${phaseName(attempt.phase)}`;
+  return scaled + (attempt.finished ? `ended at ${where}` : where);
 }
 
-// ", scaled 1/<s>" after a scaled run's name `name`, as the catalog has its scale; nothing for any
-// other name, a full run's, a trial's or a tune's.
+// ", scaled 1/<s>" after a scaled attempt's name `name`, as the catalog has its scale; nothing for
+// any other name, a full attempt's, a trial's or a tune's.
 function scaledMark(name) {
   if (!catalog) return "";
   for (const config of catalog.configs) {
-    const run = config.runs.find((r) => r.name === name);
-    if (run) return run.scale ? `, scaled 1/${run.scale}` : "";
+    const attempt = config.attempts.find((r) => r.name === name);
+    if (attempt) return attempt.scale ? `, scaled 1/${attempt.scale}` : "";
   }
   return "";
 }
 
-// A full run needs a CUDA GPU: on a machine without one, its buttons are disabled, saying why; a
-// scaled run trains on the CPU. The smithy's `NO_GPU`, which refuses the job too.
+// A full attempt needs a CUDA GPU: on a machine without one, its buttons are disabled, saying why; a
+// scaled attempt trains on the CPU. The smithy's `NO_GPU`, which refuses the job too.
 const NO_GPU = "no CUDA GPU on this machine: training is not available here";
 
 function noGpu() {
@@ -724,30 +724,30 @@ function noGpu() {
 }
 
 // A forge's button's attributes past its data: disabled while a job runs, or without a GPU when it
-// would train a full run (`full`): a new one, or one resumed at its training.
+// would train a full attempt (`full`): a new one, or one resumed at its training.
 function forgeDisabled(full) {
   const blocked = full && noGpu();
   return (running || blocked ? " disabled" : "") + (blocked ? ` title="${NO_GPU}"` : "");
 }
 
-// A run's Resume, on this machine, for a run not finished; it opens the run's screen. The smithy
-// asks the other smithies first (`lease.rs`), and a refusal comes back as any job's.
-function resumeButton(config, run) {
-  if (run.finished || !token) return "";
-  const data = `data-forge="${escape(config.name)}" data-run="${run.number}" data-screen="${escape(run.name)}"`;
-  return ` <button ${data}${forgeDisabled(!run.scale && run.phase === "train")}>Resume</button>`;
+// An attempt's Resume, on this machine, for an attempt not finished; it opens the attempt's screen.
+// The smithy asks the other smithies first (`lease.rs`), and a refusal comes back as any job's.
+function resumeButton(config, attempt) {
+  if (attempt.finished || !token) return "";
+  const data = `data-forge="${escape(config.name)}" data-attempt="${attempt.number}" data-screen="${escape(attempt.name)}"`;
+  return ` <button ${data}${forgeDisabled(!attempt.scale && attempt.phase === "train")}>Resume</button>`;
 }
 
-// One run: where it stands, View or Open, Resume; the tune of each generation that passed its gate,
-// started by hand, whether the run has ended or waits (the developer, 2026-11-02).
-function runBlock(config, run) {
-  const resume = resumeButton(config, run);
-  // The running job's own run opens its job's screen; every other run is viewed, a job running or not.
-  const mine = running && state.config === config.name && jobScreen() === run.name;
-  const view = mine ? ` <span class="tag">running</span> <button class="plain" data-screen-open="${escape(run.name)}">Open</button>`
-    : run.generations.length > 0 ? ` <button class="plain" data-screen-open="${escape(run.name)}">View</button>` : "";
-  const tunes = run.generations.filter((g) => g.passed).map((g) => tuneRow(g.player)).join("");
-  return `<div class="run"><div class="row"><b>${escape(run.name)}</b><span class="muted">${escape(runWhere(run))}</span>${view}${resume}<span class="said bad"></span></div>`
+// One attempt: where it stands, View or Open, Resume; the tune of each generation that passed its
+// gate, started by hand, whether the attempt has ended or waits (the developer, 2026-11-02).
+function attemptBlock(config, attempt) {
+  const resume = resumeButton(config, attempt);
+  // The running job's own attempt opens its job's screen; every other attempt is viewed, a job running or not.
+  const mine = running && state.config === config.name && jobScreen() === attempt.name;
+  const view = mine ? ` <span class="tag">running</span> <button class="plain" data-screen-open="${escape(attempt.name)}">Open</button>`
+    : attempt.generations.length > 0 ? ` <button class="plain" data-screen-open="${escape(attempt.name)}">View</button>` : "";
+  const tunes = attempt.generations.filter((g) => g.passed).map((g) => tuneRow(g.player)).join("");
+  return `<div class="attempt"><div class="row"><b>${escape(attempt.name)}</b><span class="muted">${escape(attemptWhere(attempt))}</span>${view}${resume}<span class="said bad"></span></div>`
     + (tunes ? `<div class="tunes">${tunes}</div>` : "")
     + `</div>`;
 }
@@ -783,7 +783,7 @@ function source(name) {
   return catalog.sources.find((s) => s.name === name);
 }
 
-// A box's one line: the running job when it is this config's, else its latest run, or a source's corpus.
+// A box's one line: the running job when it is this config's, else its count of attempts, or a source's corpus.
 function boxLine(name) {
   if (name === "lc0" && converting()) {
     return `<span class="tag">running</span> Lc0's conversion`;
@@ -806,10 +806,10 @@ function boxLine(name) {
     return name === "pesto" ? `${line}; ${escape(tuneText(catalog.pesto.tune))}` : line;
   }
   const config = catalog.configs.find((c) => c.name === name);
-  // Only the count: no run is singled out, the latest being not always the one that matters.
-  const runs = config ? config.runs.length : 0;
-  if (runs === 0) return `<span class="muted">no run yet</span>`;
-  return runs === 1 ? "1 run" : `${runs} runs`;
+  // Only the count: no attempt is singled out, the latest being not always the one that matters.
+  const attempts = config ? config.attempts.length : 0;
+  if (attempts === 0) return `<span class="muted">no attempt yet</span>`;
+  return attempts === 1 ? "1 attempt" : `${attempts} attempts`;
 }
 
 function drawBoxes() {
@@ -839,19 +839,19 @@ function corpusSection(name) {
   return `<section><h2>Corpus</h2><div class="row"><span>${escape(entry.summary)}</span>${button}<span class="said bad"></span></div>${progress}</section>`;
 }
 
-// The open config's page below its live sections: its runs and New run, or a source's corpus, and
+// The open config's page below its live sections: its attempts and New attempt, or a source's corpus, and
 // pesto's tune.
 function drawConfig() {
-  const text = current + currentRun + JSON.stringify(catalog) + running + state.slot.running + state.slot.kind + state.job + jobScreen() + !!token
+  const text = current + currentAttempt + JSON.stringify(catalog) + running + state.slot.running + state.slot.kind + state.job + jobScreen() + !!token
     + claimedMachines().join();
   if (text === catalogDrawn) return;
   catalogDrawn = text;
   const element = document.getElementById("config");
-  if (current === TRIALS && currentRun !== null) {
+  if (current === TRIALS && currentAttempt !== null) {
     element.innerHTML = trialScreen();
     bindTrialForm(element);
-  } else if (currentRun !== null) {
-    element.innerHTML = runScreen();
+  } else if (currentAttempt !== null) {
+    element.innerHTML = attemptScreen();
   } else if (current === TRIALS) {
     element.innerHTML = trialsScreen();
     bindTrialForm(element);
@@ -867,22 +867,22 @@ function drawConfig() {
       element.innerHTML = `<section class="bad">no config ${escape(current)} in configs/</section>`;
       return;
     }
-    const runs = config.runs.map((run) => runBlock(config, run)).join("") || `<div class="muted">no run yet</div>`;
+    const attempts = config.attempts.map((attempt) => attemptBlock(config, attempt)).join("") || `<div class="muted">no attempt yet</div>`;
     const fresh = token
-      ? `<div class="row newrun"><button data-forge="${escape(config.name)}" data-run="new"${forgeDisabled(true)}>New run</button>`
-        + ` <button data-forge="${escape(config.name)}" data-run="new" data-scaled${forgeDisabled(false)}>New scaled run</button>`
+      ? `<div class="row newattempt"><button data-forge="${escape(config.name)}" data-attempt="new"${forgeDisabled(true)}>New attempt</button>`
+        + ` <button data-forge="${escape(config.name)}" data-attempt="new" data-scaled${forgeDisabled(false)}>New scaled attempt</button>`
         + `<span class="said bad"></span></div>`
       : "";
-    const gpu = token && noGpu() ? `<div class="muted">no CUDA GPU on this machine: a full run's training is not available here, its other phases are; a scaled run trains on the CPU</div>` : "";
-    element.innerHTML = `<section><h2>Runs</h2>${gpu}${runs}${fresh}</section>`;
+    const gpu = token && noGpu() ? `<div class="muted">no CUDA GPU on this machine: a full attempt's training is not available here, its other phases are; a scaled attempt trains on the CPU</div>` : "";
+    element.innerHTML = `<section><h2>Attempts</h2>${gpu}${attempts}${fresh}</section>`;
   }
   element.querySelectorAll("[data-forge]").forEach((button) => {
     button.onclick = () => {
-      if (button.dataset.run === "new") {
+      if (button.dataset.attempt === "new") {
         const config = catalog.configs.find((c) => c.name === button.dataset.forge);
-        pendingNew = { config: button.dataset.forge, runs: config ? config.runs.length : 0 };
+        pendingNew = { config: button.dataset.forge, attempts: config ? config.attempts.length : 0 };
       }
-      const words = ["--forge", button.dataset.forge, button.dataset.run];
+      const words = ["--forge", button.dataset.forge, button.dataset.attempt];
       // The smithy's fixed factor, `scale::DEFAULT`.
       if (button.dataset.scaled !== undefined) words.push("scaled");
       start(words, button);
@@ -1017,46 +1017,46 @@ function drawBookProgress() {
   if (button) button.onclick = () => send("control/job/stop", BOOKS);
 }
 
-// A network's config, from its run's name, `<config>-r<n>`.
-const configOf = (network) => network.run.replace(/-r\d+$/, "");
-// A run's number, so the latest is the highest.
-const runNumber = (run) => Number((run.match(/-r(\d+)$/) || [0, 0])[1]);
+// A network's config, from its attempt's name, `<config>-a<n>`.
+const configOf = (network) => network.attempt.replace(/-a\d+$/, "");
+// An attempt's number, so the latest is the highest.
+const attemptNumber = (attempt) => Number((attempt.match(/-a(\d+)$/) || [0, 0])[1]);
 // Each distinct value of `key` among `list`, in order.
 const distinct = (list, key) => [...new Set(list.map(key))];
 
-// The network a cascade's step chooses: at `level` (config, run, generation), `value`'s latest run,
+// The network a cascade's step chooses: at `level` (config, attempt, generation), `value`'s latest attempt,
 // then its latest generation, then that generation's winner, or its first candidate without one; at
 // network, `value` itself. PeSTO is a config of its own.
 function cascade(level, value, network) {
   if (level === "network" || value === "pesto") return value;
-  const trained = catalog.networks.filter((n) => n.run !== null);
+  const trained = catalog.networks.filter((n) => n.attempt !== null);
   let list = trained.filter((n) => configOf(n) === (level === "config" ? value : configOf(network)));
-  const run = level === "config" ? Math.max(...list.map((n) => runNumber(n.run))) : runNumber(level === "run" ? value : network.run);
-  list = list.filter((n) => runNumber(n.run) === run);
+  const attempt = level === "config" ? Math.max(...list.map((n) => attemptNumber(n.attempt))) : attemptNumber(level === "attempt" ? value : network.attempt);
+  list = list.filter((n) => attemptNumber(n.attempt) === attempt);
   const generation = level === "generation" ? Number(value) : Math.max(...list.map((n) => n.generation));
   list = list.filter((n) => n.generation === generation);
   const chosen = list.find((n) => n.winner) || list[0];
   return chosen ? chosen.name : "pesto";
 }
 
-// One side's choices, a cascade of short selects: the config (PeSTO among them), its run, the run's
+// One side's choices, a cascade of short selects: the config (PeSTO among them), its attempt, the attempt's
 // generation, the generation's network, each narrowed by the one before, a new choice taking the
 // latest winner below it (`cascade`); then its parameters, tuned only where it has a tune.
 function sideRow(label, side) {
   // A choice no longer offered (its network gone) falls back to PeSTO, the catalog's first.
   const network = catalog.networks.find((n) => n.name === trialForm[side]) || catalog.networks[0];
   trialForm[side] = network.name;
-  const trained = catalog.networks.filter((n) => n.run !== null);
+  const trained = catalog.networks.filter((n) => n.attempt !== null);
   const step = (level, choices) => `<select data-cascade="${side}" data-level="${level}">${choices}</select>`;
-  const configs = option("pesto", "PeSTO", network.run === null)
-    + distinct(trained, configOf).map((c) => option(c, c, network.run !== null && configOf(network) === c)).join("");
+  const configs = option("pesto", "PeSTO", network.attempt === null)
+    + distinct(trained, configOf).map((c) => option(c, c, network.attempt !== null && configOf(network) === c)).join("");
   let steps = step("config", configs);
-  if (network.run !== null) {
+  if (network.attempt !== null) {
     const ofConfig = trained.filter((n) => configOf(n) === configOf(network));
-    const ofRun = ofConfig.filter((n) => n.run === network.run);
-    const ofGeneration = ofRun.filter((n) => n.generation === network.generation);
-    steps += step("run", distinct(ofConfig, (n) => n.run).map((r) => option(r, `run ${runNumber(r)}`, r === network.run)).join(""))
-      + step("generation", distinct(ofRun, (n) => n.generation).map((g) => option(String(g), `generation ${g}`, g === network.generation)).join(""))
+    const ofAttempt = ofConfig.filter((n) => n.attempt === network.attempt);
+    const ofGeneration = ofAttempt.filter((n) => n.generation === network.generation);
+    steps += step("attempt", distinct(ofConfig, (n) => n.attempt).map((r) => option(r, `attempt ${attemptNumber(r)}`, r === network.attempt)).join(""))
+      + step("generation", distinct(ofAttempt, (n) => n.generation).map((g) => option(String(g), `generation ${g}`, g === network.generation)).join(""))
       + step("network", ofGeneration.map((n) => {
         // The winner's lambda beside it, which its name leaves out.
         const what = n.winner ? `winner (l${lambdaText(n.lambda)})` : `lambda ${lambdaText(n.lambda)}`;
@@ -1085,9 +1085,9 @@ function trialWords() {
 
 // The trials' screen: New trial (on this machine alone), then the log, newest first.
 function trialsScreen() {
-  // The challenger, at first, the winner of the latest config's latest run's latest generation.
+  // The challenger, at first, the winner of the latest config's latest attempt's latest generation.
   if (!trialForm.challenger) {
-    const configs = distinct(catalog.networks.filter((n) => n.run !== null), configOf);
+    const configs = distinct(catalog.networks.filter((n) => n.attempt !== null), configOf);
     trialForm.challenger = configs.length > 0 ? cascade("config", configs[configs.length - 1]) : "pesto";
   }
   const f = trialForm;
@@ -1140,8 +1140,8 @@ function trialsScreen() {
 // same card from its record, its log line, and Resume for a stopped one.
 function trialScreen() {
   if (jobHere()) return "";
-  const t = catalog.trials.find((trial) => String(trial.number) === currentRun);
-  if (!t) return running ? "" : `<section class="muted">trial ${escape(currentRun)} is not kept</section>`;
+  const t = catalog.trials.find((trial) => String(trial.number) === currentAttempt);
+  if (!t) return running ? "" : `<section class="muted">trial ${escape(currentAttempt)} is not kept</section>`;
   const view = { trial: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion };
   const resume = token && t.verdict.startsWith("stopped")
     ? `<div class="row"><button data-resume-trial="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span></div>` : "";
@@ -1207,35 +1207,35 @@ function bindTrialForm(element) {
   });
 }
 
-// A run's screen below its job and its view: Resume when no job runs; a tune's, only that it is not
-// running; while another job runs, that it does.
-function runScreen() {
+// An attempt's screen below its job and its view: Resume when no job runs; a tune's, only that it is
+// not running; while another job runs, that it does.
+function attemptScreen() {
   if (jobHere()) return "";
-  if (running) return `<section class="muted">${escape(state.job)} is running: no other run is viewed meanwhile</section>`;
+  if (running) return `<section class="muted">${escape(state.job)} is running: no other attempt is viewed meanwhile</section>`;
   const config = catalog.configs.find((c) => c.name === current);
-  const run = config && config.runs.find((r) => r.name === currentRun);
-  if (!run) {
-    return currentRun.startsWith("tune of ") ? "" : `<section class="bad">no run ${escape(currentRun)} of ${escape(current)}</section>`;
+  const attempt = config && config.attempts.find((r) => r.name === currentAttempt);
+  if (!attempt) {
+    return currentAttempt.startsWith("tune of ") ? "" : `<section class="bad">no attempt ${escape(currentAttempt)} of ${escape(current)}</section>`;
   }
-  const resume = resumeButton(config, run);
-  return resume ? `<section><div class="row"><span>${escape(runWhere(run))}</span>${resume}<span class="said bad"></span></div></section>` : "";
+  const resume = resumeButton(config, attempt);
+  return resume ? `<section><div class="row"><span>${escape(attemptWhere(attempt))}</span>${resume}<span class="said bad"></span></div></section>` : "";
 }
 
-function findRun(name) {
+function findAttempt(name) {
   for (const config of catalog.configs) {
-    const run = config.runs.find((r) => r.name === name);
-    if (run) return run;
+    const attempt = config.attempts.find((r) => r.name === name);
+    if (attempt) return attempt;
   }
   return null;
 }
 
-// The view on a run's screen, opened on its latest generation, where a job just ended; none
-// elsewhere, nor on the running job's own run, whose screen is the live job's. Another run is viewed
-// while a job runs: the smithy reads a closed generation from its files.
+// The view on an attempt's screen, opened on its latest generation, where a job just ended; none
+// elsewhere, nor on the running job's own attempt, whose screen is the live job's. Another attempt is
+// viewed while a job runs: the smithy reads a closed generation from its files.
 function syncView() {
-  const config = currentRun !== null && catalog.configs.find((c) => c.name === current);
-  const run = config && config.runs.find((r) => r.name === currentRun);
-  const wanted = run && run.generations.length > 0 && !(running && jobHere());
+  const config = currentAttempt !== null && catalog.configs.find((c) => c.name === current);
+  const attempt = config && config.attempts.find((r) => r.name === currentAttempt);
+  const wanted = attempt && attempt.generations.length > 0 && !(running && jobHere());
   if (!wanted) {
     if (viewing) {
       viewing = null;
@@ -1243,9 +1243,9 @@ function syncView() {
     }
     return;
   }
-  if (viewing && viewing.run === run.name) return;
-  const last = run.generations[run.generations.length - 1];
-  viewing = { run: run.name, generation: last.generation };
+  if (viewing && viewing.attempt === attempt.name) return;
+  const last = attempt.generations[attempt.generations.length - 1];
+  viewing = { attempt: attempt.name, generation: last.generation };
   drawViewHead();
   drawViewBody();
 }
@@ -1254,15 +1254,15 @@ function syncView() {
 function drawViewHead() {
   const head = document.getElementById("viewHead");
   const section = document.getElementById("view");
-  const run = viewing && findRun(viewing.run);
-  section.classList.toggle("hidden", !run);
-  if (!run) {
+  const attempt = viewing && findAttempt(viewing.attempt);
+  section.classList.toggle("hidden", !attempt);
+  if (!attempt) {
     viewing = null;
     return;
   }
-  const generation = run.generations.find((g) => g.generation === viewing.generation) || run.generations[run.generations.length - 1];
+  const generation = attempt.generations.find((g) => g.generation === viewing.generation) || attempt.generations[attempt.generations.length - 1];
   viewing.generation = generation.generation;
-  const generations = run.generations.map((g) => option(String(g.generation), `generation ${g.generation}${g.passed ? ", passed" : ""}`, g.generation === viewing.generation)).join("");
+  const generations = attempt.generations.map((g) => option(String(g.generation), `generation ${g.generation}${g.passed ? ", passed" : ""}`, g.generation === viewing.generation)).join("");
   head.innerHTML = `<div class="row"><h2>Viewing</h2><select id="viewGeneration">${generations}</select></div>`;
   document.getElementById("viewGeneration").onchange = (event) => {
     viewing.generation = Number(event.target.value);
@@ -1276,8 +1276,8 @@ async function drawViewBody() {
   const asked = { ...viewing };
   const body = document.getElementById("viewBody");
   try {
-    const response = await fetch(`view/${encodeURIComponent(asked.run)}/${asked.generation}`, { cache: "no-store" });
-    if (!viewing || viewing.run !== asked.run || viewing.generation !== asked.generation) return;
+    const response = await fetch(`view/${encodeURIComponent(asked.attempt)}/${asked.generation}`, { cache: "no-store" });
+    if (!viewing || viewing.attempt !== asked.attempt || viewing.generation !== asked.generation) return;
     if (!response.ok) {
       body.innerHTML = `<div class="bad">${escape((await response.text()).trim())}</div>`;
       return;
@@ -1310,18 +1310,18 @@ function drawConversion() {
   if (token) document.getElementById("stopJob").onclick = () => send("control/job/stop", "lc0");
 }
 
-// The job: on its own screen (a run's, a tune's, or a source's for Play), running with Stop (on this
+// The job: on its own screen (an attempt's, a tune's, or a source's for Play), running with Stop (on this
 // machine alone), or how it ended; on its config's screen, while it runs, a line opening its screen.
 function drawJob() {
-  if (current === "lc0" && currentRun === null) {
+  if (current === "lc0" && currentAttempt === null) {
     drawConversion();
     return;
   }
   const section = document.getElementById("job");
-  const here = currentRun !== null ? jobHere() : Boolean((SOURCES.includes(current) || current === TRIALS) && state.job && state.config === current && !jobScreen());
-  const elsewhere = currentRun === null && !here && state.running && state.config === current && jobScreen() !== null;
+  const here = currentAttempt !== null ? jobHere() : Boolean((SOURCES.includes(current) || current === TRIALS) && state.job && state.config === current && !jobScreen());
+  const elsewhere = currentAttempt === null && !here && state.running && state.config === current && jobScreen() !== null;
   // A trial's own screen has no box: its card names the players and holds its Stop.
-  const shown = (here && !(current === TRIALS && currentRun !== null)) || elsewhere;
+  const shown = (here && !(current === TRIALS && currentAttempt !== null)) || elsewhere;
   section.classList.toggle("hidden", !shown);
   if (!shown) return;
   const where = state.phase ? `generation ${state.generation}, phase ${phaseName(state.phase)}` : "";
@@ -1338,7 +1338,7 @@ function drawJob() {
     // A gate ends the job with the state already moved on, to the next generation or to stopped, and
     // its line says so: the phase would read as one under way. A job stopped mid-phase keeps it, its
     // only record of where it stopped.
-    const atBoundary = /waits for Resume|the run stops here/.test(state.finished || "");
+    const atBoundary = /waits for Resume|the attempt stops here/.test(state.finished || "");
     const tail = where && !atBoundary ? `; ${escape(where)}` : "";
     section.innerHTML = `<h2>Ended</h2><div class="muted">${escape(state.finished || "")}${tail}</div>`;
     return;
@@ -1363,7 +1363,7 @@ function bindStop() {
 // screen; a forge's phases while it runs, its view showing them once it ends.
 function drawLive() {
   const section = document.getElementById("work");
-  const shown = currentRun !== null
+  const shown = currentAttempt !== null
     ? jobHere() && (state.work.kind === "tune" || state.work.kind === "trial")
     : Boolean(current === "pesto" && state.job && state.config === "pesto" && !jobScreen() && state.work.kind === "self_play");
   const stop = shown && state.work.kind === "trial" && state.running ? stopButton() : "";
@@ -1394,7 +1394,7 @@ function draw() {
     return;
   }
   document.getElementById("pageTitle").textContent =
-    currentRun === null ? current : current === TRIALS ? `trial ${currentRun}` : currentRun + scaledMark(currentRun);
+    currentAttempt === null ? current : current === TRIALS ? `trial ${currentAttempt}` : currentAttempt + scaledMark(currentAttempt);
   // New trial pressed: its screen, once it plays; forgotten if it never did.
   if (pendingTrial && catalog) {
     const screen = state.config === TRIALS ? jobScreen() : null;
@@ -1409,16 +1409,16 @@ function draw() {
   const own = jobHere() ? (!state.running ? "ended" : state.job_stopping ? "stopping" : "running") : status;
   document.getElementById("pageSub").innerHTML = `${escape(own + stopping)}${updated}`;
   if (!catalog) return;
-  // New run pressed: its screen, once the catalog lists the run; forgotten if the job ended first.
+  // New attempt pressed: its screen, once the catalog lists the attempt; forgotten if the job ended first.
   if (pendingNew) {
     const config = catalog.configs.find((c) => c.name === pendingNew.config);
-    if (config && config.runs.length > pendingNew.runs) {
+    if (config && config.attempts.length > pendingNew.attempts) {
       pendingNew = null;
-      location.hash = screenHash(config.name, config.runs[config.runs.length - 1].name);
+      location.hash = screenHash(config.name, config.attempts[config.attempts.length - 1].name);
       return;
     }
-    // A scaled one's job is named "<config>, a new run scaled 1/<s>".
-    if (!state.running && state.job && state.job.startsWith(`${pendingNew.config}, a new run`)) pendingNew = null;
+    // A scaled one's job is named "<config>, a new attempt scaled 1/<s>".
+    if (!state.running && state.job && state.job.startsWith(`${pendingNew.config}, a new attempt`)) pendingNew = null;
   }
   drawJob();
   drawLive();
@@ -1473,11 +1473,11 @@ function drawConvertProgress() {
   redraw(element, live.downloads.map((line) => place("downloading", line)).join("") + place("converting", live.conversion) + corpus(live.cap));
 }
 
-// Opens the screen the address names: `#<config>`, or `#<config>/<run>`.
+// Opens the screen the address names: `#<config>`, or `#<config>/<attempt>`.
 function route() {
-  const [name, run] = location.hash.slice(1).split("/").map(decodeURIComponent);
+  const [name, attempt] = location.hash.slice(1).split("/").map(decodeURIComponent);
   current = name || null;
-  currentRun = (current && run) || null;
+  currentAttempt = (current && attempt) || null;
   viewing = null;
   catalogDrawn = "";
   document.getElementById("job").dataset.key = "";
@@ -1531,9 +1531,9 @@ async function pollLive() {
     // steps that have none.
     const html = bars.map(liveLine).join("");
     // Not on a forge config's own screen: its job's screen shows them.
-    // Not on the trials' screens either: a trial draws its own bar on its own. On a run's screen, only
-    // the running job's own: on another run's, viewed while it runs, they would read as that run's.
-    const shown = html !== "" && current !== TRIALS && (current === null || (currentRun !== null && jobHere()) || SOURCES.includes(current));
+    // Not on the trials' screens either: a trial draws its own bar on its own. On an attempt's screen,
+    // only the running job's own: on another attempt's, viewed while it runs, they would read as that attempt's.
+    const shown = html !== "" && current !== TRIALS && (current === null || (currentAttempt !== null && jobHere()) || SOURCES.includes(current));
     for (const section of document.querySelectorAll("section.live")) {
       redraw(section, html);
       section.classList.toggle("hidden", !shown);
@@ -1544,8 +1544,8 @@ async function pollLive() {
   setTimeout(pollLive, 250);
 }
 
-// One level up: a run's screen to its config's, a config's to the main page.
-document.getElementById("back").onclick = () => { location.hash = currentRun === null ? "" : screenHash(current); };
+// One level up: an attempt's screen to its config's, a config's to the main page.
+document.getElementById("back").onclick = () => { location.hash = currentAttempt === null ? "" : screenHash(current); };
 window.onhashchange = route;
 route();
 poll();

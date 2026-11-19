@@ -16,7 +16,7 @@ use crate::stacked_adamw::StackedAdamW;
 use crate::stacked_network::StackedNetwork;
 use crate::stacked_transformer::StackedTransformer;
 use crate::{
-    arm_slice, batch, checkpoint_store, game_labels, history, round, run_config, stacked_network, stages, test_cache, train_stream,
+    arm_slice, batch, checkpoint_store, game_labels, history, round, attempt_config, stacked_network, stages, test_cache, train_stream,
     transformer_batch,
 };
 
@@ -128,8 +128,8 @@ impl Rule {
     }
 }
 
-/// Opens one lambda's run, in `run_dir`, for `train_in_lockstep`: freezes or checks its
-/// `run_config.txt` and replays where it is in its rates. Its weights are loaded into the stack later
+/// Opens one lambda's training, in `run_dir`, for `train_in_lockstep`: freezes or checks its
+/// `attempt_config.txt` and replays where it is in its rates. Its weights are loaded into the stack later
 /// (`open_stack`). `source` is the dataset it trains on.
 #[allow(clippy::too_many_arguments)]
 fn open_arm(
@@ -151,11 +151,11 @@ fn open_arm(
 
     // Before the weights are even built: everything below derives its position in the run from
     // its run step (`StackedAdamW::run_step`) and its rate from `history.tsv`, so the fields those derivations read
-    // have to be the same ones the earlier invocations of this run used. See `run_config`'s own module
+    // have to be the same ones the earlier invocations of this attempt used. See `attempt_config`'s own module
     // doc comment for what each frozen field protects.
     let mut frozen: Vec<(&str, String)> = vec![
         ("architecture", format!("{:?}", config.architecture)),
-        // What the output is trained to mean and the loss: a run started under the atan curve and
+        // What the output is trained to mean and the loss: an attempt started under the atan curve and
         // the matching loss records no such line, so it is refused rather than resumed.
         ("curve", format!("{} bce", fattorini::labels::LOGISTIC.describe())),
         // The dataset actually trained on.
@@ -166,8 +166,8 @@ fn open_arm(
         ("steps_per_round", steps_per_round.to_string()),
         ("warmup_rounds", warmup_rounds.to_string()),
     ];
-    // Patience's line is kept as it was, so a patience run begun before budgets resumes; a budget
-    // writes its own, which a patience run's file lacks, so neither resumes as the other.
+    // Patience's line is kept as it was, so a patience attempt begun before budgets resumes; a budget
+    // writes its own, which a patience attempt's file lacks, so neither resumes as the other.
     match rule {
         Rule::Patience { patience_rounds, .. } => frozen.push(("patience_rounds", patience_rounds.to_string())),
         Rule::Budget(budget) => {
@@ -177,7 +177,7 @@ fn open_arm(
     }
     frozen.push(("train_rows", train_rows.to_string()));
     frozen.push(("test_rows", test_rows.to_string()));
-    run_config::freeze_or_verify(&format!("{run_dir}/run_config.txt"), &frozen);
+    attempt_config::freeze_or_verify(&format!("{run_dir}/{}", attempt_config::FILE), &frozen);
 
     let standing = replay(&history_path, steps_per_round, rule);
     Arm {
@@ -422,7 +422,7 @@ pub(crate) fn open_stack<N: StackedModel>(
 
 /// What differs between the tracks for `train_in_lockstep`, beyond its type parameters.
 pub(crate) struct LockstepParts<'a> {
-    /// The dataset trained on, as `run_config.txt` freezes it.
+    /// The dataset trained on, as `attempt_config.txt` freezes it.
     pub(crate) source: &'a str,
     /// Every lambda of the network, the trained ones included: the round block shows them all.
     pub(crate) grid: Vec<ArmLambda>,

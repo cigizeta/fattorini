@@ -10,7 +10,7 @@ architecture:
 training:
   # Training starts at the first rate and moves to the next after 8 rounds without a new best test
   # loss, counted from the latest of the last best, the last switch and the end of warmup; the last
-  # rate running out of patience ends the run. A scalar is a single rate.
+  # rate running out of patience ends the attempt. A scalar is a single rate.
   learning_rate: [1.0e-3, 3.0e-4, 1.0e-4]
   training_batch_size: 1024
   test_batch_size: 16384

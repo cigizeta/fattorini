@@ -4,8 +4,8 @@
 //! Top-level directories, by role: `configs/` holds hand-written, checked-in configs (real source
 //! code, unlike everything below -- `/data/` is entirely gitignored, `.gitignore`); `data/lc0/` holds
 //! Lc0's games, converted by the smithy's Convert job, and `data/pesto/` PeSTO's, played by its Play
-//! job, each with its frozen test set; `data/networks/` holds the training server's runs, each with its
-//! own games (`players::run_dir`).
+//! job, each with its frozen test set; `data/networks/` holds the training server's attempts, each with
+//! its own games (`players::attempt_dir`).
 
 use serde::Deserialize;
 

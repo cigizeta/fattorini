@@ -95,7 +95,7 @@ pub(crate) fn read_candidate_step(lambda_dir: &str) -> Result<u64, String> {
     generation::record_field(&text, "step", &path)?.parse().map_err(|error| format!("{path}: invalid step: {error}"))
 }
 
-/// Writes `fields` to `path` as one `name<TAB>value` line each, like `run_config.txt`: a value may hold
+/// Writes `fields` to `path` as one `name<TAB>value` line each, like `attempt_config.txt`: a value may hold
 /// spaces but never a tab. Under a staging name and renamed into place, so a reader never sees a
 /// half-written record.
 pub(crate) fn write_record(path: &str, fields: &[(&str, String)]) {

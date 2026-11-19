@@ -16,11 +16,11 @@
 //! - `stockfish-elo-<rating>`, rating 1320 to 3190: the same executable, limited to that calibrated
 //!   rating through `UCI_LimitStrength` and `UCI_Elo`.
 //! - Any other `kind: uci` engine of the registry, by its name, e.g. `reckless`, with its options.
-//! - `<config>-g<g>-l<lambda>-r<n>`, e.g. `pesto-psq-g1-l0.95-r1`, a forge run's network
+//! - `<config>-g<g>-l<lambda>-a<n>`, e.g. `pesto-psq-g1-l0.95-a1`, a forge attempt's network
 //!   (`players::parse_network_name`): Fattorini evaluating with that lambda's candidate in
 //!   generation `g`.
-//! - `<config>-g<g>-r<n>`, e.g. `pesto-psq-g1-r1`: generation `g`'s winner, as its `generations.tsv`
-//!   records it. This machine's copy of the run first, then the remote's, where its closed
+//! - `<config>-g<g>-a<n>`, e.g. `pesto-psq-g1-a1`: generation `g`'s winner, as its `generations.tsv`
+//!   records it. This machine's copy of the attempt first, then the remote's, where its closed
 //!   generations move.
 //!
 //! A Fattorini player, pesto or a network, is always followed by what it plays with, so that its name
@@ -231,7 +231,7 @@ pub fn plays_in_process(one: &str, two: &str, engines: &Engines) -> bool {
 const SUFFIXES: &str = TuningSuffix::WORDS;
 
 /// `name` split into the player and its suffix (`players::TuningSuffix`), `None` when it has no
-/// `@`: `pesto-psq-g1-r1@search-tuned` is `pesto-psq-g1-r1` with `TuningSuffix::SearchTuned`.
+/// `@`: `pesto-psq-g1-a1@search-tuned` is `pesto-psq-g1-a1` with `TuningSuffix::SearchTuned`.
 fn split_suffix(name: &str) -> Result<(&str, Option<TuningSuffix>), String> {
     let Some((player, suffix)) = name.split_once('@') else {
         return Ok((name, None));
@@ -244,11 +244,11 @@ fn split_suffix(name: &str) -> Result<(&str, Option<TuningSuffix>), String> {
 
 /// The search parameters the Fattorini player `player` has tuned, `None` if it has none: pesto's in
 /// `players::PESTO_TUNING_DIR`, a network's beside its file (`nnue::read_tuning_beside`).
-fn tuned_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<SearchParameters>, String> {
+fn tuned_parameters(player: &str, attempt_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<SearchParameters>, String> {
     if player == "pesto" {
         return players::pesto_parameters();
     }
-    let path = players::resolve_network_file_in(player, run_dir)?;
+    let path = players::resolve_network_file_in(player, attempt_dir)?;
     Ok(match fattorini::nnue::read_tuning_beside(&path)? {
         Tuning::Parameters(parameters) => Some(parameters),
         Tuning::Untuned => None,
@@ -257,20 +257,20 @@ fn tuned_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, Strin
 
 /// The time parameters the Fattorini player `player` has tuned, `None` if it has none, as
 /// `tuned_parameters`.
-fn tuned_time_parameters(player: &str, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<TimeParameters>, String> {
+fn tuned_time_parameters(player: &str, attempt_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<TimeParameters>, String> {
     if player == "pesto" {
         return players::pesto_time_parameters();
     }
-    fattorini::nnue::read_time_tuning_beside(&players::resolve_network_file_in(player, run_dir)?)
+    fattorini::nnue::read_time_tuning_beside(&players::resolve_network_file_in(player, attempt_dir)?)
 }
 
 /// The player `name` names, or why it names none. `in_process` is `plays_in_process` for the whole
 /// run: `pesto` and networks then play in-process; otherwise every player, Fattorini included, is
 /// a UCI subprocess. An external engine's executable comes from `engines`.
 pub fn resolve_player(name: &str, in_process: bool, engines: &Engines) -> Result<EngineEntry, String> {
-    // This machine's copy of a run first, then the remote's, where its closed generations move.
-    resolve_player_with(name, in_process, engines, &players::run_dir).or_else(|local| {
-        let on_remote = |run: &str| -> Result<String, String> { Ok(remote::remote_path(&players::run_dir(run)?)) };
+    // This machine's copy of an attempt first, then the remote's, where its closed generations move.
+    resolve_player_with(name, in_process, engines, &players::attempt_dir).or_else(|local| {
+        let on_remote = |attempt: &str| -> Result<String, String> { Ok(remote::remote_path(&players::attempt_dir(attempt)?)) };
         resolve_player_with(name, in_process, engines, &on_remote)
             .map_err(|remote| if remote == local { local } else { format!("{local}; nor on the remote: {remote}") })
     })
@@ -295,10 +295,10 @@ fn fattorini_entry(net: Option<String>, in_process: bool) -> EngineEntry {
     entry
 }
 
-/// `resolve_player`, with where a run's directory is, so the tests can use temporary ones.
-fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<EngineEntry, String> {
+/// `resolve_player`, with where an attempt's directory is, so the tests can use temporary ones.
+fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, attempt_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<EngineEntry, String> {
     let (player, suffix) = split_suffix(name)?;
-    let mut entry = resolve_player_without_suffix(player, in_process, engines, run_dir)?;
+    let mut entry = resolve_player_without_suffix(player, in_process, engines, attempt_dir)?;
     if is_external(player, engines) {
         if suffix.is_some() {
             return Err(format!("{name:?}: an external engine takes no suffix, which only a Fattorini player has"));
@@ -310,8 +310,8 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
     };
     // A suffix whose files are missing is refused (the developer, 2026-11-13): a name never quietly
     // plays defaults.
-    let search = || tuned_parameters(player, run_dir)?.ok_or_else(|| format!("{name:?}: {player} has no search tune"));
-    let time = || tuned_time_parameters(player, run_dir)?.ok_or_else(|| format!("{name:?}: {player} has no time tune"));
+    let search = || tuned_parameters(player, attempt_dir)?.ok_or_else(|| format!("{name:?}: {player} has no search tune"));
+    let time = || tuned_time_parameters(player, attempt_dir)?.ok_or_else(|| format!("{name:?}: {player} has no time tune"));
     (entry.parameters, entry.time) = match suffix {
         TuningSuffix::Untuned => (Some(SearchParameters::DEFAULT), None),
         TuningSuffix::SearchTuned => (Some(search()?), None),
@@ -324,7 +324,7 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, run_dir:
 }
 
 /// `resolve_player_with` for a name with no `@` suffix.
-fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines, run_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<EngineEntry, String> {
+fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines, attempt_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<EngineEntry, String> {
     if name == "pesto" {
         return Ok(fattorini_entry(None, in_process));
     }
@@ -360,7 +360,7 @@ fn resolve_player_without_suffix(name: &str, in_process: bool, engines: &Engines
         return Ok(external_entry(engines.executable(name, name)?, Vec::new()));
     }
 
-    let path = players::resolve_network_file_in(name, run_dir)?;
+    let path = players::resolve_network_file_in(name, attempt_dir)?;
     Ok(fattorini_entry(Some(path), in_process))
 }
 
@@ -528,10 +528,10 @@ mod tests {
     #[test]
     fn fattorini_plays_in_process_only_against_fattorini() {
         let engines = engines();
-        assert!(plays_in_process("amanda-g1-r1@search-tuned", "pesto@untuned", &engines));
-        assert!(!plays_in_process("amanda-g1-r1@search-tuned", "stockfish-0", &engines), "an external engine puts both on UCI");
+        assert!(plays_in_process("amanda-g1-a1@search-tuned", "pesto@untuned", &engines));
+        assert!(!plays_in_process("amanda-g1-a1@search-tuned", "stockfish-0", &engines), "an external engine puts both on UCI");
         assert!(!plays_in_process("stockfish-elo-1500", "pesto@untuned", &engines));
-        assert!(!plays_in_process("reckless", "amanda-g1-r1@search-tuned", &engines), "a registered engine is external");
+        assert!(!plays_in_process("reckless", "amanda-g1-a1@search-tuned", &engines), "a registered engine is external");
     }
 
     #[test]
@@ -617,7 +617,7 @@ mod tests {
     #[test]
     fn a_registry_name_a_built_in_player_has_is_refused() {
         let path = test_executable();
-        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-r1", "amanda-g1-l0.70-r1", "fattorini@search-tuned"] {
+        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-a1", "amanda-g1-l0.70-a1", "fattorini@search-tuned"] {
             let entries = HashMap::from([(name.to_string(), registered(&path, &[]))]);
             assert!(Engines::from_entries(Some(entries), "test").is_err(), "{name:?}");
         }
@@ -626,32 +626,32 @@ mod tests {
     }
 
     #[test]
-    fn a_forge_runs_player_plays_its_candidate_over_uci_or_in_process() {
-        let root = std::env::temp_dir().join(format!("arena-run-player-{}", std::process::id()));
+    fn a_forge_attempts_player_plays_its_candidate_over_uci_or_in_process() {
+        let root = std::env::temp_dir().join(format!("arena-attempt-player-{}", std::process::id()));
         let root = root.to_str().unwrap().to_string();
         std::fs::remove_dir_all(&root).ok();
-        let runs = |run: &str| -> Result<String, String> { Ok(format!("{root}/runs/{run}")) };
-        let candidate = format!("{root}/runs/fine-r1/gen-1/lambda-0.05/candidate.nnue");
+        let attempts = |attempt: &str| -> Result<String, String> { Ok(format!("{root}/attempts/{attempt}")) };
+        let candidate = format!("{root}/attempts/fine-a1/gen-1/lambda-0.05/candidate.nnue");
         std::fs::create_dir_all(std::path::Path::new(&candidate).parent().unwrap()).unwrap();
         std::fs::write(&candidate, b"").unwrap();
 
-        let name = "fine-g1-l0.05-r1";
-        let entry = resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &runs).unwrap();
+        let name = "fine-g1-l0.05-a1";
+        let entry = resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &attempts).unwrap();
         assert_equal_footing(&entry);
         assert_eq!(entry.binary_path(), uci_player_path(&format!("{name}@untuned")));
         assert_eq!((entry.net.clone(), entry.parameters), (Some(candidate.clone()), Some(SearchParameters::DEFAULT)), "what its build embeds");
-        let entry = resolve_player_with(&format!("{name}@untuned"), true, &Engines::none(), &runs).unwrap();
+        let entry = resolve_player_with(&format!("{name}@untuned"), true, &Engines::none(), &attempts).unwrap();
         assert_eq!((entry.kind, entry.net, entry.parameters), (EngineKind::Network, Some(candidate.clone()), Some(SearchParameters::DEFAULT)));
-        let error = resolve_player_with("other-g1-r1@untuned", false, &Engines::none(), &runs).unwrap_err();
-        assert!(error.contains("no forge run"), "{error}");
-        for name in ["fine", "fine-g0-r1", "fine-x", "-g1-r1", "fine-g1-l1.50-r1", "fine-g1-l0.x-r1", "fine-0001-0.05", "fine-g1-l0.5-r1", "fine-g1-a1-l0.05-r1"] {
-            assert!(resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &runs).is_err(), "{name:?}");
+        let error = resolve_player_with("other-g1-a1@untuned", false, &Engines::none(), &attempts).unwrap_err();
+        assert!(error.contains("no forge attempt"), "{error}");
+        for name in ["fine", "fine-g0-a1", "fine-x", "-g1-a1", "fine-g1-l1.50-a1", "fine-g1-l0.x-a1", "fine-0001-0.05", "fine-g1-l0.5-a1", "fine-g1-l0.05-r1"] {
+            assert!(resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &attempts).is_err(), "{name:?}");
         }
 
         // Untuned: neither tuned suffix.
-        let resolve = |suffix: &str, in_process| resolve_player_with(&format!("{name}@{suffix}"), in_process, &Engines::none(), &runs);
+        let resolve = |suffix: &str, in_process| resolve_player_with(&format!("{name}@{suffix}"), in_process, &Engines::none(), &attempts);
         for in_process in [false, true] {
-            assert!(resolve_player_with(name, in_process, &Engines::none(), &runs).is_err(), "no suffix");
+            assert!(resolve_player_with(name, in_process, &Engines::none(), &attempts).is_err(), "no suffix");
             assert!(resolve("search-tuned", in_process).unwrap_err().contains("no search tune"));
             assert!(resolve("search-time-tuned", in_process).is_err());
         }

@@ -47,7 +47,7 @@ mod polyline;
 mod round;
 mod round_robin;
 mod rounds_display;
-mod run_config;
+mod attempt_config;
 mod scale;
 mod smithy;
 mod sprt;

@@ -44,25 +44,28 @@ file holding its sizes from generation 2 on and its gate (`grid_center`, `traini
 from the smithy's page, and every game is played by the arenas, `arena start`, one on every machine,
 over HTTP on the local network.
 
-A config can be forged more than once: each time is a **run**, numbered from 1, in
-`data/networks/<config>/run-<n>/` with its own copy of the config as it started, `config.yaml`, so
-editing `configs/` changes only new runs. Every phase resumes from the run's files. Run n is
-named `<config>-r<n>`, the first included (`pesto-psq-r1`, `pesto-psq-r2`). A network is named by
-its config, then each part marked by a letter, the run always and last:
+A config can be forged more than once: each time is an **attempt**, numbered from 1, in
+`data/networks/<config>/attempt-<n>/` with its own copy of the config as it started, `config.yaml`,
+so editing `configs/` changes only new attempts. Every phase resumes from the attempt's files.
+Attempt n is named `<config>-a<n>`, the first included (`pesto-psq-a1`, `pesto-psq-a2`). A network
+is named by its config, then each part marked by a letter, the attempt always and last:
 
-- a generation's winner, `<config>-g<g>-r<n>`: `pesto-psq-g1-r1`;
-- one lambda's candidate, `<config>-g<g>-l<lambda>-r<n>`, the lambda with two decimals:
-  `pesto-psq-g1-l0.95-r1`.
+- a generation's winner, `<config>-g<g>-a<n>`: `pesto-psq-g1-a1`;
+- one lambda's candidate, `<config>-g<g>-l<lambda>-a<n>`, the lambda with two decimals:
+  `pesto-psq-g1-l0.95-a1`.
+
+Attempts were called runs until 2026-11-19 (`-r<n>`, `run-<n>/`, `run_config.txt`); `./bin/arena
+rename-attempts` migrates what is left under the old names (a dry run; `--apply` makes the changes).
 
 A generation has at most one winner, so the winner's name leaves its lambda out; the page shows it
 beside it. A player is a network with what it plays with, always written after an `@`: `@untuned`,
 the defaults; `@search-tuned`, its search tune and the default clock; or `@search-time-tuned`, its
-search and time tunes (`pesto-psq-g1-r1@search-tuned`, `pesto@untuned`). A suffix whose tune is
+search and time tunes (`pesto-psq-g1-a1@search-tuned`, `pesto@untuned`). A suffix whose tune is
 missing is refused. Only a generation's winner is tuned.
 
 **Generation 1** trains on its source's whole corpus, judged on the source's whole frozen test set,
-with no play phase, and refuses to start until the corpus is complete; the run records the sizes in
-its `corpus.txt`. Its winner is gated against the PeSTO evaluation once: a fail ends the run, since
+with no play phase, and refuses to start until the corpus is complete; the attempt records the sizes
+in its `corpus.txt`. Its winner is gated against the PeSTO evaluation once: a fail ends the attempt, since
 it says the network is wrong; a pass makes it generation 2's teacher.
 
 From **generation 2** on, each generation has a **teacher**, the last champion, and runs unattended:
@@ -76,8 +79,8 @@ From **generation 2** on, each generation has a **teacher**, the last champion, 
    Each label blends a position's search score with the game's result, weighted by lambda.
 4. **Round robin.** The arenas play the candidates against each other; the best is the winner.
 5. **Gate.** The arenas play the winner against the teacher, an SPRT. A pass makes it the new
-   champion and the next generation's teacher, which starts when the developer presses the run's
-   Resume; a fail ends the run (its phase `stopped`), and a new run starts over.
+   champion and the next generation's teacher, which starts when the developer presses the attempt's
+   Resume; a fail ends the attempt (its phase `stopped`), and a new attempt starts over.
 
 A transformer, which the engine cannot play yet, ends at its training.
 
@@ -140,10 +143,10 @@ Google Drive for desktop, in streaming mode with My Drive on `G:`, on every mach
 included: Drive is Fattorini's store, `G:/My Drive/fattorini`, the same tree as the repository's `data/`. A file
 is made on the local disk and reaches Drive only whole, never written or appended there in place:
 
-- a run's networks (every candidate, every teacher) as soon as they are complete; the arenas read
+- an attempt's networks (every candidate, every teacher) as soon as they are complete; the arenas read
   them from Drive by their path there, waiting for one not yet visible on their machine, and giving
   its chore back after 30 minutes;
-- a run's living files (its state, logs, records) as whole copies at every phase boundary, so a dead
+- an attempt's living files (its state, logs, records) as whole copies at every phase boundary, so a dead
   local disk loses at most one phase;
 - a closed generation's directory, moved whole, its local copy deleted;
 - a tune's files every 15 minutes, then the whole tune beside its network at its end;
@@ -192,8 +195,8 @@ don't, it is training on the CPU.
 
 The smithy (`smithy`) runs one job at a time, a forge or a tune, and deals it as chores to
 the arenas (`arena`), at most one on every machine, each chore a number of tasks: a game, or a pair
-of games on one opening. A smithy runs on any machine: a full run trains only where a CUDA GPU is,
-and the page greys it out elsewhere, saying so; a scaled run (below) trains on the CPU. Several
+of games on one opening. A smithy runs on any machine: a full attempt trains only where a CUDA GPU
+is, and the page greys it out elsewhere, saying so; a scaled attempt (below) trains on the CPU. Several
 smithies may run at once, each arena playing for the one whose claim it holds.
 `data/machines.yaml` on Google Drive lists every machine, highest rank first: a smithy claims the
 arena of each, and between two jobs of the same kind (full or scaled) the higher-ranked smithy keeps
@@ -219,10 +222,10 @@ next try is.
 ```
 
 Jobs are started and stopped from its page, opened in a browser on that same machine,
-`http://127.0.0.1:47821/`. The page lists every forge config with every run of it: View shows any
-generation of a run, never resuming it; Resume continues a run that has not ended; New
-run starts the config afresh. Under a run, each generation whose winner passed its gate can be
-tuned (below), by hand, whether the run has ended or waits; `pesto` always can. One job at a time; when it ends, its result stays
+`http://127.0.0.1:47821/`. The page lists every forge config with every attempt of it: View shows
+any generation of an attempt, never resuming it; Resume continues an attempt that has not ended; New
+attempt starts the config afresh. Under an attempt, each generation whose winner passed its gate can
+be tuned (below), by hand, whether the attempt has ended or waits; `pesto` always can. One job at a time; when it ends, its result stays
 on the page until the next one starts, without restarting the smithy. The page opened from another
 machine shows the same, read-only.
 
@@ -268,43 +271,44 @@ LAN address. Every machine's firewall must allow both, once, below. An arena lis
 machine's LAN address as it was at `arena start`: after the machine changes network, stop and start
 it again.
 
-A stopped run resumes where it stopped with its Resume, on this smithy or any other: several
-smithies may run at once, on any machines, but a job runs in one only. A forge run, a tune, PeSTO's
+A stopped attempt resumes where it stopped with its Resume, on this smithy or any other: several
+smithies may run at once, on any machines, but a job runs in one only. A forge attempt, a tune, PeSTO's
 play, Lc0's Convert and the first freeze of a source's test set each hold a lease, in the memory of
 the smithy running the job. Starting one asks every other machine's smithy over the LAN (port
 47821), once, and waits for nothing: the job is refused while another smithy runs it, for 2 minutes
 after another stopped it (Drive syncing its last files), or when another smithy's build is too old
 to ask. A machine that does not answer is taken as off. To move a job, stop it where it runs, then
 resume it on the other machine. The `lease.txt` files older builds left on Drive are ignored and may
-be deleted. A forge run's open generation and state
+be deleted. A forge attempt's open generation and state
 are copied to Drive when it stops and every 30 minutes of training, and a Resume elsewhere copies
-them down. Full runs train only where CUDA is: on a machine without it, the page says so and offers
-scaled runs alone.
+them down. Full attempts train only where CUDA is: on a machine without it, the page says so and
+offers scaled attempts alone.
 
 An NNUE forge trains on its training set fully shuffled: its training first scatters the training set into
 `data/buckets/` on the smithy's local disk: once per source for generation 1 (about 15 GB for Lc0's,
 shared by every `lc0-` forge; PeSTO's likewise), and about 15 GB per self-play generation after. A disposable cache: deleting it costs only a new scatter. Each lambda keeps one checkpoint, its best
 so far (the others are deleted after every round).
 
-## Scaled runs
+## Scaled attempts
 
-For development, on any machine, a GPU or not: a run started with the page's New scaled run, at a fixed
-factor s of 1024 (`scale::DEFAULT`), every phase in minutes, nothing about strength.
-Data volumes and the work of a round divide by s, game counts by its square root, the search's
-depth loses log2(s) / 2 plies, each down to a floor that keeps its phase meaningful; the run's shape
-(lambdas, stages, patience, the gate's rules) stays the config's. The scale is frozen into the run's
-own `config.yaml` (`scale: <s>`) and marked on the page wherever the run is named.
+For development, on any machine, a GPU or not: an attempt started with the page's New scaled
+attempt, at a fixed factor s of 1024 (`scale::DEFAULT`), every phase in minutes, nothing about
+strength. Data volumes and the work of a round divide by s, game counts by its square root, the
+search's depth loses log2(s) / 2 plies, each down to a floor that keeps its phase meaningful; the
+attempt's shape (lambdas, stages, patience, the gate's rules) stays the config's. The scale is
+frozen into the attempt's own `config.yaml` (`scale: <s>`) and marked on the page wherever the
+attempt is named.
 
-A scaled run is a run like any other, numbered with the full ones and saved to Drive as they are. On a
+A scaled attempt is an attempt like any other, numbered with the full ones and saved to Drive as they are. On a
 source, it reads a 1/s share of the corpus, its first training files, scattered into buckets of
 their own (`data/buckets/lc0-s1024`), and a fixed subset of the source's frozen test set: sources
-are never scaled. Its networks play in their run alone: never snapshotted nor a side of a test, and tuned only
-by a tune scaled as their run, to debug the tune itself.
+are never scaled. Its networks play in their attempt alone: never snapshotted nor a side of a trial, and tuned
+only by a tune scaled as their attempt, to debug the tune itself.
 
 ## Matches
 
 ```bash
-./bin/arena duel pesto@untuned pesto-psq-g1-r1@search-tuned --time 10+0.1
+./bin/arena duel pesto@untuned pesto-psq-g1-a1@search-tuned --time 10+0.1
 ```
 
 - `match <a> <b> [<n>]`: a best of n games, 400 by default, stopped once decided; `--full` plays
@@ -312,8 +316,8 @@ by a tune scaled as their run, to debug the tune itself.
 - `sprt <a> <b> <elo>`: whether b is at least that many Elo stronger.
 - `duel <a> <b>`: until one is shown stronger, or 800 games (400 pairs).
 
-Each needs `--depth <d>` or `--time <base+inc>`. A player is a Fattorini player, `pesto` or a forge run's
-network (`pesto-psq-g1-r1`, `pesto-psq-g1-a2-l0.95-r1`), always followed by `@untuned`,
+Each needs `--depth <d>` or `--time <base+inc>`. A player is a Fattorini player, `pesto` or a forge attempt's
+network (`pesto-psq-g1-a1`, `pesto-psq-g1-l0.95-a2`), always followed by `@untuned`,
 `@search-tuned` or `@search-time-tuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
 `data/engines.yaml`, with no suffix. Against an external engine, the Fattorini player plays over
 UCI: the arena first builds it with its network and parameters embedded, as a snapshot, into
@@ -324,10 +328,10 @@ UCI: the arena first builds it with its network and parameters embedded, as a sn
 A snapshot is a release build of `fattorini` with a player's network and parameters embedded:
 
 ```bash
-./bin/arena snapshot pesto-psq-g1-r1@search-tuned
+./bin/arena snapshot pesto-psq-g1-a1@search-tuned
 ```
 
-The player is `pesto` or a full run's generation winner, with its suffix. The snapshot is
+The player is `pesto` or a full attempt's generation winner, with its suffix. The snapshot is
 written straight to Drive, never locally:
 `/g/My Drive/fattorini/data/snapshots/fattorini-<player>-<suffix>-<YYYYMMDD-HHMM>.exe`
 (UTC). A new snapshot replaces the older ones of the same player and suffix, so lichess-bot's
@@ -374,8 +378,8 @@ cargo-about --locked --features cli` (without `cli`, 0.9.3 installs no binary), 
 
 A tune of a network's search parameters by SPSA is the smithy's other job, its pairs played by the
 same arenas, started from the smithy's page: the winner of a generation that passed its gate in an
-ended forge run (`pesto-psq-g1-r1`), or `pesto`. The config's `tune:` says how long and at what
-control, the run's frozen copy for a network, `configs/pesto.yaml` for `pesto`:
+ended forge attempt (`pesto-psq-g1-a1`), or `pesto`. The config's `tune:` says how long and at what
+control, the attempt's frozen copy for a network, `configs/pesto.yaml` for `pesto`:
 
 ```yaml
 tune:
@@ -384,8 +388,8 @@ tune:
 ```
 
 A tune starts from its teacher's tune: generation g's from generation g - 1's winner's, a PeSTO
-run's generation 1 from PeSTO's; an Lc0 run's generation 1 and PeSTO itself from the default
-parameters. So a run's generations are tuned in order: a tune whose teacher has no finished tune is
+attempt's generation 1 from PeSTO's; an Lc0 attempt's generation 1 and PeSTO itself from the default
+parameters. So an attempt's generations are tuned in order: a tune whose teacher has no finished tune is
 refused, saying which to run first.
 
 The forge uses the tunes too. A generation's self-play plays its teacher's tune, and PeSTO's Play
@@ -393,8 +397,8 @@ plays PeSTO's: either is refused, saying so, while that tune is missing. Gates a
 the default parameters on both sides, PeSTO included, so they judge the evaluations alone.
 
 Under a clock the smithy benches its own machine at the start, and every arena scales its clock to
-its speed against that one. The result goes to the network's `search-parameters.txt`. A forge run's
-network is tuned in its generation's folder, `run-<n>/gen-<g>/search-tune/`.
+its speed against that one. The result goes to the network's `search-parameters.txt`. A forge attempt's
+network is tuned in its generation's folder, `attempt-<n>/gen-<g>/search-tune/`.
 
 **Then the time management:** once a network's search tune is finished, the page offers its time
 tune (`--time-tune <player>`): the 22 time parameters by SPSA, under the same `tune:` settings, both

@@ -1,7 +1,7 @@
 # lc0-halfk-threats-screlu-hidden at transform width 512 (2026-11-17, the halfk line's step 4):
 # the same network, corpus, forge and schedule, its accumulator 512 wide per perspective instead of
 # 256. Then pairwise at 512 alike, the two duelled, the winner against
-# lc0-halfk-threats-screlu-hidden-g1-r1 at 256: pairwise at 256 lost at depth 9, its head reading
+# lc0-halfk-threats-screlu-hidden-g1-a1 at 256: pairwise at 256 lost at depth 9, its head reading
 # half as many inputs, and both widen so that the width does not mix into their verdict. Differs
 # from lc0-halfk-threats-screlu-hidden by embedding_dim alone.
 
@@ -9,7 +9,7 @@
 # polyline measured on its corpus.
 lambda: polyline
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
-# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+# gate ends the attempt. Generation 1's are Lc0's corpus (lc0.yaml).
 training_positions: 1073741824
 # From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
 test_positions: 4194304

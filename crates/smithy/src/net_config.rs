@@ -44,8 +44,8 @@ pub struct Architecture {
     pub kind: ArchitectureKind,
 }
 
-/// The derived form, `king_buckets` written only when set: `run_config.txt` freezes this text
-/// (`lockstep`), so a run begun before the field existed reads the same and resumes, while a run of
+/// The derived form, `king_buckets` written only when set: `attempt_config.txt` freezes this text
+/// (`lockstep`), so an attempt begun before the field existed reads the same and resumes, while one of
 /// 8 or 10 buckets records them and never resumes as another layout.
 impl std::fmt::Debug for Architecture {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -273,12 +273,12 @@ pub enum ArchitectureKind {
 /// two agree rather than leaving a `None`/`Some` mismatch to surface later as a confusing panic
 /// somewhere in `main.rs`.
 ///
-/// **The training fields are read-only once a run has started.** The NNUE track derives where it
+/// **The training fields are read-only once an attempt has started.** The NNUE track derives where it
 /// reads from and how far into the current round it is from `optimizer.opt`'s persisted step count
-/// alone, so changing `training_batch_size` or `steps_per_round` between two invocations of one run
-/// would reinterpret every step already taken. `run_config.rs` freezes them beside the weights on the
-/// first invocation and refuses a later one that disagrees; the fix is to restore the value or start
-/// the run over, never to edit around it.
+/// alone, so changing `training_batch_size` or `steps_per_round` between two invocations of one
+/// attempt would reinterpret every step already taken. `attempt_config.rs` freezes them beside the
+/// weights on the first invocation and refuses a later one that disagrees; the fix is to restore the
+/// value or start the attempt over, never to edit around it.
 #[derive(Debug, Deserialize)]
 pub struct Training {
     /// The rates one run steps down through, in order: training starts at the first, moves abruptly
@@ -908,7 +908,7 @@ mod tests {
         assert!(error.contains("32, 8 or 10"), "{error}");
         let error = read_with("psq", "psq_threats_screlu", "  king_buckets: 8\n").expect_err("a psq kind has no king buckets").to_string();
         assert!(error.contains("a halfk kind's"), "{error}");
-        // `run_config.txt`'s frozen text: unchanged without the field, so older runs resume; the
+        // `attempt_config.txt`'s frozen text: unchanged without the field, so older attempts resume; the
         // layout in it with the field.
         let absent = format!("{:?}", read_with("debug-absent", "halfk_threats_screlu", "").unwrap().architecture);
         assert!(!absent.contains("king_buckets"), "{absent}");

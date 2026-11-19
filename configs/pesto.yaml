@@ -5,9 +5,9 @@
 
 # The corpus: 1024 x 1024 x 1024 training positions, as every self-play generation plays (raised from
 # 96 x 1024 x 1024 on 2026-11-03, the developer: every self-play about 1B), and the test games the
-# frozen test set is drawn from; generation 1 of every `pesto-` run trains on all of it.
+# frozen test set is drawn from; generation 1 of every `pesto-` attempt trains on all of it.
 training_positions: 1073741824
-# 4 x 1024 x 1024: the frozen test set every `pesto-` run's generation 1 is judged on.
+# 4 x 1024 x 1024: the frozen test set every `pesto-` attempt's generation 1 is judged on.
 test_positions: 4194304
 
 # Its tune: the default length, 32,768 pairs from the default parameters, at 10+0.1. Its Play plays

@@ -1,8 +1,8 @@
 # lc0-halfk-threats-pairwise-hidden with gentler rate steps (2026-11-17): the same network, corpus and
 # forge, its learning rates from 3e-3 to 3e-5 in steps of about 0.7 instead of about 0.3, with a
 # patience of 3 rounds instead of 6. An A/B of the schedule alone, against
-# lc0-halfk-threats-pairwise-hidden's run 1, trained only if pairwise wins the halfk line: in
-# lc0-halfk-threats-screlu's run 2, each rate kept training long after its gains had become small,
+# lc0-halfk-threats-pairwise-hidden's attempt 1, trained only if pairwise wins the halfk line: in
+# lc0-halfk-threats-screlu's attempt 2, each rate kept training long after its gains had become small,
 # noise renewing its best. Differs from lc0-halfk-threats-pairwise-hidden by learning_rate and
 # patience_rounds alone.
 
@@ -10,7 +10,7 @@
 # polyline measured on its corpus.
 lambda: polyline
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
-# gate ends the run. Generation 1's are Lc0's corpus (lc0.yaml).
+# gate ends the attempt. Generation 1's are Lc0's corpus (lc0.yaml).
 training_positions: 1073741824
 # From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
 test_positions: 4194304

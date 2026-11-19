@@ -2,13 +2,13 @@
 # and set each path to the executable on this machine. Paths use forward slashes in double quotes:
 # in a double-quoted YAML string a backslash starts an escape.
 #
-# Every entry is a UCI engine the arena can play by its name (`./bin/arena duel reckless self-psq-0001
-# --time 10+0.1`), with `options` sent to it. Hash, Threads and SyzygyPath are always set by the arena
+# Every entry is a UCI engine the arena can play by its name (`./bin/arena duel reckless
+# pesto-psq-g1-a1@search-tuned --time 10+0.1`), with `options` sent to it. Hash, Threads and SyzygyPath are always set by the arena
 # over whatever an entry says, so both sides of a match play on equal footing.
 #
 # `stockfish` is special: it only says where Stockfish is. The players stockfish-<level> and
 # stockfish-elo-<rating> run it with their handicap; Stockfish at full strength is stockfish-20.
-# A name a built-in player has (pesto, stockfish-..., <run>-NNNN) is refused.
+# A name a built-in player has (pesto, stockfish-..., <config>-g<g>-a<n>) is refused.
 engines:
   # Stockfish installed with `winget install Stockfish.Stockfish`; replace <you> with the Windows user.
   stockfish:
