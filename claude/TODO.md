@@ -43,8 +43,10 @@ buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no
 1. **Batch 8192: designed 2026-11-19** (batch-8192.md): adopted, no duel; the rate unchanged, 4096
    steps a round. Its two configs written the same day; no smoke attempt, the first full attempt
    checks it.
-2. **Speed: the profile** ("Speed", step 3): where the network's cost over PeSTO's goes, the
-   accumulator updates suspected. An idle machine, not the one converting.
+2. **Speed: the profile: done 2026-11-19** (speed-profile.md). The network 437 ns a node, PeSTO
+   226: evaluation 38.7% (finding the threats 16.5%), accumulator updates 11.8% (half of it
+   `ChangedRows::between` diffing the boards), move picking 16.3% (whole-list sorting 6.3%, PeSTO's
+   too). Next, each designed first: `between` from the move, partial sorting, incremental threats.
 3. **Lazy SMP, measured** ("Search"): nodes/s and time to a fixed depth, 1 thread against 8, on an
    idle machine with enough physical cores.
 4. **The test's Stop that did nothing** ("Data and tools"): `bindStop` read against `poll`'s
