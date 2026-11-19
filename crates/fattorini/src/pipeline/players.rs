@@ -7,7 +7,7 @@
 //!   it.
 //!
 //! A training run is an attempt (2026-11-19): names spelled `-r<n>` and directories `run-<n>/` from
-//! before are refused, and `arena rename-attempts` migrates them.
+//! before are refused: every `data/` was migrated that day.
 //!
 //! This machine's copy of an attempt first, then the remote's (`remote::remote_path`): an attempt's
 //! closed generations move there, and every machine reads them where they are.
@@ -297,7 +297,7 @@ pub fn parse_network_name(name: &str) -> Result<NetworkName, String> {
             "{name:?} is not a player: pesto, stockfish-<level>, stockfish-elo-<rating>, an engine of \
              data/engines.yaml, <config>-g<g>-a<n> (generation g's winner in attempt n) or \
              <config>-g<g>-l<lambda>-a<n> (that lambda's candidate in generation g); a name in -r<n> \
-             is from before attempts, migrated by arena rename-attempts"
+             is from before attempts (2026-11-19), when attempts were called runs"
         )
     };
     let parse = || -> Option<NetworkName> {
@@ -470,7 +470,7 @@ mod tests {
         ] {
             assert!(parse_network_name(name).is_err(), "{name:?}");
         }
-        assert!(parse_network_name("betty-g2-r1").unwrap_err().contains("arena rename-attempts"));
+        assert!(parse_network_name("betty-g2-r1").unwrap_err().contains("from before attempts"));
         assert!(resolve_network_file("gen-psq-0001").unwrap_err().contains("is not a player"));
     }
 

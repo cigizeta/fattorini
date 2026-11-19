@@ -14,10 +14,9 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 ## Run renamed attempt (2026-11-19, attempt-rename.md)
 
-Code, page and documents renamed, `arena rename-attempts --apply` run on one machine and on Drive,
-`lc0-halfk-threats-screlu-hidden-budget-8/` (two small attempts under the config's old name) deleted.
-Left: `bin/arena rename-attempts --apply` on every other machine holding a `data/`; lichess-bot's
-config pointed at the renamed snapshot; then the command removed and attempt-rename.md to done/.
+Done: code, page and documents renamed, every `data/` and Drive migrated, the one-off command
+removed, `lc0-halfk-threats-screlu-hidden-budget-8/` (two small attempts under the config's old name)
+deleted. Left: lichess-bot's config pointed at the renamed snapshot, if not done yet.
 **To check:** those two small attempts had about 2M positions, a scaled attempt's, but no `scale:` in
 their frozen `config.yaml`, which `snapshot.rs` reads to refuse a scaled network.
 

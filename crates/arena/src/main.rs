@@ -12,8 +12,6 @@
 //!   into Drive's `data/snapshots/` (`snapshot.rs`). Hidden: not in the usage.
 //! - `arena release <player>@<suffix> [--dry-run]`: a binary release at a tag, built here and
 //!   drafted on GitHub with `gh` (`release.rs`). Hidden: not in the usage.
-//! - `arena rename-attempts [--apply]`: the one-off migration of names from runs to attempts
-//!   (`rename_attempts.rs`). Hidden: not in the usage.
 //! - `arena <tournament-id>`: fitness-selection phase 1 scope only, a single pairing -- round
 //!   1's first real (bye-free) match, per proper bracket seeding -- rather than a full bracket. The
 //!   bracket scheduler is not built yet.
@@ -45,7 +43,6 @@ mod pgn;
 mod player;
 mod random_book;
 mod release;
-mod rename_attempts;
 mod results_db;
 mod runner;
 mod score;
@@ -89,7 +86,6 @@ fn main() {
         "start" | "stop" | "status" => chores::run(&first, &args.collect::<Vec<String>>()),
         "snapshot" => snapshot::command(&args.collect::<Vec<String>>()),
         "release" => release::command(&args.collect::<Vec<String>>()),
-        "rename-attempts" => rename_attempts::command(&args.collect::<Vec<String>>()),
         "match" | "sprt" | "duel" => {
             let rest: Vec<String> = args.collect();
             let versus = parse_versus_args(&first, &rest).unwrap_or_else(|message| {

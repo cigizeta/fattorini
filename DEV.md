@@ -54,8 +54,8 @@ is named by its config, then each part marked by a letter, the attempt always an
 - one lambda's candidate, `<config>-g<g>-l<lambda>-a<n>`, the lambda with two decimals:
   `pesto-psq-g1-l0.95-a1`.
 
-Attempts were called runs until 2026-11-19 (`-r<n>`, `run-<n>/`, `run_config.txt`); `./bin/arena
-rename-attempts` migrates what is left under the old names (a dry run; `--apply` makes the changes).
+Attempts were called runs until 2026-11-19 (`-r<n>`, `run-<n>/`, `run_config.txt`); every `data/`
+and Drive were migrated then, and the old names are refused.
 
 A generation has at most one winner, so the winner's name leaves its lambda out; the page shows it
 beside it. A player is a network with what it plays with, always written after an `@`: `@untuned`,
