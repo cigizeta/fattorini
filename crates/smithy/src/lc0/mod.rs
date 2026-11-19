@@ -323,6 +323,10 @@ struct Line {
     total: u64,
     rate: Option<f64>,
     eta_seconds: Option<f64>,
+    /// The conversion's share of its tar done, by time (`Flow::conversion_line`); `None` elsewhere
+    /// and before the run's rate is known.
+    #[serde(default)]
+    fraction: Option<f64>,
 }
 
 /// One place's counts: `done` of `total` bytes, `from` where they stood at `started`.
@@ -343,20 +347,21 @@ impl Flow {
         let (observed, seconds) = (self.done.saturating_sub(self.from), self.started.elapsed().as_secs_f64());
         let rate = (observed > 0 && seconds > 0.0).then(|| observed as f64 / seconds);
         let eta_seconds = rate.map(|rate| self.total.saturating_sub(self.done) as f64 / rate);
-        Line { tar: self.tar.clone(), done: self.done, total: self.total, rate, eta_seconds }
+        Line { tar: self.tar.clone(), done: self.done, total: self.total, rate, eta_seconds, fraction: None }
     }
 
-    /// The conversion's line: its bytes read, but its rate the run's whole tars' (`converted_bytes`
-    /// over `converting`), seals and uploads included. The bytes read alone ran three times faster
-    /// than whole tars (2026-11-19): a seal reads no byte, and a tar's last one runs at 100%. The ETA
-    /// is the tar's whole conversion at that rate less the time spent on it, `None` once spent.
+    /// The conversion's line, measured by time, not by bytes read: its rate the run's whole tars'
+    /// (`converted_bytes` over `converting`), seals and uploads included, its `fraction` the time
+    /// spent on the tar over the tar's whole conversion at that rate, held under 1 until the tar is
+    /// done, and its ETA the rest of that time, `None` once spent. The bytes read ran three times
+    /// faster than whole tars (2026-11-19): a seal reads no byte, and a tar's last one runs at 100%.
     fn conversion_line(&self, converted_bytes: u64, converting: Duration) -> Line {
         let seconds = converting.as_secs_f64();
         let rate = (converted_bytes > 0 && seconds > 0.0).then(|| converted_bytes as f64 / seconds);
-        let eta_seconds = rate
-            .map(|rate| self.total as f64 / rate - self.started.elapsed().as_secs_f64())
-            .filter(|eta| *eta > 0.0);
-        Line { tar: self.tar.clone(), done: self.done, total: self.total, rate, eta_seconds }
+        let (expected, spent) = (rate.map(|rate| self.total as f64 / rate), self.started.elapsed().as_secs_f64());
+        let eta_seconds = expected.map(|expected| expected - spent).filter(|eta| *eta > 0.0);
+        let fraction = expected.map(|expected| (spent / expected.max(f64::MIN_POSITIVE)).min(0.99));
+        Line { tar: self.tar.clone(), done: self.done, total: self.total, rate, eta_seconds, fraction }
     }
 }
 

@@ -15,6 +15,10 @@ and an ETA of 0.
 - The conversion's rate is that ratio, `None` until the run's first tar is converted.
 - The current tar's ETA is its whole conversion at that rate less the time already spent on it, so a
   seal at 100% still counts down; `None` once that is spent, never a negative or a false 0.
+- The converting line gives the tar's size alone and its percentage by time, the time spent on it
+  over its whole conversion at the run's rate, held at 99% until done (the developer, 2026-11-19: a
+  byte count beside a time percentage would contradict it). Before the first tar's rate, the size
+  alone.
 - Nothing names a seal on the page (the developer, 2026-11-19: too technical); the ETA still
   counting down at 100% says enough.
 - The corpus line is unchanged: its rate is sealed positions over the run's wall time, seals

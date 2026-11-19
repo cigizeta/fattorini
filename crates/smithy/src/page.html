@@ -1464,8 +1464,17 @@ function convertLine(what, line) {
   const eta = line.eta_seconds === null ? "" : `, ETA about ${duration(Math.round(line.eta_seconds))}`;
   const tar = line.tar ? ` ${line.tar}` : "";
   const of = line.tar ? "of" : "of max";
-  const stage = line.stage ? `, ${line.stage}` : "";
-  return `<div>${escape(`${what}${tar}: ${count(line.done)} ${of} ${count(line.total)} (${percent(line.done / Math.max(1, line.total))})${stage}${rate}${eta}`)}</div>`;
+  return `<div>${escape(`${what}${tar}: ${count(line.done)} ${of} ${count(line.total)} (${percent(line.done / Math.max(1, line.total))})${rate}${eta}`)}</div>`;
+}
+
+// The conversion's place: `converting {tar} ({size}): {percent}, {rate}, ETA about {eta}`, the tar's
+// size alone and its percent by time, not bytes read, which outrun the seals and uploads; size alone
+// until the run's first tar gives a rate.
+function conversionLine(line) {
+  const percentDone = line.fraction == null ? "" : `: ${percent(line.fraction)}`;
+  const rate = line.rate === null ? "" : `, ${bytes(Math.round(line.rate))}/s`;
+  const eta = line.eta_seconds === null ? "" : `, ETA about ${duration(Math.round(line.eta_seconds))}`;
+  return `<div>${escape(`converting ${line.tar} (${bytes(line.total)})${percentDone}${rate}${eta}`)}</div>`;
 }
 
 // Lc0's Convert in its Corpus section, while it runs, in fixed places so the page keeps its height:
@@ -1485,7 +1494,8 @@ function drawConvertProgress() {
     return;
   }
   const place = (what, line) => line === null ? blank : convertLine(what, line);
-  redraw(element, live.downloads.map((line) => place("downloading", line)).join("") + place("converting", live.conversion) + corpus(live.cap));
+  const converting = live.conversion === null ? blank : conversionLine(live.conversion);
+  redraw(element, live.downloads.map((line) => place("downloading", line)).join("") + converting + corpus(live.cap));
 }
 
 // Opens the screen the address names: `#<config>`, or `#<config>/<attempt>`.
