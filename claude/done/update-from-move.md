@@ -5,7 +5,8 @@ written the same day, `cargo test` and clippy passed. **Exact, and no faster:** 
 16 counted 27,589,863 nodes before and after; back to back on one idle machine, the old build
 2,595,889 and 2,584,827 nodes/s, the new 2,596,781 and 2,316,075 (an outlier, 11% below every other
 run). The profile's 27 ns in `between` were mostly waits on memory, which reading the move waits on
-too. Kept or reverted: the developer's decision, pending.
+too. **Kept** (the developer, 2026-11-19): exact and tested, and incremental threats will need an
+update read from the move anyway.
 
 ## Why
 
