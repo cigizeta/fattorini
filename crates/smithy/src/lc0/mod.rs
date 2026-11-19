@@ -133,9 +133,11 @@ struct TarRow {
     segments: u64,
 }
 
-/// The download workers, one connection each: about 2 MB/s each from storage.lczero.org, within
-/// the home line's 5 MB/s (the developer, 2026-10-17). The page's `CONVERT_CONNECTIONS` follows it.
-const CONNECTIONS: usize = 2;
+/// The download workers, one connection each: about 2 MB/s each from storage.lczero.org, the server's
+/// limit per connection. Three since 2026-11-19 (the developer): two used about 32 Mbit/s and a speed
+/// test beside them still found about 19 free, a line of about 50 Mbit/s, so a third fits within it.
+/// The page's `CONVERT_CONNECTIONS` follows it.
+const CONNECTIONS: usize = 3;
 
 /// How often a download's bar reads its `.tmp`'s size: curl runs silent, so the file is the
 /// only measure of its progress.
