@@ -28,6 +28,19 @@ trial 18, 10+0.1, 49.3% (its slower evaluation gives the gain back). So width 51
 1.2B positions. **Next (the developer, 2026-11-19): more data, then 8 king buckets**
 (halfk-king-buckets.md), at width 256.
 
+**While Lc0's Convert runs (the developer, 2026-11-19):** about 2 days left then, the 8 king
+buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no GPU, in this order:
+
+1. **Batch 8192, designed** ("To design" below): the rate schedule's endpoints at the new size and
+   the duel that judges it, so training starts on the larger corpus without waiting. No machine.
+2. **Speed: the profile** ("Speed", step 3): where the network's cost over PeSTO's goes, the
+   accumulator updates suspected. An idle machine, not the one converting.
+3. **Lazy SMP, measured** ("Search"): nodes/s and time to a fixed depth, 1 thread against 8, on an
+   idle machine with enough physical cores.
+4. **The test's Stop that did nothing** ("Data and tools"): `bindStop` read against `poll`'s
+   redraw, then reproduced.
+5. **Won endgames** ("Evaluation"): a few games into won endings on a free CPU.
+
 **Then, more of Lc0's data (the developer, 2026-11-18):** once `-hidden-512` run 1 ends and its
 duels are played (its gate, then against `lc0-halfk-threats-screlu-hidden-g1-r1` at depth 9 and
 10+0.1), Lc0's data loaded towards 4 * 1024^3 positions. Why: width 512 overfits from its third pass
