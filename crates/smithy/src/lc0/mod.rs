@@ -406,6 +406,7 @@ pub(crate) fn run(rest: &[String]) {
         [] => {}
         _ => fail(format!("{CHILD_COMMAND} takes nothing: everything is in {CONFIG_PATH}")),
     }
+    kill_children_on_exit();
     if let Err(error) = remote::check_mounted() {
         fail(error.to_string());
     }
@@ -751,6 +752,37 @@ fn fail(message: String) -> ! {
     process::exit(1);
 }
 
+/// Puts this process in a Job Object that kills its members once its last handle closes: when this
+/// process ends, however it ends, so do the curls it spawned, which join the job. Without it a
+/// `fail` left a download's curl running, holding the smithy's pipe of this job's output open, and
+/// the job looked alive until that curl gave up (2026-11-19, seven minutes).
+fn kill_children_on_exit() {
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    // SAFETY: null attributes and name make an unnamed job with default security.
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        fail(format!("CreateJobObjectW: {}", std::io::Error::last_os_error()));
+    }
+    // SAFETY: an all-zero JOBOBJECT_EXTENDED_LIMIT_INFORMATION is a valid "no limits" record.
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
+    // SAFETY: `info` is the record the class names, `size` bytes long, alive for the call.
+    if unsafe { SetInformationJobObject(job, JobObjectExtendedLimitInformation, std::ptr::addr_of!(info).cast(), size) } == 0 {
+        fail(format!("SetInformationJobObject: {}", std::io::Error::last_os_error()));
+    }
+    // SAFETY: `job` is a valid job handle and the pseudo-handle names this process. The handle is
+    // never closed: the process's exit closes it, which is what kills the job.
+    if unsafe { AssignProcessToJobObject(job, GetCurrentProcess()) } == 0 {
+        fail(format!("AssignProcessToJobObject: {}", std::io::Error::last_os_error()));
+    }
+}
+
 /// Whether the corpus, `LC0_ROOT`, has stopped at its cap, so its `train` no longer grows: a training
 /// run's epoch is fixed at its first round, and a run never resumes over another.
 pub(crate) fn is_complete() -> bool {
@@ -821,11 +853,9 @@ fn summary_line(rows: &[TarRow], staged: Option<usize>, complete: bool) -> Strin
     let tars = rows.iter().filter(|row| row.games > 0).count();
     let state = if complete { "complete" } else { "not complete" };
     match staged {
-        // A converted tar is deleted from staging, so the downloads are the rows plus the tars staged.
-        Some(staged) => format!(
-            "the Convert's {LC0_ROOT}, with visit counts, {state}: {} tars downloaded, {tars} converted",
-            rows.len() + staged
-        ),
+        // A converted tar is deleted from staging, so the downloads are the converted plus the tars
+        // staged. An empty tar's row is neither: it is never downloaded (`EMPTY_TAR_BYTES`).
+        Some(staged) => format!("the Convert's {LC0_ROOT}, with visit counts, {state}: {} tars downloaded, {tars} converted", tars + staged),
         None => format!("the Convert's {LC0_ROOT}, with visit counts, {state}: {} tars converted", progress::grouped(tars)),
     }
 }
@@ -1090,9 +1120,13 @@ fn convert_tar(
     while let Some((name, gzipped)) = archive.next_file().unwrap_or_else(|message| fail(format!("{stem}: {message}"))) {
         let Some(game_id) = game_id(&name) else { continue };
         let mut game = Vec::new();
-        flate2::read::GzDecoder::new(&gzipped[..])
-            .read_to_end(&mut game)
-            .unwrap_or_else(|error| fail(format!("{stem}: {name}: failed to gunzip: {error}")));
+        // Lc0's own tars hold the odd damaged game (2026-11-19, `training-run2-test91-20260124-1917`
+        // whole by its Content-Length, one member "incomplete deflate stream"): that game is passed
+        // over, not the run ended. A broken tar or a game that fails to convert still stops it.
+        if let Err(error) = flate2::read::GzDecoder::new(&gzipped[..]).read_to_end(&mut game) {
+            println!("{stem}: {name}: failed to gunzip, the game skipped: {error}");
+            continue;
+        }
         let converted = convert::convert_game(game_id, &game, table, true).unwrap_or_else(|message| fail(format!("{stem}: {name}: {message}")));
         let Some(converted) = converted else {
             row.skipped += 1;
@@ -1240,7 +1274,7 @@ mod tests {
         let rows = [row("test", 10, 5, 2), row("train", 10, 5, 3), row("none", 10, 0, 0)];
         assert_eq!(
             summary_line(&rows, Some(4), false),
-            format!("the Convert's {LC0_ROOT}, with visit counts, not complete: 7 tars downloaded, 2 converted")
+            format!("the Convert's {LC0_ROOT}, with visit counts, not complete: 6 tars downloaded, 2 converted")
         );
         assert_eq!(summary_line(&rows, None, true), format!("the Convert's {LC0_ROOT}, with visit counts, complete: 2 tars converted"));
     }

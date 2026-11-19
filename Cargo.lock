@@ -1400,6 +1400,7 @@ dependencies = [
  "shakmaty",
  "tch",
  "time",
+ "windows-sys",
  "zstd 0.13.3",
 ]
 

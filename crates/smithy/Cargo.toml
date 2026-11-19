@@ -37,6 +37,8 @@ tch = "0.24"
 # heap it read about a third below the arena's on the same idle machine (2026-11-13: 732,000 nodes
 # per second per thread against the arena's 1,097,000), so every arena's clock was scaled down.
 mimalloc = "0.1.52"
+# `lc0`'s Job Object, so its curls die with it (`lc0/mod.rs`, `kill_children_on_exit`).
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [lints]
 workspace = true
