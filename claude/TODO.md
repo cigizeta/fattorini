@@ -53,8 +53,8 @@ buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no
    simplified threats (the developer). Left: the halfk network's profile.
 3. **Lazy SMP, measured: done 2026-11-19** ("Search"): 2.86 times faster to depth 22 at 8 threads,
    each thread 15% slower than alone. Nothing to optimize; the UCI node count undercounts.
-4. **The test's Stop that did nothing** ("Data and tools"): `bindStop` read against `poll`'s
-   redraw, then reproduced.
+4. **The test's Stop that did nothing: fixed 2026-11-19** ("Data and tools"): a hidden box's stale
+   Stop shared the card's id and took its click.
 5. **Won endgames: dropped 2026-11-19** (the developer): endgames are now better on Lichess.
 
 **Then, more of Lc0's data (the developer, 2026-11-18):** once `-hidden-512` run 1 ends and its
@@ -429,9 +429,12 @@ changes).
 
 - **A test's Stop once did nothing** (2026-11-13, test 6): clicked on the test's screen, opened
   before the smithy restarted, it sent no request the smithy logged (no "stop asked from the
-  page"); a reload, then Stop, worked. Not the token, which every poll refreshes (`poll`). Suspect:
-  the card redrawn by a poll losing its handler (`bindStop`). To reproduce before fixing; test 5's
-  Stop had worked.
+  page"); a reload, then Stop, worked. **Fixed 2026-11-19, not reproduced first** (the developer):
+  the job's box, hidden on a trial's screen, kept its stale Stop, and both buttons were `stopJob`, so
+  `bindStop`'s `getElementById` bound the hidden one, first in the page, and the card's had no
+  handler. A hidden box is now emptied (the Convert slot's too), and each Stop has its own id
+  (`stopJob`, `stopTrial`, `stopSlot`). To see working on the next trial stopped from its screen,
+  having opened the Trials list first.
 
 - **A failed claim's reason, and a shorter wait** (2026-11-13, after a power cut): an arena restarted
   and answering (checked with curl on loopback and the LAN) read "no arena answering" for minutes,

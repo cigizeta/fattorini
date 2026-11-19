@@ -1296,7 +1296,12 @@ function drawConversion() {
   const slot = state.slot;
   const shown = converting() || (!slot.running && slot.finished);
   section.classList.toggle("hidden", !shown);
-  if (!shown) return;
+  if (!shown) {
+    // Emptied, not only hidden, as the job's box: no hidden Stop left behind.
+    section.innerHTML = "";
+    section.dataset.key = "";
+    return;
+  }
   const mode = !slot.running ? "ended" : slot.stopping ? "stopping" : "running";
   const key = mode + (slot.finished || "") + !!token;
   if (section.dataset.key === key) return;
@@ -1305,9 +1310,9 @@ function drawConversion() {
     section.innerHTML = `<h2>Last job beside the arena job</h2><div class="muted">ended: ${escape(slot.finished)}</div>`;
     return;
   }
-  const stop = token ? `<button id="stopJob"${mode === "stopping" ? " disabled" : ""}>${mode === "stopping" ? "Stopping" : "Stop"}</button>` : "";
+  const stop = token ? `<button id="stopSlot"${mode === "stopping" ? " disabled" : ""}>${mode === "stopping" ? "Stopping" : "Stop"}</button>` : "";
   section.innerHTML = `<div class="row"><h2>Running now: Lc0's conversion</h2>${stop}</div><div class="muted">its lines go to the smithy's terminal</div>`;
-  if (token) document.getElementById("stopJob").onclick = () => send("control/job/stop", "lc0");
+  if (token) document.getElementById("stopSlot").onclick = () => send("control/job/stop", "lc0");
 }
 
 // The job: on its own screen (an attempt's, a tune's, or a source's for Play), running with Stop (on this
@@ -1323,7 +1328,13 @@ function drawJob() {
   // A trial's own screen has no box: its card names the players and holds its Stop.
   const shown = (here && !(current === TRIALS && currentAttempt !== null)) || elsewhere;
   section.classList.toggle("hidden", !shown);
-  if (!shown) return;
+  if (!shown) {
+    // Emptied, not only hidden: a hidden box kept its Stop, which then took the trial card's click
+    // (2026-11-13, a trial's Stop that did nothing until a reload).
+    section.innerHTML = "";
+    section.dataset.key = "";
+    return;
+  }
   const where = state.phase ? `generation ${state.generation}, phase ${phaseName(state.phase)}` : "";
   const mode = !state.running ? "ended" : state.job_stopping ? "stopping" : "running";
   const key = (elsewhere ? "open " + jobScreen() : "") + mode + state.job + where + (state.finished || "") + !!token;
@@ -1343,20 +1354,23 @@ function drawJob() {
     section.innerHTML = `<h2>Ended</h2><div class="muted">${escape(state.finished || "")}${tail}</div>`;
     return;
   }
-  section.innerHTML = `<div class="row"><h2>Running now</h2>${stopButton()}</div><div class="muted">${escape(where)}</div>`;
+  section.innerHTML = `<div class="row"><h2>Running now</h2>${stopButton("stopJob")}</div><div class="muted">${escape(where)}</div>`;
   bindStop();
 }
 
-// The job's Stop, on this machine alone: its box's, or a trial's card's.
-function stopButton() {
+// The job's Stop, on this machine alone: its box's (`stopJob`) or a trial's card's (`stopTrial`), an
+// id each, so neither can take the other's click.
+function stopButton(id) {
   if (!token) return "";
   const stopping = state.job_stopping;
-  return `<button id="stopJob"${stopping ? " disabled" : ""}>${stopping ? "Stopping at its next safe point" : "Stop"}</button>`;
+  return `<button id="${id}"${stopping ? " disabled" : ""}>${stopping ? "Stopping at its next safe point" : "Stop"}</button>`;
 }
 
 function bindStop() {
-  const button = document.getElementById("stopJob");
-  if (button) button.onclick = () => send("control/job/stop", current);
+  for (const id of ["stopJob", "stopTrial"]) {
+    const button = document.getElementById(id);
+    if (button) button.onclick = () => send("control/job/stop", current);
+  }
 }
 
 // The job's live sections, on its own screen alone: a tune's work, or PeSTO's play on its source's
@@ -1366,7 +1380,7 @@ function drawLive() {
   const shown = currentAttempt !== null
     ? jobHere() && (state.work.kind === "tune" || state.work.kind === "trial")
     : Boolean(current === "pesto" && state.job && state.config === "pesto" && !jobScreen() && state.work.kind === "self_play");
-  const stop = shown && state.work.kind === "trial" && state.running ? stopButton() : "";
+  const stop = shown && state.work.kind === "trial" && state.running ? stopButton("stopTrial") : "";
   redraw(section, shown ? work(state.work, state.waiting, stop) : "");
   bindStop();
   section.classList.toggle("hidden", !shown);
