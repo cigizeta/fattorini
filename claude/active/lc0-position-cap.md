@@ -1,6 +1,7 @@
 # Lc0's cap in training positions
 
-**Status:** written, 2026-11-18, steps 1 to 4; step 5's Convert waits for the order below.
+**Status:** written, 2026-11-18, steps 1 to 4; step 5's tests and clippy clean. `complete.txt` deleted on the remote 2026-11-19 (the
+developer): the order's step 2, the Convert next.
 
 ## The order (complete.txt)
 
