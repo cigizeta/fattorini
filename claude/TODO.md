@@ -24,14 +24,16 @@ and its `.bak`; trial-rename.md to done/ 2026-11-19 (the developer).
 (width 256's best: 0.617875); its gate passed (46 games, 89.3%). Its duels against `-hidden-g1-r1`,
 both drawn and curtailed: trial 17, depth 9, 52.5% for 512 (about +17 Elo, the better evaluation);
 trial 18, 10+0.1, 49.3% (its slower evaluation gives the gain back). So width 512 does not pay on
-1.2B positions. **Next (the developer, 2026-11-19): more data, then 8 king buckets**
-(halfk-king-buckets.md), at width 256.
+1.2B positions. **Next (the developer, 2026-11-19, batch-8192.md): more data, then two attempts**
+(an attempt is a training run, from 2026-11-19), at width 512 with 8 king buckets (halfk-king-buckets.md),
+batch 8192: `lc0-halfk-threats-screlu-hidden-512-budget-8`, then `lc0-halfk-threats-pairwise-hidden-512-budget-8`.
+Width 256 may never run.
 
 **While Lc0's Convert runs (the developer, 2026-11-19):** about 2 days left then, the 8 king
 buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no GPU, in this order:
 
-1. **Batch 8192, designed** ("To design" below): the rate schedule's endpoints at the new size and
-   the duel that judges it, so training starts on the larger corpus without waiting. No machine.
+1. **Batch 8192: designed 2026-11-19** (batch-8192.md): adopted, no duel; the rate unchanged, 4096
+   steps a round. Left: its two configs and their scaled smoke attempts.
 2. **Speed: the profile** ("Speed", step 3): where the network's cost over PeSTO's goes, the
    accumulator updates suspected. An idle machine, not the one converting.
 3. **Lazy SMP, measured** ("Search"): nodes/s and time to a fixed depth, 1 thread against 8, on an
@@ -250,8 +252,8 @@ Each to confirm the first time it happens:
   (fixed-budget-schedule-implementation.md). **Implemented 2026-11-18**, a scaled smoke run end to
   end; next, `lc0-halfk-threats-screlu-hidden-budget` on the training machine, against
   screlu-hidden at 256 under patience.
-- **A batch of 8192, a candidate when the corpus grows to 4 * 1024^3 positions** (the developer,
-  2026-11-18). Measured on 2026-11-18 with one network training (`-hidden-512`, batch 4096): the GPU
+- **A batch of 8192: decided 2026-11-19, see batch-8192.md.** The record (the developer,
+  2026-11-18): Measured on 2026-11-18 with one network training (`-hidden-512`, batch 4096): the GPU
   85 to 88% busy, steadily, at about 70% of its power limit and most of its memory free, so the feed
   is not the bound and a larger batch is the way to fill it. At 4 passes, about 4.3B positions are
   about 4.2M steps at 4096 against 2.1M at 8192; the rate schedule's endpoints to be checked at the
