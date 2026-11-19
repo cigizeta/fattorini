@@ -5,8 +5,8 @@
 fixed axis and epoch lines (as the stage lines are drawn, `class="stage"`). **Changed 2026-11-19 (the
 developer):** the vertical lines mark the round robin's candidates, not the epochs ("The decision"
 below). Steps 1 and 2 redone the same day: `Budget::candidate_rounds` (with a test) in place of
-`rounds_per_epoch`, `ScheduleRow::Budget`'s `candidate_rounds`, `lossChart`'s candidate lines; not yet
-compiled nor tested. Steps 3 and 4 left.
+`rounds_per_epoch`, `ScheduleRow::Budget`'s `candidate_rounds`, `lossChart`'s candidate lines. Step 4
+done (tests and clippy clean, committed). Step 3 left: the check by eye on the page.
 
 ## Why
 

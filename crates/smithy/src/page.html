@@ -506,10 +506,11 @@ function lossChart(curve, last, budget = false) {
   const roundTicks = rounds.map((round) => `<text x="${x(round).toFixed(1)}" y="${height - 8}" text-anchor="middle">${whole(round)}</text>`).join("");
   const bestRow = last && rows.find((c) => c[0] === last.best_round);
   const best = bestRow ? `<circle class="best" cx="${x(bestRow[0]).toFixed(1)}" cy="${y(bestRow[2]).toFixed(1)}" r="5"/>` : "";
-  const legend = `<line class="test" x1="${width - 190}" x2="${width - 170}" y1="${top + 6}" y2="${top + 6}"/>`
-    + `<text x="${width - 164}" y="${top + 10}">test loss</text>`
-    + `<line class="train" x1="${width - 100}" x2="${width - 80}" y1="${top + 6}" y2="${top + 6}"/>`
-    + `<text x="${width - 74}" y="${top + 10}">train loss</text>`;
+  // Stacked in the top right corner, train above test (the developer, 2026-11-19).
+  const legend = `<line class="train" x1="${width - 100}" x2="${width - 80}" y1="${top + 6}" y2="${top + 6}"/>`
+    + `<text x="${width - 74}" y="${top + 10}">train loss</text>`
+    + `<line class="test" x1="${width - 100}" x2="${width - 80}" y1="${top + 22}" y2="${top + 22}"/>`
+    + `<text x="${width - 74}" y="${top + 26}">test loss</text>`;
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="training and test loss by round">`
     + `<defs><clipPath id="loss-plot"><rect x="${left}" y="${top}" width="${width - left - right}" height="${height - top - bottom}"/></clipPath></defs>`
     + stages + passes
