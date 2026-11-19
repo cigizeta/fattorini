@@ -15,7 +15,9 @@ use std::fs;
 use std::path::Path;
 
 use crate::board::bitboard::Bitboard;
+use crate::board::chess_move::{Move, MoveKind};
 use crate::board::color::Color;
+use crate::board::make_move::castling_rook_squares;
 use crate::board::Board;
 use crate::features::{extract_canonical, halfk, psq, psq_threats};
 use crate::labels::CEILING_PAWNS;
@@ -1608,6 +1610,25 @@ impl QuantizedPsqNetwork {
     /// changed, so it is refreshed instead (`refresh_through_cache`); the other updates as psq's,
     /// a king move inside its bucket included (its own row out and in).
     pub fn update(&self, parent_accumulators: &[Vec<i16>; 2], child_accumulators: &mut [Vec<i16>; 2], parent: &Board, child: &Board) {
+        self.update_from(parent_accumulators, child_accumulators, parent, child, None);
+    }
+
+    /// `update` for `child` reached from `parent` by `mv`, `None` for a null move: the piece rows
+    /// read from the move (`PieceChanges::of_move`), at most four pieces, instead of diffing the
+    /// boards' twelve bitboards, which cost more than the update itself (27 ns a node of 437, samply,
+    /// 2026-11-19). The same rows as `update`'s, so the same accumulators; the search calls this one.
+    pub fn update_with_move(
+        &self, parent_accumulators: &[Vec<i16>; 2], child_accumulators: &mut [Vec<i16>; 2], parent: &Board, child: &Board, mv: Option<Move>,
+    ) {
+        let pieces = mv.map_or_else(PieceChanges::empty, |mv| PieceChanges::of_move(parent, mv));
+        self.update_from(parent_accumulators, child_accumulators, parent, child, Some(&pieces));
+    }
+
+    /// `update`'s body: the piece rows from `pieces` when given, else from the boards' difference.
+    fn update_from(
+        &self, parent_accumulators: &[Vec<i16>; 2], child_accumulators: &mut [Vec<i16>; 2], parent: &Board, child: &Board,
+        pieces: Option<&PieceChanges>,
+    ) {
         let mut refreshed = [false; 2];
         let changes = if let Some(layout) = self.halfk {
             let kings = [Color::White, Color::Black].map(|perspective| halfk_king(layout, child, perspective));
@@ -1618,7 +1639,10 @@ impl QuantizedPsqNetwork {
                     refreshed[index] = true;
                 }
             }
-            let mut changes = ChangedRows::between_halfk(parent, child, kings);
+            let mut changes = match pieces {
+                Some(pieces) => ChangedRows::of_pieces_halfk(pieces, kings),
+                None => ChangedRows::between_halfk(parent, child, kings),
+            };
             // The castling and en passant rows, compared only when either changed. A perspective
             // whose mirror changed was refreshed above, so its rows here go unread.
             let state_changed = parent.castling_rights() != child.castling_rights() || parent.en_passant_square() != child.en_passant_square();
@@ -1635,7 +1659,14 @@ impl QuantizedPsqNetwork {
             }
             changes
         } else {
-            ChangedRows::between(parent, child)
+            match pieces {
+                Some(pieces) => {
+                    let mut changes = ChangedRows::of_pieces(pieces);
+                    changes.push_psq_state_rows(parent, child);
+                    changes
+                }
+                None => ChangedRows::between(parent, child),
+            }
         };
         for perspective in [Color::White, Color::Black] {
             let index = perspective as usize;
@@ -2111,6 +2142,55 @@ fn piece_row_for(piece_type: PieceType, is_own: bool, square: Square, perspectiv
     psq::piece_row(piece_type, is_own, oriented_square(square, perspective))
 }
 
+/// The pieces a move takes off the board and puts on it, at most four, read from the move and the
+/// board before it: the captured piece off its square (behind `to` for en passant), the moving piece
+/// off `from`, the placed piece (its promotion, if any) onto `to`, and for castling the rook off and
+/// on. Captured first, so a quiet move is one row added and one removed and a capture one added and
+/// two removed, the cases `update_i16_avx2` unrolls; the update wraps, so the order never changes
+/// the result. Empty for a null move.
+struct PieceChanges {
+    entries: [(Piece, Square, bool); 4],
+    count: usize,
+}
+
+impl PieceChanges {
+    fn empty() -> PieceChanges {
+        PieceChanges { entries: [(Piece::new(Color::White, PieceType::Pawn), Square::A1, false); 4], count: 0 }
+    }
+
+    /// `mv`'s changes, `parent` the board it is played on.
+    fn of_move(parent: &Board, mv: Move) -> PieceChanges {
+        let mut changes = PieceChanges::empty();
+        let moving = parent.piece_at(mv.from()).expect("a move's from square holds the piece it moves");
+        let captured_square = match mv.kind() {
+            MoveKind::EnPassantCapture => Square::new(mv.to().file(), mv.from().rank()),
+            _ => mv.to(),
+        };
+        if let Some(captured) = parent.piece_at(captured_square) {
+            changes.push(captured, captured_square, false);
+        }
+        changes.push(moving, mv.from(), false);
+        let placed = mv.promotion().map_or(moving, |promotion| Piece::new(moving.color(), promotion));
+        changes.push(placed, mv.to(), true);
+        if mv.kind() == MoveKind::Castle {
+            let (rook_from, rook_to) = castling_rook_squares(moving.color(), mv.to());
+            let rook = Piece::new(moving.color(), PieceType::Rook);
+            changes.push(rook, rook_from, false);
+            changes.push(rook, rook_to, true);
+        }
+        changes
+    }
+
+    fn push(&mut self, piece: Piece, square: Square, added: bool) {
+        self.entries[self.count] = (piece, square, added);
+        self.count += 1;
+    }
+
+    fn entries(&self) -> &[(Piece, Square, bool)] {
+        &self.entries[..self.count]
+    }
+}
+
 /// The most rows one perspective can gain or lose in one update. A legal move loses at most 8
 /// (castling: king and rook, four castling rights, an en passant file) and gains fewer; the
 /// margin covers any two boards the search compares.
@@ -2120,13 +2200,13 @@ const MAX_CHANGED_ROWS: usize = 16;
 /// the rows active in `child` only, `removed` those active in `parent` only. On the stack, so an
 /// update allocates nothing.
 ///
-/// What changed is found by comparing the two boards, not by reading the move: for each of the 12
-/// piece bitboards, `parent XOR child` is the squares that changed, of which those in `parent` lost
-/// the piece and those in `child` gained it. Castling (king and rook), en passant (the captured pawn
-/// is off the destination square), promotion (a pawn leaves, another piece arrives) and null moves
-/// need no case of their own, and `make_move` is not touched. Castling rights and the en passant
-/// file are compared directly. The boards are scanned once, each change mapped to both perspectives'
-/// rows.
+/// The piece rows come one of two ways. The search reads them from the move (`of_pieces`,
+/// `PieceChanges::of_move`): at most four pieces. `between` compares the two boards instead: for
+/// each of the 12 piece bitboards, `parent XOR child` is the squares that changed, of which those in
+/// `parent` lost the piece and those in `child` gained it, no case needed for castling, en passant,
+/// promotion or null moves; it is the tests' oracle for the first, and costed more than the update
+/// itself in the search. Castling rights and the en passant file are compared directly either way
+/// (`push_psq_state_rows`).
 struct ChangedRows {
     added: [[usize; MAX_CHANGED_ROWS]; 2],
     removed: [[usize; MAX_CHANGED_ROWS]; 2],
@@ -2199,7 +2279,42 @@ impl ChangedRows {
                 }
             }
         }
+        changes.push_psq_state_rows(parent, child);
+        changes
+    }
 
+    /// `between`'s piece rows from `pieces`, a move's changes, instead of the boards' difference.
+    fn of_pieces(pieces: &PieceChanges) -> ChangedRows {
+        let mut changes = ChangedRows::empty();
+        for &(piece, square, added) in pieces.entries() {
+            for perspective in [Color::White, Color::Black] {
+                let is_own = piece.color() == perspective;
+                changes.push(perspective, piece_row_for(piece.piece_type(), is_own, square, perspective), added);
+            }
+        }
+        changes
+    }
+
+    /// `between_halfk`'s rows from `pieces`, a move's changes, each perspective's in the bucket of its
+    /// king in the child (`kings`).
+    fn of_pieces_halfk(pieces: &PieceChanges, kings: [(usize, bool); 2]) -> ChangedRows {
+        let mut changes = ChangedRows::empty();
+        for &(piece, square, added) in pieces.entries() {
+            for perspective in [Color::White, Color::Black] {
+                let (bucket, mirrored) = kings[perspective as usize];
+                let is_own = piece.color() == perspective;
+                let row = halfk::piece_row(bucket, mirrored, piece.piece_type(), is_own, oriented_square(square, perspective));
+                changes.push(perspective, row, added);
+            }
+        }
+        changes
+    }
+
+    /// A psq network's castling and en passant rows that differ between `parent` and `child`, each
+    /// compared directly and only when it changed.
+    fn push_psq_state_rows(&mut self, parent: &Board, child: &Board) {
+        let perspectives = [Color::White, Color::Black];
+        let changes = self;
         let (before, after) = (parent.castling_rights(), child.castling_rights());
         if before != after {
             for perspective in perspectives {
@@ -2230,7 +2345,6 @@ impl ChangedRows {
                 }
             }
         }
-        changes
     }
 
     fn push(&mut self, perspective: Color, row: usize, added: bool) {
@@ -2804,6 +2918,59 @@ impl<'a> Reader<'a> {
 pub(crate) mod tests {
     use super::*;
     use crate::stack_buckets::{count_bucket_of_board, material_bucket_of_board, phase_bucket_of_board};
+
+    /// Every legal move and every reply, from positions holding every kind (castling both ways, en
+    /// passant, promotions plain and capturing, captures of a rook that could castle): the rows read
+    /// from the move are the rows the boards differ by, per perspective, for psq and for halfk in 32
+    /// and 8 buckets. A null move's are only the en passant file's.
+    #[test]
+    fn the_rows_read_from_a_move_are_the_rows_the_boards_differ_by() {
+        use crate::movegen::legal::legal_moves;
+        let sorted = |changes: &ChangedRows, perspective: Color| {
+            let (mut added, mut removed) = (changes.added(perspective).to_vec(), changes.removed(perspective).to_vec());
+            added.sort_unstable();
+            removed.sort_unstable();
+            (added, removed)
+        };
+        let check = |parent: &Board, mv: Option<Move>, child: &Board| {
+            let pieces = mv.map_or_else(PieceChanges::empty, |mv| PieceChanges::of_move(parent, mv));
+            let mut from_move = ChangedRows::of_pieces(&pieces);
+            from_move.push_psq_state_rows(parent, child);
+            let diffed = ChangedRows::between(parent, child);
+            for perspective in [Color::White, Color::Black] {
+                assert_eq!(sorted(&from_move, perspective), sorted(&diffed, perspective), "psq, {mv:?}, {perspective:?}");
+            }
+            for layout in [halfk::Layout::Squares, halfk::Layout::Eight] {
+                let kings = [Color::White, Color::Black].map(|perspective| halfk_king(layout, child, perspective));
+                let (from_move, diffed) = (ChangedRows::of_pieces_halfk(&pieces, kings), ChangedRows::between_halfk(parent, child, kings));
+                for perspective in [Color::White, Color::Black] {
+                    assert_eq!(sorted(&from_move, perspective), sorted(&diffed, perspective), "halfk {layout:?}, {mv:?}, {perspective:?}");
+                }
+            }
+        };
+        for fen in [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+            "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1",
+            "8/8/8/3pP3/8/8/8/4K2k w - d6 0 1",
+            "r3k2r/1P6/8/8/8/8/1p6/R3K2R w KQkq - 0 1",
+        ] {
+            let (board, _) = Board::from_fen(fen).unwrap();
+            let mut null = board;
+            null.make_null_move();
+            check(&board, None, &null);
+            for mv in legal_moves(&board, board.side_to_move()) {
+                let mut child = board;
+                child.make_move(mv);
+                check(&board, Some(mv), &child);
+                for reply in legal_moves(&child, child.side_to_move()) {
+                    let mut grandchild = child;
+                    grandchild.make_move(reply);
+                    check(&child, Some(reply), &grandchild);
+                }
+            }
+        }
+    }
 
     #[test]
     fn fit_label_scale_recovers_the_scale_a_network_s_pawns_were_made_with() {

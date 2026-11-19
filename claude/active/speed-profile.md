@@ -58,11 +58,20 @@ In PeSTO's run, `sort_descending` is 6.5% and `bitboard::next` the top function 
    they are. A halfk network refreshes at every king move across buckets: to profile the same way
    with `lc0-halfk-threats-screlu-hidden-g1-a1`.
 
+## What the first fix taught
+
+`between` from the move (update-from-move.md) was exact and gained nothing measurable: the sampled
+27 ns a node were waits on memory, the parent's bitboards or the weight rows loaded next, which the
+new path waits on as well. A sampler charges a stall to whatever instruction waits, so in
+memory-bound code a function's share is not time a rewrite saves. Before the next fix: a cheap
+experiment that removes the cost outright (as sorting nothing, for finding 3) to bound the gain
+before designing it.
+
 ## Next
 
 In order of gain over effort, each designed before it is written:
 
-1. `between` from the move (finding 2): about 27 ns of 437, up to 6%.
+1. `between` from the move (finding 2): done 2026-11-19, exact, no measurable gain.
 2. Partial move sorting (finding 3): up to 6%, PeSTO included.
 3. Incremental threats (finding 1): up to 16%, the largest and the hardest.
 4. The halfk network's profile, for refreshes and its wider transform.

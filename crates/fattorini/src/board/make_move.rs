@@ -238,6 +238,14 @@ fn castling_side_of(color: Color, king_to: Square) -> CastlingSide {
     CastlingSide::Queenside
 }
 
+/// The rook's squares, from and to, when `color`'s king castles to `king_to`: the same squares
+/// `make_move` moves the rook between, for the accumulator update that reads a move instead of
+/// diffing two boards.
+pub(crate) fn castling_rook_squares(color: Color, king_to: Square) -> (Square, Square) {
+    let squares = castling_side_of(color, king_to).squares(color);
+    (squares.rook_from, squares.rook_to)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

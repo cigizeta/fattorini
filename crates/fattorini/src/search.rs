@@ -1744,8 +1744,9 @@ impl<'a> Search<'a> {
     }
 
     /// `accumulators[ply + 1]` from `accumulators[ply]`, for `child` reached from `parent` at
-    /// `ply`. A no-op unless the evaluator is psq.
-    fn update_accumulators(&mut self, ply: u32, parent: &Board, child: &Board) {
+    /// `ply` by `mv`, `None` for a null move: the changed rows read from the move. A no-op unless
+    /// the evaluator is psq.
+    fn update_accumulators(&mut self, ply: u32, parent: &Board, child: &Board, mv: Option<Move>) {
         let Some(Network::Psq(_, network)) = self.evaluator else {
             return;
         };
@@ -1754,7 +1755,7 @@ impl<'a> Search<'a> {
             return;
         }
         let (before, after) = self.accumulators.split_at_mut(ply + 1);
-        network.update(&before[ply], &mut after[0], parent, child);
+        network.update_with_move(&before[ply], &mut after[0], parent, child, mv);
         #[cfg(feature = "node-stats")]
         crate::node_stats::updated(ply + 1);
     }
@@ -2147,7 +2148,7 @@ impl<'a> Search<'a> {
             && e >= beta
         {
             let undo = scratch.make_null_move();
-            self.update_accumulators(ply, board, &scratch);
+            self.update_accumulators(ply, board, &scratch, None);
             self.null_move_in_progress = true;
             self.ancestors.push(board.hash());
             // A null move is a pass, not a real move -- nothing for continuation
@@ -2452,7 +2453,7 @@ impl<'a> Search<'a> {
                         // The child's accumulators only now, once the move is sure to be searched:
                         // none of the four pruning tests above reads them, and a pruned move would
                         // pay a whole update (about 100 ns on caroline, 2026-10-07) for nothing.
-                        self.update_accumulators(ply, board, &scratch);
+                        self.update_accumulators(ply, board, &scratch, Some(mv));
 
                         // Recorded here, unconditionally, the moment this move is confirmed to
                         // actually be searched -- not gated on how the search below turns out,
@@ -3100,7 +3101,7 @@ impl<'a> Search<'a> {
                 self.tt.prefetch(scratch.hash());
                 found_legal_move = true;
                 noisy_moves_tried += 1;
-                self.update_accumulators(ply, board, &scratch);
+                self.update_accumulators(ply, board, &scratch, Some(mv));
                 // Same push-before-recurse, pop-after pattern as the main search's own loop.
                 self.ancestors.push(board.hash());
                 // `Some(mv.to())`: whichever child node this leads to, `mv` is now *its* own
