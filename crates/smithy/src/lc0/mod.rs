@@ -459,9 +459,11 @@ pub(crate) fn run(rest: &[String]) {
     board().cap = Some(Flow::new("", train_positions(&rows), config.cap_positions));
     let given_up = read_given_up();
     if !given_up.is_empty() {
+        // A count, not the names: the list grows past a hundred tars and floods the log. The names are
+        // in the file.
         println!(
-            "passed over, skipped as too slow before ({SKIPPED_PATH}, delete their rows to try them again): {}",
-            given_up.join(", ")
+            "passed over {} tars skipped as too slow before ({SKIPPED_PATH} lists them; delete their rows to try them again)",
+            given_up.len()
         );
     }
     let pending: Arc<Vec<String>> = Arc::new(
