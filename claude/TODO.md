@@ -33,7 +33,8 @@ Width 256 may never run.
 buckets ready (halfk-king-buckets-implementation.md, step 9), so work needing no GPU, in this order:
 
 1. **Batch 8192: designed 2026-11-19** (batch-8192.md): adopted, no duel; the rate unchanged, 4096
-   steps a round. Left: its two configs and their scaled smoke attempts.
+   steps a round. Its two configs written the same day; no smoke attempt, the first full attempt
+   checks it.
 2. **Speed: the profile** ("Speed", step 3): where the network's cost over PeSTO's goes, the
    accumulator updates suspected. An idle machine, not the one converting.
 3. **Lazy SMP, measured** ("Search"): nodes/s and time to a fixed depth, 1 thread against 8, on an

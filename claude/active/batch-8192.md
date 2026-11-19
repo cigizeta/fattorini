@@ -61,15 +61,14 @@ the count of updates, and the fix the endpoints, not the batch.
    `lc0-halfk-threats-pairwise-hidden.yaml`'s architecture (`kind: halfk_threats_pairwise_hidden`)
    with `embedding_dim: 512`, `king_buckets: 8`, and the training block of step 1; differing from
    step 1's config by its kind alone.
-3. **A scaled smoke attempt of each** before Convert ends: batch 8192 at width 512 fits in memory,
-   a round's time recorded for the ETA. The command, through `bin/smithy`, given to the developer.
+3. **No scaled smoke attempt (the developer, 2026-11-19):** the GPU machine converts until the
+   corpus is whole, and memory is no worry: at batch 4096 the 32-bucket `-hidden-512` left most of it
+   free, 8 buckets cut the transform's rows from 27328 to 10432, and a doubled batch adds only
+   activations (8192 x 512 lanes a perspective, a few tens of MB). The full attempt's first rounds
+   check it.
 4. **On the first full attempt:** GPU busy and time per round logged against 4096's (85 to 88%), so
    the gain is seen, not assumed.
 5. **Comparing attempts across batches** reads epochs, not rounds (budget-loss-chart.md to check).
 6. **TODO.md:** "Next" and "While Lc0's Convert runs" updated to this order; "To design"'s batch item
    pointing here.
 
-## Open
-
-- Whether width 512's transform at 8192 fits the GPU's memory with room for the test batch (step 3
-  answers).
