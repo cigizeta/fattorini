@@ -16,7 +16,7 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 Done: code, page and documents renamed, every `data/` and Drive migrated, the one-off command
 removed, `lc0-halfk-threats-screlu-hidden-budget-8/` (two small attempts under the config's old name)
-deleted. Left: lichess-bot's config pointed at the renamed snapshot, if not done yet.
+deleted; lichess-bot's config pointed at the renamed snapshot.
 **To check:** those two small attempts had about 2M positions, a scaled attempt's, but no `scale:` in
 their frozen `config.yaml`, which `snapshot.rs` reads to refuse a scaled network.
 
