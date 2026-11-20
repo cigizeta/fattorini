@@ -255,6 +255,17 @@ fn tuned_parameters(player: &str, attempt_dir: &dyn Fn(&str) -> Result<String, S
     })
 }
 
+/// What the Fattorini player `player` plays `@untuned`: the reasoned defaults in its network's own
+/// unit (`SearchParameters::translated` by its pawn scale), pesto's as they are.
+fn untuned_parameters(player: &str, attempt_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<SearchParameters, String> {
+    if player == "pesto" {
+        return Ok(SearchParameters::DEFAULT);
+    }
+    let path = players::resolve_network_file_in(player, attempt_dir)?;
+    let network = fattorini::nnue::Network::load(&path).map_err(|error| format!("failed to load network {path}: {error}"))?;
+    Ok(SearchParameters::DEFAULT.translated(network.pawn_percent()))
+}
+
 /// The time parameters the Fattorini player `player` has tuned, `None` if it has none, as
 /// `tuned_parameters`.
 fn tuned_time_parameters(player: &str, attempt_dir: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<TimeParameters>, String> {
@@ -313,7 +324,7 @@ fn resolve_player_with(name: &str, in_process: bool, engines: &Engines, attempt_
     let search = || tuned_parameters(player, attempt_dir)?.ok_or_else(|| format!("{name:?}: {player} has no search tune"));
     let time = || tuned_time_parameters(player, attempt_dir)?.ok_or_else(|| format!("{name:?}: {player} has no time tune"));
     (entry.parameters, entry.time) = match suffix {
-        TuningSuffix::Untuned => (Some(SearchParameters::DEFAULT), None),
+        TuningSuffix::Untuned => (Some(untuned_parameters(player, attempt_dir)?), None),
         TuningSuffix::SearchTuned => (Some(search()?), None),
         TuningSuffix::SearchTimeTuned => (Some(search()?), Some(time()?)),
     };
@@ -633,15 +644,18 @@ mod tests {
         let attempts = |attempt: &str| -> Result<String, String> { Ok(format!("{root}/attempts/{attempt}")) };
         let candidate = format!("{root}/attempts/fine-a1/gen-1/lambda-0.05/candidate.nnue");
         std::fs::create_dir_all(std::path::Path::new(&candidate).parent().unwrap()).unwrap();
-        std::fs::write(&candidate, b"").unwrap();
+        fattorini::nnue::PsqNetwork::sample_for_tests(8).write(&candidate).unwrap();
+        // Untuned, a network plays the defaults in its own unit.
+        let pawn_percent = fattorini::nnue::Network::load(&candidate).unwrap().pawn_percent();
+        let untuned = SearchParameters::DEFAULT.translated(pawn_percent);
 
         let name = "fine-g1-l0.05-a1";
         let entry = resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &attempts).unwrap();
         assert_equal_footing(&entry);
         assert_eq!(entry.binary_path(), uci_player_path(&format!("{name}@untuned")));
-        assert_eq!((entry.net.clone(), entry.parameters), (Some(candidate.clone()), Some(SearchParameters::DEFAULT)), "what its build embeds");
+        assert_eq!((entry.net.clone(), entry.parameters), (Some(candidate.clone()), Some(untuned)), "what its build embeds");
         let entry = resolve_player_with(&format!("{name}@untuned"), true, &Engines::none(), &attempts).unwrap();
-        assert_eq!((entry.kind, entry.net, entry.parameters), (EngineKind::Network, Some(candidate.clone()), Some(SearchParameters::DEFAULT)));
+        assert_eq!((entry.kind, entry.net, entry.parameters), (EngineKind::Network, Some(candidate.clone()), Some(untuned)));
         let error = resolve_player_with("other-g1-a1@untuned", false, &Engines::none(), &attempts).unwrap_err();
         assert!(error.contains("no forge attempt"), "{error}");
         for name in ["fine", "fine-g0-a1", "fine-x", "-g1-a1", "fine-g1-l1.50-a1", "fine-g1-l0.x-a1", "fine-0001-0.05", "fine-g1-l0.5-a1", "fine-g1-l0.05-r1"] {
@@ -664,7 +678,7 @@ mod tests {
             assert_eq!((entry.parameters, entry.time), (Some(tuned), None));
             assert!(resolve("search-time-tuned", in_process).unwrap_err().contains("no time tune"));
             let entry = resolve("untuned", in_process).unwrap();
-            assert_eq!((entry.parameters, entry.time), (Some(SearchParameters::DEFAULT), None));
+            assert_eq!((entry.parameters, entry.time), (Some(untuned), None));
         }
         // Both tuned: @search-time-tuned plays both files; @search-tuned still the default clock.
         let clock = TimeParameters { pv_min: 0.6, ..TimeParameters::DEFAULT };

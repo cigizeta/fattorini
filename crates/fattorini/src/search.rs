@@ -345,7 +345,20 @@ pub struct SearchParameters {
     /// and at 10s+0.1, both leaning to `-128` by about 20 Elo; `-140` since 2026-11-08, where the lc0
     /// network's tune settled, a little stricter still.
     pub good_quiet_threshold: i32,
+    /// Delta pruning's value of a captured piece, in percent of `piece_value`'s: the material a
+    /// capture wins, in the evaluator's unit. 100 for PeSTO, whose unit is `piece_value`'s; a
+    /// network's starts at its pawn scale (`translated`) and is tuned from there.
+    pub victim_percent: i32,
+    /// Correction history's bound on a correction, the bound on the error that updates it twice
+    /// this: one pawn, enough to fix a pawn structure or a placement the evaluation misjudges, never
+    /// to outweigh a piece.
+    pub correction_cap: i32,
 }
+
+/// The first line of a parameters file written since the search's constants moved into the
+/// evaluator's own unit (2026-11-20): before, a file held classical values the search scaled by the
+/// pawn scale at load. A file without it is such an old tune, never read as a tune.
+pub const UNITS_LINE: &str = "units\tnetwork";
 
 impl SearchParameters {
     /// Every value its reasoned default, each argued in its field's doc comment.
@@ -360,11 +373,33 @@ impl SearchParameters {
         aspiration_delta: 10,
         history_pruning_multiplier: -35,
         good_quiet_threshold: -140,
+        victim_percent: 100,
+        correction_cap: piece_value(PieceType::Pawn),
     };
+
+    /// These parameters, reasoned in `piece_value`'s pawn, in an evaluator's own unit whose pawn is
+    /// `pawn_percent` of `piece_value`'s: every value compared with an evaluation scaled by
+    /// `pawn_percent / 100`, those compared with SEE's material (`see_prune_margin`, `see_margin`)
+    /// and the unitless ones kept. Where a network's untuned search, and a tune of it, start: the
+    /// pawn scale's only use (`nnue::measure_label_percent`). The aspiration window, tuned in the
+    /// evaluator's unit before this existed, is kept too. PeSTO's, at 100, is these parameters.
+    pub fn translated(&self, pawn_percent: i32) -> SearchParameters {
+        let scaled = |value: i32| -> i32 { value * pawn_percent / 100 };
+        SearchParameters {
+            razoring_margin: scaled(self.razoring_margin),
+            reverse_futility_margin: scaled(self.reverse_futility_margin),
+            futility_margin: scaled(self.futility_margin),
+            null_move_margin: scaled(self.null_move_margin),
+            delta_margin: scaled(self.delta_margin),
+            victim_percent: scaled(self.victim_percent),
+            correction_cap: scaled(self.correction_cap),
+            ..*self
+        }
+    }
 
     /// The fields' names, in declaration order: the keys of a parameters file, and the order of
     /// `values` and `from_values`.
-    pub const NAMES: [&'static str; 10] = [
+    pub const NAMES: [&'static str; 12] = [
         "razoring_margin",
         "reverse_futility_margin",
         "futility_margin",
@@ -375,10 +410,12 @@ impl SearchParameters {
         "aspiration_delta",
         "history_pruning_multiplier",
         "good_quiet_threshold",
+        "victim_percent",
+        "correction_cap",
     ];
 
     /// What each field does, in plain words, in `NAMES`' order: shown beside a tune's values.
-    pub const DESCRIPTIONS: [&'static str; 10] = [
+    pub const DESCRIPTIONS: [&'static str; 12] = [
         "how far below beta a shallow node must be to drop into quiescence",
         "how far above beta a shallow node must be to return at once",
         "how far below alpha a quiet move must be to be skipped, per ply",
@@ -389,10 +426,12 @@ impl SearchParameters {
         "the starting half-width of the aspiration window",
         "how bad a quiet move's history must be to be skipped, per ply squared",
         "the history below which a quiet move counts as bad",
+        "a captured piece's value in quiescence, in percent of its material value",
+        "how far the correction history may move a static evaluation",
     ];
 
     /// The fields as an array, in `NAMES`' order.
-    pub fn values(&self) -> [i32; 10] {
+    pub fn values(&self) -> [i32; 12] {
         [
             self.razoring_margin,
             self.reverse_futility_margin,
@@ -404,12 +443,14 @@ impl SearchParameters {
             self.aspiration_delta,
             self.history_pruning_multiplier,
             self.good_quiet_threshold,
+            self.victim_percent,
+            self.correction_cap,
         ]
     }
 
     /// The inverse of `values`.
-    pub fn from_values(values: [i32; 10]) -> SearchParameters {
-        let [razoring_margin, reverse_futility_margin, futility_margin, null_move_margin, delta_margin, see_prune_margin, see_margin, aspiration_delta, history_pruning_multiplier, good_quiet_threshold] =
+    pub fn from_values(values: [i32; 12]) -> SearchParameters {
+        let [razoring_margin, reverse_futility_margin, futility_margin, null_move_margin, delta_margin, see_prune_margin, see_margin, aspiration_delta, history_pruning_multiplier, good_quiet_threshold, victim_percent, correction_cap] =
             values;
         SearchParameters {
             razoring_margin,
@@ -422,24 +463,32 @@ impl SearchParameters {
             aspiration_delta,
             history_pruning_multiplier,
             good_quiet_threshold,
+            victim_percent,
+            correction_cap,
         }
     }
 
-    /// The text of a parameters file: one `name<TAB>value` line per field, in `NAMES`' order.
+    /// The text of a parameters file: `UNITS_LINE`, then one `name<TAB>value` line per field, in
+    /// `NAMES`' order.
     pub fn to_file_text(&self) -> String {
-        let mut text = String::new();
+        let mut text = format!("{UNITS_LINE}\n");
         for (name, value) in SearchParameters::NAMES.iter().zip(self.values()) {
             text.push_str(&format!("{name}\t{value}\n"));
         }
         text
     }
 
-    /// The parameters in a parameters file's `text`, read from `path` (named in errors). Every field
-    /// exactly once, in any order, and nothing else: a tuned player silently searching with a
-    /// default for a misspelled field would be found only by its play.
+    /// The parameters in a parameters file's `text`, read from `path` (named in errors). `UNITS_LINE`
+    /// first, then every field exactly once, in any order, and nothing else: a tuned player silently
+    /// searching with a default for a misspelled field would be found only by its play, and one read
+    /// from an old, classical file with values about three times too large.
     pub fn parse_file_text(path: &str, text: &str) -> Result<SearchParameters, String> {
-        let mut values: [Option<i32>; 10] = [None; 10];
-        for line in text.lines() {
+        let mut lines = text.lines();
+        if lines.next() != Some(UNITS_LINE) {
+            return Err(format!("{path}: a tune from before the search's constants moved into the network's unit: retune it, or play it @untuned"));
+        }
+        let mut values: [Option<i32>; 12] = [None; 12];
+        for line in lines {
             let Some((name, value)) = line.split_once('\t') else {
                 return Err(format!("{path}: expected \"name<TAB>value\", got {line:?}"));
             };
@@ -453,7 +502,7 @@ impl SearchParameters {
                 return Err(format!("{path}: {name} appears twice"));
             }
         }
-        let mut complete = [0; 10];
+        let mut complete = [0; 12];
         for (index, value) in values.iter().enumerate() {
             let Some(value) = value else {
                 return Err(format!("{path}: {} is missing", SearchParameters::NAMES[index]));
@@ -463,14 +512,19 @@ impl SearchParameters {
         Ok(SearchParameters::from_values(complete))
     }
 
-    /// The parameters file at `path`: `None` when there is none, an `Err` when it cannot be read or
-    /// parsed.
+    /// The parameters file at `path`: `None` when there is none, or when it is an old, classical tune
+    /// (no `UNITS_LINE`), which is not a tune any more: its network plays untuned until tuned again,
+    /// and a player asking it `@search-tuned` is refused as having no tune. An `Err` when it cannot be
+    /// read or parsed.
     pub fn read_file(path: &str) -> Result<Option<SearchParameters>, String> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(format!("{path}: {error}")),
         };
+        if text.lines().next() != Some(UNITS_LINE) {
+            return Ok(None);
+        }
         SearchParameters::parse_file_text(path, &text).map(Some)
     }
 
@@ -484,17 +538,17 @@ impl SearchParameters {
     }
 }
 
-/// The four margins of `SearchParameters` compared with a static evaluation at every node, in the
-/// evaluator's own pawn (`Search::in_evaluator_pawns`): kept rather than recomputed at every node.
-/// Delta pruning's margin is converted together with its victim's value, where it is used.
+/// The four margins of `SearchParameters` compared with a static evaluation at every node, and the
+/// correction history's bound, in the evaluator's own unit as the parameters are: kept apart from
+/// them only for the nodes' reads.
 #[derive(Clone, Copy, Debug)]
 struct EvalMargins {
     razoring: i32,
     reverse_futility: i32,
     futility: i32,
     null_move: i32,
-    /// One pawn: the correction history's bound on a correction, and half its bound on an error.
-    pawn: i32,
+    /// The correction history's bound on a correction, and half its bound on an error.
+    correction_cap: i32,
 }
 
 /// The deepest remaining depth at which classical and reverse futility prune: three plies. Both
@@ -1400,13 +1454,10 @@ struct Search<'a> {
     /// move is found legal, so evaluating a node costs only the head. Empty unless the evaluator
     /// is a psq network. One set per `Search`, so each Lazy SMP thread has its own.
     accumulators: Vec<[Vec<i16>; 2]>,
-    /// The evaluator's pawn against `piece_value`'s, in percent: 100 for PeSTO, a network's
-    /// as measured when it loaded (`nnue::measure_label_percent`). Set with the evaluator.
-    pawn_percent: i32,
-    /// What this search prunes, orders and windows by: `SearchParameters::DEFAULT` unless the
-    /// caller gave others (`set_parameters`).
+    /// What this search prunes, orders and windows by, in the evaluator's unit:
+    /// `SearchParameters::DEFAULT` unless the caller gave others (`set_parameters`).
     parameters: SearchParameters,
-    /// `parameters`' margins compared with a static evaluation, in the evaluator's pawn.
+    /// `parameters`' margins compared with a static evaluation.
     eval_margins: EvalMargins,
     /// MultiPV's own root move exclusion: a repeated root search, at the same
     /// depth, treats every move in here as if it didn't exist at all -- letting the *next*-best
@@ -1564,9 +1615,8 @@ fn new_search<'a>(
         // `search_root` sets it directly on the `Search` this returns.
         evaluator: None,
         accumulators: Vec::new(),
-        pawn_percent: 100,
         parameters: SearchParameters::DEFAULT,
-        eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
+        eval_margins: eval_margins(&SearchParameters::DEFAULT),
         stop_signal,
         // Set by `search_root_limited` for a helper thread, as `tablebase` above is.
         helper_nodes: None,
@@ -1579,16 +1629,15 @@ fn new_search<'a>(
     }
 }
 
-/// `parameters`' margins compared with a static evaluation, in an evaluator's pawn of
-/// `pawn_percent` of `piece_value`'s.
-fn eval_margins(parameters: &SearchParameters, pawn_percent: i32) -> EvalMargins {
-    let scaled = |centipawns: i32| -> i32 { centipawns * pawn_percent / 100 };
+/// `parameters`' margins compared with a static evaluation, as they are: the parameters are in the
+/// evaluator's unit already.
+fn eval_margins(parameters: &SearchParameters) -> EvalMargins {
     EvalMargins {
-        razoring: scaled(parameters.razoring_margin),
-        reverse_futility: scaled(parameters.reverse_futility_margin),
-        futility: scaled(parameters.futility_margin),
-        null_move: scaled(parameters.null_move_margin),
-        pawn: scaled(piece_value(PieceType::Pawn)),
+        razoring: parameters.razoring_margin,
+        reverse_futility: parameters.reverse_futility_margin,
+        futility: parameters.futility_margin,
+        null_move: parameters.null_move_margin,
+        correction_cap: parameters.correction_cap,
     }
 }
 
@@ -1664,7 +1713,7 @@ impl<'a> Search<'a> {
     /// 2026-10-31 after its duels: drawn, but about +17 Elo on the clock with both networks.
     fn correction(&self, board: &Board) -> i32 {
         let sum: i32 = Self::correction_indices(board).iter().map(|&index| self.correction_history[index]).sum();
-        (sum / 3).clamp(-self.eval_margins.pawn, self.eval_margins.pawn)
+        (sum / 3).clamp(-self.eval_margins.correction_cap, self.eval_margins.correction_cap)
     }
 
     /// Teaches the correction history that a search of `depth` found `score` where the static
@@ -1683,7 +1732,7 @@ impl<'a> Search<'a> {
         if !proven {
             return;
         }
-        let error = error.clamp(-2 * self.eval_margins.pawn, 2 * self.eval_margins.pawn);
+        let error = error.clamp(-2 * self.eval_margins.correction_cap, 2 * self.eval_margins.correction_cap);
         let weight = depth.min(CORRECTION_DEPTH_CAP) as i32;
         for index in Self::correction_indices(board) {
             let entry = &mut self.correction_history[index];
@@ -1703,11 +1752,10 @@ impl<'a> Search<'a> {
         (value + beta) / 2
     }
 
-    /// Sets the evaluator and its pawn scale, and for a psq network allocates one accumulator pair
-    /// per ply and computes the root's from scratch.
+    /// Sets the evaluator, and for a psq network allocates one accumulator pair per ply and computes
+    /// the root's from scratch.
     fn set_evaluator(&mut self, evaluator: Option<&'a Network>, root: &Board) {
         self.evaluator = evaluator;
-        self.set_pawn_percent(evaluator.map_or(100, Network::pawn_percent));
         self.accumulators = match evaluator {
             // Every entry starts as the root's: entry 0 is then correct, and the rest are only
             // buffers of the right size, each overwritten before it is read.
@@ -1716,16 +1764,10 @@ impl<'a> Search<'a> {
         };
     }
 
-    /// Sets the evaluator's pawn scale, in percent, and the margins derived from it.
-    fn set_pawn_percent(&mut self, pawn_percent: i32) {
-        self.pawn_percent = pawn_percent;
-        self.eval_margins = eval_margins(&self.parameters, pawn_percent);
-    }
-
-    /// Sets the search's parameters, and their margins in the evaluator's pawn.
+    /// Sets the search's parameters, in the evaluator's unit, and their margins.
     fn set_parameters(&mut self, parameters: SearchParameters) {
         self.parameters = parameters;
-        self.eval_margins = eval_margins(&parameters, self.pawn_percent);
+        self.eval_margins = eval_margins(&parameters);
     }
 
     /// Razoring's test: `eval` so far below `alpha` that only quiescence is worth trusting.
@@ -1741,12 +1783,6 @@ impl<'a> Search<'a> {
     /// Classical futility's test: no quiet move can plausibly lift `static_eval` to `alpha`.
     fn is_futile(&self, static_eval: i32, alpha: i32, remaining: u32) -> bool {
         static_eval + self.eval_margins.futility * remaining as i32 <= alpha
-    }
-
-    /// `centipawns` of `piece_value`'s pawn in the evaluator's own pawn, for comparing with a
-    /// static evaluation. Exactly `centipawns` for PeSTO.
-    fn in_evaluator_pawns(&self, centipawns: i32) -> i32 {
-        centipawns * self.pawn_percent / 100
     }
 
     /// `accumulators[ply + 1]` from `accumulators[ply]`, for `child` reached from `parent` at
@@ -3087,8 +3123,9 @@ impl<'a> Search<'a> {
             if !in_check && mv.promotion().is_none() {
                 let victim = captured_piece(board, mv).expect("quiescence: noisy non-promotion move has no victim");
                 let static_eval = stand_pat.expect("quiescence: stand pat exists whenever not in check");
-                let best_case =
-                    static_eval + self.in_evaluator_pawns(piece_value(victim.piece_type()) + self.parameters.delta_margin);
+                let best_case = static_eval
+                    + piece_value(victim.piece_type()) * self.parameters.victim_percent / 100
+                    + self.parameters.delta_margin;
                 if best_case <= alpha {
                     continue;
                 }
@@ -3941,10 +3978,10 @@ fn search_root(
 }
 
 /// The parameters a search uses when its caller gives none: `evaluator`'s tuning
-/// (`Network::tuning`, from the files beside its own) if there is one, else
-/// `SearchParameters::DEFAULT`.
+/// (`Network::tuning`, from the files beside its own) if there is one, else the defaults in its
+/// unit (`SearchParameters::translated` by its pawn scale); PeSTO's, `SearchParameters::DEFAULT`.
 pub fn default_parameters_for(evaluator: Option<&Network>) -> SearchParameters {
-    evaluator.map_or(SearchParameters::DEFAULT, |network| network.tuning().parameters())
+    evaluator.map_or(SearchParameters::DEFAULT, |network| network.tuning().parameters(network.pawn_percent()))
 }
 
 /// The PeSTO evaluation of `board` once the pending captures are resolved: the search's own
@@ -5663,9 +5700,8 @@ mod tests {
             tablebase: None,
             evaluator: None,
             accumulators: Vec::new(),
-            pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
-            eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
+            eval_margins: eval_margins(&SearchParameters::DEFAULT),
             excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
@@ -5710,9 +5746,8 @@ mod tests {
             tablebase: None,
             evaluator: None,
             accumulators: Vec::new(),
-            pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
-            eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
+            eval_margins: eval_margins(&SearchParameters::DEFAULT),
             excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
@@ -5756,9 +5791,8 @@ mod tests {
             tablebase: None,
             evaluator: None,
             accumulators: Vec::new(),
-            pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
-            eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
+            eval_margins: eval_margins(&SearchParameters::DEFAULT),
             excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
@@ -5828,9 +5862,8 @@ mod tests {
             tablebase: None,
             evaluator: None,
             accumulators: Vec::new(),
-            pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
-            eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
+            eval_margins: eval_margins(&SearchParameters::DEFAULT),
             excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
@@ -5869,9 +5902,8 @@ mod tests {
             tablebase: None,
             evaluator: None,
             accumulators: Vec::new(),
-            pawn_percent: 100,
             parameters: SearchParameters::DEFAULT,
-            eval_margins: eval_margins(&SearchParameters::DEFAULT, 100),
+            eval_margins: eval_margins(&SearchParameters::DEFAULT),
             excluded_root_moves: Vec::new(), root_stats: RootStats::default(),
             scores: Vec::new(),
             quiets: Vec::new(),
@@ -7367,7 +7399,6 @@ mod tests {
                     assert!(!search.accumulators.is_empty(), "test's own premise: the incremental path is on");
                 } else {
                     search.evaluator = Some(&network);
-                    search.set_pawn_percent(network.pawn_percent());
                 }
                 let score = search.alpha_beta_with_buffer(&board, 0, 5, -INFINITY, INFINITY);
                 results.push((score, search.pv.line(0).first().copied(), search.nodes));
@@ -7773,7 +7804,7 @@ mod tests {
         let default_nodes = nodes(default);
         assert_eq!(default_nodes, default_reports.last().unwrap().nodes);
 
-        let moved: [(&str, SearchParameters); 10] = [
+        let moved: [(&str, SearchParameters); 12] = [
             ("razoring", SearchParameters { razoring_margin: 50, ..default }),
             ("reverse futility", SearchParameters { reverse_futility_margin: 50, ..default }),
             ("futility", SearchParameters { futility_margin: 50, ..default }),
@@ -7787,6 +7818,8 @@ mod tests {
             ("aspiration", SearchParameters { aspiration_delta: 5, ..default }),
             ("history pruning", SearchParameters { history_pruning_multiplier: -5, ..default }),
             ("good quiet", SearchParameters { good_quiet_threshold: 0, ..default }),
+            ("victim", SearchParameters { victim_percent: 30, ..default }),
+            ("correction cap", SearchParameters { correction_cap: 10, ..default }),
         ];
         for (name, parameters) in moved {
             assert_ne!(nodes(parameters), default_nodes, "{name}: moving it alone should change the tree");
@@ -7815,7 +7848,7 @@ mod tests {
         let tt = TranspositionTable::new(1);
         let stop_signal = AtomicBool::new(false);
         let mut search = quiescence_search(&tt, &stop_signal);
-        let pawn = search.eval_margins.pawn;
+        let pawn = search.eval_margins.correction_cap;
 
         search.update_correction(&board, 8, 0, -40, Bound::Lower);
         search.update_correction(&board, 8, 0, 40, Bound::Upper);

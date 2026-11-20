@@ -73,7 +73,8 @@ fn refuse_an_older_cpu() {
 /// `fattorini bench [<depth>]`, with what the build embeds, as the engine plays.
 fn run_bench(depth: u32) {
     let evaluator = fattorini::uci::embedded_evaluator();
-    let parameters = fattorini::uci::embedded_parameters();
+    let parameters = fattorini::uci::embedded_parameters()
+        .unwrap_or_else(|| fattorini::search::default_parameters_for(evaluator.as_deref()));
     let (nodes, seconds) = fattorini::bench::bench_with(evaluator.as_deref(), parameters, depth);
     println!("{}", fattorini::bench::bench_line(nodes, seconds));
 }
@@ -82,7 +83,8 @@ fn run_bench(depth: u32) {
 /// on the bench positions (`bench::tm_probe`), one tab-separated line each, the medians last.
 fn run_tm_probe(depth: u32) {
     let evaluator = fattorini::uci::embedded_evaluator();
-    let parameters = fattorini::uci::embedded_parameters();
+    let parameters = fattorini::uci::embedded_parameters()
+        .unwrap_or_else(|| fattorini::search::default_parameters_for(evaluator.as_deref()));
     for line in fattorini::bench::tm_probe(evaluator.as_deref(), parameters, depth) {
         println!("{line}");
     }

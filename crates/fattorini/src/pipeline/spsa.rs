@@ -119,7 +119,11 @@ const fn spec(start: f64, min: f64, max: f64, c_end: f64) -> Spec {
 /// window's floor near where the last tune ended; and `c_end` kept at its old share of its value, an
 /// eighth for the margins and a fifth for the aspiration window, so a smaller value is not perturbed
 /// by a larger part of itself.
-pub const SEARCH_SPECS: [Spec; 10] = [
+///
+/// Classical, as `SearchParameters::DEFAULT` is: a tune of a network translates them into its unit
+/// first (`translated_specs`). The two added on 2026-11-20, the victim's value and the correction cap,
+/// a margin's range, a quarter to twice their start, and its eighth as `c_end`.
+pub const SEARCH_SPECS: [Spec; 12] = [
     spec(150.0, 50.0, 400.0, 19.0),
     spec(100.0, 25.0, 300.0, 12.5),
     spec(200.0, 50.0, 400.0, 25.0),
@@ -130,7 +134,34 @@ pub const SEARCH_SPECS: [Spec; 10] = [
     spec(10.0, 3.0, 40.0, 2.0),
     spec(-35.0, -100.0, -5.0, 5.0),
     spec(-140.0, -512.0, 0.0, 32.0),
+    spec(100.0, 25.0, 200.0, 12.5),
+    spec(100.0, 25.0, 200.0, 12.5),
 ];
+
+/// Which of `SEARCH_SPECS`, in `SearchParameters::NAMES`' order, are in the evaluator's unit, as
+/// `SearchParameters::translated` scales them: the four eval margins, delta pruning's margin, the
+/// victim's value and the correction cap. Not the SEE margins (material), the aspiration window (in
+/// the evaluator's unit already, untranslated) nor the history thresholds (unitless).
+const SEARCH_IN_NETWORK_UNIT: [bool; 12] = [true, true, true, true, true, false, false, false, false, false, true, true];
+
+/// `kind`'s specs in the unit of a network whose pawn is `pawn_percent` of `piece_value`'s: each
+/// parameter `SearchParameters::translated` scales has its start, range and `c_end` scaled alike, the
+/// rest kept. What a new tune of that network starts from, its pawn scale's one use in a tune; PeSTO's,
+/// at 100, the specs themselves. The time parameters are not translated yet.
+pub fn translated_specs(kind: TuneKind, pawn_percent: i32) -> Vec<Spec> {
+    let factor = f64::from(pawn_percent) / 100.0;
+    match kind {
+        TuneKind::Search => SEARCH_SPECS
+            .iter()
+            .zip(SEARCH_IN_NETWORK_UNIT)
+            .map(|(spec, scaled)| match scaled {
+                true => Spec { start: spec.start * factor, min: spec.min * factor, max: spec.max * factor, c_end: spec.c_end * factor },
+                false => *spec,
+            })
+            .collect(),
+        TuneKind::Time => TIME_SPECS.to_vec(),
+    }
+}
 
 /// The 22 time parameters, in `TimeParameters::NAMES`' order, each starting at its default (accepted
 /// by the developer, 2026-11-13; revisited after the first tune's traces). `c_end` about a tenth of
@@ -265,9 +296,9 @@ pub fn point(theta: &[f64], schedule: &Schedule, specs: &[Spec], k: u32, delta: 
     (0..specs.len()).map(|i| clip(theta[i] + (sign * delta[i]) as f64 * schedule.c_k(i, k), &specs[i])).collect()
 }
 
-/// `values`, ten in `SearchParameters::NAMES`' order, each rounded to the nearest integer.
+/// `values`, twelve in `SearchParameters::NAMES`' order, each rounded to the nearest integer.
 pub fn search_parameters(values: &[f64]) -> SearchParameters {
-    let rounded: [i32; 10] = std::array::from_fn(|i| values[i].round() as i32);
+    let rounded: [i32; 12] = std::array::from_fn(|i| values[i].round() as i32);
     SearchParameters::from_values(rounded)
 }
 
@@ -302,6 +333,20 @@ mod tests {
 
     fn close(left: f64, right: f64) -> bool {
         (left - right).abs() < 1e-9 * right.abs().max(1.0)
+    }
+
+    /// A network's tune starts at the defaults in its unit, start, range and step scaled together,
+    /// the material and unitless parameters kept; PeSTO's, at 100, the specs themselves.
+    #[test]
+    fn translated_specs_start_at_the_translated_defaults() {
+        assert_eq!(translated_specs(TuneKind::Search, 100), SEARCH_SPECS.to_vec());
+        assert_eq!(translated_specs(TuneKind::Time, 30), TIME_SPECS.to_vec());
+        let specs = translated_specs(TuneKind::Search, 30);
+        assert_eq!(search_parameters(&start_theta(&specs)), SearchParameters::DEFAULT.translated(30));
+        let razoring = SEARCH_SPECS[0];
+        assert_eq!(specs[0], Spec { start: 45.0, min: razoring.min * 0.3, max: razoring.max * 0.3, c_end: razoring.c_end * 0.3 });
+        assert_eq!(specs[5], SEARCH_SPECS[5], "SEE pruning compares material");
+        assert_eq!(specs[7], SEARCH_SPECS[7], "the aspiration window is in the network's unit already");
     }
 
     #[test]
@@ -375,7 +420,7 @@ mod tests {
     fn a_point_moves_by_c_k_along_delta_clipped_and_rounded() {
         let schedule = Schedule::new(PAIRS, R_END, &SEARCH_SPECS);
         let theta = start_theta(&SEARCH_SPECS);
-        let delta: Delta = vec![1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
+        let delta: Delta = vec![1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
         let k = PAIRS - 1;
         let side = |theta: &[f64], sign| search_parameters(&point(theta, &schedule, &SEARCH_SPECS, k, &delta, sign)).values();
         let plus = side(&theta, 1);
@@ -409,7 +454,7 @@ mod tests {
     fn an_update_moves_along_delta_with_the_result_and_clips() {
         let schedule = Schedule::new(PAIRS, R_END, &SEARCH_SPECS);
         let theta = start_theta(&SEARCH_SPECS);
-        let delta: Delta = vec![1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
+        let delta: Delta = vec![1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1];
         assert_eq!(update(&theta, &schedule, &SEARCH_SPECS, 0, &delta, 0), theta, "a drawn pair moves nothing");
         // Futility and null move: margins of 200 with the same spec, Delta +1 and -1.
         let won = update(&theta, &schedule, &SEARCH_SPECS, 0, &delta, 2);

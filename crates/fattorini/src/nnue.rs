@@ -568,6 +568,28 @@ fn screlu_head(own: &[f32], opponent: &[f32], output: &Layer) -> f32 {
 }
 
 impl PsqNetwork {
+    /// A small deterministic psq network of `embedding_dim` lanes and no hidden layer, its weights
+    /// small and spread: for other crates' tests that need a real network file, as the arena's
+    /// player resolution does, measuring its pawn scale. Never trained, so it plays nonsense.
+    pub fn sample_for_tests(embedding_dim: usize) -> PsqNetwork {
+        let mut next = 0.0f32;
+        let mut values = |count: usize| -> Vec<f32> {
+            (0..count)
+                .map(|_| {
+                    next += 1.0;
+                    ((next * 0.618).fract() - 0.5) * 0.05
+                })
+                .collect()
+        };
+        let transform = values(psq::ROWS * embedding_dim);
+        let transform_bias = values(embedding_dim);
+        let output = Layer { in_dim: 2 * embedding_dim, out_dim: 1, weight: values(2 * embedding_dim), bias: values(1) };
+        PsqNetwork {
+            embedding_dim, transform, transform_bias, hidden: Vec::new(), output, step: 0, learning_rate: 0.0, threats: false,
+            pairwise: false, screlu: false, stack: None, material: None, halfk: false, king_layout: halfk::Layout::Squares,
+        }
+    }
+
     /// The transform's row count.
     fn rows(&self) -> usize {
         if self.halfk_state() {
@@ -1214,10 +1236,12 @@ pub enum Tuning {
 }
 
 impl Tuning {
-    /// The parameters this tuning searches with.
-    pub fn parameters(&self) -> SearchParameters {
+    /// The parameters this tuning searches with, for a network whose pawn is `pawn_percent` of
+    /// `piece_value`'s: the tuned ones as they are, in its unit already, else the defaults translated
+    /// into it (`SearchParameters::translated`).
+    pub fn parameters(&self, pawn_percent: i32) -> SearchParameters {
         match *self {
-            Tuning::Untuned => SearchParameters::DEFAULT,
+            Tuning::Untuned => SearchParameters::DEFAULT.translated(pawn_percent),
             Tuning::Parameters(parameters) => parameters,
         }
     }
@@ -5600,10 +5624,10 @@ pub(crate) mod tests {
         std::fs::remove_file(&parameters_path).ok();
         assert_eq!(Network::load(&path).unwrap().tuning(), Tuning::Untuned);
 
-        let tuned = SearchParameters::from_values([1, 2, 3, 4, 5, 6, 7, 8, -9, -10]);
+        let tuned = SearchParameters::from_values([1, 2, 3, 4, 5, 6, 7, 8, -9, -10, 11, 12]);
         tuned.write_file(&parameters_path).unwrap();
         assert_eq!(Network::load(&path).unwrap().tuning(), Tuning::Parameters(tuned));
-        assert_eq!(Network::load(&path).unwrap().tuning().parameters(), tuned);
+        assert_eq!(Network::load(&path).unwrap().tuning().parameters(30), tuned, "a tune is in the network's unit already");
 
         let good = tuned.to_file_text();
         let malformed_files = [
@@ -5612,12 +5636,18 @@ pub(crate) mod tests {
             good.replacen("razoring_margin\t1", "razoring_margn\t1", 1),
             good.replacen("razoring_margin\t1", "razoring_margin 1", 1),
             format!("{good}razoring_margin\t1\n"),
-            String::new(),
+            format!("{}\n", crate::search::UNITS_LINE),
         ];
         for malformed in malformed_files {
             std::fs::write(&parameters_path, &malformed).unwrap();
             assert!(Network::load(&path).is_err(), "{malformed:?} should be refused");
         }
+
+        // An old, classical tune, without the units line: not a tune, its network untuned.
+        let old = good.lines().skip(1).map(|line| format!("{line}\n")).collect::<String>();
+        std::fs::write(&parameters_path, &old).unwrap();
+        assert_eq!(Network::load(&path).unwrap().tuning(), Tuning::Untuned);
+        assert!(SearchParameters::parse_file_text("old", &old).is_err(), "as an embedded tune, refused");
         std::fs::remove_dir_all(&dir).ok();
     }
 

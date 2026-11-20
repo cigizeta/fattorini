@@ -682,9 +682,10 @@ enum Work {
     },
     /// Pairs: for each pairing, `(challenger, teacher)` by name (`publish`), `wanted` pairs each, every result
     /// appended to `record` as `pairing<TAB>r<TAB>chore<TAB>session<TAB>seq`, its games to the PGN
-    /// beside it (`Dirs::games_of`). `sides`, what the challenger and the teacher play in a gate or a
-    /// round robin (a trial's sides play `Shared::trial`'s).
-    Pairs { pairings: Vec<(String, String)>, wanted: u32, record: String, sides: [SearchParameters; 2] },
+    /// beside it (`Dirs::games_of`). `sides`, one per pairing, what its challenger and its teacher
+    /// play in a gate or a round robin, each in its own network's unit (a trial's sides play
+    /// `Shared::trial`'s).
+    Pairs { pairings: Vec<(String, String)>, wanted: u32, record: String, sides: Vec<[SearchParameters; 2]> },
     /// A tune (`Shared::tune`) of the player whose network is `network`, by name or `PESTO`:
     /// one pair per `k`, each with its own parameters.
     Tune { network: String },
@@ -1086,14 +1087,15 @@ impl Shared {
 
     /// `shares` of `pairings` as a tournament's entries, and counted into chore `id`'s matchups.
     fn tournament_entries(&mut self, id: &str, pairings: &[(String, String)], shares: &[(usize, u64)]) -> Vec<Entry> {
-        let [first, second] = match self.work() {
-            Work::Pairs { sides, .. } => sides.map(Some),
-            _ => [Some(SearchParameters::DEFAULT); 2],
+        let sides = match self.work() {
+            Work::Pairs { sides, .. } => sides,
+            _ => Vec::new(),
         };
         let dealt = self.chores.get_mut(id).expect("the chore is there");
         let mut entries = Vec::new();
         for &(pairing, share) in shares {
             let (challenger, teacher) = pairings[pairing].clone();
+            let [first, second] = sides[pairing].map(Some);
             let players = vec![
                 Player { network: challenger, parameters: first, time: None },
                 Player { network: teacher, parameters: second, time: None },
@@ -1330,7 +1332,7 @@ impl Shared {
                 // A trial's sides also play their time tunes; a gate plays a depth, no clock.
                 let (limit, [first, second], [first_time, second_time]) = match &self.trial {
                     Some(trial) => (trial.limit.clone(), trial.parameters.map(Some), trial.time),
-                    None => (Limit::Depth(self.depth()), sides.map(Some), [None; 2]),
+                    None => (Limit::Depth(self.depth()), sides[pairing].map(Some), [None; 2]),
                 };
                 let players = vec![
                     Player { network: challenger, parameters: first, time: first_time },
@@ -4020,11 +4022,17 @@ impl Attempt<'_> {
 
     /// Plays `pairings`, `wanted` pairs each, as chores, recording into `record`, until `decided`
     /// says so (given every pairing's results so far) or every pairing is complete; the challengers
-    /// and teachers playing `sides`.
+    /// and teachers playing `sides`, `None` for a side untuned: each of its networks plays the
+    /// defaults in its own unit (`untuned_parameters`).
     fn play_pairs(
-        &self, pairings: Vec<(String, String)>, sides: [SearchParameters; 2], wanted: u32, record: &str,
+        &self, pairings: Vec<(String, String)>, sides: [Option<SearchParameters>; 2], wanted: u32, record: &str,
         mut decided: impl FnMut(&[Vec<i32>]) -> bool,
     ) -> Result<(Ended, Vec<Vec<i32>>), String> {
+        let side = |given: Option<SearchParameters>, network: &str| given.map_or_else(|| untuned_parameters(network), Ok);
+        let sides = pairings
+            .iter()
+            .map(|(challenger, teacher)| Ok([side(sides[0], challenger)?, side(sides[1], teacher)?]))
+            .collect::<Result<Vec<_>, String>>()?;
         let results = recorded_pairs(record, pairings.len())?;
         mark_start(record)?;
         {
@@ -4115,7 +4123,7 @@ impl Attempt<'_> {
         // Its progress is its section's graphical bar alone, timed from its record (`round_robin_view`).
         self.lock().view = View::RoundRobin { labels: labels.clone(), players: players.clone() };
         // Candidates against candidates: the defaults, judging the networks alone.
-        let (ended, results) = self.play_pairs(pairings, [SearchParameters::DEFAULT; 2], wanted, &record, |_| false)?;
+        let (ended, results) = self.play_pairs(pairings, [None; 2], wanted, &record, |_| false)?;
         self.lock().view = View::None;
         if let Ended::Stopped = ended {
             return Ok((Ended::Stopped, 0));
@@ -4139,7 +4147,7 @@ impl Attempt<'_> {
         let teacher = self.teacher(state.generation)?;
         // Both sides the defaults, PeSTO too, untuned against untuned: the gate judges the
         // evaluations alone.
-        let sides = [SearchParameters::DEFAULT, SearchParameters::DEFAULT];
+        let sides = [None, None];
         log::info!("gate: lambda {winner} against {teacher}, SPRT at {} Elo", self.config.gate_elo_d());
         let started = Instant::now();
         let elo_d = self.config.gate_elo_d();
@@ -4619,6 +4627,26 @@ fn machine_name() -> Result<String, String> {
     let text = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error} (write it once: `echo 'name: <machine>' > {path}`)"))?;
     let machine: Machine = serde_yaml::from_str(&text).map_err(|error| format!("{path}: {error}"))?;
     Ok(machine.name)
+}
+
+/// What the player named `name` (`publish`'s name, or `PESTO`) plays untuned: the reasoned defaults
+/// in its network's own unit (`SearchParameters::translated` by its pawn scale), PeSTO's as they
+/// are. Its network loaded from this machine's copy, else the remote's; once per name, kept, since
+/// a name always means the same bytes.
+fn untuned_parameters(name: &str) -> Result<SearchParameters, String> {
+    if name == PESTO {
+        return Ok(SearchParameters::DEFAULT);
+    }
+    static KEPT: OnceLock<Mutex<HashMap<String, SearchParameters>>> = OnceLock::new();
+    let kept = KEPT.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(&parameters) = kept.lock().unwrap().get(name) {
+        return Ok(parameters);
+    }
+    let path = if Path::new(name).exists() { name.to_string() } else { remote::remote_path(name) };
+    let network = fattorini::nnue::Network::load(&path).map_err(|error| format!("failed to load network {path}: {error}"))?;
+    let parameters = SearchParameters::DEFAULT.translated(network.pawn_percent());
+    kept.lock().unwrap().insert(name.to_string(), parameters);
+    Ok(parameters)
 }
 
 /// The network at `path` by its name, its path under `data/`, which a chore carries and an arena reads it by from the remote: copied there
@@ -5177,11 +5205,6 @@ struct TrialPlayer {
 /// then have (the developer, 2026-11-13: refused, never the defaults quietly).
 fn trial_player(side: &trials::Side) -> Result<TrialPlayer, String> {
     let player = players::FattoriniPlayer::resolve(&side.player)?;
-    let parameters = match (side.tuning.search_tuned(), player.own_tuning()?) {
-        (false, _) => SearchParameters::DEFAULT,
-        (true, Tuning::Parameters(parameters)) => parameters,
-        (true, Tuning::Untuned) => return Err(format!("{} has no search tune: it can only play @untuned", side.player)),
-    };
     let time = if side.tuning.time_tuned() {
         Some(player.own_time_tuning()?.ok_or_else(|| format!("{} has no time tune: no @search-time-tuned", side.player))?)
     } else {
@@ -5193,6 +5216,13 @@ fn trial_player(side: &trials::Side) -> Result<TrialPlayer, String> {
             (publish(path)?, Some(network))
         }
         None => (PESTO.to_string(), None),
+    };
+    // Untuned, the defaults in the network's own unit, PeSTO's as they are.
+    let untuned = network.as_ref().map_or(SearchParameters::DEFAULT, |network| SearchParameters::DEFAULT.translated(network.pawn_percent()));
+    let parameters = match (side.tuning.search_tuned(), player.own_tuning()?) {
+        (false, _) => untuned,
+        (true, Tuning::Parameters(parameters)) => parameters,
+        (true, Tuning::Untuned) => return Err(format!("{} has no search tune: it can only play @untuned", side.player)),
     };
     Ok(TrialPlayer { name, parameters, time, network })
 }
@@ -5402,7 +5432,7 @@ fn play_trial(status: &Status, dir: &str, spec: &trials::Spec, number: u32, star
             pairings: vec![(challenger.name, champion.name)],
             wanted: spec.kind.max_pairs(),
             record: record.clone(),
-            sides: [challenger.parameters, champion.parameters],
+            sides: vec![[challenger.parameters, champion.parameters]],
         });
     }
     // Its progress, bar and gauge, is the page's, drawn from its view (`trial_view`).
@@ -6499,7 +6529,7 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             let pairings = vec![("aa".to_string(), "bb".to_string()), ("aa".to_string(), "cc".to_string())];
-            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone(), sides: [SearchParameters::DEFAULT, TEACHER_TUNE] });
+            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone(), sides: vec![[SearchParameters::DEFAULT, TEACHER_TUNE]; 2] });
             shared.pairs = vec![vec![2], vec![]];
         }
         let session = hello(&shared, 1);
@@ -6543,7 +6573,7 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             let pairings = ["bb", "cc", "dd"].iter().map(|second| ("aa".to_string(), second.to_string())).collect();
-            shared.work = Some(Work::Pairs { pairings, wanted: 4, record: record.clone(), sides: [SearchParameters::DEFAULT; 2] });
+            shared.work = Some(Work::Pairs { pairings, wanted: 4, record: record.clone(), sides: vec![[SearchParameters::DEFAULT; 2]; 3] });
             shared.pairs = vec![vec![0, 0], vec![], vec![0]];
         }
         let session = hello(&shared, 1);
@@ -6592,7 +6622,7 @@ mod tests {
                 pairings: vec![("aa".to_string(), "bb".to_string())],
                 wanted: 3,
                 record: format!("{dir}/test-0001.tsv"),
-                sides: [SearchParameters::DEFAULT; 2],
+                sides: vec![[SearchParameters::DEFAULT; 2]],
             });
         }
         let session = hello(&shared, 1);
@@ -6614,7 +6644,7 @@ mod tests {
         {
             let mut shared = shared.lock().unwrap();
             let pairings = vec![("aa".to_string(), "bb".to_string()), ("aa".to_string(), "cc".to_string())];
-            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone(), sides: [SearchParameters::DEFAULT; 2] });
+            shared.work = Some(Work::Pairs { pairings, wanted: 1, record: record.clone(), sides: vec![[SearchParameters::DEFAULT; 2]; 2] });
         }
         let lost = hello(&shared, 1);
         let first = chore(&post(&shared, CHORE_PATH, lost.as_bytes()));
@@ -6873,7 +6903,7 @@ mod tests {
         let record = format!("{dir}/round-robin.tsv");
         let shared = Mutex::new(Shared::default());
         shared.lock().unwrap().work =
-            Some(Work::Pairs { pairings: vec![("aa".to_string(), "bb".to_string())], wanted: 4, record: record.clone(), sides: [SearchParameters::DEFAULT; 2] });
+            Some(Work::Pairs { pairings: vec![("aa".to_string(), "bb".to_string())], wanted: 4, record: record.clone(), sides: vec![[SearchParameters::DEFAULT; 2]] });
         let session = hello(&shared, 1);
         let dealt = chore(&post(&shared, CHORE_PATH, session.as_bytes()));
         assert_eq!(shared.lock().unwrap().outstanding(0), 4);

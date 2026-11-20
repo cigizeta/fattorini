@@ -330,8 +330,10 @@ mod tests {
                     let mut reader = book.reader();
                     while !stop.load(Ordering::SeqCst) {
                         let fen = book.random_fen(&mut reader, &mut rng);
+                        // Untuned: the defaults in the network's own unit, PeSTO's as they are.
+                        let untuned = network.as_deref().map_or(SearchParameters::DEFAULT, |network| SearchParameters::DEFAULT.translated(network.pawn_percent()));
                         let Some((_, played)) =
-                            play_game_pgn(&fen, DEFAULT_SEARCH_DEPTH, &tt, &tablebase, network.as_deref(), Some(SearchParameters::DEFAULT), &player, &mut rng, &stop)
+                            play_game_pgn(&fen, DEFAULT_SEARCH_DEPTH, &tt, &tablebase, network.as_deref(), Some(untuned), &player, &mut rng, &stop)
                         else {
                             break;
                         };

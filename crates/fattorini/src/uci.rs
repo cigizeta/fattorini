@@ -588,9 +588,10 @@ pub struct Engine {
     /// the PeSTO evaluation. `Arc` for the same reason as `tt`: the search's background thread
     /// outlives the `handle` call that spawns it.
     evaluator: Option<Arc<Network>>,
-    /// The search parameters every search uses: the embedded ones (`embedded_parameters`), then any
-    /// field a `setoption` of its UCI name sets.
-    parameters: SearchParameters,
+    /// The search parameters every search uses: the embedded ones (`embedded_parameters`), or `None`
+    /// for an untuned build, whose search takes the defaults in its evaluator's unit
+    /// (`search::default_parameters_for`).
+    parameters: Option<SearchParameters>,
     /// The time parameters every clock is planned with: the embedded ones
     /// (`embedded_time_parameters`), no option setting them.
     time_parameters: TimeParameters,
@@ -647,7 +648,7 @@ impl Engine {
             last_search_output: Arc::new(Mutex::new(Vec::new())),
             tablebase: Arc::new(SyzygyTablebase::new()),
             evaluator: None,
-            parameters: SearchParameters::DEFAULT,
+            parameters: None,
             time_parameters: TimeParameters::DEFAULT,
             description: String::new(),
             pin_at_next_go: false,
@@ -1100,7 +1101,7 @@ impl Engine {
                                 } else {
                                     choose_best_move_threaded(
                                         board, target_depth, limit, ancestors, tt, tablebase, evaluator,
-                                        Some(parameters), thread_idx, stop_signal, helper_nodes, ponder_state,
+                                        parameters, thread_idx, stop_signal, helper_nodes, ponder_state,
                                         move |report| {
                                             let line = format_info_line(report, root_tablebase, tt.hashfull(), evaluator);
                                             // Pushed before the print, not after -- see
@@ -1128,7 +1129,7 @@ impl Engine {
                         } else {
                             scope.spawn(move || {
                                 choose_best_move_threaded(
-                                    board, target_depth, limit, ancestors, tt, tablebase, evaluator, Some(parameters),
+                                    board, target_depth, limit, ancestors, tt, tablebase, evaluator, parameters,
                                     thread_idx, stop_signal, helper_nodes, None, |_| {},
                                 )
                             })
@@ -1270,17 +1271,17 @@ pub fn embedded_evaluator() -> Option<Arc<Network>> {
     }
 }
 
-/// The embedded parameters, `SearchParameters::DEFAULT` when the build has none; malformed ones end
-/// the process, as a bad network does.
-pub fn embedded_parameters() -> SearchParameters {
+/// The embedded parameters, in the network's unit, `None` when the build has none; malformed ones,
+/// or an old, classical tune, end the process, as a bad network does.
+pub fn embedded_parameters() -> Option<SearchParameters> {
     if EMBEDDED_PARAMETERS.is_empty() {
-        return SearchParameters::DEFAULT;
+        return None;
     }
     let text = String::from_utf8_lossy(EMBEDDED_PARAMETERS);
-    SearchParameters::parse_file_text("the embedded parameters", &text).unwrap_or_else(|error| {
+    Some(SearchParameters::parse_file_text("the embedded parameters", &text).unwrap_or_else(|error| {
         eprintln!("{error}");
         std::process::exit(1);
-    })
+    }))
 }
 
 /// The embedded time parameters, `TimeParameters::DEFAULT` when the build has none; malformed ones
@@ -1827,7 +1828,7 @@ mod tests {
         // `cargo test` builds with no `FATTORINI_*` set.
         let engine = Engine::embedded();
         assert!(engine.evaluator.is_none());
-        assert_eq!(engine.parameters, SearchParameters::DEFAULT);
+        assert_eq!(engine.parameters, None, "untuned: the search takes the defaults in its evaluator's unit");
         assert!(engine.description.is_empty());
         assert!(embedded_notices().is_empty());
     }

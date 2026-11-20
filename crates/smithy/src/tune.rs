@@ -266,9 +266,16 @@ impl Tune {
         // time tune's from the time defaults.
         let (pairs, specs) = match args.pairs {
             Some(pairs) => {
+                // In the tuned network's unit: the classical specs translated by its pawn scale, measured
+                // once here, its one use in a tune (PeSTO's 100). A teacher's tune is in that unit already.
+                let pawn_percent = match &player.network {
+                    Some(path) => fattorini::nnue::Network::load(path).map_err(|error| format!("failed to load network {path}: {error}"))?.pawn_percent(),
+                    None => 100,
+                };
+                let translated = spsa::translated_specs(kind, pawn_percent);
                 let specs = match (kind, &args.start) {
-                    (TuneKind::Search, Some(start)) => spsa::specs_from(&spsa::SEARCH_SPECS, &spsa::search_values(start)),
-                    _ => kind.specs().to_vec(),
+                    (TuneKind::Search, Some(start)) => spsa::specs_from(&translated, &spsa::search_values(start)),
+                    _ => translated,
                 };
                 (scaled_pairs(pairs, args.scale), specs)
             }

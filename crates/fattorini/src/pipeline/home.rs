@@ -54,10 +54,10 @@ pub fn set_router(router: &str) -> Result<(), String> {
 pub fn at_home() -> bool {
     let Some(home) = HOME.get() else { return true };
     let mut last = home.last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((at, answer)) = *last {
-        if at.elapsed() < RECHECK {
-            return answer;
-        }
+    if let Some((at, answer)) = *last
+        && at.elapsed() < RECHECK
+    {
+        return answer;
     }
     let answer = gateway_mac() == Some(home.router);
     if last.map(|(_, before)| before) != Some(answer) {

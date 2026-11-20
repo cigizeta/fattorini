@@ -551,7 +551,8 @@ impl Player {
         let time = if time_pairs.is_empty() { None } else { Some(TimeParameters::parse_file_text("player", &lines(&time_pairs))?) };
         let parameters = match search_pairs.as_slice() {
             ["own"] => None,
-            _ => Some(SearchParameters::parse_file_text("player", &lines(&search_pairs))?),
+            // The values the search uses, in the network's unit, as both ends of one build send them.
+            _ => Some(SearchParameters::parse_file_text("player", &format!("{}\n{}", crate::search::UNITS_LINE, lines(&search_pairs)))?),
         };
         Ok(Player { network: network.to_string(), parameters, time })
     }
