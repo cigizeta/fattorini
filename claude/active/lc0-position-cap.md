@@ -21,11 +21,14 @@ any time: training does not read the cap. Then:
 The halfk line wants more data before the king buckets are compared (halfk-king-buckets.md): which
 layout wins depends on the data it trains on, and the next corpus is at least 4 x 1024^3 training
 positions (the developer, 2026-11-18). Training sees positions, not bytes, so the cap counts them.
-At about 21.5 bytes a position, about 86 GiB on Drive.
+**Raised to 5 billion (the developer, 2026-11-20):** the cap is a bound, not an exact count, so it
+need not be a power of two, and 5 billion is the rounder number above the minimum (10 billion one
+day). At about 21.5 bytes a position, about 100 GiB on Drive. Takes effect when the Convert is
+restarted from the page, since it reads the cap once at its start.
 
 ## Design
 
-- **`cap_positions` replaces `cap_bytes`** in `configs/lc0.yaml`, set to 4294967296. The config
+- **`cap_positions` replaces `cap_bytes`** in `configs/lc0.yaml`, set to 4294967296, later 5000000000. The config
   refuses `cap_bytes`, so a stale key is not silently ignored.
 - **The cap counts training positions alone:** the `train` rows' `positions`, as the summary's
   `train_positions` does. The test tars are frozen apart and do not count.
@@ -34,7 +37,7 @@ At about 21.5 bytes a position, about 86 GiB on Drive.
 - `passes_cap`, `may_fetch` and `decide` compare positions: what the train rows hold, plus what is
   ahead (downloaded, not yet converted, in predicted positions), plus the tar's prediction.
 - **The page:** `lc0::cap_bytes` becomes `lc0::cap_positions`, `[done, total]` in training
-  positions; the catalog's line shows them as positions (e.g. "1.20 B of 4.29 B positions").
+  positions; the catalog's line shows them as positions (e.g. "1.20 B of 5.00 B positions").
 - **`staging_bytes` stays bytes:** it bounds the disk, not the corpus.
 - Raising the cap only appends tars: the rows done, the corpus and the frozen test set are kept.
 

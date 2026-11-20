@@ -12,11 +12,12 @@ prefix: training-run2-test91-
 # order until the cap.
 from: 20260101-0000
 
-# 4 x 1024^3 training positions (the developer, 2026-11-18, from a cap of 24 GiB, about 1.2 billion
-# positions): the halfk line's data, its minimum. Training sees positions, not bytes, so the cap
-# counts them, in train/ alone: the test tars are not counted. At about 21.5 bytes a position, about
-# 86 GiB on Drive. train/ is never taken past this, but by one tar's misprediction.
-cap_positions: 4294967296
+# 5 billion training positions (the developer, 2026-11-20, a round number above the halfk line's
+# minimum of 4 x 1024^3; before that a cap of 24 GiB, about 1.2 billion positions). Training sees
+# positions, not bytes, so the cap counts them, in train/ alone: the test tars are not counted. At
+# about 21.5 bytes a position, about 100 GiB on Drive. train/ is never taken past this, but by one
+# tar's misprediction.
+cap_positions: 5000000000
 
 # Tars downloaded but not yet converted, on the converting machine's local disk. Downloads pause while staging holds this much, unless it holds nothing.
 staging_bytes: 100000000000

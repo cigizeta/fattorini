@@ -37,9 +37,9 @@ const SEGMENTS_PER_SAMPLE: u64 = 4;
 /// Fixed, so a census read twice keeps the same positions.
 const SAMPLE_SEED: u64 = 0xC0FF_EE11;
 
-/// The corpus a full run trains on today, and the one considered (4 x 1024^3), for each bucket's
-/// positions a pass.
-const CORPORA: [(&str, f64); 2] = [("today's corpus", 0.0), ("4 x 1024^3", 4_294_967_296.0)];
+/// The corpus a full run trains on today, and the one being converted (Lc0's cap of 5 billion), for
+/// each bucket's positions a pass.
+const CORPORA: [(&str, f64); 2] = [("today's corpus", 0.0), ("5 billion", 5_000_000_000.0)];
 
 /// The two perspectives a position's accumulators take, each with its own king's bucket.
 const PERSPECTIVES: [&str; 2] = ["side to move", "opponent"];
