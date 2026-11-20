@@ -1,11 +1,21 @@
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo/logo-dark-large.svg">
+  <img src="logo/logo-light-large.svg" alt="Fattorini's logo: two clocks on a tilting beam, a tumbling chess clock" width="240">
+</picture>
+
+<br>
+
 # Fattorini
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="logo/logo-dark-large.svg">
-    <img src="logo/logo-light-large.svg" alt="Fattorini's logo: two clocks on a tilting beam, a tumbling chess clock" width="240">
-  </picture>
-</p>
+<a href="https://lichess.org/@/fattorini-bot/perf/blitz"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Flichess.org%2Fapi%2Fuser%2Ffattorini-bot&query=%24.perfs.blitz.rating&label=Lichess%20blitz&color=E69F00&style=for-the-badge&logo=lichess" alt="Lichess blitz rating"></a>
+<a href="https://github.com/cigizeta/fattorini/releases/latest"><img src="https://img.shields.io/github/v/release/cigizeta/fattorini?label=release&color=0072B2&style=for-the-badge" alt="Latest release"></a>
+<a href="LICENSE"><img src="https://img.shields.io/github/license/cigizeta/fattorini?color=009E73&style=for-the-badge" alt="License"></a>
+
+<br>
+
+</div>
 
 Fattorini is a UCI chess engine written in Rust by Calogero Zarba. Its evaluation networks
 are trained on a limited compute budget. A release is one `.exe` for Windows, its network
@@ -13,7 +23,9 @@ embedded: about 3250 on CCRL Blitz's scale, by Fattorini's own estimate (below).
 
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
-Fattorini's account on Lichess is [fattorini-bot](https://lichess.org/@/fattorini-bot).
+Fattorini's account on Lichess is [fattorini-bot](https://lichess.org/@/fattorini-bot). Its Lichess
+blitz rating, in the badge above, is on Lichess's scale, against bots and people there: it is not
+comparable with the CCRL estimate below.
 
 ## Strength
 
