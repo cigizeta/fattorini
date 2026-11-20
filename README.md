@@ -10,7 +10,9 @@
 # Fattorini
 
 <a href="https://lichess.org/@/fattorini-bot/perf/blitz"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Flichess.org%2Fapi%2Fuser%2Ffattorini-bot&query=%24.perfs.blitz.rating&label=Lichess%20blitz&color=E69F00&style=for-the-badge&logo=lichess" alt="Lichess blitz rating"></a>
+&nbsp;&nbsp;
 <a href="https://github.com/cigizeta/fattorini/releases/latest"><img src="https://img.shields.io/github/v/release/cigizeta/fattorini?label=release&color=0072B2&style=for-the-badge" alt="Latest release"></a>
+&nbsp;&nbsp;
 <a href="LICENSE"><img src="https://img.shields.io/github/license/cigizeta/fattorini?color=009E73&style=for-the-badge" alt="License"></a>
 
 <br>
