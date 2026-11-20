@@ -1,7 +1,8 @@
 # CCRL badges in the README
 
-Status: design agreed, not implemented. Waits for Fattorini's first CCRL listing (the 40/15 list
-expected on 2026-11-27, from a 12'+8" tournament of 44 games).
+Status: design agreed, not implemented. CCRL's 40/15 list of 2026-11-20 already rates Fattorini
+2026.11.0 (3227 +80 -80, 31 games of a 44-game 12'+8" tournament). The 40/15 badge goes into the
+README tomorrow (the developer, 2026-11-20).
 
 ## The problem
 
@@ -19,27 +20,45 @@ badges for every combination would be unreadable.
   never more. Multi-CPU ratings are never shown: claiming a strength at 8 threads is not a fair
   comparison.
 - **Each badge shows the newest rated version,** with the version in the badge, as
-  `CCRL 40/15 | 3210 (2026.11.0)` (number illustrative). The newest version is meant to be the
-  strongest, and it is easy to compute: version names (`YYYY.M.N`) sort by date, so it is the
-  highest version CCRL has rated on that list (comparing the numbers, not the strings). A new
-  version takes over the badge on its first rating, even on few games, and even in the unlikely
-  case that its rating is lower than the previous version's (the developer, 2026-11-20): the badge
-  shows the engine people download. If CCRL's engine-family
-  view lists every version on one page, the Action reads that page and its URL never changes; to
-  be checked.
+  `CCRL 40/15 | 3227 (2026.11.0)`. The newest version is meant to be the strongest. A new version
+  takes over the badge on its first rating, even on few games, and even in the unlikely case that
+  its rating is lower than the previous version's (the developer, 2026-11-20): the badge shows the
+  engine people download.
 - **No badge for Fattorini's own estimate:** a badge reads as official. The estimate stays in the
   Strength section's text, marked as an estimate, until CCRL rates Fattorini on Blitz.
 - **No CCRL table in the README (the developer, 2026-11-20):** a table would need hand edits at
   each list update. The badges carry CCRL's numbers; CCRL's own pages, which each badge links to,
   carry the detail (versions, margins, games).
-- **Live badges, no hand edits (the developer, recorded in TODO.md):** a daily GitHub Action reads
-  Fattorini's CCRL engine page for each list (`engine_details.cgi`, or its `Details (text)` view,
-  where the rating reads "#rank (rating +e -e)") and writes a JSON file for a shields.io endpoint
-  badge. If the Action reads per-version pages instead, their engine names change at each release. If no rating is found (CCRL's page changed),
-  the Action keeps the last good value and fails, so GitHub's failed-workflow e-mail reports it and
-  the badge never shows a wrong number. GitHub disables a scheduled workflow after 60 days without
-  activity in a public repository, warning by e-mail first. Each badge links to Fattorini's entry on
-  that list. To be designed in detail once the name CCRL uses is known.
+- **Live badges, no hand edits (the developer, recorded in TODO.md):** a daily GitHub Action writes
+  a JSON file for a shields.io endpoint badge, one per list. Each badge links to the family page.
+
+## The page the Action reads (checked 2026-11-20)
+
+**The family page,** one URL per list that never changes, listing every rated version with its
+rating and margin (Blitz's is the same under `/404/`):
+
+```text
+https://computerchess.org.uk/4040/cgi/compare_engines.cgi?family=Fattorini&print=Rating+list
+```
+
+Seen on Myrddin's (18 versions, rows as "Myrddin 0.96 64-bit, 3258, +15 -15"). It already works
+for Fattorini's single version ("Comparing 1 engines!"), although the per-version page links to it
+only from the second version on. The plain-text variant, `print=Rating+list+%28text%29`, gives one
+line per version, the easiest to parse: `Fattorini 2026.11.0 64-bit  3227  +80  -80  40.3%  +60.9
+[31]` (name, rating, margins, score, average opponent, games).
+
+- **Only single-CPU rows count:** the family page mixes in `4CPU` entries (Myrddin 0.88 both plain
+  and `4CPU`) and `32-bit` builds. The Action keeps rows named `Fattorini <version> 64-bit` exactly.
+- **The newest rated version** is the highest `<version>` among them, compared as numbers
+  (`2026.9.0` before `2026.11.0`). Its rating and version go to the JSON. A release CCRL has not
+  tested is simply absent, so the badge stays on the previous version with no special case.
+- **A page that yields no Fattorini row** (CCRL changed its layout): the last value is kept and the
+  run fails, so GitHub's failed-workflow e-mail reports it and the badge never shows a wrong
+  number.
+- **Scheduled workflows run on the default branch only** (GitHub's rule): the Action and its JSON
+  live on `main`, and the endpoint URL points there, whichever branch's README shows the badge.
+- GitHub disables a scheduled workflow after 60 days without activity in a public repository,
+  warning by e-mail first.
 
 ## Strength section
 
@@ -53,12 +72,12 @@ rows, release and license on the first, the ratings (CCRL 40/15, CCRL Blitz, Lic
 second. Colours continue the palette already in use (`0072B2`, `009E73`, `E69F00`): `56B4E9` for
 40/15, `CC79A7` for Blitz.
 
-## Steps, once the first listing appears
+## Steps
 
-1. Read Fattorini's 40/15 entry: the engine name CCRL uses, rating, margin, games, and the URL.
-2. Design the Action in detail (where the JSON lives, the parsing, the failure path) in this
-   document, then implement it.
-3. Add the CCRL 40/15 badge and split the badge row in two.
+1. Design the Action in detail in this document: where the JSON lives on `main`, the parsing of the
+   text page, the failure path, the schedule.
+2. Implement it; run it once by hand (`workflow_dispatch`) and check the JSON.
+3. Add the CCRL 40/15 badge to the README, linking to the family page, and split the badge row.
 
 ## Open
 

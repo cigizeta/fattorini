@@ -31,17 +31,18 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   **Next:** a search tune of the release network, then its time tune, on idle machines only
   (after the Convert and halfk's training): a few Elo at most.
 - **README heading:** logo, title and three live badges (Lichess blitz, release, license) through
-  shields.io, as io-chess's README. **A CCRL Blitz badge once CCRL rates Fattorini** (the developer:
-  no weekly hand edits): a daily GitHub Action reading the engine's CCRL page
-  (`computerchess.org.uk/404/cgi/engine_details.cgi?...&eng=<name>`, or its `Details (text)` view;
-  the rating as "#rank (rating +e -e)"), writing a JSON file for a shields.io endpoint badge. The
-  name in the URL is per version, so it changes at each release, and a new version's badge keeps the
-  previous rating until CCRL has one. If CCRL's page changes and no rating is found, the Action keeps
-  the last good value and fails, so GitHub's failed-workflow e-mail says so and the badge never shows
-  a wrong number. The e-mail goes to whoever last changed the workflow's schedule, under GitHub's
-  Settings, Notifications, Actions ("only failed workflows"). GitHub disables a scheduled workflow
-  after 60 days without activity in a public repository, warning by e-mail first. To design when the
-  name CCRL uses is known.
+  shields.io, as io-chess's README. **Two CCRL badges, 40/15 and Blitz, single CPU, newest rated
+  version, live through a daily GitHub Action** (the developer: no weekly hand edits), designed in
+  ccrl-badges.md. CCRL's 40/15 list of 2026-11-20 already rates Fattorini 2026.11.0 (3227 +80 -80,
+  31 games); the 40/15 badge is next. The failed-workflow e-mail goes to whoever last changed the
+  workflow's schedule, under GitHub's Settings, Notifications, Actions ("only failed workflows").
+- **CCRL's entry: authors and links (not sent yet, the developer 2026-11-20: wait a bit).** CCRL's
+  per-version page shows "Authors:" and "Links:" lines under the rating (as Stockfish 19's), and
+  Fattorini's has neither. The message, for CCRL's forum or Discord, or the tester:
+  "Hello, thank you for testing Fattorini 2026.11.0 in Cloaked In Red. Could you add its author and
+  homepage to its CCRL entry? Author: Calogero Zarba (Italy). Link: Homepage,
+  https://github.com/cigizeta/fattorini. Thank you!" The country is the developer's choice
+  (2026-11-20), as the other entries give theirs.
 - **To move to done/ (the developer):** logo.md, shown-score.md, material-value.md, tuned-units.md,
   tuned-units-implementation.md.
 
