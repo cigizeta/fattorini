@@ -1,9 +1,11 @@
 # Fattorini
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="logo/logo-dark-large.svg">
-  <img src="logo/logo-light-large.svg" alt="Fattorini's logo: two clocks on a tilting beam, a tumbling chess clock" width="240">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/logo-dark-large.svg">
+    <img src="logo/logo-light-large.svg" alt="Fattorini's logo: two clocks on a tilting beam, a tumbling chess clock" width="240">
+  </picture>
+</p>
 
 Fattorini is a UCI chess engine written in Rust by Calogero Zarba. Its evaluation networks
 are trained on a limited compute budget. A release is one `.exe` for Windows, its network
