@@ -1195,6 +1195,9 @@ pub struct QuantizedPsqNetwork {
     /// This network's pawn against `piece_value`'s, in percent (`measure_label_percent`): what the
     /// search scales its evaluation margins by. 100 until `Network::from_psq` measures it.
     pawn_percent: i32,
+    /// The curve this network was trained to mean (`curve_of_version`), set with `pawn_percent`:
+    /// what turns its output into the expected score a GUI's score is shown from.
+    curve: crate::labels::Curve,
     /// What this network's search was tuned to, from the files beside its own (`read_tuning_beside`).
     /// Its margins are in `piece_value`'s pawn, scaled by `pawn_percent` like the defaults.
     tuning: Tuning,
@@ -1465,6 +1468,7 @@ impl QuantizedPsqNetwork {
             transform_bias: to_i16(&network.transform_bias),
             head,
             pawn_percent: 100,
+            curve: crate::labels::LOGISTIC,
             tuning: Tuning::Untuned,
         })
     }
@@ -2520,7 +2524,22 @@ impl Network {
         let mut quantized = QuantizedPsqNetwork::quantize(&network)?;
         let pawn_percent = measure_label_percent_through(|board| quantized.evaluate(board), curve);
         quantized.pawn_percent = pawn_percent;
+        quantized.curve = *curve;
         Ok(Network::Psq(network, quantized))
+    }
+
+    /// A search score of this network's, in its centipawns (`100 * y`), as a GUI is shown it: Lc0's
+    /// centipawns for the same expected score, `100 * LC0.pawns(curve.score(y))`, that is
+    /// `90 * tan(1.5637 * q)`. The network's own unit matches Lc0's only near 0 and falls far behind
+    /// for a clear advantage (`q = 0.9`: 207 against 550), and a material pawn reads as about its
+    /// pawn scale. Monotone, and for display alone: the search keeps its own centipawns. Not for a
+    /// mate or tablebase score, which the caller passes through.
+    pub fn shown_centipawns(&self, centipawns: i32) -> i32 {
+        let curve = match self {
+            Network::Psq(_, quantized) => quantized.curve,
+        };
+        let q = curve.score(f64::from(centipawns) / 100.0);
+        (100.0 * crate::labels::LC0.pawns(q)).round() as i32
     }
 
     /// This network's pawn against `piece_value`'s, in percent (`measure_label_percent`).
@@ -5534,6 +5553,29 @@ pub(crate) mod tests {
         let Network::Psq(_, quantized) = &network;
         assert_eq!(network.pawn_percent(), measure_label_percent(|board| quantized.evaluate(board)));
         assert_eq!(network.pawn_percent() % PAWN_SCALE_STEP_PERCENT, 0);    }
+
+    /// The shown score is Lc0's centipawns for the network's expected score: odd, increasing, equal
+    /// to the network's own near 0 (the two curves share their slope there), larger for a clear
+    /// advantage, and Lc0's ceiling at the network's.
+    #[test]
+    fn a_shown_score_is_lc0_s_centipawns_for_the_same_expected_score() {
+        let network = Network::from_psq(sample_network(16, &[8])).unwrap();
+        assert_eq!(network.shown_centipawns(0), 0);
+        for cp in [10, 50, 150, 400, 1500] {
+            assert_eq!(network.shown_centipawns(-cp), -network.shown_centipawns(cp), "odd at {cp}");
+        }
+        // Not tested far out: past about 1000, `q` is within 1e-6 of 1 and steps under a rounding.
+        for cp in [10, 50, 150, 400] {
+            assert!(network.shown_centipawns(cp + 10) > network.shown_centipawns(cp), "increasing at {cp}");
+        }
+        assert!((network.shown_centipawns(10) - 10).abs() <= 1, "near 0, the network's own centipawns");
+        let q = crate::labels::LOGISTIC.score(2.07);
+        assert!((q - 0.9).abs() < 0.001, "207 network centipawns are an expected score of 0.9");
+        assert!((network.shown_centipawns(207) - 550).abs() <= 10, "and Lc0 shows 0.9 as about 550");
+        let ceiling = (100.0 * crate::labels::LC0.pawns(1.0)).round() as i32;
+        assert_eq!(network.shown_centipawns(3200), ceiling, "the network's ceiling is Lc0's");
+        assert!(!crate::labels::is_decisive(ceiling), "below the tablebase band");
+    }
 
     /// A network without `search-parameters.txt` is untuned; the file round trips every field, and a
     /// malformed one is refused rather than falling back. The time file is read beside it alike.

@@ -461,6 +461,17 @@ pub fn split_score(score: i32) -> (Option<i32>, Option<i32>) {
     (Some(score), None)
 }
 
+/// A search score as a GUI is shown it: a network's centipawns as Lc0's for the same expected
+/// score (`Network::shown_centipawns`); a mate or tablebase score, or any score of the PeSTO
+/// evaluation (`evaluator` `None`), unchanged. For display alone: the search, the clock's
+/// `previous_score` and the arena keep the search's own centipawns.
+fn shown_score(score: i32, evaluator: Option<&Network>) -> i32 {
+    match evaluator {
+        Some(network) if !crate::labels::is_decisive(score) => network.shown_centipawns(score),
+        _ => score,
+    }
+}
+
 /// Formats one completed iterative-deepening depth's own `info` line. Used by `go_search`'s
 /// live, per-depth callback for thread `0` -- the only place any `info` line is ever built now,
 /// since only thread `0`'s own progress is ever reported live (see `go_search`'s own doc
@@ -468,14 +479,14 @@ pub fn split_score(score: i32) -> (Option<i32>, Option<i32>) {
 /// at that same call site (`TranspositionTable::hashfull`'s own doc comment), not computed here
 /// -- this function only ever formats data it's handed, never reaches back into search state.
 /// `root` is the root's tablebase result, `None` outside the tables: the score shown goes through
-/// `root_reported_score`, the report's own score staying the search's.
-fn format_info_line(r: &IterationReport, root: Option<TbResult>, hashfull: u32) -> String {
+/// `root_reported_score`, the report's own score staying the search's, then `shown_score`.
+fn format_info_line(r: &IterationReport, root: Option<TbResult>, hashfull: u32, evaluator: Option<&Network>) -> String {
     let pv = r.pv.iter().map(|&mv| format_move(mv)).collect::<Vec<_>>().join(" ");
     // nps: multiply by 1000 before dividing, not the other way around, so a sub-second
     // time_ms doesn't get truncated to 0 first; .max(1) guards the division itself against a
     // time_ms of 0 (an extremely fast depth-1 completion).
     let nps = r.nodes * 1000 / r.time_ms.max(1);
-    let score = format_score(root_reported_score(r.score, root));
+    let score = format_score(shown_score(root_reported_score(r.score, root), evaluator));
     format!(
         "info depth {} seldepth {} score {score} nodes {} nps {} hashfull {hashfull} time {} pv {pv}",
         r.depth, r.seldepth, r.nodes, nps, r.time_ms
@@ -1063,7 +1074,7 @@ impl Engine {
                                             // Every rank shown is of the tables' best rank (the
                                             // rest are excluded), so every one takes the root's
                                             // result.
-                                            let shown = |score| root_reported_score(score, root_tablebase);
+                                            let shown = |score| shown_score(root_reported_score(score, root_tablebase), evaluator);
                                             let mut lines = vec![format_multipv_info_line(
                                                 report, 1, shown(report.score), &report.pv, tt.hashfull(),
                                             )];
@@ -1091,7 +1102,7 @@ impl Engine {
                                         board, target_depth, limit, ancestors, tt, tablebase, evaluator,
                                         Some(parameters), thread_idx, stop_signal, helper_nodes, ponder_state,
                                         move |report| {
-                                            let line = format_info_line(report, root_tablebase, tt.hashfull());
+                                            let line = format_info_line(report, root_tablebase, tt.hashfull(), evaluator);
                                             // Pushed before the print, not after -- see
                                             // last_search_output's own doc comment for what this is
                                             // for; a test reading it back shouldn't depend on the
@@ -1163,7 +1174,7 @@ impl Engine {
             // completes between the `ponderhit` and the `bestmove`. Not under MultiPV, an analysis
             // setting, where one rank out of several would mislead.
             let final_info_line = match reports.last() {
-                Some(report) if multipv <= 1 => Some(format_info_line(report, root_tablebase, tt.hashfull())),
+                Some(report) if multipv <= 1 => Some(format_info_line(report, root_tablebase, tt.hashfull(), evaluator)),
                 _ => None,
             };
             let mut output = last_search_output.lock().unwrap();
@@ -1470,15 +1481,25 @@ mod tests {
     }
 
     #[test]
+    fn the_shown_score_of_pesto_and_of_a_decisive_score_is_the_searchs() {
+        for score in [0, 30, -150, 3200] {
+            assert_eq!(shown_score(score, None), score, "PeSTO has no expected score to convert");
+        }
+        let tablebase_win = crate::search::tb_win_at(0);
+        assert_eq!(shown_score(tablebase_win, None), tablebase_win);
+        assert_eq!(shown_score(-(MATE_SCORE - 3), None), -(MATE_SCORE - 3));
+    }
+
+    #[test]
     fn an_info_line_shows_the_roots_tablebase_result_in_the_tablebase_band_not_as_a_mate() {
         // The KQ vs KN that showed +1.59: the line carries the tables' win, as `cp` in the band.
         let report = IterationReport {
             depth: 12, seldepth: 18, score: 159, nodes: 1000, pv: vec![Move::new(Square::D1, Square::D5, None)], time_ms: 10,
         };
         let shown = crate::search::tb_win_at(0);
-        assert!(format_info_line(&report, Some(TbResult::Win), 0).contains(&format!(" score cp {shown} ")));
-        assert!(format_info_line(&report, Some(TbResult::Draw), 0).contains(" score cp 0 "));
-        assert!(format_info_line(&report, None, 0).contains(" score cp 159 "));
+        assert!(format_info_line(&report, Some(TbResult::Win), 0, None).contains(&format!(" score cp {shown} ")));
+        assert!(format_info_line(&report, Some(TbResult::Draw), 0, None).contains(" score cp 0 "));
+        assert!(format_info_line(&report, None, 0, None).contains(" score cp 159 "));
         assert_eq!(report.score, 159, "the report itself keeps the search's score");
     }
 

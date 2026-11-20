@@ -6,7 +6,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// `fattorini` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
 /// `config.yml` (`engine_options`), pins each game's engine to its own physical cores
 /// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints Fattorini's license
-/// and the third-party notices a release embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
+/// and the third-party notices a release embeds. `pawn-scale` measures a network's pawn. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
 /// `tm-probe [<depth>]` measures the time management's factors on those positions.
 ///
@@ -20,6 +20,8 @@ fn main() {
         ["--lichess"] => fattorini::uci::run(true),
         ["about"] => about(),
         ["licenses"] => licenses(),
+        ["pawn-scale"] => pawn_scale(None),
+        ["pawn-scale", path] => pawn_scale(Some(path)),
         ["bench"] => run_bench(fattorini::bench::BENCH_DEPTH),
         ["bench", depth] => match depth.parse::<u32>() {
             Ok(depth) if depth > 0 => run_bench(depth),
@@ -37,7 +39,7 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini bench [<depth>] | fattorini tm-probe [<depth>]");
+            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini bench [<depth>] | fattorini tm-probe [<depth>]");
             std::process::exit(2);
         }
     }
@@ -106,6 +108,40 @@ fn licenses() {
     } else {
         print!("{notices}");
     }
+}
+
+/// `fattorini pawn-scale [<network>]`: the network's pawn against a material pawn (PeSTO's), in
+/// percent, as the engine measures it at load and scales its margins by (`nnue::measure_label_percent`):
+/// `network` a `.nnue` file or a player's name (`<config>-g<g>-a<n>`, any `@<tuning>` ignored, the
+/// pawn being the network's), else the embedded one. A material pawn up reads as that many centipawns.
+fn pawn_scale(network: Option<&str>) {
+    let path = network.map(|network| {
+        if network.ends_with(".nnue") {
+            return network.to_string();
+        }
+        let player = network.split_once('@').map_or(network, |(player, _)| player);
+        fattorini::pipeline::players::resolve_network_file(player).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            std::process::exit(1);
+        })
+    });
+    let (name, percent) = match path.as_deref() {
+        Some(path) => match fattorini::nnue::Network::load(path) {
+            Ok(network) => (path.to_string(), network.pawn_percent()),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        },
+        None => match fattorini::uci::embedded_evaluator() {
+            Some(network) => ("the embedded network".to_string(), network.pawn_percent()),
+            None => {
+                println!("no network embedded: the PeSTO evaluation, whose pawn is 100% by definition");
+                return;
+            }
+        },
+    };
+    println!("{name}: pawn scale {percent}%, a material pawn up reads as about {percent} centipawns");
 }
 
 /// `fattorini about`: what the build embeds, as its description says.
