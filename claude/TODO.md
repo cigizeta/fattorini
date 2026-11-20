@@ -12,6 +12,27 @@ Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Ka
 with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
 and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
+## 2026-11-20: tuned units, the shown score, the material question, the logo
+
+- **The logo** (logo.md): a tumbling chess clock, in the README, on smithy's page, as the `.exe`'s
+  icon and GitHub's social preview; the name and logo under AGPLv3 section 7(e). Done.
+- **The score a GUI is shown** (shown-score.md): Lc0's centipawns for the network's expected score
+  (`y` to `q = tanh(y/2S)` to `90 tan(1.5637 q)`), on Lichess since that day's snapshot. Small scores
+  unchanged (the slopes match at zero), large ones larger. Done.
+- **Why a pawn is worth about 30** (material-value.md, `smithy material`): the network follows its
+  labels, and Lc0's games score a pawn up about 60%, the exchange up about 59%: the teacher's data,
+  not training. Nothing to fix in the pipeline.
+- **The search's constants in the network's unit** (tuned-units.md, its plan
+  tuned-units-implementation.md): SPSA tunes them as they are; the pawn scale only translates the
+  classical defaults for an untuned network and a new tune's starting point. Three constants
+  tuned for the first time: delta pruning's victim value, the correction cap, the time manager's
+  score window. Tune files carry a units line; `smithy translate-tunes` converted the release
+  network's (at 30%), the old files kept as `.classical`. Lichess on the snapshot of that code.
+  **Next:** a search tune of the release network, then its time tune, on idle machines only
+  (after the Convert and halfk's training): a few Elo at most.
+- **To move to done/ (the developer):** logo.md, shown-score.md, material-value.md, tuned-units.md,
+  tuned-units-implementation.md.
+
 ## Run renamed attempt (2026-11-19, attempt-rename.md)
 
 Done: code, page and documents renamed, every `data/` and Drive migrated, the one-off command
@@ -205,8 +226,12 @@ blitz-time-management-v2.md) never had its 180+2 duel: Reckless's set replaced b
   `MAX_CLOCK_FRACTION`, `(alpha + 1/M) * T`) went with it. The released 2026.11.0, the build the
   CCRL testers have, is still Classic with 20 ms: the margin reaches them with the next release.
   `CHECK_INTERVAL`, 1024 nodes, re-checked the same day: at most 0.4 ms at today's speed, 10 ms
-  only below about 100k nodes/s, so it stays. Left, unchecked: whether depth 1 always finishes on
-  a near-empty clock, and what it costs.
+  only below about 100k nodes/s, so it stays. **Depth 1 on a near-empty clock: closed 2026-11-20.**
+  It always completes by construction, and two tests check it: a 30 ms clock under a 100 ms
+  overhead (`a_clock_below_the_overhead_still_plays_a_legal_move`) and an exhausted node budget
+  (`choose_best_move_with_an_exhausted_budget_still_completes_depth_one`). Its cost was never timed
+  on its own: a few thousand nodes at most, about a millisecond, inside the 15 ms margin; the
+  1+0.01 check at `timemargin=0` (release-checks.md) and Lichess's blitz lost nothing on time.
 - **README at the release** (readme-for-humans.md): Strength, the network named: the CCRL Blitz
   estimate alone, no Stockfish (the developer, 2026-11-11), with its full methodology (the developer,
   2026-11-10): the Stockfish 10 bench and S, the scaled control (1'+0.5"), the 10 games at once
