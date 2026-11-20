@@ -74,7 +74,7 @@ fn take(name: &str) -> Result<String, String> {
 }
 
 /// The parameter files a build embeds (`build.rs`), each local, beside the build while it runs;
-/// none for a kind at its defaults, which needs no file.
+/// none for a kind the player has none of, whose build then plays its network's untuned defaults.
 #[derive(Debug, Default)]
 pub(crate) struct ParameterFiles {
     pub(crate) search: Option<String>,
@@ -91,19 +91,20 @@ impl ParameterFiles {
 }
 
 /// The parameters as local files in `dir`, named after `stem`, for `build.rs`; none for a kind
-/// absent or at its defaults. The caller removes them after the build (`ParameterFiles::remove`).
+/// absent. Values equal to the classical defaults are written too: in a network's unit they are not
+/// its untuned ones. The caller removes them after the build (`ParameterFiles::remove`).
 pub(crate) fn parameter_files(
     search: Option<SearchParameters>, time: Option<TimeParameters>, dir: &str, stem: &str,
 ) -> Result<ParameterFiles, String> {
     let mut files = ParameterFiles::default();
     let create_dir = || std::fs::create_dir_all(dir).map_err(|error| format!("failed to create {dir}: {error}"));
-    if let Some(search) = search.filter(|search| *search != SearchParameters::DEFAULT) {
+    if let Some(search) = search {
         create_dir()?;
         let file = format!("{dir}/{stem}.search-parameters.txt");
         search.write_file(&file)?;
         files.search = Some(file);
     }
-    if let Some(time) = time.filter(|time| *time != TimeParameters::DEFAULT) {
+    if let Some(time) = time {
         create_dir()?;
         let file = format!("{dir}/{stem}.time-parameters.txt");
         time.write_file(&file)?;

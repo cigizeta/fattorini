@@ -391,6 +391,52 @@ pub fn attempt_winner(attempt_dir: &str, generation_number: u32) -> Result<ArmLa
     ))
 }
 
+/// Player `name`'s (`pesto`, or a network player, any `@<tuning>` ignored) old, classical
+/// `search-parameters.txt` and `time-parameters.txt`, this machine's and the remote's, rewritten in
+/// its network's unit (`SearchParameters::from_classical_text`, `TimeParameters::from_classical_text`),
+/// so its tune plays as it did before the constants moved into that unit. The old file is kept beside
+/// it as `<file>.classical`; a file already in the network's unit, or absent, is left alone. One line
+/// a file says what was done.
+pub fn translate_tune(name: &str) -> Result<Vec<String>, String> {
+    let name = name.split_once('@').map_or(name, |(name, _)| name);
+    let player = FattoriniPlayer::resolve(name)?;
+    let pawn_percent = match &player.network {
+        Some(path) => nnue::Network::load(path)?.pawn_percent(),
+        None => 100,
+    };
+    let mut paths = Vec::new();
+    for path in [&player.search_parameters_path, &player.time_parameters_path] {
+        paths.push(path.clone());
+        if path.starts_with("data/") {
+            paths.push(remote::remote_path(path));
+        }
+    }
+    let mut report = Vec::new();
+    for path in paths {
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{path}: {error}")),
+        };
+        if text.lines().next() == Some(crate::search::UNITS_LINE) {
+            report.push(format!("{path}: in the network's unit already"));
+            continue;
+        }
+        let translated = if path.ends_with(SEARCH_PARAMETERS_FILE) {
+            SearchParameters::from_classical_text(&path, &text, pawn_percent)?.to_file_text()
+        } else {
+            TimeParameters::from_classical_text(&path, &text, pawn_percent)?.to_file_text()
+        };
+        let backup = format!("{path}.classical");
+        std::fs::copy(&path, &backup).map_err(|error| format!("{backup}: {error}"))?;
+        let tmp = format!("{path}.tmp");
+        std::fs::write(&tmp, &translated).map_err(|error| format!("{tmp}: {error}"))?;
+        std::fs::rename(&tmp, &path).map_err(|error| format!("{path}: {error}"))?;
+        report.push(format!("{path}: translated at a pawn scale of {pawn_percent}%, the old file kept as {backup}"));
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

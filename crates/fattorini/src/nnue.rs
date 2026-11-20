@@ -1214,14 +1214,17 @@ pub struct QuantizedPsqNetwork {
     transform: Vec<i16>,
     transform_bias: Vec<i16>,
     head: QuantizedHead,
-    /// This network's pawn against `piece_value`'s, in percent (`measure_label_percent`): what the
-    /// search scales its evaluation margins by. 100 until `Network::from_psq` measures it.
+    /// This network's pawn against `piece_value`'s, in percent (`measure_label_percent`). The search
+    /// never reads it: it only translates the classical defaults into this network's unit, for an
+    /// untuned search or clock and for a new tune's starting point (`SearchParameters::translated`,
+    /// `TimeParameters::translated`, `spsa::translated_specs`). 100 until `Network::from_psq`
+    /// measures it.
     pawn_percent: i32,
     /// The curve this network was trained to mean (`curve_of_version`), set with `pawn_percent`:
     /// what turns its output into the expected score a GUI's score is shown from.
     curve: crate::labels::Curve,
     /// What this network's search was tuned to, from the files beside its own (`read_tuning_beside`).
-    /// Its margins are in `piece_value`'s pawn, scaled by `pawn_percent` like the defaults.
+    /// In this network's own unit, played as it is.
     tuning: Tuning,
 }
 
@@ -5617,8 +5620,10 @@ pub(crate) mod tests {
         let time = crate::search::TimeParameters { pv_b: 0.05, ..crate::search::TimeParameters::DEFAULT };
         time.write_file(&time_path).unwrap();
         assert_eq!(read_time_tuning_beside(&path), Ok(Some(time)));
+        std::fs::write(&time_path, format!("{}\npv_b\t0.05\n", crate::search::UNITS_LINE)).unwrap();
+        assert!(read_time_tuning_beside(&path).is_err(), "22 missing");
         std::fs::write(&time_path, "pv_b\t0.05\n").unwrap();
-        assert!(read_time_tuning_beside(&path).is_err(), "21 missing");
+        assert_eq!(read_time_tuning_beside(&path), Ok(None), "an old, classical time tune is no tune");
         std::fs::remove_file(&time_path).ok();
         sample_network(16, &[8]).write(&path).unwrap();
         std::fs::remove_file(&parameters_path).ok();

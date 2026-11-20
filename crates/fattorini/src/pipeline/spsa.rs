@@ -1,6 +1,6 @@
 //! SPSA as fishtest runs it (`spsa_handler.py`, `spsa_workflow.py`, fetched 2026-10-16), over one
-//! kind of parameters (`TuneKind`): the search's ten `SearchParameters`, or the time management's
-//! 22 `TimeParameters`. Pure functions, no games and no files, so the method is tested on its own. A
+//! kind of parameters (`TuneKind`): the search's twelve `SearchParameters`, or the time management's
+//! 23 `TimeParameters`. Pure functions, no games and no files, so the method is tested on its own. A
 //! pair of games, colours reversed on one opening, plays theta + c_k Delta against theta - c_k
 //! Delta; its result moves each parameter along Delta, then clips it to its range. `smithy start
 //! --spsa` runs it, the arenas playing the pairs.
@@ -146,30 +146,43 @@ const SEARCH_IN_NETWORK_UNIT: [bool; 12] = [true, true, true, true, true, false,
 
 /// `kind`'s specs in the unit of a network whose pawn is `pawn_percent` of `piece_value`'s: each
 /// parameter `SearchParameters::translated` scales has its start, range and `c_end` scaled alike, the
-/// rest kept. What a new tune of that network starts from, its pawn scale's one use in a tune; PeSTO's,
-/// at 100, the specs themselves. The time parameters are not translated yet.
+/// rest kept; for time, as `TimeParameters::translated`, the score window scaled and the trend's slope
+/// divided. What a new tune of that network starts from, its pawn scale's one use in a tune; PeSTO's,
+/// at 100, the specs themselves.
 pub fn translated_specs(kind: TuneKind, pawn_percent: i32) -> Vec<Spec> {
     let factor = f64::from(pawn_percent) / 100.0;
+    let scale = |spec: &Spec, by: f64| Spec { start: spec.start * by, min: spec.min * by, max: spec.max * by, c_end: spec.c_end * by };
     match kind {
         TuneKind::Search => SEARCH_SPECS
             .iter()
             .zip(SEARCH_IN_NETWORK_UNIT)
-            .map(|(spec, scaled)| match scaled {
-                true => Spec { start: spec.start * factor, min: spec.min * factor, max: spec.max * factor, c_end: spec.c_end * factor },
-                false => *spec,
+            .map(|(spec, scaled)| if scaled { scale(spec, factor) } else { *spec })
+            .collect(),
+        TuneKind::Time => TIME_SPECS
+            .iter()
+            .enumerate()
+            .map(|(i, spec)| match i {
+                TIME_TREND_SLOPE => scale(spec, 1.0 / factor),
+                TIME_EVAL_WINDOW => scale(spec, factor),
+                _ => *spec,
             })
             .collect(),
-        TuneKind::Time => TIME_SPECS.to_vec(),
     }
 }
 
-/// The 22 time parameters, in `TimeParameters::NAMES`' order, each starting at its default (accepted
+/// `trend_b` and `eval_window` in `TimeParameters::NAMES`: the time parameters read against a score.
+const TIME_TREND_SLOPE: usize = 11;
+const TIME_EVAL_WINDOW: usize = 22;
+
+/// The 23 time parameters, in `TimeParameters::NAMES`' order, each starting at its default (accepted
 /// by the developer, 2026-11-13; revisited after the first tune's traces). `c_end` about a tenth of
 /// the value's scale; a slope near zero perturbed by its own size rather than its value's. Ranges
 /// wide enough that no start sits near an edge, a factor's floor below its intercept, and
 /// `multiplier_min < multiplier_max` and `trend_min < trend_max` held by the ranges themselves.
-/// `soft_rise` may pass `soft_max`: the time manager floors the soft fraction.
-pub const TIME_SPECS: [Spec; 22] = [
+/// `soft_rise` may pass `soft_max`: the time manager floors the soft fraction. Classical, as the
+/// search's (`translated_specs`); `eval_window`, added on 2026-11-20, from 3 to 40 with an eighth as
+/// `c_end`.
+pub const TIME_SPECS: [Spec; 23] = [
     spec(0.0594, 0.03, 0.10, 0.006),
     spec(0.0492, 0.02, 0.08, 0.006),
     spec(0.0386, 0.01, 0.10, 0.006),
@@ -192,6 +205,7 @@ pub const TIME_SPECS: [Spec; 22] = [
     spec(0.8642, 0.5, 1.0, 0.08),
     spec(1.15, 0.7, 2.0, 0.12),
     spec(0.2526, 0.0, 1.0, 0.04),
+    spec(12.0, 3.0, 40.0, 1.5),
 ];
 
 /// theta, the tune's current point, as real numbers in its kind's names' order.
@@ -302,7 +316,7 @@ pub fn search_parameters(values: &[f64]) -> SearchParameters {
     SearchParameters::from_values(rounded)
 }
 
-/// `values`, 22 in `TimeParameters::NAMES`' order, as they are.
+/// `values`, 23 in `TimeParameters::NAMES`' order, as they are.
 pub fn time_parameters(values: &[f64]) -> TimeParameters {
     TimeParameters::from_values(std::array::from_fn(|i| values[i]))
 }
@@ -340,7 +354,12 @@ mod tests {
     #[test]
     fn translated_specs_start_at_the_translated_defaults() {
         assert_eq!(translated_specs(TuneKind::Search, 100), SEARCH_SPECS.to_vec());
-        assert_eq!(translated_specs(TuneKind::Time, 30), TIME_SPECS.to_vec());
+        assert_eq!(translated_specs(TuneKind::Time, 100), TIME_SPECS.to_vec());
+        let time = translated_specs(TuneKind::Time, 30);
+        assert!(close(time_parameters(&start_theta(&time)).eval_window, TimeParameters::DEFAULT.translated(30).eval_window));
+        assert!(close(time_parameters(&start_theta(&time)).trend_b, TimeParameters::DEFAULT.translated(30).trend_b));
+        assert!(close(time[TIME_EVAL_WINDOW].max, 12.0) && close(time[TIME_TREND_SLOPE].max, 0.5), "ranges scaled alike");
+        assert_eq!(time[0], TIME_SPECS[0], "a share of the clock is unitless");
         let specs = translated_specs(TuneKind::Search, 30);
         assert_eq!(search_parameters(&start_theta(&specs)), SearchParameters::DEFAULT.translated(30));
         let razoring = SEARCH_SPECS[0];
@@ -444,7 +463,7 @@ mod tests {
     fn a_time_point_is_played_unrounded() {
         let schedule = Schedule::new(PAIRS, R_END, &TIME_SPECS);
         let theta = start_theta(&TIME_SPECS);
-        let delta = vec![1; 22];
+        let delta = vec![1; 23];
         let plus = time_parameters(&point(&theta, &schedule, &TIME_SPECS, PAIRS - 1, &delta, 1));
         assert!(close(plus.soft_max, 0.0594 + 0.006));
         assert!(close(plus.hard_soft_ratio, 3.0 + 0.4));

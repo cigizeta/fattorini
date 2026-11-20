@@ -1,6 +1,6 @@
 //! A tune, the smithy's job of a player, as its config's `tune:` says (`args_of`): one kind of a
 //! Fattorini player's parameters by SPSA (`fattorini::pipeline::spsa`), its ten search parameters
-//! or, after them, its 22 time parameters with its tuned search, every pair played by the arenas. Pairs of games, colours
+//! or, after them, its 23 time parameters with its tuned search, every pair played by the arenas. Pairs of games, colours
 //! reversed on one random book opening, between theta + c_k Delta and theta - c_k Delta, one `k` per
 //! pair; theta moves as each pair arrives, in the order they arrive, each with its own `k`, as
 //! fishtest's workers do. Every game ends early by the tablebase, win and draw rules: a tune's chores
@@ -749,7 +749,7 @@ pub(crate) mod tests {
     }
 
     /// A time tune: both sides play its search and their own time points; its state, spec and result
-    /// are the 22 time parameters', unrounded.
+    /// are the 23 time parameters', unrounded.
     #[test]
     fn a_time_tune_plays_its_search_and_tunes_the_clock() {
         let dir = temp_dir("time");
@@ -767,8 +767,8 @@ pub(crate) mod tests {
             tune.record(k, 1, "alpha").unwrap();
         }
         let again = tune_of_kind_in(&dir, 4, TuneKind::Time);
-        assert_eq!((again.k_done, &again.theta), (4, &tune.theta), "22 values read back");
-        assert_eq!(tune.rows().len(), 22);
+        assert_eq!((again.k_done, &again.theta), (4, &tune.theta), "23 values read back");
+        assert_eq!(tune.rows().len(), 23);
         tune.finish().unwrap();
         assert!(tune.parameters_path().ends_with("/time-parameters.txt"));
         let tuned = fattorini::search::TimeParameters::read_file(tune.parameters_path()).unwrap().unwrap();

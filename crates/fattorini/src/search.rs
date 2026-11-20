@@ -512,6 +512,15 @@ impl SearchParameters {
         Ok(SearchParameters::from_values(complete))
     }
 
+    /// An old, classical parameters file's `text` (no `UNITS_LINE`, the ten fields before
+    /// `victim_percent`), in the unit of a network whose pawn is `pawn_percent` of `piece_value`'s:
+    /// the missing fields at their defaults, then `translated`, which scales the margins exactly as
+    /// the old search did at load, so the tune plays as it did (`fattorini translate-tune`).
+    pub fn from_classical_text(path: &str, text: &str, pawn_percent: i32) -> Result<SearchParameters, String> {
+        let full = with_missing_fields(text, &SearchParameters::NAMES, &SearchParameters::DEFAULT.values().map(|value| value.to_string()), 10);
+        SearchParameters::parse_file_text(path, &full).map(|parameters| parameters.translated(pawn_percent))
+    }
+
     /// The parameters file at `path`: `None` when there is none, or when it is an old, classical tune
     /// (no `UNITS_LINE`), which is not a tune any more: its network plays untuned until tuned again,
     /// and a player asking it `@search-tuned` is refused as having no tune. An `Err` when it cannot be
@@ -536,6 +545,24 @@ impl SearchParameters {
         std::fs::rename(&tmp_path, path).map_err(|error| format!("{path}: {error}"))?;
         Ok(())
     }
+}
+
+/// An old, classical file's `text` as a current one: `UNITS_LINE` first, then its lines, then each of
+/// `names` from `first_new` on (the fields added since such files were written) it lacks, at its
+/// `defaults` (same order). An older field missing stays missing, for the parser to refuse. Its
+/// values are kept as they are, still classical.
+fn with_missing_fields(text: &str, names: &[&str], defaults: &[String], first_new: usize) -> String {
+    let mut full = format!("{UNITS_LINE}\n");
+    for line in text.lines() {
+        full.push_str(line);
+        full.push('\n');
+    }
+    for (name, default) in names.iter().zip(defaults).skip(first_new) {
+        if !text.lines().any(|line| line.split_once('\t').is_some_and(|(present, _)| present == *name)) {
+            full.push_str(&format!("{name}\t{default}\n"));
+        }
+    }
+    full
 }
 
 /// The four margins of `SearchParameters` compared with a static evaluation at every node, and the
@@ -3311,8 +3338,11 @@ const EXTRA_MARGIN_MS: u64 = 15;
 /// for Fattorini's search after Reckless's own spent its clock by move 30 in a 180+2 test.
 /// **Reckless's:** every other one started from Reckless's SPSA output (its sessions up to "SMP
 /// SPSA session 200k games", #1072), tuned to Reckless's search. Reckless's hand-picked constants
-/// are never tuned, so they are not here: `INC_FRACTION`, `CYCLIC_SOFT`, `CYCLIC_HARD`,
-/// `EVAL_WINDOW_CP`, and `EXTRA_MARGIN_MS`.
+/// are never tuned, so they are not here: `INC_FRACTION`, `CYCLIC_SOFT`, `CYCLIC_HARD` and
+/// `EXTRA_MARGIN_MS`. Reckless's hand-picked score window is, as `eval_window`, since it is compared
+/// with the evaluator's scores.
+///
+/// Every field compared with a score is in the evaluator's own unit (`translated`), as the search's.
 ///
 /// One set per network, as the search's: a tune writes `time-parameters.txt` beside it, since the
 /// factors read the network's scores and the tree its evaluation shapes.
@@ -3339,7 +3369,7 @@ pub struct TimeParameters {
     pub nodes_a: f64,
     pub nodes_b: f64,
     pub nodes_min: f64,
-    /// Score trend `d`, the previous move's score minus this depth's, in Reckless's centipawns:
+    /// Score trend `d`, the previous move's score minus this depth's, in the evaluator's unit:
     /// `clamp(trend_a + trend_b * d, trend_min, trend_max)`. Its neutral point is a drop of about
     /// 5 cp, not 0: an unchanged score gives `trend_a`.
     pub trend_a: f64,
@@ -3351,7 +3381,7 @@ pub struct TimeParameters {
     pub pv_a: f64,
     pub pv_b: f64,
     pub pv_min: f64,
-    /// Score stability `n`, the depths in a row with the score within `EVAL_WINDOW_CP` of its
+    /// Score stability `n`, the depths in a row with the score within `eval_window` of its
     /// running average: `max(eval_a - eval_b * n, eval_min)`.
     pub eval_a: f64,
     pub eval_b: f64,
@@ -3360,6 +3390,9 @@ pub struct TimeParameters {
     /// re-searches included: `changes_a + ln(1 + changes_b * c)`.
     pub changes_a: f64,
     pub changes_b: f64,
+    /// 12, hand-picked by Reckless and untouched by every SPSA session checked, tuned here: the
+    /// score stability's window, in the evaluator's unit.
+    pub eval_window: f64,
 }
 
 /// 0.75, hand-picked by Reckless, never tuned: the share of the increment added to both bounds.
@@ -3369,10 +3402,6 @@ const INC_FRACTION: f64 = 0.75;
 const CYCLIC_SOFT: f64 = 1.0;
 /// 5.0, hand-picked by Reckless, never tuned: under `movestogo`, the hard bound in even shares.
 const CYCLIC_HARD: f64 = 5.0;
-/// 12, hand-picked by Reckless, never tuned: the score stability's window, in Reckless's
-/// centipawns, scaled to the evaluator's pawn. Unchanged since Reckless introduced it, untouched by
-/// every SPSA session checked.
-const EVAL_WINDOW_CP: i32 = 12;
 /// The soft fraction's floor: a tune may perturb `soft_rise` past `soft_max`, which would make the
 /// fraction at move 0 negative. Never reached at the defaults, whose fraction starts at 0.0102.
 const MIN_SOFT_FRACTION: f64 = 0.005;
@@ -3405,11 +3434,25 @@ impl TimeParameters {
         eval_min: 0.8642,
         changes_a: 1.1500,
         changes_b: 0.2526,
+        eval_window: 12.0,
     };
+
+    /// These parameters, reasoned in `piece_value`'s pawn, in an evaluator's own unit whose pawn is
+    /// `pawn_percent` of `piece_value`'s, as `SearchParameters::translated`: the score window times
+    /// `pawn_percent / 100`, the trend's slope, per unit of score, divided by it, the rest kept.
+    pub fn translated(&self, pawn_percent: i32) -> TimeParameters {
+        let factor = f64::from(pawn_percent) / 100.0;
+        TimeParameters { eval_window: self.eval_window * factor, trend_b: self.trend_b / factor, ..*self }
+    }
+
+    /// The defaults in `evaluator`'s unit, for a network with no time tune; PeSTO's are `DEFAULT`.
+    pub fn untuned_for(evaluator: Option<&Network>) -> TimeParameters {
+        TimeParameters::DEFAULT.translated(evaluator.map_or(100, Network::pawn_percent))
+    }
 
     /// The fields' names, in declaration order: the keys of a `time-parameters.txt`, and the order
     /// of `values` and `from_values`.
-    pub const NAMES: [&'static str; 22] = [
+    pub const NAMES: [&'static str; 23] = [
         "soft_max",
         "soft_rise",
         "soft_rate",
@@ -3432,10 +3475,11 @@ impl TimeParameters {
         "eval_min",
         "changes_a",
         "changes_b",
+        "eval_window",
     ];
 
     /// What each field does, in plain words, in `NAMES`' order: shown beside a tune's values.
-    pub const DESCRIPTIONS: [&'static str; 22] = [
+    pub const DESCRIPTIONS: [&'static str; 23] = [
         "share of the clock a move aims for, late in the game",
         "how much less a move aims for at the start of the game",
         "how fast the aim grows toward the late-game share, per move",
@@ -3458,10 +3502,11 @@ impl TimeParameters {
         "the least a steady score cuts the think to",
         "think longer when the best move keeps changing: at no change",
         "think longer when the best move keeps changing: per change",
+        "how close to its average a score must stay to count as steady",
     ];
 
     /// The fields as an array, in `NAMES`' order.
-    pub fn values(&self) -> [f64; 22] {
+    pub fn values(&self) -> [f64; 23] {
         [
             self.soft_max,
             self.soft_rise,
@@ -3485,12 +3530,13 @@ impl TimeParameters {
             self.eval_min,
             self.changes_a,
             self.changes_b,
+            self.eval_window,
         ]
     }
 
     /// The inverse of `values`.
-    pub fn from_values(values: [f64; 22]) -> TimeParameters {
-        let [soft_max, soft_rise, soft_rate, hard_fraction, hard_soft_ratio, multiplier_min, multiplier_max, nodes_a, nodes_b, nodes_min, trend_a, trend_b, trend_min, trend_max, pv_a, pv_b, pv_min, eval_a, eval_b, eval_min, changes_a, changes_b] =
+    pub fn from_values(values: [f64; 23]) -> TimeParameters {
+        let [soft_max, soft_rise, soft_rate, hard_fraction, hard_soft_ratio, multiplier_min, multiplier_max, nodes_a, nodes_b, nodes_min, trend_a, trend_b, trend_min, trend_max, pv_a, pv_b, pv_min, eval_a, eval_b, eval_min, changes_a, changes_b, eval_window] =
             values;
         TimeParameters {
             soft_max,
@@ -3515,21 +3561,30 @@ impl TimeParameters {
             eval_min,
             changes_a,
             changes_b,
+            eval_window,
         }
     }
 
-    /// The text of a `time-parameters.txt`: one `name<TAB>value` line per field, in `NAMES`' order,
-    /// each value in Rust's shortest form that reads back to the same `f64`.
+    /// The text of a `time-parameters.txt`: `UNITS_LINE`, then one `name<TAB>value` line per field,
+    /// in `NAMES`' order, each value in Rust's shortest form that reads back to the same `f64`.
     pub fn to_file_text(&self) -> String {
-        TimeParameters::NAMES.iter().zip(self.values()).map(|(name, value)| format!("{name}\t{value}\n")).collect()
+        let mut text = format!("{UNITS_LINE}\n");
+        for (name, value) in TimeParameters::NAMES.iter().zip(self.values()) {
+            text.push_str(&format!("{name}\t{value}\n"));
+        }
+        text
     }
 
-    /// The parameters in a `time-parameters.txt`'s `text`, read from `path` (named in errors). Every
-    /// field exactly once, in any order, each a finite number, and nothing else, as
-    /// `SearchParameters::parse_file_text`.
+    /// The parameters in a `time-parameters.txt`'s `text`, read from `path` (named in errors).
+    /// `UNITS_LINE` first, then every field exactly once, in any order, each a finite number, and
+    /// nothing else, as `SearchParameters::parse_file_text`.
     pub fn parse_file_text(path: &str, text: &str) -> Result<TimeParameters, String> {
-        let mut values: [Option<f64>; 22] = [None; 22];
-        for line in text.lines() {
+        let mut lines = text.lines();
+        if lines.next() != Some(UNITS_LINE) {
+            return Err(format!("{path}: a time tune from before its score window moved into the network's unit: retune it, or play it @untuned"));
+        }
+        let mut values: [Option<f64>; 23] = [None; 23];
+        for line in lines {
             let Some((name, value)) = line.split_once('\t') else {
                 return Err(format!("{path}: expected \"name<TAB>value\", got {line:?}"));
             };
@@ -3543,7 +3598,7 @@ impl TimeParameters {
                 return Err(format!("{path}: {name} appears twice"));
             }
         }
-        let mut complete = [0.0; 22];
+        let mut complete = [0.0; 23];
         for (index, value) in values.iter().enumerate() {
             let Some(value) = value else {
                 return Err(format!("{path}: {} is missing", TimeParameters::NAMES[index]));
@@ -3553,14 +3608,27 @@ impl TimeParameters {
         Ok(TimeParameters::from_values(complete))
     }
 
-    /// The `time-parameters.txt` at `path`: `None` when there is none, an `Err` when it cannot be
-    /// read or parsed.
+    /// An old, classical `time-parameters.txt`'s `text` (no `UNITS_LINE`, no `eval_window`), in the
+    /// unit of a network whose pawn is `pawn_percent` of `piece_value`'s: `eval_window` at its
+    /// default, then `translated`, which scales the window and the trend's slope exactly as the old
+    /// time manager did, so the tune plays as it did (`fattorini translate-tune`).
+    pub fn from_classical_text(path: &str, text: &str, pawn_percent: i32) -> Result<TimeParameters, String> {
+        let full = with_missing_fields(text, &TimeParameters::NAMES, &TimeParameters::DEFAULT.values().map(|value| value.to_string()), 22);
+        TimeParameters::parse_file_text(path, &full).map(|parameters| parameters.translated(pawn_percent))
+    }
+
+    /// The `time-parameters.txt` at `path`: `None` when there is none, or when it is an old, classical
+    /// tune (no `UNITS_LINE`), as `SearchParameters::read_file`; an `Err` when it cannot be read or
+    /// parsed.
     pub fn read_file(path: &str) -> Result<Option<TimeParameters>, String> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(format!("{path}: {error}")),
         };
+        if text.lines().next() != Some(UNITS_LINE) {
+            return Ok(None);
+        }
         TimeParameters::parse_file_text(path, &text).map(Some)
     }
 
@@ -3661,8 +3729,9 @@ struct TimeManager {
     started: Instant,
     limit: Option<TimeLimit>,
     last_move: Option<Move>,
-    /// The evaluator's pawn against `piece_value`'s, in percent, which scales the score windows.
-    pawn_percent: i32,
+    /// The parameters the factors read under a limit other than a clock (`tm-probe`): the
+    /// evaluator's untuned ones (`TimeParameters::untuned_for`).
+    untuned: TimeParameters,
     /// What the five factors read.
     counters: TimeCounters,
 }
@@ -3710,12 +3779,12 @@ struct TimeCounters {
 }
 
 impl TimeManager {
-    fn new(limit: Option<TimeLimit>, started: Instant, pawn_percent: i32) -> TimeManager {
+    fn new(limit: Option<TimeLimit>, started: Instant, untuned: TimeParameters) -> TimeManager {
         let average = match limit {
             Some(TimeLimit::Clock { previous_score: Some(score), .. }) => score,
             _ => 0,
         };
-        TimeManager { started, limit, last_move: None, pawn_percent, counters: TimeCounters { average, ..TimeCounters::default() } }
+        TimeManager { started, limit, last_move: None, untuned, counters: TimeCounters { average, ..TimeCounters::default() } }
     }
 
     /// Takes in what the root of a depth that just completed counted (`RootStats`) and its nodes,
@@ -3738,20 +3807,20 @@ impl TimeManager {
     /// Updates the two stability counters with the best move and score of a depth that just
     /// completed, after `record_root_stats`.
     fn record_iteration(&mut self, best_move: Move, score: i32) {
-        let window = EVAL_WINDOW_CP * self.pawn_percent / 100;
+        let window = self.parameters().eval_window;
         let counters = &mut self.counters;
-        counters.eval_stable = if (score - counters.average).abs() < window { counters.eval_stable + 1 } else { 0 };
+        counters.eval_stable = if f64::from((score - counters.average).abs()) < window { counters.eval_stable + 1 } else { 0 };
         counters.pv_stable = if self.last_move == Some(best_move) { counters.pv_stable + 1 } else { 0 };
         counters.best = Some((best_move, score));
         self.last_move = Some(best_move);
     }
 
-    /// The clock's time parameters; the defaults under any other limit, where `tm-probe` still reads
-    /// the factors.
+    /// The clock's time parameters; the evaluator's untuned ones under any other limit, where
+    /// `tm-probe` still reads the factors.
     fn parameters(&self) -> TimeParameters {
         match self.limit {
             Some(TimeLimit::Clock { time, .. }) => time,
-            _ => TimeParameters::DEFAULT,
+            _ => self.untuned,
         }
     }
 
@@ -3779,7 +3848,7 @@ impl TimeManager {
         let decisive = TB_WIN_SCORE - MAX_PLY as i32;
         let trend = match previous {
             Some(previous) if previous.abs() < decisive && score.abs() < decisive => {
-                let drop = f64::from(previous - score) * 100.0 / f64::from(self.pawn_percent);
+                let drop = f64::from(previous - score);
                 (p.trend_a + p.trend_b * drop).clamp(p.trend_min, p.trend_max)
             }
             _ => 1.0,
@@ -4365,7 +4434,7 @@ fn iterate(
     let adds_to = helper_nodes.filter(|_| thread_idx != 0);
     let reads = helper_nodes.filter(|_| thread_idx == 0);
     let started = Instant::now();
-    let mut time_manager = TimeManager::new(limit, started, evaluator.map_or(100, Network::pawn_percent));
+    let mut time_manager = TimeManager::new(limit, started, TimeParameters::untuned_for(evaluator));
     let mut reports = Vec::new();
     let mut total_nodes = 0;
     let mut best_move = None;
@@ -4514,7 +4583,7 @@ pub fn choose_best_move_multipv_with_progress(
     ponder: Option<&PonderState>, mut on_iteration: impl FnMut(&IterationReport, &[MultiPvLine]),
 ) -> (Vec<IterationReport>, Option<Move>) {
     let started = Instant::now();
-    let mut time_manager = TimeManager::new(limit, started, evaluator.map_or(100, Network::pawn_percent));
+    let mut time_manager = TimeManager::new(limit, started, TimeParameters::untuned_for(evaluator));
     let mut reports = Vec::new();
     let mut total_nodes = 0;
     let mut best_move = None;
@@ -6227,7 +6296,7 @@ mod tests {
         let clock_limit = Some(clock(600_000, 0, None, 100, Some(30), 20));
         assert_eq!(single_move_limit(&forced, clock_limit), Some(TimeLimit::Fixed { target_ms: 0 }));
         assert_eq!(single_move_limit(&forced, Some(TimeLimit::Movetime { ms: 2_000 })), Some(TimeLimit::Fixed { target_ms: 0 }));
-        let manager = TimeManager::new(Some(TimeLimit::Fixed { target_ms: 0 }), Instant::now(), 100);
+        let manager = TimeManager::new(Some(TimeLimit::Fixed { target_ms: 0 }), Instant::now(), TimeParameters::DEFAULT);
         assert!(!manager.should_start_next(), "no depth past 1");
         assert_eq!(single_move_limit(&forced, Some(TimeLimit::Fixed { target_ms: 2_000 })), Some(TimeLimit::Fixed { target_ms: 500 }));
         assert_eq!(single_move_limit(&forced, Some(TimeLimit::Fixed { target_ms: 100 })), Some(TimeLimit::Fixed { target_ms: 100 }));
@@ -6336,13 +6405,42 @@ mod tests {
         let tuned = TimeParameters { soft_max: 0.0612345678901, changes_b: 0.3, ..TimeParameters::DEFAULT };
         let text = tuned.to_file_text();
         assert_eq!(TimeParameters::parse_file_text("t", &text), Ok(tuned), "exact through the text");
-        assert_eq!(text.lines().count(), 22);
-        let without_last = text.lines().take(21).collect::<Vec<_>>().join("\n");
-        assert!(TimeParameters::parse_file_text("t", &without_last).unwrap_err().contains("changes_b is missing"));
+        assert_eq!(text.lines().count(), 24, "the units line and 23 fields");
+        let without_last = text.lines().take(23).collect::<Vec<_>>().join("\n");
+        assert!(TimeParameters::parse_file_text("t", &without_last).unwrap_err().contains("eval_window is missing"));
+        let classical = text.lines().skip(1).collect::<Vec<_>>().join("\n");
+        assert!(TimeParameters::parse_file_text("t", &classical).unwrap_err().contains("retune it"));
         assert!(TimeParameters::parse_file_text("t", &format!("{text}soft_max\t0.05\n")).unwrap_err().contains("twice"));
         assert!(TimeParameters::parse_file_text("t", &format!("{text}inc_fraction\t0.75\n")).unwrap_err().contains("unknown"));
         assert!(TimeParameters::parse_file_text("t", &text.replace("0.3", "NaN")).unwrap_err().contains("finite"));
         assert_eq!(TimeParameters::from_values(TimeParameters::DEFAULT.values()), TimeParameters::DEFAULT);
+    }
+
+    /// An old tune plays as it did: its margins scaled as the old search scaled them at load, the
+    /// new fields at their translated defaults, the trend's slope divided as the old drop was.
+    #[test]
+    fn a_classical_file_translates_to_what_the_old_engine_played() {
+        let old_search: String = SearchParameters::NAMES[..10]
+            .iter()
+            .zip([150, 90, 200, 210, 200, 140, 50, 12, -30, -150])
+            .map(|(name, value)| format!("{name}\t{value}\n"))
+            .collect();
+        let search = SearchParameters::from_classical_text("s", &old_search, 30).unwrap();
+        assert_eq!(search.values(), [45, 27, 60, 63, 60, 140, 50, 12, -30, -150, 30, 30]);
+        let old_time: String =
+            TimeParameters::NAMES[..22].iter().zip(TimeParameters::DEFAULT.values()).map(|(name, value)| format!("{name}\t{value}\n")).collect();
+        assert_eq!(TimeParameters::from_classical_text("t", &old_time, 30), Ok(TimeParameters::DEFAULT.translated(30)));
+        assert!(SearchParameters::from_classical_text("s", "razoring_margin\t150\n", 30).unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn translated_time_parameters_scale_the_window_and_the_trends_slope() {
+        assert_eq!(TimeParameters::DEFAULT.translated(100), TimeParameters::DEFAULT);
+        let at_30 = TimeParameters::DEFAULT.translated(30);
+        assert!((at_30.eval_window - 3.6).abs() < 1e-9);
+        assert!((at_30.trend_b - 0.16).abs() < 1e-9);
+        assert_eq!(TimeParameters { eval_window: 12.0, trend_b: 0.0480, ..at_30 }, TimeParameters::DEFAULT);
+        assert_eq!(TimeParameters::untuned_for(None), TimeParameters::DEFAULT);
     }
 
     #[test]
@@ -6351,7 +6449,7 @@ mod tests {
         let limit = TimeLimit::Clock {
             time_ms: 10_000, inc_ms: 0, moves_to_go: None, previous_score: None, overhead_ms: 0, fullmove: 1, time: quick,
         };
-        let manager = TimeManager::new(Some(limit), Instant::now(), 100);
+        let manager = TimeManager::new(Some(limit), Instant::now(), TimeParameters::DEFAULT);
         assert_eq!(manager.bounds(), Some((Duration::from_millis(285), Duration::from_millis(885))), "0.03 of 10 s, minus 15");
     }
 
@@ -6394,7 +6492,7 @@ mod tests {
         let best = Move::new(Square::E2, Square::E4, None);
         let other = Move::new(Square::D2, Square::D4, None);
         let mut manager =
-            TimeManager::new(Some(clock(180_000, 2_000, None, 100, previous, 1)), Instant::now(), 100);
+            TimeManager::new(Some(clock(180_000, 2_000, None, 100, previous, 1)), Instant::now(), TimeParameters::DEFAULT);
         let mut stats = RootStats::default();
         stats.record(best, best_nodes, false);
         if total_nodes > best_nodes {
@@ -6437,7 +6535,7 @@ mod tests {
     fn the_stability_counters_reach_their_floors() {
         let p = &TimeParameters::DEFAULT;
         let best = Move::new(Square::E2, Square::E4, None);
-        let mut manager = TimeManager::new(Some(clock(180_000, 2_000, None, 100, None, 1)), Instant::now(), 100);
+        let mut manager = TimeManager::new(Some(clock(180_000, 2_000, None, 100, None, 1)), Instant::now(), TimeParameters::DEFAULT);
         for _ in 0..40 {
             let mut stats = RootStats::default();
             stats.record(best, 100, false);
@@ -6462,7 +6560,7 @@ mod tests {
     #[test]
     fn the_deadline_is_the_hard_bound_and_never_moves() {
         let started = Instant::now();
-        let mut manager = TimeManager::new(Some(clock(10_000, 100, None, 100, Some(0), 1)), started, 100);
+        let mut manager = TimeManager::new(Some(clock(10_000, 100, None, 100, Some(0), 1)), started, TimeParameters::DEFAULT);
         assert_eq!(manager.deadline(), Some(started + Duration::from_millis(568)));
         let best = Move::new(Square::E2, Square::E4, None);
         for score in [0, -300, 200] {
@@ -6481,7 +6579,7 @@ mod tests {
         let limit = time_limit(&board, None, None, None, None, None, Some(2_000), false, 100, TimeParameters::DEFAULT);
         assert_eq!(limit, Some(TimeLimit::Movetime { ms: 2_000 }));
         let started = Instant::now();
-        let manager = TimeManager::new(limit, started, 100);
+        let manager = TimeManager::new(limit, started, TimeParameters::DEFAULT);
         assert_eq!(manager.deadline(), Some(started + Duration::from_millis(1_985)));
         assert!(manager.should_start_next());
     }

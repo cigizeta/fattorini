@@ -93,6 +93,13 @@ fn main() {
         Some(census::COMMAND) => census::run(&rest),
         // What material is worth to Lc0, the results, the labels and a network: run by hand.
         Some(material::COMMAND) => material::run(&rest),
+        // Every player's old, classical tune files into its network's unit: run by hand once, when
+        // the search's constants moved into that unit (2026-11-20). In no usage line.
+        Some("translate-tunes") if rest.is_empty() => {
+            if !smithy::translate_tunes() {
+                process::exit(1);
+            }
+        }
         // The book job's child, likewise.
         Some(book::CHILD_COMMAND) => book::run(&rest),
         Some(verb @ ("start" | "stop" | "status")) => smithy::run(verb, &rest),

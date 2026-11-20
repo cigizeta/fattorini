@@ -593,8 +593,9 @@ pub struct Engine {
     /// (`search::default_parameters_for`).
     parameters: Option<SearchParameters>,
     /// The time parameters every clock is planned with: the embedded ones
-    /// (`embedded_time_parameters`), no option setting them.
-    time_parameters: TimeParameters,
+    /// (`embedded_time_parameters`), no option setting them; `None` for an untuned build, whose clock
+    /// takes the defaults in its evaluator's unit (`TimeParameters::untuned_for`).
+    time_parameters: Option<TimeParameters>,
     /// What the build is (`embedded_description`), said by the startup `info string`, never in
     /// `id name`; empty for a development build.
     description: String,
@@ -649,7 +650,7 @@ impl Engine {
             tablebase: Arc::new(SyzygyTablebase::new()),
             evaluator: None,
             parameters: None,
-            time_parameters: TimeParameters::DEFAULT,
+            time_parameters: None,
             description: String::new(),
             pin_at_next_go: false,
             last_score: Arc::new(Mutex::new(None)),
@@ -962,7 +963,7 @@ impl Engine {
             movetime,
             infinite,
             self.move_overhead_ms,
-            self.time_parameters,
+            self.time_parameters.unwrap_or_else(|| TimeParameters::untuned_for(self.evaluator.as_deref())),
         )
         .map(|limit| limit.with_fullmove(self.fullmove));
         // A game move with one legal move searches depth 1 (`single_move_limit`); `infinite` does
@@ -1284,17 +1285,17 @@ pub fn embedded_parameters() -> Option<SearchParameters> {
     }))
 }
 
-/// The embedded time parameters, `TimeParameters::DEFAULT` when the build has none; malformed ones
-/// end the process, as bad search parameters do.
-pub fn embedded_time_parameters() -> TimeParameters {
+/// The embedded time parameters, in the network's unit, `None` when the build has none; malformed
+/// ones, or an old, classical tune, end the process, as bad search parameters do.
+pub fn embedded_time_parameters() -> Option<TimeParameters> {
     if EMBEDDED_TIME_PARAMETERS.is_empty() {
-        return TimeParameters::DEFAULT;
+        return None;
     }
     let text = String::from_utf8_lossy(EMBEDDED_TIME_PARAMETERS);
-    TimeParameters::parse_file_text("the embedded time parameters", &text).unwrap_or_else(|error| {
+    Some(TimeParameters::parse_file_text("the embedded time parameters", &text).unwrap_or_else(|error| {
         eprintln!("{error}");
         std::process::exit(1);
-    })
+    }))
 }
 
 /// What the build is, empty for a development build.

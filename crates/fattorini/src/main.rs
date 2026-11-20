@@ -6,7 +6,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// `fattorini` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
 /// `config.yml` (`engine_options`), pins each game's engine to its own physical cores
 /// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints Fattorini's license
-/// and the third-party notices a release embeds. `pawn-scale` measures a network's pawn. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
+/// and the third-party notices a release embeds. `pawn-scale` measures a network's pawn.
+/// `translate-tune` converts a player's old, classical tune files into its network's unit. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
 /// `tm-probe [<depth>]` measures the time management's factors on those positions.
 ///
@@ -22,6 +23,7 @@ fn main() {
         ["licenses"] => licenses(),
         ["pawn-scale"] => pawn_scale(None),
         ["pawn-scale", path] => pawn_scale(Some(path)),
+        ["translate-tune", player] => translate_tune(player),
         ["bench"] => run_bench(fattorini::bench::BENCH_DEPTH),
         ["bench", depth] => match depth.parse::<u32>() {
             Ok(depth) if depth > 0 => run_bench(depth),
@@ -39,7 +41,7 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini bench [<depth>] | fattorini tm-probe [<depth>]");
+            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini translate-tune <player> | fattorini bench [<depth>] | fattorini tm-probe [<depth>]");
             std::process::exit(2);
         }
     }
@@ -113,7 +115,7 @@ fn licenses() {
 }
 
 /// `fattorini pawn-scale [<network>]`: the network's pawn against a material pawn (PeSTO's), in
-/// percent, as the engine measures it at load and scales its margins by (`nnue::measure_label_percent`):
+/// percent, as the engine measures it at load to translate its untuned defaults (`nnue::measure_label_percent`):
 /// `network` a `.nnue` file or a player's name (`<config>-g<g>-a<n>`, any `@<tuning>` ignored, the
 /// pawn being the network's), else the embedded one. A material pawn up reads as that many centipawns.
 fn pawn_scale(network: Option<&str>) {
@@ -144,6 +146,19 @@ fn pawn_scale(network: Option<&str>) {
         },
     };
     println!("{name}: pawn scale {percent}%, a material pawn up reads as about {percent} centipawns");
+}
+
+/// `fattorini translate-tune <player>`: one player's old, classical tune files in its network's
+/// unit (`players::translate_tune`); `smithy translate-tunes` does every player.
+fn translate_tune(player: &str) {
+    match fattorini::pipeline::players::translate_tune(player) {
+        Ok(report) if report.is_empty() => println!("{player}: no tune files"),
+        Ok(report) => report.iter().for_each(|line| println!("{line}")),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// `fattorini about`: what the build embeds, as its description says.

@@ -548,7 +548,7 @@ impl Player {
         let (time_pairs, search_pairs): (Vec<&str>, Vec<&str>) = parameters.split(',').partition(|pair| pair.starts_with(TIME_KEY_PREFIX));        let lines = |pairs: &[&str]| -> String {
             pairs.iter().map(|pair| pair.trim_start_matches(TIME_KEY_PREFIX).replacen('=', "\t", 1)).collect::<Vec<_>>().join("\n")
         };
-        let time = if time_pairs.is_empty() { None } else { Some(TimeParameters::parse_file_text("player", &lines(&time_pairs))?) };
+        let time = if time_pairs.is_empty() { None } else { Some(TimeParameters::parse_file_text("player", &format!("{}\n{}", crate::search::UNITS_LINE, lines(&time_pairs)))?) };
         let parameters = match search_pairs.as_slice() {
             ["own"] => None,
             // The values the search uses, in the network's unit, as both ends of one build send them.

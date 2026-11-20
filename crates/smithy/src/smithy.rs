@@ -2115,6 +2115,31 @@ fn player_entry(name: String) -> PlayerEntry {
     PlayerEntry { name, tune, time_tune }
 }
 
+/// `smithy translate-tunes`, run by hand once: pesto and every generation winner of the catalog, its old,
+/// classical tune files rewritten in its network's unit (`players::translate_tune`), one line a file.
+/// A player that fails is reported and the others go on; the exit status says whether any failed.
+pub fn translate_tunes() -> bool {
+    let mut names = vec![PESTO.to_string()];
+    for config in catalog().configs {
+        for attempt in config.attempts {
+            // Only a generation's winner is ever tuned: one without a winner has no files to read.
+            names.extend(attempt.generations.into_iter().filter(|generation| generation.passed).map(|generation| generation.player.name));
+        }
+    }
+    let mut ok = true;
+    for name in names {
+        match players::translate_tune(&name) {
+            Ok(report) if report.is_empty() => println!("{name}: no tune files"),
+            Ok(report) => report.iter().for_each(|line| println!("{name}: {line}")),
+            Err(error) => {
+                eprintln!("{name}: {error}");
+                ok = false;
+            }
+        }
+    }
+    ok
+}
+
 fn catalog() -> Catalog {
     let names = config_names();
     let configs: Vec<ConfigEntry> = names

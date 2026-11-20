@@ -345,12 +345,13 @@ pub fn start_player(
             let network_path = entry.network_path();
             let network = Network::load(network_path)
                 .unwrap_or_else(|error| panic!("failed to load network {network_path} for engine {name:?}: {error}"));
+            let time = entry.time.unwrap_or_else(|| TimeParameters::untuned_for(Some(&network)));
             Ok(Box::new(InProcessPlayer::new(
                 Some(Arc::new(network)),
                 Arc::clone(tablebase),
                 entry.hash_mb(),
                 entry.parameters,
-                entry.time.unwrap_or(TimeParameters::DEFAULT),
+                time,
             )))
         }
     }

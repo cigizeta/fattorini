@@ -71,7 +71,26 @@ started.
   untuned call sites above; step 5 for the search (`spsa::translated_specs`, `tune.rs` translating
   at a new tune's start; a tune in flight from before restarts).
 - **2026-11-20, compiled and tested:** fattorini, arena and smithy tests pass; clippy clean.
-- **Next:** then step 3 (time), the old-file command, and step 5 for time.
+- **2026-11-20, written, not compiled:** step 3 and step 5 for time. `eval_window` is the 23rd time
+  parameter; `TimeParameters::translated` and `untuned_for`; time files carry the units line, old
+  ones read as no tune; the time manager holds its untuned parameters for limits other than a clock,
+  no pawn scale; UCI, the arena's chores and in-process pairings translate an untuned network's time
+  defaults; `translated_specs` covers time. A snapshot now embeds whatever tune it is given, values
+  equal to the classical defaults included, since in a network's unit those are not its untuned ones.
+- **2026-11-20, compiled and tested:** step 3 and step 5 for time.
+- **2026-11-20, written, not compiled:** `fattorini translate-tune <player>`. Each old file, the
+  local one and the remote's, gets its missing fields at their classical defaults, then
+  `translated(pawn)`, which is what the old engine did at load, so the tune plays as before. The old
+  file is kept as `<file>.classical`.
+- **2026-11-20, compiled and tested:** `translate-tune`; step 6's doc comments. Only the fields
+  added that day may be filled in; a missing older field is refused.
+- **2026-11-20, written, not compiled:** `smithy translate-tunes` (the developer's choice), which
+  walks smithy's catalog, pesto first, and translates each player (`players::translate_tune`, moved
+  into the library).
+- **2026-11-20, run:** the release network's search and time tunes were translated at 30%, with
+  the old files kept as `.classical`. No other player had tune files. Generations without a winner
+  were reported as errors; they are skipped now, since only a winner is tuned.
+- **Next:** move this plan and tuned-units.md to done.
 
 ## After
 

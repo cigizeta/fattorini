@@ -776,21 +776,23 @@ impl Arena {
             tags.push(("TimeControl".to_string(), spec.text.clone()));
         }
         let control: Control = spec.control;
-        // A player's time parameters are the chore's, else the defaults: the smithy writes a tuned
-        // set in full, so no file is read here.
+        // A player's time parameters are the chore's, else the defaults in its network's unit: the
+        // smithy writes a tuned set in full, so no file is read here.
+        let challenger_time = challenger.time.unwrap_or_else(|| TimeParameters::untuned_for(challenger_network.as_deref()));
+        let teacher_time = teacher.time.unwrap_or_else(|| TimeParameters::untuned_for(teacher_network.as_deref()));
         let mut challenger_player = InProcessPlayer::new(
             challenger_network,
             Arc::clone(&self.tablebase),
             PAIR_HASH_MB,
             challenger.parameters,
-            challenger.time.unwrap_or(TimeParameters::DEFAULT),
+            challenger_time,
         );
         let mut teacher_player = InProcessPlayer::new(
             teacher_network,
             Arc::clone(&self.tablebase),
             PAIR_HASH_MB,
             teacher.parameters,
-            teacher.time.unwrap_or(TimeParameters::DEFAULT),
+            teacher_time,
         );
         let recording =
             Recording { event_name: "fattorini arena", round: 1, champion_name: &teacher.network, challenger_name: &challenger.network, pgn_path: "" };
