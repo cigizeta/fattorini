@@ -30,6 +30,18 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   network's (at 30%), the old files kept as `.classical`. Lichess on the snapshot of that code.
   **Next:** a search tune of the release network, then its time tune, on idle machines only
   (after the Convert and halfk's training): a few Elo at most.
+- **README heading:** logo, title and three live badges (Lichess blitz, release, license) through
+  shields.io, as io-chess's README. **A CCRL Blitz badge once CCRL rates Fattorini** (the developer:
+  no weekly hand edits): a daily GitHub Action reading the engine's CCRL page
+  (`computerchess.org.uk/404/cgi/engine_details.cgi?...&eng=<name>`, or its `Details (text)` view;
+  the rating as "#rank (rating +e -e)"), writing a JSON file for a shields.io endpoint badge. The
+  name in the URL is per version, so it changes at each release, and a new version's badge keeps the
+  previous rating until CCRL has one. If CCRL's page changes and no rating is found, the Action keeps
+  the last good value and fails, so GitHub's failed-workflow e-mail says so and the badge never shows
+  a wrong number. The e-mail goes to whoever last changed the workflow's schedule, under GitHub's
+  Settings, Notifications, Actions ("only failed workflows"). GitHub disables a scheduled workflow
+  after 60 days without activity in a public repository, warning by e-mail first. To design when the
+  name CCRL uses is known.
 - **To move to done/ (the developer):** logo.md, shown-score.md, material-value.md, tuned-units.md,
   tuned-units-implementation.md.
 
