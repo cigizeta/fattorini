@@ -150,3 +150,8 @@ This program is distributed in the hope that it will be useful, but
 WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
 or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
 License for more details: the full text is in `LICENSE`.
+
+As an additional term under section 7(e) of the license, no right is granted to use the name
+"Fattorini" or its logo (the files in `logo/`) for a modified version. Forks are welcome, under
+another name and without the logo: the engine's UCI name (`id name`) and the `.exe`'s icon
+included. Unmodified copies of this repository and of its releases may of course keep both.

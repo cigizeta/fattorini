@@ -71,6 +71,12 @@ Not applicable: Lichess has no profile pictures, CCRL's lists no logos.
   C runtime static, the notices: a build-dependency never reaches the binary, so `cargo-about`'s
   list should not change).
 
+## Licence, decided (the developer, 2026-11-20)
+
+The logo stays AGPLv3 like the code, with one additional term under section 7(e), in the README's
+License section: no right to use the name "Fattorini" or the logo for a modified version. Forks
+are welcome under another name, without the logo, `id name` and the `.exe`'s icon included.
+
 ## Background and colouring, decided
 
 - **Background: decided (the developer, 2026-11-20).** The logo owns its background: one look on
