@@ -5,8 +5,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// `fattorini` with no arguments is the UCI engine. `--lichess`, which lichess-bot passes through its
 /// `config.yml` (`engine_options`), pins each game's engine to its own physical cores
-/// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints the third-party notices
-/// a release embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
+/// (`core_pinning.rs`). `about` says what the build embeds; `licenses` prints Fattorini's license
+/// and the third-party notices a release embeds. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
 /// `tm-probe [<depth>]` measures the time management's factors on those positions.
 ///
@@ -86,11 +86,23 @@ fn run_tm_probe(depth: u32) {
     }
 }
 
-/// `fattorini licenses`: the third-party notices, which only a release embeds.
+/// Fattorini's own license, with the additional term the README's License section adds under the
+/// AGPLv3's section 7(e): printed by every build, since a binary travels without the README.
+const OWN_LICENSE: &str = "\
+Fattorini, Copyright (C) 2026 Calogero Zarba
+Licensed under the GNU Affero General Public License, version 3 only, with no warranty.
+As an additional term under its section 7(e), no right is granted to use the name \"Fattorini\"
+or its logo for a modified version: a fork takes another name, another UCI id name and another icon.
+The source, the full license and its terms: https://github.com/cigizeta/fattorini
+";
+
+/// `fattorini licenses`: Fattorini's own license, then the third-party notices, which only a
+/// release embeds.
 fn licenses() {
+    println!("{OWN_LICENSE}");
     let notices = fattorini::uci::embedded_notices();
     if notices.is_empty() {
-        println!("no notices embedded: a development build");
+        println!("Third-party notices: embedded in a release only, not in this development build.");
     } else {
         print!("{notices}");
     }

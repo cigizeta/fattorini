@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="9 -40 230 230" width="96" height="96">
   <title>Fattorini</title>
+  <!-- Copyright (C) 2026 Calogero Zarba. AGPLv3, with an additional term under its section 7(e):
+       not to be used for a modified version of Fattorini. See the README's License section. -->
   <!-- Fattorini's logo, small, cream (favicon, the .exe's icon): logo-light-large.svg's drawing on a
        square, four ticks for the numerals, thicker hands. logo-dark-small.svg is the same in the dark
        colouring. No @media in any logo file: every renderer draws each the same. -->

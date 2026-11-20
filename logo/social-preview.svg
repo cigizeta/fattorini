@@ -1,4 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <!-- Copyright (C) 2026 Calogero Zarba. AGPLv3, with an additional term under its section 7(e):
+       not to be used for a modified version of Fattorini. See the README's License section. -->
   <!-- GitHub's social preview: logo-light-large.svg centred on its own cream, 1280x640. GitHub takes
        no SVG there, so this is rendered to social-preview.png, which is uploaded by hand. The
        drawing is copied in, not referenced: a referenced file is not loaded by every renderer (a

@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="4 -24 240 196" width="480" height="392">
   <title>Fattorini</title>
+  <!-- Copyright (C) 2026 Calogero Zarba. AGPLv3, with an additional term under its section 7(e):
+       not to be used for a modified version of Fattorini. See the README's License section. -->
   <!-- Fattorini's logo, large, cream (light themes and wherever the theme is unknown): a tumbling
        chess clock, two clocks on a beam that rocks on a pivot. logo-dark-large.svg is the same
        drawing in the dark colouring; logo-light-small.svg the small variant. Every mark a path, no fonts. -->
