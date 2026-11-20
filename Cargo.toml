@@ -24,6 +24,7 @@ pgn-replay = { path = "crates/pgn-replay" }
 progress = { path = "crates/progress" }
 lan-http = { path = "crates/lan-http" }
 ctrlc = "3.5.2"
+embed-resource = "3.0"
 # `smithy start` and `arena start` log their events to stdout (`progress::log_events`); no regex filter.
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 flate2 = "1"

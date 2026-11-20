@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fattorini smithy</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,FAVICON_LIGHT">
 <style>
   :root {
     --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #e7e5e4; --panel: #ffffff;
@@ -110,19 +111,40 @@
   .box .tag { color: var(--accent); font-weight: 600; }
   .head { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
   .head h1 { margin: 0; }
+  /* The logo beside every view's title, the small one, its colouring the page's theme's. */
+  .brand { display: flex; gap: 12px; align-items: center; margin-bottom: 4px; }
+  .brand h1 { margin: 0; }
+  .head .brand { margin-bottom: 0; }
+  .logo { width: 40px; height: 40px; }
+  .logo-dark { display: none; }
+  @media (prefers-color-scheme: dark) {
+    .logo-cream { display: none; }
+    .logo-dark { display: block; }
+  }
 </style>
 </head>
 <body>
 <main>
   <div id="home">
-    <h1>Fattorini smithy</h1>
+    <div class="brand">
+      <img class="logo logo-cream" alt="" src="data:image/svg+xml,FAVICON_LIGHT">
+      <img class="logo logo-dark" alt="" src="data:image/svg+xml,FAVICON_DARK">
+      <h1>Fattorini smithy</h1>
+    </div>
     <div class="sub" id="sub">waiting for the smithy</div>
     <section class="live hidden"></section>
     <div id="boxes"></div>
     <div id="arenas"></div>
   </div>
   <div id="page" class="hidden">
-    <div class="head"><h1 id="pageTitle"></h1><button class="plain" id="back">Back</button></div>
+    <div class="head">
+      <div class="brand">
+        <img class="logo logo-cream" alt="" src="data:image/svg+xml,FAVICON_LIGHT">
+        <img class="logo logo-dark" alt="" src="data:image/svg+xml,FAVICON_DARK">
+        <h1 id="pageTitle"></h1>
+      </div>
+      <button class="plain" id="back">Back</button>
+    </div>
     <div class="sub" id="pageSub"></div>
     <section class="live hidden"></section>
     <section id="job" class="hidden"></section>

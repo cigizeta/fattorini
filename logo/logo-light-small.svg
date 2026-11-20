@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="9 -40 230 230" width="96" height="96">
+  <title>Fattorini</title>
+  <!-- Fattorini's logo, small, cream (favicon, the .exe's icon): logo-light-large.svg's drawing on a
+       square, four ticks for the numerals, thicker hands. logo-dark-small.svg is the same in the dark
+       colouring. No @media in any logo file: every renderer draws each the same. -->
+  <style>
+    .bg { fill: #f4efe2; }
+    .frame { fill: #2f4a3a; } .frame-line { stroke: #2f4a3a; }
+    .dial { fill: #fffdf7; stroke: #2f4a3a; }
+    .ink { stroke: #2f4a3a; } .ink-dot { fill: #2f4a3a; }
+    .base { fill: #b8893b; }
+  </style>
+  <defs>
+    <!-- One clock: a pentagon frame, point up, standing on the beam, a knob at each upper corner. -->
+    <g id="clock">
+      <path class="frame-line" d="M0 -42 L-38 -16 L-27 42 L27 42 L38 -16 Z" fill="none" stroke-width="7" stroke-linejoin="round"/>
+      <circle class="frame" cx="0" cy="-44" r="6"/>
+      <circle class="frame" cx="-40" cy="-16" r="6"/>
+      <circle class="frame" cx="40" cy="-16" r="6"/>
+      <circle class="dial" cx="0" cy="6" r="24" stroke-width="6"/>
+    </g>
+    <!-- Ticks at XII, III, VI and IX. -->
+    <path id="ticks" class="ink" d="M0 -19 V-13 M19 0 H13 M0 19 V13 M-19 0 H-13" stroke-width="3" stroke-linecap="round"/>
+  </defs>
+  <rect class="bg" x="9" y="-40" width="230" height="230" rx="40"/>
+  <rect class="base" x="44" y="138" width="152" height="18" rx="9"/>
+  <path class="frame" d="M120 104 L104 140 L136 140 Z"/>
+  <!-- The beam is bent at the pivot like a flat roof: each arm, with its clock, slopes 8 degrees
+       down from the middle; the whole tipped 7 degrees, one arm almost flat, the other steep. -->
+  <g transform="rotate(7 120 102)">
+    <g transform="rotate(-8 120 102)">
+      <use href="#clock" x="75" y="56"/>
+      <use href="#ticks" x="75" y="62"/>
+      <rect class="frame" x="28" y="96" width="98" height="12" rx="6"/>
+      <path class="ink" d="M75 62 L75 50 M75 62 L66.6 58.8" stroke-width="4" stroke-linecap="round"/>
+      <circle class="ink-dot" cx="75" cy="62" r="3"/>
+    </g>
+    <g transform="rotate(8 120 102)">
+      <use href="#clock" x="165" y="56"/>
+      <use href="#ticks" x="165" y="62"/>
+      <rect class="frame" x="114" y="96" width="98" height="12" rx="6"/>
+      <path class="ink" d="M165 62 L165 50 M165 62 L172.9 66.3" stroke-width="4" stroke-linecap="round"/>
+      <circle class="ink-dot" cx="165" cy="62" r="3"/>
+    </g>
+  </g>
+</svg>

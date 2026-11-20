@@ -2897,9 +2897,42 @@ impl Schedule {
     }
 }
 
-/// The status page, polling `/state.json`.
+/// The status page, polling `/state.json`, as written: `page_html` serves it with its icon.
 const PAGE: &str = include_str!("page.html");
+/// The small logo, beside every view's title: green for a dark page, cream for a light one, by the
+/// page's CSS. The tab's icon is cream alone: browsers do not reliably honour `media` on an icon
+/// link, and where the theme cannot be told, the logo is cream.
+const FAVICON_DARK: &str = include_str!("../../../logo/logo-dark-small.svg");
+const FAVICON_LIGHT: &str = include_str!("../../../logo/logo-light-small.svg");
 const PAGE_PATH: &str = "/";
+
+/// The status page with the logos inlined as `data:` URLs wherever `page.html` says `FAVICON_DARK`
+/// or `FAVICON_LIGHT` (its icons and its title's logo), built once: a reply carries no
+/// `Content-Type`, and a browser shows nothing for an SVG served without `image/svg+xml`.
+fn page_html() -> &'static str {
+    static HTML: OnceLock<String> = OnceLock::new();
+    HTML.get_or_init(|| {
+        PAGE.replace("FAVICON_DARK", &data_url_text(FAVICON_DARK))
+            .replace("FAVICON_LIGHT", &data_url_text(FAVICON_LIGHT))
+    })
+}
+
+/// `svg` as the text of a `data:` URL inside an attribute's double quotes: `%`, `#`, `"` and line
+/// breaks escaped; the rest of an SVG is valid in a URL as it is.
+fn data_url_text(svg: &str) -> String {
+    let mut text = String::with_capacity(svg.len() + 256);
+    for c in svg.chars() {
+        match c {
+            '%' => text.push_str("%25"),
+            '#' => text.push_str("%23"),
+            '"' => text.push_str("%22"),
+            '\n' => text.push_str("%0A"),
+            '\r' => {}
+            c => text.push(c),
+        }
+    }
+    text
+}
 const STATE_PATH: &str = "/state.json";
 /// The smithy's live bars, drawn nowhere but here (`progress::live`), polled four times a second: kept
 /// apart from `/state.json`, which reads the attempt's files.
@@ -3522,7 +3555,7 @@ fn page(status: &Status, request: &Request, control_here: bool) -> Option<Reply>
         }
     };
     match request.path.as_str() {
-        PAGE_PATH => Some(Reply { code: 200, body: PAGE.as_bytes().to_vec() }),
+        PAGE_PATH => Some(Reply { code: 200, body: page_html().as_bytes().to_vec() }),
         STATE_PATH => Some(json(serde_json::to_vec(&status.snapshot(Instant::now(), control_here)), "the state")),
         PROGRESS_PATH => Some(json(serde_json::to_vec(&progress::live()), "the progress")),
         CATALOG_PATH => Some(json(serde_json::to_vec(&catalog()), "the catalog")),

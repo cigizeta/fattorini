@@ -48,6 +48,11 @@ windows-sys = { workspace = true, features = [
 # without, at 16 threads). Compiled from C source.
 mimalloc = "0.1.52"
 
+# `build.rs` compiles the `.exe`'s icon (`logo/fattorini.ico`) into a Windows resource with `rc.exe`,
+# which this crate finds in the Windows SDK; build time only, never in the binary's notices.
+[build-dependencies]
+embed-resource.workspace = true
+
 # `nnue_bench` reads PGN games, resolving them through the `pgn-replay` source it includes, and reads
 # zstd-compressed segments.
 [dev-dependencies]
