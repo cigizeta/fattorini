@@ -19,9 +19,12 @@
 
 </div>
 
-Fattorini is a UCI chess engine written in Rust by Calogero Zarba. Its evaluation networks
-are trained on a limited compute budget. A release is one `.exe` for Windows, its network
-embedded: about 3250 on CCRL Blitz's scale, by Fattorini's own estimate (below).
+Fattorini is a UCI chess engine written in Rust by Calogero Zarba. It is named after Antonio
+Fattorini, an Italian immigrant to Yorkshire whose
+[family's business](https://en.wikipedia.org/wiki/Fattorini_%26_Sons) is credited with making the
+first chess clock in 1883. Its evaluation networks are trained on a limited compute budget. Each
+release ships as a single Windows `.exe` with the network embedded: about 3250 on CCRL Blitz's
+scale, by Fattorini's own estimate (below).
 
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
