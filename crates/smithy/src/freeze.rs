@@ -286,6 +286,12 @@ fn check_polyline(dir: &str, labelling: &Labelling) -> Result<(), String> {
     Ok(())
 }
 
+/// The positions the set of `dir` was frozen at, `None` when it is not frozen: for a reader that takes
+/// the set whole (`material.rs`), whatever run froze it.
+pub(crate) fn frozen_rows(dir: &str) -> Result<Option<u64>, String> {
+    Ok(read_manifest(dir, 0)?.map(|manifest| manifest.rows))
+}
+
 /// The manifest of `dir`, or none when the set is not frozen. An error when it was frozen at fewer
 /// positions than `rows`: a run asking fewer reads a subset of it (`subset`).
 fn read_manifest(dir: &str, rows: u64) -> Result<Option<Manifest>, String> {
