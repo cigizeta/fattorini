@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
 # Never on crates.io: Fattorini is released as a binary on its own repository, and `cargo-about` leaves
 # unpublished crates out of the release's third-party notices.
 publish = false

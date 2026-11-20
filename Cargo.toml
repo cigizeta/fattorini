@@ -7,6 +7,7 @@ version = "2026.11.1"
 edition = "2024"
 rust-version = "1.99.1"
 license = "AGPL-3.0-only"
+authors = ["Calogero Zarba"]
 
 # Dead code is never tolerated: every build fails on it, the `bin/` wrappers' included. Not every
 # warning: a new toolchain's lint would then break the build. A `pub` item of a library is never

@@ -1,8 +1,8 @@
 # Fattorini
 
-Fattorini is a UCI chess engine written in Rust. Its evaluation networks are trained on a limited compute
-budget. A release is one `.exe` for Windows, its network embedded: about 3250 on CCRL Blitz's
-scale, by Fattorini's own estimate (below).
+Fattorini is a UCI chess engine written in Rust by Calogero Zarba. Its evaluation networks
+are trained on a limited compute budget. A release is one `.exe` for Windows, its network
+embedded: about 3250 on CCRL Blitz's scale, by Fattorini's own estimate (below).
 
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
