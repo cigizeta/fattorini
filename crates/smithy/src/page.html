@@ -416,10 +416,12 @@ function budgetProgress(r, round = null) {
   // Round 0 only tests: no ETA until a round has trained.
   const left = Math.max(0, total - r.round);
   const pace = r.round > 0 ? r.elapsed_seconds / r.round : 0;
-  const eta = !r.finished && r.round > 0 && left > 0 ? `, ETA about ${duration(Math.round(left * pace))}` : "";
   const partial = r.finished || !round || left === 0 ? 0
     : round.half === "test" ? 1 : Math.min(1, round.done / Math.max(1, round.total));
   const position = r.round + partial;
+  // The rounds left counted from the round under way's progress, not its start, so the ETA falls at
+  // every poll and stays within the minute: the rounds are alike to about a second.
+  const eta = !r.finished && r.round > 0 && left > 0 ? `, ETA about ${duration(Math.round((total - position) * pace))}` : "";
   // The speed, as every other bar gives it after its percent: in seconds a round, training and test,
   // at the average pace the ETA uses (a round takes about a minute, so rounds/s would read 0.0).
   const rate = r.round > 0 ? `, ${number(pace, 1)} s/round` : "";
