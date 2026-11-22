@@ -150,6 +150,9 @@ struct GenConfig {
     /// Each teacher's frozen test set, as `training_positions`: a source's generation 1 is judged on
     /// the source's own.
     test_positions: u64,
+    /// Pairs a pairing of every round robin, a grid's among its lambdas and a budget's among its
+    /// checkpoints, so that both cost the same: 400 in the configs, for nine players 6,400 games a
+    /// candidate. A scaled attempt's shrunk by `scale::games`.
     round_robin_pairs: u32,
     gate_elo_d: f64,
     /// The tune of each generation whose challenger passed its gate, started by hand from the page.
@@ -3450,8 +3453,7 @@ impl Status {
                         .and_then(|&arm| candidates::read_budget_candidates(&dirs.arm(generation, arm)).ok())
                         .unwrap_or_default();
                     let labels: Vec<String> = listed.iter().map(|candidate| epoch_label(&candidate.epoch)).collect();
-                    let wanted = budget_pairs(labels.len(), config.scale);
-                    (labels, wanted)
+                    (labels, config.round_robin_pairs)
                 } else {
                     let constants: Vec<f64> = lambdas.iter().filter_map(|arm| arm.constant()).collect();
                     let learned = learned_lambdas(&dirs, generation, &constants);
@@ -4117,8 +4119,7 @@ impl Attempt<'_> {
             .iter()
             .map(|candidate| Ok((epoch_label(&candidate.epoch), publish(&candidates::budget_candidate_path(&dir, &candidate.epoch))?)))
             .collect::<Result<_, String>>()?;
-        let wanted = budget_pairs(listed.len(), self.config.scale);
-        let (ended, winner) = self.round_robin(state, &players, wanted)?;
+        let (ended, winner) = self.round_robin(state, &players, self.config.round_robin_pairs)?;
         if let Ended::Stopped = ended {
             return Ok(Ended::Stopped);
         }
@@ -4473,21 +4474,6 @@ fn epoch_label(epoch: &str) -> String {
     format!("epoch {epoch}")
 }
 
-/// Games each candidate of a budget's round robin plays: about 2,000, so that nine checkpoints a
-/// quarter epoch apart, a few Elo from each other, are told apart.
-const BUDGET_GAMES_A_CANDIDATE: u32 = 2000;
-
-/// Pairs a pairing among `count` candidates of a budget's round robin, each candidate meeting the
-/// `count - 1` others two games a pair, `BUDGET_GAMES_A_CANDIDATE` in all: 125 for nine. Not
-/// `round_robin_pairs`, the grid's. A scaled attempt's shrunk as that one is (`scale::games`).
-fn budget_pairs(count: usize, scale: Option<u64>) -> u32 {
-    let opponents = (count.max(2) - 1) as u32;
-    let pairs = (BUDGET_GAMES_A_CANDIDATE / 2).div_ceil(opponents);
-    match scale {
-        Some(s) => scale::games(pairs, s, scale::MIN_PAIRS),
-        None => pairs,
-    }
-}
 
 /// The round robin's pairings of `count` lambdas, by index: every two, the first before the second.
 fn round_robin_players(count: usize) -> Vec<(usize, usize)> {
@@ -6908,14 +6894,6 @@ mod tests {
             let got = rounds(rows / s, &scaled);
             assert!(got.abs_diff(full) <= 1, "1/{s}: {got} rounds against {full}");
         }
-    }
-
-    #[test]
-    fn a_budget_round_robin_plays_about_two_thousand_games_a_candidate() {
-        assert_eq!(budget_pairs(9, None), 125);
-        assert_eq!(budget_pairs(9, None) * 2 * 8, 2000);
-        assert_eq!(budget_pairs(2, None), 1000);
-        assert!(budget_pairs(9, Some(64)) < 125, "a scaled attempt's fewer");
     }
 
     fn test_claim() -> Claim {

@@ -66,8 +66,9 @@ shelved: this is the standard technique, not one of them.
      runs (the developer: no reason to be Scrooge at first): the first round robin shows how
      strength grows over the last two epochs, and fewer candidates may follow. A round robin among
      them at **depth 9** (checkpoints of one network search alike, so depth measures what differs,
-     the evaluation), about 2,000 games a candidate: 36 pairings of 125 pairs, 9,000 games, about
-     15 minutes. The most points win, then the gate and the duels. The existing round robin, so it must survive the grid's removal (TODO.md,
+     the evaluation), `round_robin_pairs` a pairing, 400 in the configs: 6,400 games a candidate,
+     36 pairings of 400 pairs, 28,800 games, about 48 minutes, the grid's cost (corrected 2026-11-22
+     from 2,000 games a candidate, budget-round-robin-pairs.md). The most points win, then the gate and the duels. The existing round robin, so it must survive the grid's removal (TODO.md,
      "Code to clean up"). The bandit below kept as the record of what was weighed.
    - **No reference: the candidates play each other** (the developer, 2026-11-17). An external
      reference, the previous experiment's winner, was proposed and dropped: experiments vary, which

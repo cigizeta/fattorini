@@ -14,8 +14,8 @@ lambda: polyline
 training_positions: 1073741824
 # From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
 test_positions: 4194304
-# Read by the lambda grid alone, but required: a budget's round robin ignores it and plays about
-# 2,000 games a candidate (125 pairs a pairing for nine).
+# Pairs a pairing of the round robin, a grid's lambdas or a budget's checkpoints: for nine, 6,400
+# games a candidate, 28,800 in all.
 round_robin_pairs: 400
 gate_elo_d: 35
 
