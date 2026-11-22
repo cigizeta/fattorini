@@ -2988,7 +2988,7 @@ struct RoundRow {
     /// train in lockstep.
     train_seconds: f64,
     test_seconds: f64,
-    /// Every round's training and test seconds so far, round 0's test included: the training's elapsed
+    /// Every round's training and test seconds so far, round 0's initial loss left out: the training's elapsed
     /// time as its files record it, across stops and restarts, for the page's ETA.
     elapsed_seconds: f64,
 }
@@ -3238,7 +3238,12 @@ impl Status {
         let per_round = schedule.steps_per_round;
         // The trainer appends while the page reads: the rounds whose lines are whole.
         let records = super::history::read_complete(path);
-        let elapsed_seconds: f64 = records.iter().map(|record| record.train_duration_secs + record.test_duration_secs).sum();
+        // Round 0 left out: it only computes the initial loss, which is no training time.
+        let elapsed_seconds: f64 = records
+            .iter()
+            .filter(|record| record.step / per_round > 0)
+            .map(|record| record.train_duration_secs + record.test_duration_secs)
+            .sum();
         let curve: Vec<[f64; 4]> = records
             .iter()
             .map(|record| [(record.step / per_round) as f64, record.train_loss, record.test_loss, record.learning_rate])

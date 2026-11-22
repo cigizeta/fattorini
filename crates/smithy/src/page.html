@@ -346,7 +346,7 @@ function trainingProgress(lambdas, round) {
   if (!shape) return roundLine(round);
   // A budget: its length known from the start. One arm: its length estimated from its stages. A grid
   // keeps the patience rounds below.
-  if (shape.schedule.kind === "budget") return budgetProgress(shape);
+  if (shape.schedule.kind === "budget") return budgetProgress(shape, round);
   if (lambdas.length === 1) return stageProgress(shape, round);
   const share = shape.schedule.stages * shape.schedule.patience;
   // Settled: a finished lambda's share and every stage it left behind, which no new best takes back,
@@ -407,15 +407,24 @@ function stageProgress(r, round) {
 // A budgeted attempt's progress: its rounds of the budget's, its ETA the rounds left at the average pace of
 // the rounds done, not the latest round's (the developer, 2026-11-19): a budget's rounds are alike.
 // No line for the round under way (the developer, 2026-11-18): the budget's own line says it.
-function budgetProgress(r) {
+// The bar also moves within the round under way, as its live pass says, so it advances at every poll
+// (every two seconds) rather than once a round: the training half by its share done, the test half
+// as the training done.
+function budgetProgress(r, round = null) {
   const total = r.schedule.total_rounds;
   const elapsed = `elapsed ${duration(Math.round(r.elapsed_seconds))}`;
   // Round 0 only tests: no ETA until a round has trained.
   const left = Math.max(0, total - r.round);
   const pace = r.round > 0 ? r.elapsed_seconds / r.round : 0;
   const eta = !r.finished && r.round > 0 && left > 0 ? `, ETA about ${duration(Math.round(left * pace))}` : "";
-  return `<div>round ${whole(r.round)} of ${whole(total)} (${percent(r.round / Math.max(1, total))}), `
-    + `${elapsed}${eta}</div>${bar(r.round, total, r.round)}`;
+  const partial = r.finished || !round || left === 0 ? 0
+    : round.half === "test" ? 1 : Math.min(1, round.done / Math.max(1, round.total));
+  const position = r.round + partial;
+  // The speed, as every other bar gives it after its percent: in seconds a round, training and test,
+  // at the average pace the ETA uses (a round takes about a minute, so rounds/s would read 0.0).
+  const rate = r.round > 0 ? `, ${number(pace, 1)} s/round` : "";
+  return `<div>round ${whole(r.round)} of ${whole(total)} (${percent(position / Math.max(1, total))})${rate}, `
+    + `${elapsed}${eta}</div>${bar(position, total, position)}`;
 }
 
 // The round under way, as the text bar has it: its half, done of total, rate, and that half's ETA.
@@ -441,14 +450,6 @@ function training(list, round = null, polyline = null) {
   const key = (lambda) => (typeof lambda === "string" ? Infinity : lambda);
   const lambdas = [...list].sort((a, b) => key(a.lambda) - key(b.lambda));
   const ranked = lambdas.filter((l) => l.last).sort((a, b) => a.last.best_loss - b.last.best_loss);
-  // The latest round's time, alike for every lambda trained in it: they train in lockstep. Only
-  // while training goes on: once every lambda has finished, the last round's time says nothing.
-  const latest = lambdas.filter((l) => l.last).map((l) => l.last).sort((a, b) => b.round - a.round)[0];
-  const ongoing = lambdas.some((l) => !l.last || !l.last.finished);
-  const took = latest && ongoing
-    ? `<div class="muted">round ${whole(latest.round)} took ${number(latest.train_seconds + latest.test_seconds, 1)}s: `
-      + `training ${number(latest.train_seconds, 1)}s, test ${number(latest.test_seconds, 1)}s</div>`
-    : "";
   const values = polyline ? `<div class="muted">lambda for each tenth of the training: ${escape(polyline)}</div>` : "";
   // One polyline arm: its lambda and rank say nothing, and its rounds draw a loss chart instead.
   const single = lambdas.length === 1 && lambdas[0].lambda === "polyline";
@@ -462,7 +463,7 @@ function training(list, round = null, polyline = null) {
     ? `<div class="muted">learning rate falling geometrically from ${escape(plan.start.toExponential(0))} `
       + `to ${escape(plan.end.toExponential(0))} over ${escape(String(plan.epochs))} epochs</div>`
     : "";
-  return `<h2>Training</h2>${values}${rates}${trainingProgress(lambdas, round)}${took}`
+  return `<h2>Training</h2>${values}${rates}${trainingProgress(lambdas, round)}`
     + (lambdas.length === 0 ? "" : table(["lambda", "rank", "learning rate", "train loss", "test loss", "best loss", "round", "stage", "patience"].slice(columns, end),
       lambdas.map((l) => {
         const r = l.last;
