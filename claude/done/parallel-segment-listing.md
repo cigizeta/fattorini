@@ -1,6 +1,9 @@
 # The segments' `.meta` read in parallel
 
-**Status:** plan and code, 2026-11-22 (the developer: "this is a sync problem, fix").
+**Status:** done, 2026-11-22 (the developer: "this is a sync problem, fix"). Seen working the same
+day on `lc0-halfk-threats-screlu-hidden-512-8-budget-a1`'s restart: "much faster" (the developer),
+the rate not recorded. Left open: the listing still ignores Stop, which now waits seconds, not
+minutes.
 
 ## Why
 
