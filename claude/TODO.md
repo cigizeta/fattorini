@@ -12,6 +12,18 @@ Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Ka
 with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
 and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
+## 2026-11-22: the larger corpus, the first attempt on it
+
+- **Lc0's Convert ended 2026-11-22.** Next: `lc0-halfk-threats-screlu-hidden-512-8-budget`
+  (batch-8192.md), then its pairwise twin.
+- **The polyline re-measured on the whole corpus** (the developer, 2026-11-22: "we absolutely need
+  to re-measure"): `data/lc0/polyline.txt` (measured on 1.19B) and the frozen set's
+  `lambda-polyline/` deleted on Drive, so the first attempt measures it on the finished buckets and
+  labels the frozen set again. Test losses from here on are not comparable with the 1.2B attempts';
+  only duels compare across the two corpora.
+- **A budget's round robin sized by `round_robin_pairs`** (budget-round-robin-pairs.md): 400 pairs a
+  pairing, as the grid's, not 125. Its step 4 to see on the next scaled budget attempt.
+
 ## 2026-11-20: tuned units, the shown score, the material question, the logo
 
 - **The logo** (logo.md): a tumbling chess clock, in the README, on smithy's page, as the `.exe`'s
