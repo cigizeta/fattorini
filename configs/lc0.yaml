@@ -22,6 +22,11 @@ cap_positions: 5000000000
 # Tars downloaded but not yet converted, on the converting machine's local disk. Downloads pause while staging holds this much, unless it holds nothing.
 staging_bytes: 100000000000
 
+# 4 GiB: the largest tar downloaded; a larger one is passed over, at every run (the developer,
+# 2026-11-22, after a tar of 37.87 GiB held the conversion up for hours). The largest converted
+# before it was 3.74 GiB, so none of those would have been passed over.
+max_tar_bytes: 4294967296
+
 # The earliest tars, whole, until this many games: the test set smithy freeze draws from.
 test:
   games: 65536

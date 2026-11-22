@@ -105,6 +105,10 @@ struct Lc0Config {
     cap_positions: u64,
     /// The tars allowed in staging at once, downloaded or downloading but not yet converted.
     staging_bytes: u64,
+    /// The largest tar downloaded; a larger one is passed over, at every run. A tar of tens of GiB
+    /// blocks the conversion, which goes in date order, for hours on one connection, and fills much of
+    /// the cap from one moment of Lc0's run (the developer, 2026-11-22).
+    max_tar_bytes: u64,
     test: TestConfig,
     segment: u64,
     /// The frozen test set every `lc0-` run's generation 1 is judged on, drawn from `test/`.
@@ -242,7 +246,8 @@ enum Slot {
     Approved(u64),
     /// In staging, or empty: ready to convert.
     Ready(u64),
-    /// Too slow (`SKIP_AFTER`): recorded in `SKIPPED_PATH`, passed over without a row.
+    /// Too slow (`SKIP_AFTER`): recorded in `SKIPPED_PATH`, passed over without a row. Or too large
+    /// (`too_large`): passed over without a row or a record.
     Skipped(u64),
 }
 
@@ -518,8 +523,9 @@ pub(crate) fn run(rest: &[String]) {
     // resumes its own `.tmp`s alone.
     for worker in 0..CONNECTIONS {
         let (pipeline, pending) = (Arc::clone(&pipeline), Arc::clone(&pending));
-        let (url, prefix, cap_positions, staging_bytes) = (config.url.clone(), config.prefix.clone(), config.cap_positions, config.staging_bytes);
-        std::thread::spawn(move || fetch_tars(worker, &pipeline, &pending, &url, &prefix, cap_positions, staging_bytes));
+        let (url, prefix) = (config.url.clone(), config.prefix.clone());
+        let limits = Limits { cap_positions: config.cap_positions, staging_bytes: config.staging_bytes, max_tar_bytes: config.max_tar_bytes };
+        std::thread::spawn(move || fetch_tars(worker, &pipeline, &pending, &url, &prefix, limits));
     }
 
     // The converter takes the tars in date order: the earliest are the test set.
@@ -529,6 +535,14 @@ pub(crate) fn run(rest: &[String]) {
     for (index, stem) in pending.iter().enumerate() {
         let shared = wake.wait_while(locked(lock), |shared| shared.slots[index] == Slot::Unclaimed).expect("a worker panicked");
         let tar_bytes = shared.slots[index].tar_bytes().expect("a claimed tar has its size");
+        // Too large: its worker passes it over at its turn, which comes, every tar before it done. No
+        // `decide` first: its prediction alone could stop the run.
+        if too_large(tar_bytes, config.max_tar_bytes) {
+            let mut shared = wake.wait_while(shared, |shared| !matches!(shared.slots[index], Slot::Skipped(_))).expect("a worker panicked");
+            shared.converting = index + 1;
+            wake.notify_all();
+            continue;
+        }
         let mut dir = "none";
         if tar_bytes != EMPTY_TAR_BYTES {
             match decide(&shared.rows, tar_bytes, config.cap_positions, config.test.games) {
@@ -667,7 +681,7 @@ fn locked(lock: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
 /// One download worker, number `worker` on the board: takes the next tar in date order, reads its
 /// size, waits for its turn to be approved, downloads it, and takes the next, until every tar is
 /// taken or the converter stops.
-fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str, prefix: &str, cap_positions: u64, staging_bytes: u64) {
+fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str, prefix: &str, limits: Limits) {
     let (lock, wake) = &**pipeline;
     loop {
         let index = {
@@ -684,6 +698,9 @@ fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str,
         let tar_path = format!("{}/{stem}.tar", staging_dir());
         // An empty tar, or one left whole in staging by an earlier run, needs no connection.
         let fetch = tar_bytes != EMPTY_TAR_BYTES && !Path::new(&tar_path).exists();
+        // Never fetched, so not waited on either: at its turn it is passed over, or every tar after
+        // it would wait for good.
+        let large = too_large(tar_bytes, limits.max_tar_bytes);
 
         let mut shared = locked(lock);
         shared.slots[index] = Slot::Sized(tar_bytes);
@@ -692,13 +709,24 @@ fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str,
             .wait_while(shared, |shared| {
                 let turn = shared.next_approve == index;
                 !shared.stopped
-                    && !(turn && (!fetch || may_fetch(&shared.rows, shared.ahead(), shared.staged_bytes, tar_bytes, cap_positions, staging_bytes)))
+                    && !(turn && (large || !fetch || may_fetch(&shared.rows, shared.ahead(), shared.staged_bytes, tar_bytes, limits)))
             })
             .expect("a worker panicked");
         if shared.stopped {
             return;
         }
         shared.next_approve += 1;
+        if large {
+            println!(
+                "{}: skipped, {:.2} GiB, larger than max_tar_bytes ({:.2} GiB)",
+                &stem[prefix.len()..],
+                tar_bytes as f64 / GIB,
+                limits.max_tar_bytes as f64 / GIB
+            );
+            shared.slots[index] = Slot::Skipped(tar_bytes);
+            wake.notify_all();
+            continue;
+        }
         if tar_bytes != EMPTY_TAR_BYTES {
             shared.staged_bytes += tar_bytes;
         }
@@ -729,14 +757,30 @@ fn fetch_tars(worker: usize, pipeline: &Pipeline, pending: &[String], url: &str,
     }
 }
 
-/// Whether a tar of `tar_bytes` may be downloaded now: its predicted training positions fit under
-/// `cap_positions` beside `rows` and the `ahead` predicted for the approved tars before it, and staging, holding
-/// `staged_bytes`, has room for it within `staging_bytes`. An empty staging always has room, so a
-/// tar larger than `staging_bytes` cannot stall the run. With no training tar yet and none approved
-/// before it, it is the one `decide` sends to `train` whatever the cap, and may be fetched.
-fn may_fetch(rows: &[TarRow], ahead: u64, staged_bytes: u64, tar_bytes: u64, cap_positions: u64, staging_bytes: u64) -> bool {
-    let fits = !passes_cap(rows, ahead, tar_bytes, cap_positions) || (ahead == 0 && !has_train(rows));
-    fits && (staged_bytes == 0 || staged_bytes + tar_bytes <= staging_bytes)
+const GIB: f64 = (1u64 << 30) as f64;
+
+/// The config's limits on what the workers download.
+#[derive(Clone, Copy, Debug)]
+struct Limits {
+    cap_positions: u64,
+    staging_bytes: u64,
+    max_tar_bytes: u64,
+}
+
+/// Whether a tar of `tar_bytes` is larger than `max_tar_bytes`: never downloaded. An empty tar never is.
+fn too_large(tar_bytes: u64, max_tar_bytes: u64) -> bool {
+    tar_bytes != EMPTY_TAR_BYTES && tar_bytes > max_tar_bytes
+}
+
+/// Whether a tar of `tar_bytes` may be downloaded now: it is not `too_large`, its predicted training
+/// positions fit under `cap_positions` beside `rows` and the `ahead` predicted for the approved tars
+/// before it, and staging, holding `staged_bytes`, has room for it within `staging_bytes`. An empty
+/// staging always has room, so a tar larger than `staging_bytes` cannot stall the run. With no
+/// training tar yet and none approved before it, it is the one `decide` sends to `train` whatever
+/// the cap, and may be fetched.
+fn may_fetch(rows: &[TarRow], ahead: u64, staged_bytes: u64, tar_bytes: u64, limits: Limits) -> bool {
+    let fits = !passes_cap(rows, ahead, tar_bytes, limits.cap_positions) || (ahead == 0 && !has_train(rows));
+    !too_large(tar_bytes, limits.max_tar_bytes) && fits && (staged_bytes == 0 || staged_bytes + tar_bytes <= limits.staging_bytes)
 }
 
 /// Whether a tar has gone to `train`.
@@ -848,10 +892,14 @@ fn check_config(config: Lc0Config) -> Result<Lc0Config, String> {
         || config.segment == 0
         || config.test.games == 0
         || config.staging_bytes == 0
+        || config.max_tar_bytes == 0
         || config.test_positions == 0
         || !config.url.ends_with('/')
     {
-        return Err("cap_positions, segment, test.games, test_positions and staging_bytes must be positive, and url must end with /".to_string());
+        return Err(
+            "cap_positions, segment, test.games, test_positions, staging_bytes and max_tar_bytes must be positive, and url must end with /"
+                .to_string(),
+        );
     }
     Ok(config)
 }
@@ -1423,13 +1471,15 @@ mod tests {
     fn a_config_with_the_old_byte_cap_is_refused() {
         let config = |cap: &str| {
             format!(
-                "url: https://x/\nprefix: p-\nfrom: 20260101-0017\n{cap}\nstaging_bytes: 1\ntest:\n  games: 1\nsegment: 1\ntest_positions: 1\n"
+                "url: https://x/\nprefix: p-\nfrom: 20260101-0017\n{cap}\nstaging_bytes: 1\nmax_tar_bytes: 1\ntest:\n  games: 1\nsegment: 1\ntest_positions: 1\n"
             )
         };
         let read = |text: String| serde_yaml::from_str::<Lc0Config>(&text).map_err(|error| error.to_string()).and_then(check_config);
         assert!(read(config("cap_positions: 4294967296")).is_ok());
         assert!(read(config("cap_bytes: 25769803776")).is_err(), "a stale key is refused, not ignored");
         assert!(read(config("cap_positions: 0")).is_err());
+        assert!(read(config("cap_positions: 1").replace("max_tar_bytes: 1\n", "")).is_err(), "max_tar_bytes is required");
+        assert!(read(config("cap_positions: 1").replace("max_tar_bytes: 1", "max_tar_bytes: 0")).is_err());
     }
 
     #[test]
@@ -1438,8 +1488,8 @@ mod tests {
         for test_games in [10, 65_536] {
             let rows = [row("test", 1000, 300, test_games)];
             assert_eq!(decide(&rows, 1000, 299, 65_536), Decision::Convert { dir: "train" });
-            assert!(may_fetch(&rows, 0, 0, 1000, 299, 3000), "fetched for it");
-            assert!(!may_fetch(&rows, 1, 0, 1000, 299, 3000), "but not a second one, behind it");
+            assert!(may_fetch(&rows, 0, 0, 1000, limits(299, 3000)), "fetched for it");
+            assert!(!may_fetch(&rows, 1, 0, 1000, limits(299, 3000)), "but not a second one, behind it");
         }
         let rows = [row("test", 1000, 300, 65_536), row("train", 1000, 300, 10)];
         assert!(matches!(decide(&rows, 1000, 300, 65_536), Decision::Stop { .. }), "once it has one, the cap holds");
@@ -1458,10 +1508,23 @@ mod tests {
     fn a_tar_is_downloaded_only_within_the_cap_and_staging() {
         // Ratio 0.1, 100 training positions used: a tar of 1000 predicts 100.
         let rows = [row("test", 1000, 100, 10), row("train", 2000, 100, 10)];
-        assert!(may_fetch(&rows, 0, 2000, 1000, 200, 3000));
-        assert!(!may_fetch(&rows, 1, 2000, 1000, 200, 3000), "past the cap");
-        assert!(!may_fetch(&rows, 0, 2001, 1000, 200, 3000), "past staging");
-        assert!(may_fetch(&rows, 0, 0, 5000, 100 + 500, 3000), "an empty staging takes even a tar larger than it");
+        assert!(may_fetch(&rows, 0, 2000, 1000, limits(200, 3000)));
+        assert!(!may_fetch(&rows, 1, 2000, 1000, limits(200, 3000)), "past the cap");
+        assert!(!may_fetch(&rows, 0, 2001, 1000, limits(200, 3000)), "past staging");
+        assert!(may_fetch(&rows, 0, 0, 5000, limits(100 + 500, 3000)), "an empty staging takes even a tar larger than it");
+    }
+
+    /// `cap_positions` and `staging_bytes`, with no tar too large.
+    fn limits(cap_positions: u64, staging_bytes: u64) -> Limits {
+        Limits { cap_positions, staging_bytes, max_tar_bytes: u64::MAX }
+    }
+
+    #[test]
+    fn a_tar_larger_than_max_tar_bytes_is_never_fetched() {
+        let max = Limits { max_tar_bytes: 1000, ..limits(u64::MAX, u64::MAX) };
+        assert!(may_fetch(&[], 0, 0, 1000, max), "at the limit, fetched");
+        assert!(!may_fetch(&[], 0, 0, 1001, max), "past it, not even into an empty staging, before any training tar");
+        assert!(!too_large(EMPTY_TAR_BYTES, 1), "an empty tar never is too large");
     }
 
     #[test]
