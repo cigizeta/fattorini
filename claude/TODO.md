@@ -26,7 +26,12 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   four changes, not separated: Lc0's larger corpus, 8 king buckets, batch 8192, the budget
   schedule. Next: its pairwise twin, `lc0-halfk-threats-pairwise-hidden-512-8-budget`, started
   2026-11-23, then their duels, which test the prediction of width 512 ("Screlu-hidden and
-  pairwise, both at transform width 512").
+  pairwise, both at transform width 512"). **A confound:** pairwise alone has psq's 12 castling and
+  en passant rows (`HalfKav2HmState`), screlu-hidden none, so the duels measure pairwise plus those
+  rows.
+- **Every network always encodes castling rights and en passant (the developer, 2026-11-23).**
+  A network without them is not compliant: it will be retrained with them, and deleted. Today
+  that is every halfk network but pairwise's, `-hidden-512-8-budget` included.
 - **The polyline re-measured on the whole corpus** (the developer, 2026-11-22: "we absolutely need
   to re-measure"): `data/lc0/polyline.txt` (measured on 1.19B) and the frozen set's
   `lambda-polyline/` deleted on Drive, so the first attempt measures it on the finished buckets and
