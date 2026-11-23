@@ -19,12 +19,11 @@
 
 </div>
 
-Fattorini is a UCI chess engine written in Rust by Calogero Zarba. It is named after Antonio
-Fattorini, an Italian immigrant to Yorkshire whose
-[family's business](https://en.wikipedia.org/wiki/Fattorini_%26_Sons) is credited with making the
-first chess clock in 1883. Its evaluation networks are trained on a limited compute budget. Each
-release ships as a single Windows `.exe` with the network embedded: about 3250 on CCRL Blitz's
-scale, by Fattorini's own estimate (below).
+Fattorini is a UCI chess engine written in Rust. It is named after Antonio Fattorini, an Italian
+immigrant to Yorkshire whose [family's business](https://en.wikipedia.org/wiki/Fattorini_%26_Sons)
+is credited with making the first chess clock in 1883. Its evaluation networks are trained on a
+limited compute budget. Each release ships as a single Windows `.exe` with the network embedded:
+about 3250 on CCRL Blitz's scale, by Fattorini's own estimate (below).
 
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
@@ -91,9 +90,9 @@ generation's network, plays games against itself, searching every position, and 
 become the training labels. One network is trained on them, and it replaces the teacher only if it
 beats it over the board.
 
-Along the other route, the first generation trains on Leela Chess Zero's published training games,
-from its test91 run, each position with the score of Leela's search; its winner must beat the PeSTO
-evaluation over the board, and from there on it teaches the next generation as above.
+There is a second route: the first generation trains on Leela Chess Zero's published training
+games, from its test91 run, each position with the score of Leela's search; its winner must beat
+the PeSTO evaluation over the board, and from there on it teaches the next generation as above.
 
 ### Lambda by progress
 
@@ -129,8 +128,8 @@ The shape belongs to the teacher:
   from mid-game it is 0: the formula finds no noise left to correct, the scores being right about who
   is winning and only a little timid about how much.
 
-So as Fattorini's own networks improve, their lambda is measured afresh each generation and should move
-from the first shape toward the second, with no schedule to design.
+So as Fattorini's own networks improve, their lambda is measured afresh each generation and should
+move from the first shape toward the second, with no schedule to design.
 
 ## Inside
 
@@ -142,20 +141,22 @@ from the first shape toward the second, with no schedule to design.
   piece-square ones (pieces on squares, castling rights, the en passant file) and 4,096 simplified
   threats, one for each square pair where a piece of the side attacks an opponent's (no pins, no
   x-rays). Both sides' inputs feed 256 neurons each, squared after clipping (SCReLU), straight to
-  the output. It was trained on Leela Chess Zero's data (below), the likely main source of its
-  strength. The piece-square part is updated incrementally; the threats are recomputed at each
-  evaluation.
+  the output. It was trained on Leela Chess Zero's data (see Acknowledgments), the likely main
+  source of its strength. The piece-square part is updated incrementally; the threats are
+  recomputed at each evaluation.
 - **Search parameters:** the pruning and reduction margins tuned by SPSA with the network they ship
   with.
 - **Endgames:** Syzygy tablebases, both WDL and DTZ.
 
 ## Acknowledgments
 
-Some of Fattorini's networks, the first release's among them, are trained with the self-play games of [Leela Chess Zero](https://lczero.org),
-from its test91 run's training data (storage.lczero.org), made available under the
+Some of Fattorini's networks, the first release's among them, are trained with the self-play games
+of [Leela Chess Zero](https://lczero.org), from its test91 run's training data
+(storage.lczero.org), made available under the
 [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/), its contents
 under the [Database Contents License (DbCL) 1.0](https://opendatacommons.org/licenses/dbcl/1-0/).
-The conversion of that data into Fattorini's training positions is Fattorini's own, in `crates/smithy/src/lc0/`.
+The conversion of that data into Fattorini's training positions is Fattorini's own, in
+`crates/smithy/src/lc0/`.
 
 ## License
 
