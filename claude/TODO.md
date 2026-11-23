@@ -45,6 +45,10 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   an attempt trains. Not test90 (400 visits, another cpuct: a second teacher, against the measured
   polyline; its tars seen were 10,240 bytes, perhaps empty). A later run (test92) judged on its
   description, visits and format before any use: a run's number says nothing of its strength.
+  **When data is added: the skipped tars retried** (the developer, 2026-11-23: Lc0's server may have
+  solved its speed problem). `data/lc0/skipped.tsv` on Drive holds 122 rows of tars skipped as too
+  slow; deleting a tar's rows has the next Convert try it again, no code needed. Tars over
+  `max_tar_bytes` (4 GiB) are a separate pass-over, kept unless that limit is raised.
 - **Every network always encodes castling rights and en passant (the developer, 2026-11-23).**
   A network without them is not compliant: it will be retrained with them, and deleted. Today
   that is every halfk network but pairwise's, `-hidden-512-8-budget` included.
