@@ -4504,7 +4504,7 @@ fn points_text(value: f64) -> String {
 fn minutes(started: Instant) -> String {
     let seconds = started.elapsed().as_secs();
     let (days, hours, mins) = (seconds / 86_400, seconds / 3600 % 24, seconds / 60 % 60);
-    if days > 0 { format!("{days}d{hours:02}h{mins:02}m") } else { format!("{hours}h{mins:02}m") }
+    if days > 0 { format!("{days}d{hours}h{mins}m") } else { format!("{hours}h{mins}m") }
 }
 
 /// Generation `generation`'s test set (`freeze.rs`): where it is frozen, the games it is drawn from,

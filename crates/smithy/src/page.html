@@ -184,15 +184,14 @@ function gauge(llr, lower, upper, left = "fail", right = "pass", tick = 0, won =
     + `<div class="mark${verdict}" style="left:${at(llr)}%"></div></div><span class="end">${escape(right)}</span></div>`;
 }
 
-// Seconds as `5d 13h 07m`, `1h 05m`, `4m` or `35s`: whole minutes from 90 s, so never `1m`, the
-// seconds below it; days once the hours reach 24.
+// Seconds as `5d 13h 7m`, `1h 5m`, `4m` or `35s`, never padded with zeros: whole minutes from 90 s,
+// so never `1m`, the seconds below it; days once the hours reach 24.
 function duration(seconds) {
   if (seconds < 90) return `${seconds}s`;
   const minutes = Math.round(seconds / 60);
   const d = Math.floor(minutes / 1440), h = Math.floor(minutes / 60) % 24, m = minutes % 60;
-  const mm = String(m).padStart(2, "0");
-  if (d > 0) return `${d}d ${String(h).padStart(2, "0")}h ${mm}m`;
-  return h > 0 ? `${h}h ${mm}m` : `${m}m`;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 // A trial's title: its kind and settings, then its two sides by role, the champion first as on the
