@@ -336,8 +336,9 @@ Each to confirm the first time it happens:
 - **A batch of 8192: decided 2026-11-19, see batch-8192.md.** The record (the developer,
   2026-11-18): Measured on 2026-11-18 with one network training (`-hidden-512`, batch 4096): the GPU
   85 to 88% busy, steadily, at about 70% of its power limit and most of its memory free, so the feed
-  is not the bound and a larger batch is the way to fill it. At 4 passes, about 4.3B positions are
-  about 4.2M steps at 4096 against 2.1M at 8192; the rate schedule's endpoints to be checked at the
+  is not the bound and a larger batch is the way to fill it. At 4 passes over about 5B positions,
+  about 4.9M steps at 4096 against 2.4M at 8192 (corrected 2026-11-23 from 4.3B, the cap before
+  lc0-position-cap.md raised it); the rate schedule's endpoints to be checked at the
   new size, and the change judged by duels, not by speed alone.
 - **Another learning-rate rule, much later** (the developer, 2026-11-17): the fixed budget above
   replaces patience; the adaptive rules stay shelved.

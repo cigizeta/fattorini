@@ -8,16 +8,18 @@ code and candidate names (`-r2`) keep "run" until renamed, if ever.
 
 ## The decisions (the developer, 2026-11-19)
 
-1. **Batch 8192 on the ~4.3B corpus, adopted, not judged by a duel.** The batch of 4096 was chosen
-   for 1.2B positions, where each counts; Stockfish trains on far larger batches, and 4.3B affords
+1. **Batch 8192 on the ~5B corpus, adopted, not judged by a duel.** The batch of 4096 was chosen
+   for 1.2B positions, where each counts; Stockfish trains on far larger batches, and 5B affords
    8192. Measured on 2026-11-18 (`-hidden-512`, batch 4096): the GPU 85 to 88% busy, at about 70% of
    its power limit, most of its memory free, so a larger batch is the way to fill it.
 2. **The rate does not change with the batch:** 1e-3 to 1e-5, geometric, as at 4096 (the developer
    always chooses the rate regardless of the batch). No square-root or linear scaling rule.
 3. **A round stays 4096 steps,** so 4096 x 8192, about 33.5M positions. Not 2048 steps: that would
    only keep positions per round equal for the charts, while the round is a unit of work (warmup,
-   test passes and checkpoints count steps). Over 4 epochs of ~4.3B: about 2.1M steps, about 256
-   rounds.
+   test passes and checkpoints count steps). Over 4 epochs of ~5B: about 2.4M steps, 592 rounds
+   (the screlu-hidden attempt's, 2026-11-23). Corrected 2026-11-23: this said ~4.3B, the corpus cap
+   of 4 x 1024^3 before lc0-position-cap.md raised it to 5 billion on 2026-11-20, and about 256
+   rounds, wrong even then.
 4. **The first two attempts, at width 512 with 8 king buckets:**
    1. `lc0-halfk-threats-screlu-hidden-512-8-budget`
    2. `lc0-halfk-threats-pairwise-hidden-512-8-budget`
@@ -32,7 +34,8 @@ code and candidate names (`-r2`) keep "run" until renamed, if ever.
 ## What the attempts can tell
 
 - **Pairwise against screlu-hidden,** both at 512 with 8 king buckets: one change, a clean duel at
-  depth 9 then 10+0.1. TODO's prediction (the halfk line, step 4) still applies: clearly better than
+  depth 9 then 10+0.1. Not quite one change (found 2026-11-23): pairwise alone has psq's 12
+  castling and en passant rows. TODO's prediction (the halfk line, step 4) still applies: clearly better than
   test 15's -30 Elo, the theory of pairwise's width holds; about -30 again, it fails.
 - **The winner against `lc0-halfk-threats-screlu-hidden-g1-r1`,** today's best, mixes four changes
   (width, king buckets, corpus with batch, schedule): enough to decide what ships and plays on

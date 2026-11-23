@@ -1,5 +1,5 @@
 # lc0-halfk-threats-screlu-hidden-512-budget in 8 king buckets, at batch 8192 (2026-11-19): the first
-# attempt on Lc0's larger corpus, about 4.3B positions. Differs from
+# attempt on Lc0's larger corpus, about 5B positions. Differs from
 # lc0-halfk-threats-screlu-hidden-512-budget by its king buckets (the king's 32 squares merged into 8,
 # so that each bucket's rows see more positions) and its batch: 4096 suited 1.2B positions, the larger
 # corpus affords 8192, which fills a GPU that 4096 left 12 to 15% idle. The rate is not scaled with

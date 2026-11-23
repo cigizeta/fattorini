@@ -1,5 +1,6 @@
 # lc0-halfk-threats-screlu-hidden-512-8-budget with pairwise (2026-11-19): the second attempt on Lc0's
-# larger corpus, differing from it by its kind alone, so their duel says whether pairwise holds at
+# larger corpus, differing from it by its kind, which also brings psq's 12 castling and en passant
+# rows that screlu-hidden lacks; so their duel says, but for those rows, whether pairwise holds at
 # width 512, where each perspective keeps 256 products (at 256 it lost to screlu-hidden, test 15,
 # about -30 Elo).
 
