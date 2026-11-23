@@ -37,6 +37,14 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   by the count of pieces on the board, each a set of the whole head's weights. The design to write
   in `claude/active/` before any code. The screlu networks are not retrained for castling and en
   passant: deleted once superseded.
+- **Lc0's data: test91 alone, up to 10B, but not soon (the developer, 2026-11-23).** The next
+  release trains on today's corpus, about 5B positions of test91 from 2026-01-01 into July.
+  test91 (BT4 in RL mode, 800 visits, active) has data up to today; at about 0.75B a month,
+  roughly 8.5B now and 10B around January 2027, a rough estimate. Later: the cap in
+  `configs/lc0.yaml` from 5B to 10B, taking effect at a Convert restarted from the page, not while
+  an attempt trains. Not test90 (400 visits, another cpuct: a second teacher, against the measured
+  polyline; its tars seen were 10,240 bytes, perhaps empty). A later run (test92) judged on its
+  description, visits and format before any use: a run's number says nothing of its strength.
 - **Every network always encodes castling rights and en passant (the developer, 2026-11-23).**
   A network without them is not compliant: it will be retrained with them, and deleted. Today
   that is every halfk network but pairwise's, `-hidden-512-8-budget` included.
