@@ -520,10 +520,18 @@ function lossChart(curve, last, budget = false) {
   const candidates = plan && Array.isArray(plan.candidate_rounds) ? plan.candidate_rounds : [];
   const passes = candidates
     .map((round) => `<line class="stage" x1="${x(round).toFixed(1)}" x2="${x(round).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
-  // Loss ticks at every multiple of 0.001 within the range, always with three decimals (the
-  // developer, 2026-11-23). The range stays the data's, not widened to them.
+  // Loss ticks at multiples of 0.001 within the range, always with three decimals (the developer,
+  // 2026-11-23), but not all of them: the step is 1, 2 or 5 thousandths times a power of ten, the
+  // smallest giving at most six ticks, since a wide range (an attempt's first rounds) crowded the
+  // axis with one label per thousandth. The range stays the data's, not widened to them.
+  const thousandths = (high - low) * 1000;
+  let tickStep = 1;
+  for (let power = 1; ; power *= 10) {
+    const fit = [1, 2, 5].map((m) => m * power).find((s) => thousandths / s < 6);
+    if (fit) { tickStep = fit; break; }
+  }
   const lossTicks = [];
-  for (let k = Math.ceil(low * 1000); k / 1000 <= high; k++) lossTicks.push(k / 1000);
+  for (let k = Math.ceil(low * 1000 / tickStep) * tickStep; k / 1000 <= high; k += tickStep) lossTicks.push(k / 1000);
   const ticks = lossTicks.map((loss) =>
     `<text x="${left - 6}" y="${(y(loss) + 4).toFixed(1)}" text-anchor="end">${loss.toFixed(3)}</text>`).join("");
   // About eight round ticks: every round early on, then fives, then tens.
