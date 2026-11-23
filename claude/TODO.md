@@ -16,6 +16,17 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 - **Lc0's Convert ended 2026-11-22.** Next: `lc0-halfk-threats-screlu-hidden-512-8-budget`
   (batch-8192.md), then its pairwise twin.
+- **`-hidden-512-8-budget` attempt 1, generation 1, ended 2026-11-23:** 592 rounds, 4 epochs, 9h 31m;
+  best test loss 0.614117, still falling at the end (not comparable with the 1.2B attempts'). Lambda
+  from 0.012 to 0.030, 0 from mid-training on. Round robin, 400 pairs a pairing: epoch 4.000 first,
+  51.3%, the top four within 0.6%, epoch 2.000 last, 47.6%. Gate passed, 36 games, 94.4%. Duels
+  against `-hidden-512-g1-a1`, both won by the challenger: trial 19, depth 9, 252 games, 58.1%
+  (about +57 Elo); trial 20, 10+0.1, 34 games, 70.6% (+18 -4 =12; a short sequential match, so
+  the size is uncertain and likely overstated). The new champion of the halfk line. The gain mixes
+  four changes, not separated: Lc0's larger corpus, 8 king buckets, batch 8192, the budget
+  schedule. Next: its pairwise twin, `lc0-halfk-threats-pairwise-hidden-512-8-budget`, started
+  2026-11-23, then their duels, which test the prediction of width 512 ("Screlu-hidden and
+  pairwise, both at transform width 512").
 - **The polyline re-measured on the whole corpus** (the developer, 2026-11-22: "we absolutely need
   to re-measure"): `data/lc0/polyline.txt` (measured on 1.19B) and the frozen set's
   `lambda-polyline/` deleted on Drive, so the first attempt measures it on the finished buckets and
