@@ -29,6 +29,14 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   pairwise, both at transform width 512"). **A confound:** pairwise alone has psq's 12 castling and
   en passant rows (`HalfKav2HmState`), screlu-hidden none, so the duels measure pairwise plus those
   rows.
+- **Next, output buckets by piece count, the mainstream way, on the best network (the developer,
+  2026-11-23):** on the winner of pairwise against screlu-hidden at `-512-8-budget`. Expected
+  different from October's nulls (material, 78 buckets, and phase, 25: drawn; taper: a null), which
+  bucketed a psq network's one output layer on 1.2B positions: here the head is hidden and the
+  corpus about 5B. Mainstream (Reckless, Stockfish, PlentyChess, Alexandria, Obsidian): 8 buckets
+  by the count of pieces on the board, each a set of the whole head's weights. The design to write
+  in `claude/active/` before any code. The screlu networks are not retrained for castling and en
+  passant: deleted once superseded.
 - **Every network always encodes castling rights and en passant (the developer, 2026-11-23).**
   A network without them is not compliant: it will be retrained with them, and deleted. Today
   that is every halfk network but pairwise's, `-hidden-512-8-budget` included.
