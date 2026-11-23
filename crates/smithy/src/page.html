@@ -520,16 +520,12 @@ function lossChart(curve, last, budget = false) {
   const candidates = plan && Array.isArray(plan.candidate_rounds) ? plan.candidate_rounds : [];
   const passes = candidates
     .map((round) => `<line class="stage" x1="${x(round).toFixed(1)}" x2="${x(round).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
-  // Loss ticks at round values (the developer, 2026-11-23): multiples of a step of 1, 2 or 5 times a
-  // power of ten, the smallest giving at most six ticks, printed with the step's decimals alone, so
-  // 0.615 at a step of 0.001 and 0.6155 at 0.0005. The range stays the data's, not widened to them.
-  const scale = 10 ** Math.floor(Math.log10((high - low) / 6));
-  const lossStep = [1, 2, 5, 10].map((m) => m * scale).find((s) => (high - low) / s <= 6);
-  const decimals = Math.max(0, -Math.floor(Math.log10(lossStep) + 1e-9));
+  // Loss ticks at every multiple of 0.001 within the range, always with three decimals (the
+  // developer, 2026-11-23). The range stays the data's, not widened to them.
   const lossTicks = [];
-  for (let k = Math.ceil(low / lossStep); k * lossStep <= high; k++) lossTicks.push(k * lossStep);
+  for (let k = Math.ceil(low * 1000); k / 1000 <= high; k++) lossTicks.push(k / 1000);
   const ticks = lossTicks.map((loss) =>
-    `<text x="${left - 6}" y="${(y(loss) + 4).toFixed(1)}" text-anchor="end">${loss.toFixed(decimals)}</text>`).join("");
+    `<text x="${left - 6}" y="${(y(loss) + 4).toFixed(1)}" text-anchor="end">${loss.toFixed(3)}</text>`).join("");
   // About eight round ticks: every round early on, then fives, then tens.
   const raw = (latest - first) / 8;
   const step = raw <= 1 ? 1 : raw <= 5 ? 5 : Math.ceil(raw / 10) * 10;
