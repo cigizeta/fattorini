@@ -64,6 +64,9 @@ Download the latest `.exe` from this repository's Releases and add it to any UCI
 Cute Chess, Arena or BanksiaGUI. The network is inside the `.exe`: there is nothing else to
 install or set.
 
+The `.exe` is not code-signed, so Windows SmartScreen may warn the first time it runs, and some
+antivirus programs may flag it. Choose "More info", then "Run anyway", or build it from source.
+
 Requirements:
 
 - Windows, 64-bit.
