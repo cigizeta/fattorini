@@ -14,6 +14,9 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 ## 2026-11-25: screlu's and pairwise's inference optimized, then benched, then duelled
 
+**Next session (the developer, 2026-11-25):** the inference work below, then the 10+0.1 duel of
+pairwise against screlu-hidden at 512.
+
 - **`-pairwise-hidden-512-8-budget` attempt 1, generation 1, ended 2026-11-25:** 592 rounds, 9h 30m;
   best test loss 0.614776 at round 590 (screlu-hidden's 0.614117: +0.00066). Round robin, 400 pairs a
   pairing: epoch 4.000 first, 51.3%, epoch 2.000 last, 47.0%, as screlu-hidden's. Gate passed, 42
