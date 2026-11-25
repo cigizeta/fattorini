@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Writes a shields.io endpoint badge for one CCRL list: the rating of the newest Fattorini version
+# that list rates, single CPU only. Run daily by .github/workflows/ccrl-badges.yml, and by hand.
+#
+#   bin/ccrl-badge <list-dir> <label> <color> <out.json>
+#   bin/ccrl-badge 4040 "CCRL 40/15" 56B4E9 badges/ccrl-4040.json
+#
+# <list-dir> is CCRL's directory for the list (4040 for 40/15, 404 for Blitz); <out.json> is relative
+# to the repository root. When the page has no Fattorini row (not rated yet, or CCRL changed its
+# layout) or cannot be fetched, the script exits non-zero and writes nothing, so the badge keeps its
+# last value and the workflow's failure is reported instead of a wrong number.
+set -euo pipefail
+
+if [ $# -ne 4 ]; then
+  echo "usage: bin/ccrl-badge <list-dir> <label> <color> <out.json>" >&2
+  exit 2
+fi
+LIST_DIR="$1"
+LABEL="$2"
+COLOR="$3"
+OUT="$4"
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# The family page lists every rated version; its "text" variant is still HTML, one row per version
+# as "Fattorini 2026.11.0 64-bit  3227  +80  -80  40.3%  +60.9  31".
+URL="https://computerchess.org.uk/$LIST_DIR/cgi/compare_engines.cgi?family=Fattorini&print=Rating+list+%28text%29"
+PAGE="$(curl --fail --silent --show-error --max-time 60 "$URL")"
+
+# Only rows named exactly "Fattorini <version> 64-bit": 4CPU and 32-bit builds are never shown.
+ROWS="$(printf '%s\n' "$PAGE" \
+  | sed -e 's/<[^>]*>//g' -e 's/&nbsp;/ /g' \
+  | awk '/^[[:space:]]*Fattorini [0-9]+(\.[0-9]+)* 64-bit[[:space:]]+[0-9]+[[:space:]]/ { print $2, $4 }')"
+
+if [ -z "$ROWS" ]; then
+  echo "ccrl-badge: no single-CPU Fattorini row on $URL" >&2
+  exit 1
+fi
+
+# The newest version, compared field by field as numbers (2026.9.0 before 2026.11.0).
+NEWEST="$(printf '%s\n' "$ROWS" | sort -V -k1,1 | tail -n 1)"
+VERSION="${NEWEST%% *}"
+RATING="${NEWEST##* }"
+
+mkdir -p "$(dirname "$OUT")"
+TMP="$OUT.tmp"
+printf '{"schemaVersion":1,"label":"%s","message":"%s (%s)","color":"%s"}\n' \
+  "$LABEL" "$RATING" "$VERSION" "$COLOR" > "$TMP"
+mv "$TMP" "$OUT"
+echo "$OUT: $RATING ($VERSION)"

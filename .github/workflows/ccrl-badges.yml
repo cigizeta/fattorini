@@ -1,0 +1,33 @@
+# Refreshes the README's CCRL badge once a day from CCRL's rating list. Scheduled workflows run on
+# the default branch only, so this file and badges/ live on main.
+name: CCRL badges
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  badges:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CCRL 40/15
+        run: bin/ccrl-badge 4040 "CCRL 40/15" 56B4E9 badges/ccrl-4040.json
+
+      - name: Commit if changed
+        run: |
+          if [ -n "$(git status --porcelain badges/)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add badges/
+            git commit -m "CCRL 40/15 badge: $(sed -n 's/.*"message":"\([^"]*\)".*/\1/p' badges/ccrl-4040.json)"
+            git push
+          fi

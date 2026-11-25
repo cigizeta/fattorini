@@ -1,6 +1,6 @@
 # CCRL badges in the README
 
-Status: design agreed, not implemented. CCRL's 40/15 list of 2026-11-20 already rates Fattorini
+Status: design agreed, the Action designed 2026-11-25; plan in ccrl-badges-implementation.md. CCRL's 40/15 list of 2026-11-20 already rates Fattorini
 2026.11.0 (3227 +80 -80, 31 games of a 44-game 12'+8" tournament). The 40/15 badge goes into the
 README tomorrow (the developer, 2026-11-20).
 
@@ -72,6 +72,34 @@ rows, release and license on the first, the ratings (CCRL 40/15, CCRL Blitz, Lic
 second. Colours continue the palette already in use (`0072B2`, `009E73`, `E69F00`): `56B4E9` for
 40/15, `CC79A7` for Blitz.
 
+## Decided 2026-11-25 (the developer)
+
+- **The badge links to the family page** (`compare_engines.cgi?family=Fattorini`, one fixed URL per
+  list), not a version's `engine_details.cgi`, which would go stale at the next release.
+- **Two badge rows:** release and license first; the ratings (CCRL 40/15, later CCRL Blitz, Lichess
+  blitz) second.
+- **CCRL 40/15 is `56B4E9`**, `CC79A7` kept for Blitz.
+
+## The Action (designed 2026-11-25)
+
+Checked that day: the 40/15 family page rates 2026.11.0 at 3227 +80 -80, 31 games; Blitz's says
+"No engines selected!". The "text" variant is HTML, the row inside it reading
+`Fattorini 2026.11.0 64-bit  3227  +80  -80  40.3%  +60.9  31`.
+
+- **Workflow:** `.github/workflows/ccrl-badges.yml` on `main`, daily on a `schedule` and by hand
+  (`workflow_dispatch`), on `windows-latest` under Git Bash, as every script here.
+- **Script:** `bin/ccrl-badge <list-dir> <label> <color> <out.json>`, Bash, runnable locally too.
+  It fetches the family text page with curl, strips tags, keeps lines matching
+  `^ *Fattorini ([0-9.]+) 64-bit +([0-9]+) ` (dropping `4CPU` and `32-bit`), picks the highest
+  version compared field by field as numbers, and writes
+  `{"schemaVersion":1,"label":"CCRL 40/15","message":"3227 (2026.11.0)","color":"56B4E9"}`.
+- **Output:** `badges/ccrl-4040.json` on `main`, committed by `github-actions[bot]` only when it
+  changes. Blitz gets `badges/ccrl-404.json` and its workflow step once CCRL rates Fattorini there.
+- **Failure:** no matching row, or curl failing, exits non-zero before writing, so the JSON keeps
+  its last value and the failed run's e-mail reports it.
+- **README:** a shields.io endpoint badge reading the JSON through raw.githubusercontent.com from
+  `main`, linking to the family page.
+
 ## Steps
 
 1. Design the Action in detail in this document: where the JSON lives on `main`, the parsing of the
@@ -81,7 +109,5 @@ second. Colours continue the palette already in use (`0072B2`, `009E73`, `E69F00
 
 ## Open
 
-- Two badge rows, or one row of five: the developer to confirm.
-- The two colours: the developer to confirm.
 - The Strength section once CCRL rates Fattorini on Blitz: keep the estimate as history, or remove
   it.
