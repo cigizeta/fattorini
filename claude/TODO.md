@@ -521,6 +521,10 @@ changes).
 ## Evaluation
 
 - **X-rays and pins in the threats:** a features experiment of its own, its inference cost timed.
+  **Confirmed for the halfk line (the developer, 2026-11-25):** richer threats, x-rays, pins and
+  attacks on one's own pieces, on top of the final halfk architecture (pairwise, dual head,
+  piece-count buckets, if they win), one change against it. More rows make incremental threats worth
+  designing with it (under "Speed", item 2). A design in `claude/active/` first.
 - **Width 512** (psq-threats-screlu-512.md): its state is there.
 - **The transformer track, later** (rotor-transformer.md): not before the NNUEs are its baseline; MCTS,
   PUCT with certainty propagation; a policy head (lc0-policy.md, mcts-nnue.md). Its code stays as
