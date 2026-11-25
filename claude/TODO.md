@@ -12,6 +12,32 @@ Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Ka
 with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
 and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
+## 2026-11-25: screlu's and pairwise's inference optimized, then benched, then duelled
+
+- **Pairwise trails on loss at equal width (2026-11-25):** `-pairwise-hidden-512-8-budget` against
+  `-screlu-hidden-512-8-budget`, step by step, test loss about 0.0004 behind at round 50, 0.00065 at
+  round 497 (0.61491 against 0.61426), train loss as far behind: less capacity (its head reads 512
+  products against 1024 squares), no overfitting. Peers use pairwise for speed at equal time, at
+  wide transforms, so the duels wait for the engine to take that speed. Its training is not wasted:
+  both optimizations are inference, and the finished networks load unchanged.
+- **Optimize both screlu's and pairwise's inference** (the developer, 2026-11-25), a design in
+  `claude/active/` first. Today the first hidden layer is dense i16 by i16 over every input, squares
+  or products alike (`first_layer_values`, `dots_i16_8_avx2`), so pairwise gains only its halved
+  inputs. Two optimizations, each for both kinds:
+  1. **A sparse first layer:** the inputs' nonzero 4-byte groups found (compare, movemask, a
+     lookup table), only their weight columns accumulated. Exact, the same integers. Both gain; a
+     square is zero when its lane is clipped, a product when either of its lanes is, so pairwise
+     gains more. First measured, for both: the inputs' zero fraction on test positions, and the
+     first layer's share of an evaluation.
+  2. **8-bit first layer:** inputs as u8 (squares and products both in 0..=127, `(a * b + 256) >> 9`),
+     weights as i8, `maddubs` + `madd` (or `vpdpbusd`). Both gain alike. Not exact: first measured
+     on the existing networks (the drift, how often `maddubs` saturates); a weight clamp in smithy,
+     and new attempts, only if the drift is too large.
+- **Then the bench:** nodes/s of both networks, before and after, on one idle machine.
+- **Then the duels,** pairwise against screlu-hidden, both `-512-8-budget`, at depth 9 and 10+0.1,
+  on the optimized engine: equal time is what decides pairwise (2026-11-22's planned duels, moved
+  after the optimization).
+
 ## 2026-11-25: the networks' unit on Elo's scale
 
 - **S = 400 / ln 10 centipawns (elo-scale.md), written, tests and clippy clean 2026-11-25:** the
