@@ -119,7 +119,10 @@ impl Architecture {
     pub fn halfk(&self) -> bool {
         matches!(
             self.kind,
-            ArchitectureKind::HalfkThreatsScrelu | ArchitectureKind::HalfkThreatsScreluHidden | ArchitectureKind::HalfkThreatsPairwiseHidden
+            ArchitectureKind::HalfkThreatsScrelu
+                | ArchitectureKind::HalfkThreatsScreluHidden
+                | ArchitectureKind::HalfkThreatsPairwiseHidden
+                | ArchitectureKind::HalfkThreatsPairwiseDual
         )
     }
 
@@ -145,6 +148,7 @@ impl Architecture {
                 | ArchitectureKind::PsqThreatsPairwiseMaterial
                 | ArchitectureKind::PsqThreatsPairwiseHidden
                 | ArchitectureKind::HalfkThreatsPairwiseHidden
+                | ArchitectureKind::HalfkThreatsPairwiseDual
         )
     }
 
@@ -204,6 +208,8 @@ impl Architecture {
     pub fn head_shape(&self) -> HeadShape {
         if self.stack() {
             HeadShape::Stack
+        } else if matches!(self.kind, ArchitectureKind::HalfkThreatsPairwiseDual) {
+            HeadShape::Dual
         } else if self.kings() {
             HeadShape::Kings
         } else if self.hidden_beside() {
@@ -281,6 +287,13 @@ pub enum ArchitectureKind {
     /// `HalfkThreatsScreluHidden` with each perspective's clipped lanes split in two halves multiplied
     /// in place of the squares, as `PsqThreatsPairwise`'s: the head reads `embedding_dim` products.
     HalfkThreatsPairwiseHidden,
+    /// `HalfkThreatsPairwiseHidden` with a dual head (`nnue::dual_head`), screlu's squaring brought in
+    /// where it is cheap, a few values rather than every lane: the first hidden layer's outputs but the
+    /// last clipped, then passed on as they are and squared (CReLU and SCReLU) into the second layer;
+    /// the last, raw, added to the output, a shortcut. `value_head.hidden_dim` the two widths, the
+    /// first counting the shortcut. Same data as `HalfkThreatsPairwiseHidden`
+    /// (`FeatureSet::HalfKav2HmState`).
+    HalfkThreatsPairwiseDual,
     /// `PsqThreatsScrelu` with its one output replaced by `PsqThreatsPairwiseMaterial`'s 78 weight
     /// sets, each reading the `2 * embedding_dim` squares (psq-threats-screlu-material.md). No hidden
     /// layer; trained factorised. Same data as psq_threats.
@@ -485,11 +498,14 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
              one hidden layer, but value_head.hidden_dim has {} widths",
             config.architecture.value_head_hidden_dim().len()
         );
-    } else if matches!(config.architecture.kind, ArchitectureKind::HalfkThreatsScreluHidden | ArchitectureKind::HalfkThreatsPairwiseHidden) {
+    } else if matches!(
+        config.architecture.kind,
+        ArchitectureKind::HalfkThreatsScreluHidden | ArchitectureKind::HalfkThreatsPairwiseHidden | ArchitectureKind::HalfkThreatsPairwiseDual
+    ) {
         ensure!(
             config.architecture.value_head_hidden_dim().len() == 2,
-            "{path}: architecture.kind is halfk_threats_screlu_hidden or halfk_threats_pairwise_hidden, whose head has two \
-             hidden layers, but value_head.hidden_dim has {} widths",
+            "{path}: architecture.kind is halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden or \
+             halfk_threats_pairwise_dual, whose head has two hidden layers, but value_head.hidden_dim has {} widths",
             config.architecture.value_head_hidden_dim().len()
         );
     } else if config.architecture.screlu() {

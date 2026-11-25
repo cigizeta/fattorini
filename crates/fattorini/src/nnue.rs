@@ -188,33 +188,45 @@ pub const FEATURE_SET_HALFK8_THREATS_PAIRWISE_HIDDEN: u32 = 25;
 pub const FEATURE_SET_HALFK10_THREATS_SCRELU: u32 = 26;
 pub const FEATURE_SET_HALFK10_THREATS_SCRELU_HIDDEN: u32 = 27;
 pub const FEATURE_SET_HALFK10_THREATS_PAIRWISE_HIDDEN: u32 = 28;
+/// Halfk_threats_pairwise_hidden with its first hidden layer's outputs split: all but the last
+/// clipped, then passed on both as they are and squared (CReLU and SCReLU side by side), into the
+/// second layer; the last, raw, added to the output, a shortcut (`dual_head`). The body
+/// halfk_threats_pairwise_hidden's, its second layer reading `2 * (first width - 1)` values. Its
+/// 32-bucket tag, then 8 and 10 king buckets.
+pub const FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL: u32 = 29;
+pub const FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL: u32 = 30;
+pub const FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL: u32 = 31;
 
-/// The halfk kinds' tags of 32 buckets, in the order each layout's tags follow.
-const HALFK_TAGS: [u32; 3] =
-    [FEATURE_SET_HALFK_THREATS_SCRELU, FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN, FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN];
+/// Each halfk kind's tags: 32 king buckets, 8, then 10.
+const HALFK_TAGS: [[u32; 3]; 4] = [
+    [FEATURE_SET_HALFK_THREATS_SCRELU, FEATURE_SET_HALFK8_THREATS_SCRELU, FEATURE_SET_HALFK10_THREATS_SCRELU],
+    [FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN, FEATURE_SET_HALFK8_THREATS_SCRELU_HIDDEN, FEATURE_SET_HALFK10_THREATS_SCRELU_HIDDEN],
+    [FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN, FEATURE_SET_HALFK8_THREATS_PAIRWISE_HIDDEN, FEATURE_SET_HALFK10_THREATS_PAIRWISE_HIDDEN],
+    [FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL],
+];
 
 /// A tag's kind and king layout: a halfk tag of 8 or 10 buckets as its kind's 32-bucket tag and its
 /// layout, so that everything past the header reads one tag a kind; any other tag as itself,
 /// `Squares`.
 fn split_layout(feature_set: u32) -> (u32, halfk::Layout) {
-    match feature_set {
-        FEATURE_SET_HALFK8_THREATS_SCRELU..=FEATURE_SET_HALFK8_THREATS_PAIRWISE_HIDDEN => {
-            (HALFK_TAGS[(feature_set - FEATURE_SET_HALFK8_THREATS_SCRELU) as usize], halfk::Layout::Eight)
+    for tags in HALFK_TAGS {
+        if feature_set == tags[1] {
+            return (tags[0], halfk::Layout::Eight);
         }
-        FEATURE_SET_HALFK10_THREATS_SCRELU..=FEATURE_SET_HALFK10_THREATS_PAIRWISE_HIDDEN => {
-            (HALFK_TAGS[(feature_set - FEATURE_SET_HALFK10_THREATS_SCRELU) as usize], halfk::Layout::Ten)
+        if feature_set == tags[2] {
+            return (tags[0], halfk::Layout::Ten);
         }
-        _ => (feature_set, halfk::Layout::Squares),
     }
+    (feature_set, halfk::Layout::Squares)
 }
 
 /// `split_layout`'s inverse: a halfk kind's 32-bucket tag with `layout`'s.
 fn with_layout(feature_set: u32, layout: halfk::Layout) -> u32 {
-    let Some(index) = HALFK_TAGS.iter().position(|&tag| tag == feature_set) else { return feature_set };
+    let Some(tags) = HALFK_TAGS.iter().find(|tags| tags[0] == feature_set) else { return feature_set };
     match layout {
-        halfk::Layout::Squares => feature_set,
-        halfk::Layout::Eight => FEATURE_SET_HALFK8_THREATS_SCRELU + index as u32,
-        halfk::Layout::Ten => FEATURE_SET_HALFK10_THREATS_SCRELU + index as u32,
+        halfk::Layout::Squares => tags[0],
+        halfk::Layout::Eight => tags[1],
+        halfk::Layout::Ten => tags[2],
     }
 }
 
@@ -238,7 +250,7 @@ fn shape_of(feature_set: u32, layout: halfk::Layout) -> Option<(usize, usize)> {
         | FEATURE_SET_PSQ_THREATS_PAIRWISE_MATERIAL
         | FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN => Some((psq_threats::ROWS, 1)),
         FEATURE_SET_HALFK_THREATS_SCRELU | FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN => Some((layout.rows(), 2)),
-        FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN => Some((layout.rows_with_state(), 1)),
+        FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN | FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL => Some((layout.rows_with_state(), 1)),
         _ => None,
     }
 }
@@ -270,6 +282,9 @@ fn feature_set_name(feature_set: u32) -> &'static str {
         FEATURE_SET_HALFK10_THREATS_SCRELU => "halfk_threats_screlu with 10 king buckets",
         FEATURE_SET_HALFK10_THREATS_SCRELU_HIDDEN => "halfk_threats_screlu_hidden with 10 king buckets",
         FEATURE_SET_HALFK10_THREATS_PAIRWISE_HIDDEN => "halfk_threats_pairwise_hidden with 10 king buckets",
+        FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL => "halfk_threats_pairwise_dual",
+        FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL => "halfk_threats_pairwise_dual with 8 king buckets",
+        FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL => "halfk_threats_pairwise_dual with 10 king buckets",
         _ => "an unknown feature set",
     }
 }
@@ -417,6 +432,24 @@ fn hidden_beside_head(inputs: &[f32], hidden: &Layer, output: &Layer) -> f32 {
         .collect();
     let inputs = values.iter().copied().chain(values.iter().map(|value| value * value)).chain(inputs.iter().copied());
     output.bias[0] + output.weight.iter().zip(inputs).map(|(weight, input)| weight * input).sum::<f32>()
+}
+
+/// A dual head in f32 (halfk_threats_pairwise_dual), over the products, own first: `first`'s
+/// outputs but the last clipped, then passed on as they are and squared, in that order, through
+/// `second`, clipped, and `output`; the last of `first`'s outputs, raw, added to the value, a
+/// shortcut past the two layers after it. Scalar: the reference.
+fn dual_head(inputs: &[f32], first: &Layer, second: &Layer, output: &Layer) -> f32 {
+    let raw: Vec<f32> = (0..first.out_dim)
+        .map(|out| {
+            let row = &first.weight[out * first.in_dim..(out + 1) * first.in_dim];
+            first.bias[out] + row.iter().zip(inputs).map(|(weight, input)| weight * input).sum::<f32>()
+        })
+        .collect();
+    let (values, shortcut) = raw.split_at(first.out_dim - 1);
+    let clipped: Vec<f32> = values.iter().map(|value| value.clamp(0.0, 1.0)).collect();
+    let doubled: Vec<f32> = clipped.iter().copied().chain(clipped.iter().map(|value| value * value)).collect();
+    let values = clipped_layer(second, &doubled);
+    output.bias[0] + output.weight.iter().zip(&values).map(|(weight, value)| weight * value).sum::<f32>() + shortcut[0]
 }
 
 /// One fully-connected layer of the value head, in the orientation a matrix-vector product wants:
@@ -725,7 +758,25 @@ impl PsqNetwork {
             }
             return hidden_beside_head(&products, &self.hidden[0], &self.output);
         }
+        if self.dual() {
+            let mut products = Vec::with_capacity(self.embedding_dim);
+            for lanes in [own, opponent] {
+                let (a, b) = lanes.split_at(lanes.len() / 2);
+                products.extend(a.iter().zip(b).map(|(a, b)| a.clamp(0.0, 1.0) * b.clamp(0.0, 1.0)));
+            }
+            return dual_head(&products, &self.hidden[0], &self.hidden[1], &self.output);
+        }
         self.pairwise_head(own, opponent, &self.output)
+    }
+
+    /// Whether this is a halfk_threats_pairwise_dual network (`dual_head`): halfk pairwise with two
+    /// hidden layers, the second reading the first's outputs but the last, each twice. The second
+    /// layer's width tells it from halfk_threats_pairwise_hidden's, which reads the first's outputs
+    /// once: `2 * (width - 1)` is `width` only at 2, which `validate`'s multiple of 8 rules out.
+    fn dual(&self) -> bool {
+        self.halfk
+            && self.pairwise
+            && matches!(self.hidden.as_slice(), [first, second] if first.out_dim > 2 && second.in_dim == 2 * (first.out_dim - 1))
     }
 
     /// `evaluate_accumulators` for a screlu network: each lane clipped and squared, own first, into
@@ -894,6 +945,9 @@ impl PsqNetwork {
         if self.pairwise_hidden_beside() {
             return self.validate_hidden_beside("pairwise", "products");
         }
+        if self.dual() {
+            return self.validate_dual();
+        }
         if let Some(stack) = &self.stack {
             if !(self.pairwise || self.screlu) {
                 return Err("a stack network reads pairwise products or squares, and is neither".to_string());
@@ -963,6 +1017,27 @@ impl PsqNetwork {
         Ok(())
     }
 
+    /// A dual network (`dual_head`): the first layer reading every product, the second its outputs but
+    /// the last, each twice, and the output the second.
+    fn validate_dual(&self) -> Result<(), String> {
+        validate_transform(self.rows(), self.embedding_dim, &self.transform, &self.transform_bias)?;
+        let [first, second] = self.hidden.as_slice() else { return Err("a dual network has two hidden layers".to_string()) };
+        first.validate("the dual first layer")?;
+        second.validate("the dual second layer")?;
+        let count = self.head_input();
+        if first.in_dim != count {
+            return Err(format!("the dual first layer reads {} values, but there are {count} products", first.in_dim));
+        }
+        self.output.validate("output layer")?;
+        if self.output.in_dim != second.out_dim || self.output.out_dim != 1 {
+            return Err(format!(
+                "the dual output: {} -> {}, but the layer is {} -> 1",
+                self.output.in_dim, self.output.out_dim, second.out_dim
+            ));
+        }
+        Ok(())
+    }
+
     /// Serializes to `path` as format `VERSION`, a network trained in Elo's unit (`write_version`).
     pub fn write(&self, path: &str) -> Result<(), String> {
         self.write_version(path, VERSION)
@@ -1009,7 +1084,9 @@ impl PsqNetwork {
                 &[], material.iter(), self.step, self.learning_rate,
             );
         }
-        let feature_set = if self.halfk && self.pairwise {
+        let feature_set = if self.dual() {
+            with_layout(FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL, self.king_layout)
+        } else if self.halfk && self.pairwise {
             with_layout(FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN, self.king_layout)
         } else if self.halfk && !self.hidden.is_empty() {
             with_layout(FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN, self.king_layout)
@@ -1296,6 +1373,9 @@ enum QuantizedHead {
     /// faster an evaluation, no faster a node, but 23 cp p99 and 95 cp max from f32, against 6 and
     /// 20 in 16 bits.
     TwoHidden { first: QuantizedRows, second: Layer, output: Layer },
+    /// A dual network's two hidden layers (`dual_head`): the first quantized as `TwoHidden`'s over the
+    /// products, its last row the shortcut; the second and the output in f32 (`dual_head_value`).
+    Dual { first: QuantizedRows, second: Layer, output: Layer },
     /// Material sets (`PsqNetwork::material`): each bucket's output quantized as `Output`'s, on its
     /// own scale, so a bucket's evaluation is a plain pairwise one with that bucket's weights.
     Material { weights: Vec<Vec<i16>>, scales: Vec<f32>, biases: Vec<f32> },
@@ -1376,6 +1456,23 @@ fn second_layer_and_output(values: &[f32], second: &Layer, output: &Layer) -> f3
         }
     }
     output.bias[0] + dot_product_avx2(&output.weight, second_values)
+}
+
+/// A quantized first layer's integer sums over `inputs` (products or squares) into `sums`, one per
+/// row: in groups of eight rows when `vectorized` (`dots_i16_8_avx2`; the caller checks the rows
+/// are a multiple of 8), row by row otherwise. Exact either way.
+fn first_layer_sums(inputs: &[i16], vectorized: bool, first: &QuantizedRows, sums: &mut [i32]) {
+    let in_dim = inputs.len();
+    for (group, group_sums) in sums.chunks_mut(8).enumerate() {
+        if vectorized {
+            group_sums.copy_from_slice(&dots_i16_8_avx2(&first.weight[group * 8 * in_dim..(group + 1) * 8 * in_dim], inputs));
+        } else {
+            for (index, sum) in group_sums.iter_mut().enumerate() {
+                let row = &first.weight[(group * 8 + index) * in_dim..(group * 8 + index + 1) * in_dim];
+                *sum = inputs.iter().zip(row).map(|(&input, &weight)| input as i32 * weight as i32).sum();
+            }
+        }
+    }
 }
 
 /// The most outputs a quantized first hidden layer may have: its sums and values live in stack
@@ -1476,6 +1573,11 @@ impl QuantizedPsqNetwork {
                 let (weight, scale, bias) = quantize_output(&network.output);
                 QuantizedHead::Output { weight, scale, bias }
             }
+            [first, second] if network.dual() => QuantizedHead::Dual {
+                first: QuantizedRows::quantize(first, input_one)?,
+                second: second.clone(),
+                output: network.output.clone(),
+            },
             // Halfk's, over the squares or the products alike; psq pairwise's two layers are `Hidden`.
             [first, second] if network.halfk => QuantizedHead::TwoHidden {
                 first: QuantizedRows::quantize(first, input_one)?,
@@ -1829,8 +1931,9 @@ impl QuantizedPsqNetwork {
             | QuantizedHead::Material { .. }
             | QuantizedHead::Kings { .. }
             | QuantizedHead::HiddenBeside { .. }
-            | QuantizedHead::TwoHidden { .. } => {
-                panic!("a stack, material, kings, hidden-beside or two-hidden head reads products or squares")
+            | QuantizedHead::TwoHidden { .. }
+            | QuantizedHead::Dual { .. } => {
+                panic!("a stack, material, kings, hidden-beside, two-hidden or dual head reads products or squares")
             }
         }
     }
@@ -2022,6 +2125,7 @@ impl QuantizedPsqNetwork {
                 }
                 // Halfk's two hidden layers, over the products as over a screlu network's squares.
                 QuantizedHead::TwoHidden { first, second, output } => self.stack_head_value(products, vectorized, first, second, output),
+                QuantizedHead::Dual { first, second, output } => self.dual_head_value(products, vectorized, first, second, output),
                 QuantizedHead::Kings { .. } => panic!("a kings head reads squares, not pairwise products"),
             }
         })
@@ -2093,21 +2197,11 @@ impl QuantizedPsqNetwork {
     /// integer sums, in groups of eight rows when `vectorized` and its outputs allow, as `Hidden`'s,
     /// then their values, bit for bit the same either way.
     fn first_layer_values(&self, inputs: &[i16], vectorized: bool, first: &QuantizedRows, values: &mut [f32]) {
-        let in_dim = inputs.len();
         let out_dim = first.biases.len();
         let vectorized = vectorized && out_dim.is_multiple_of(8);
         let mut sums = [0i32; MAX_HIDDEN_OUTPUTS];
         let sums = &mut sums[..out_dim];
-        for (group, group_sums) in sums.chunks_mut(8).enumerate() {
-            if vectorized {
-                group_sums.copy_from_slice(&dots_i16_8_avx2(&first.weight[group * 8 * in_dim..(group + 1) * 8 * in_dim], inputs));
-            } else {
-                for (index, sum) in group_sums.iter_mut().enumerate() {
-                    let row = &first.weight[(group * 8 + index) * in_dim..(group * 8 + index + 1) * in_dim];
-                    *sum = inputs.iter().zip(row).map(|(&input, &weight)| input as i32 * weight as i32).sum();
-                }
-            }
-        }
+        first_layer_sums(inputs, vectorized, first, sums);
         if vectorized {
             hidden_values_avx2(sums, &first.denominators, &first.biases, values);
         } else {
@@ -2127,6 +2221,27 @@ impl QuantizedPsqNetwork {
         let values = &mut values[..out_dim];
         self.first_layer_values(products, vectorized, first, values);
         second_layer_and_output(values, second, output)
+    }
+
+    /// A dual head's value from the products (`dual_head`): the first layer's integer sums (in groups
+    /// of eight rows when `vectorized` and its outputs allow), then every value from them by the same
+    /// scalar arithmetic on every path, so that both agree exactly: the rows but the last clipped
+    /// (`hidden_value`) and squared beside them, through the second layer and the output in f32, and
+    /// the last row's value, raw, added.
+    fn dual_head_value(&self, products: &[i16], vectorized: bool, first: &QuantizedRows, second: &Layer, output: &Layer) -> f32 {
+        let out_dim = first.biases.len();
+        let mut sums = [0i32; MAX_HIDDEN_OUTPUTS];
+        let sums = &mut sums[..out_dim];
+        first_layer_sums(products, vectorized && out_dim.is_multiple_of(8), first, sums);
+        let width = out_dim - 1;
+        let mut doubled = [0.0f32; 2 * MAX_HIDDEN_OUTPUTS];
+        let (clipped, squared) = doubled[..2 * width].split_at_mut(width);
+        for (row, (value, square)) in clipped.iter_mut().zip(squared.iter_mut()).enumerate() {
+            *value = hidden_value(first.biases[row], sums[row], first.scales[row], PRODUCT_ONE);
+            *square = *value * *value;
+        }
+        let shortcut = first.biases[width] + sums[width] as f32 / (PRODUCT_ONE * first.scales[width]);
+        second_layer_and_output(&doubled[..2 * width], second, output) + shortcut
     }
 
     /// A head with a hidden layer, from its first layer's integer sums: their values, bit for bit
@@ -2683,9 +2798,15 @@ impl Network {
         }
         let halfk_hidden_count = match feature_set {
             FEATURE_SET_HALFK_THREATS_SCRELU => Some(0),
-            FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN | FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN => Some(2),
+            FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN | FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN | FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL => {
+                Some(2)
+            }
             _ => None,
         };
+        let is_dual = feature_set == FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL;
+        if is_dual && hidden_count == 2 && hidden_dims[0] < 2 {
+            return Err(format!("{path}: a halfk_threats_pairwise_dual network's first layer is {} wide, at least 2", hidden_dims[0]));
+        }
         if let Some(expected) = halfk_hidden_count
             && hidden_count != expected
         {
@@ -2742,6 +2863,12 @@ impl Network {
             let hidden = layer(head_input, hidden_dims[0])?;
             let output = layer(2 * hidden_dims[0] + head_input, 1)?;
             (vec![hidden], output, None)
+        } else if is_dual {
+            // The first layer over every product, the second over its outputs but the last, each
+            // twice (`dual_head`), then the output over the second.
+            let first = layer(head_input, hidden_dims[0])?;
+            let second = layer(2 * (hidden_dims[0] - 1), hidden_dims[1])?;
+            (vec![first, second], layer(hidden_dims[1], 1)?, None)
         } else {
             let mut hidden = Vec::with_capacity(hidden_count);
             let mut input_dim = head_input;
@@ -2777,10 +2904,14 @@ impl Network {
                 | FEATURE_SET_HALFK_THREATS_SCRELU
                 | FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN
                 | FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN
+                | FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL
         );
         let halfk = matches!(
             feature_set,
-            FEATURE_SET_HALFK_THREATS_SCRELU | FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN | FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN
+            FEATURE_SET_HALFK_THREATS_SCRELU
+                | FEATURE_SET_HALFK_THREATS_SCRELU_HIDDEN
+                | FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN
+                | FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL
         );
         let screlu = matches!(
             feature_set,
@@ -2800,6 +2931,7 @@ impl Network {
                 | FEATURE_SET_PSQ_THREATS_PAIRWISE
                 | FEATURE_SET_PSQ_THREATS_PAIRWISE_HIDDEN
                 | FEATURE_SET_HALFK_THREATS_PAIRWISE_HIDDEN
+                | FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL
         ) || (is_stack && !screlu) || (is_material && !screlu);
         let network = PsqNetwork {
             embedding_dim, transform, transform_bias, hidden, output, step, learning_rate, threats, pairwise, screlu, stack, material,
@@ -4577,6 +4709,97 @@ pub(crate) mod tests {
         network
     }
 
+    /// A halfk_threats_pairwise_dual sample: `lively_halfk_two_hidden_network`'s pairwise one with its
+    /// second layer reading the first's outputs but the last, each twice (`dual_head`).
+    fn lively_halfk_dual_network_in(embedding_dim: usize, widths: [usize; 2], layout: halfk::Layout) -> PsqNetwork {
+        let mut network = lively_halfk_two_hidden_network_in(embedding_dim, widths, true, layout);
+        let in_dim = 2 * (widths[0] - 1);
+        let weight = (0..in_dim * widths[1]).map(|index| ((index as f32 * 0.531).fract() - 0.5) * 0.3).collect();
+        network.hidden[1] = Layer { in_dim, out_dim: widths[1], weight, bias: vec![0.4; widths[1]] };
+        network
+    }
+
+    fn lively_halfk_dual_network(embedding_dim: usize, widths: [usize; 2]) -> PsqNetwork {
+        lively_halfk_dual_network_in(embedding_dim, widths, halfk::Layout::Squares)
+    }
+
+    #[test]
+    fn a_halfk_pairwise_dual_network_survives_a_write_and_a_load_as_its_own_kind() {
+        let path = temp_path("halfk-dual-round-trip");
+        let network = lively_halfk_dual_network(16, [8, 4]);
+        assert!(network.dual());
+        network.write(&path).expect("writing a valid halfk_threats_pairwise_dual network should succeed");
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL);
+        let loaded = load_psq(&path);
+        assert!(loaded.dual() && loaded.halfk && loaded.pairwise && !loaded.screlu);
+        assert_eq!(loaded, network);
+        std::fs::remove_file(&path).ok();
+        // Tag 22's sample is not dual: its second layer reads the first's outputs once.
+        assert!(!lively_halfk_two_hidden_network(16, [8, 4], true).dual());
+    }
+
+    #[test]
+    fn the_halfk_dual_f32_head_squares_all_but_the_last_and_adds_the_last_raw() {
+        // Against a plain f64 computation: the products, the first layer raw, its outputs but the
+        // last clipped then squared beside them, the second layer clipped, the output, plus the last
+        // output of the first layer unclipped.
+        let (board, _) = Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10").unwrap();
+        let network = lively_halfk_dual_network(16, [8, 8]);
+        let side_to_move = board.side_to_move();
+        let own = network.refresh(&board, side_to_move);
+        let opponent = network.refresh(&board, side_to_move.opposite());
+        let products: Vec<f64> = [&own, &opponent]
+            .into_iter()
+            .flat_map(|lanes| {
+                let (a, b) = lanes.split_at(lanes.len() / 2);
+                a.iter().zip(b).map(|(a, b)| a.clamp(0.0, 1.0) as f64 * b.clamp(0.0, 1.0) as f64).collect::<Vec<f64>>()
+            })
+            .collect();
+        let layer = |layer: &Layer, inputs: &[f64]| -> Vec<f64> {
+            (0..layer.out_dim)
+                .map(|out| {
+                    let row = &layer.weight[out * layer.in_dim..(out + 1) * layer.in_dim];
+                    layer.bias[out] as f64 + row.iter().zip(inputs).map(|(w, x)| *w as f64 * x).sum::<f64>()
+                })
+                .collect()
+        };
+        let raw = layer(&network.hidden[0], &products);
+        let clipped: Vec<f64> = raw[..7].iter().map(|value| value.clamp(0.0, 1.0)).collect();
+        let inside = raw[..7].iter().filter(|value| **value > 0.0 && **value < 1.0).count();
+        assert!(inside >= 3, "only {inside} of 7 values inside the clip: the sample tests too little");
+        let doubled: Vec<f64> = clipped.iter().copied().chain(clipped.iter().map(|value| value * value)).collect();
+        let second: Vec<f64> = layer(&network.hidden[1], &doubled).into_iter().map(|value| value.clamp(0.0, 1.0)).collect();
+        let reference = layer(&network.output, &second)[0] + raw[7];
+        let value = network.evaluate_accumulators(&own, &opponent) as f64;
+        assert!((value - reference).abs() <= 1e-5, "{value} against {reference}");
+        // The shortcut is read: without it, the value moves by the raw output.
+        assert!(raw[7].abs() > 1e-3, "the shortcut's sample value {} is too small to test", raw[7]);
+    }
+
+    #[test]
+    fn a_quantized_halfk_dual_network_stays_close_to_f32_and_its_paths_agree() {
+        // The first layer in int16 per row, its last row the shortcut: within 0.02 pawns of f32, and
+        // the vectorized evaluation equal to the scalar one exactly (32 lanes take the kernels, 24 the
+        // scalar loops).
+        for (embedding_dim, widths) in [(32, [16, 32]), (24, [8, 8])] {
+            let network = lively_halfk_dual_network(embedding_dim, widths);
+            let quantized = QuantizedPsqNetwork::quantize(&network).expect("a small sample network quantizes");
+            assert!(matches!(quantized.head, QuantizedHead::Dual { .. }));
+            for fen in [
+                "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
+            ] {
+                let (board, _) = Board::from_fen(fen).unwrap();
+                let (exact, approximate) = (network.evaluate_pawns(&board), quantized.evaluate_pawns(&board));
+                let what = format!("width {embedding_dim}, {fen}");
+                assert!((exact - approximate).abs() <= 0.02, "{what}: {approximate} against {exact}");
+                assert_eq!(quantized.evaluate(&board), centipawns(approximate), "{what}");
+            }
+        }
+    }
+
     #[test]
     fn a_halfk_hidden_network_survives_a_write_and_a_load_as_its_own_kind() {
         let path = temp_path("halfk-hidden-round-trip");
@@ -4858,22 +5081,23 @@ pub(crate) mod tests {
 
     #[test]
     fn every_halfk_kind_of_every_layout_survives_a_write_and_a_load_under_its_own_tag() {
-        // Tags 20 to 22 stay 32 buckets; 23 to 25 are 8, 26 to 28 are 10, each kind in that order.
-        for (layout, first_tag) in
-            [(halfk::Layout::Squares, 20), (halfk::Layout::Eight, FEATURE_SET_HALFK8_THREATS_SCRELU), (halfk::Layout::Ten, FEATURE_SET_HALFK10_THREATS_SCRELU)]
-        {
+        // Tags 20 to 22 stay 32 buckets; 23 to 25 are 8, 26 to 28 are 10, each kind in that order;
+        // the dual kind's are 29, 30 and 31.
+        for (column, layout) in [halfk::Layout::Squares, halfk::Layout::Eight, halfk::Layout::Ten].into_iter().enumerate() {
             let kinds = [
                 lively_halfk_network_in(8, layout),
                 lively_halfk_two_hidden_network_in(8, [8, 4], false, layout),
                 lively_halfk_two_hidden_network_in(16, [8, 4], true, layout),
+                lively_halfk_dual_network_in(16, [8, 4], layout),
             ];
             for (index, network) in kinds.into_iter().enumerate() {
                 let path = temp_path("halfk-layout-round-trip");
                 network.write(&path).expect("a valid halfk network writes");
                 let bytes = fs::read(&path).unwrap();
                 let tag = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-                assert_eq!(tag, first_tag + index as u32, "{layout:?}, kind {index}");
-                assert_eq!(split_layout(tag), (HALFK_TAGS[index], layout));
+                assert_eq!(tag, HALFK_TAGS[index][column], "{layout:?}, kind {index}");
+                assert_eq!(split_layout(tag), (HALFK_TAGS[index][0], layout));
+                assert_eq!(with_layout(HALFK_TAGS[index][0], layout), tag);
                 assert_eq!(load_psq(&path), network, "{layout:?}, kind {index}");
                 std::fs::remove_file(&path).ok();
             }

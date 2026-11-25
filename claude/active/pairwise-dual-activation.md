@@ -1,7 +1,8 @@
 # Pairwise with squares in the head: design
 
 Status: proposed 2026-11-25 (the developer asked for an architecture combining pairwise with
-screlu, "trying to get the best of both"). Not decided, not planned. Waits behind the inference
+screlu, "trying to get the best of both"); implemented the same day
+(pairwise-dual-activation-implementation.md), not yet tested by the developer nor trained. Waits behind the inference
 work and the 512 duels (TODO.md, 2026-11-25), and possibly behind the piece-count buckets (the
 developer, 2026-11-25).
 

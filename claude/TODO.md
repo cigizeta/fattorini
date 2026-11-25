@@ -43,6 +43,15 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   on the optimized engine: equal time is what decides pairwise (2026-11-22's planned duels, moved
   after the optimization).
 
+## 2026-11-25: halfk_threats_pairwise_dual
+
+- **Designed and written 2026-11-25** (pairwise-dual-activation.md, its plan
+  pairwise-dual-activation-implementation.md): pairwise on the transform; of the first hidden
+  layer's 16 outputs, 15 clipped and squared side by side (30) into the second layer, the 16th raw
+  added to the output. Tags 29 to 31; `configs/lc0-halfk-threats-pairwise-dual-512-8-budget.yaml`,
+  `unit: elo`. **Next:** the developer's `cargo test` and clippy, then its attempt, when the
+  training machine is free; its order against the piece-count buckets still open.
+
 ## 2026-11-25: the networks' unit on Elo's scale
 
 - **S = 400 / ln 10 centipawns (elo-scale.md), written, tests and clippy clean 2026-11-25:** the

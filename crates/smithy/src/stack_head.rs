@@ -34,7 +34,9 @@ pub const BUCKETS: [i64; 3] = [OUR_KING_BUCKETS as i64, THEIR_KING_BUCKETS as i6
 /// side's squares through a stage by its own king, then one plain output over those stages' values
 /// and every square (`psq_threats_screlu_kings`, `StackHead::kings`), or one hidden layer over every
 /// square or product, then one plain output over its values and every one of them
-/// (`psq_threats_screlu_hidden`, `psq_threats_pairwise_hidden`, `hidden_output_input`).
+/// (`psq_threats_screlu_hidden`, `psq_threats_pairwise_hidden`, `hidden_output_input`), or two hidden
+/// layers whose first's outputs but the last are passed on clipped and squared, the last added to the
+/// output (`halfk_threats_pairwise_dual`, `dual_input`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadShape {
     Plain,
@@ -45,6 +47,7 @@ pub enum HeadShape {
     Taper,
     Kings,
     Hidden,
+    Dual,
 }
 
 impl HeadShape {
@@ -73,7 +76,7 @@ impl HeadShape {
             HeadShape::Phase => PHASE_BUCKETS,
             HeadShape::Count => COUNT_BUCKETS,
             HeadShape::Taper => TAPER_SETS,
-            HeadShape::Plain | HeadShape::Stack | HeadShape::Kings | HeadShape::Hidden => {
+            HeadShape::Plain | HeadShape::Stack | HeadShape::Kings | HeadShape::Hidden | HeadShape::Dual => {
                 panic!("{self:?} is not a single bucketed output")
             }
         }
@@ -88,7 +91,7 @@ impl HeadShape {
     /// `TAPER_PHASE_COLUMN`.
     pub fn stages(self) -> &'static [(&'static str, i64)] {
         match self {
-            HeadShape::Plain | HeadShape::Taper | HeadShape::Hidden => &[],
+            HeadShape::Plain | HeadShape::Taper | HeadShape::Hidden | HeadShape::Dual => &[],
             HeadShape::Stack => &[("l1", 0), ("l2", 1), ("output", 2)],
             HeadShape::Kings => &[("l1", 0), ("l2", 1)],
             HeadShape::Material => &[("output", 2)],
@@ -125,6 +128,17 @@ pub fn hidden_output_input(values: &Tensor, squares: &Tensor) -> Tensor {
     let clipped = values.clamp(0.0, 1.0);
     let squared = clipped.square();
     Tensor::cat(&[clipped, squared, squares.shallow_clone()], -1)
+}
+
+/// A dual head's first layer, raw, `[..., width]`, split: its outputs but the last clipped, then
+/// those squared, along the last dimension, the engine's order (`nnue::dual_head`), the second
+/// layer's input; and the last output, unclipped, `[..., 1]`, the shortcut added to the output.
+pub fn dual_input(raw: &Tensor) -> (Tensor, Tensor) {
+    let last = raw.dim() as i64 - 1;
+    let width = raw.size()[last as usize];
+    let clipped = raw.narrow(last, 0, width - 1).clamp(0.0, 1.0);
+    let squared = clipped.square();
+    (Tensor::cat(&[clipped, squared], last), raw.narrow(last, width - 1, 1))
 }
 
 /// A kings head's input to its output from each side's stage output, `[..., width]`, and every

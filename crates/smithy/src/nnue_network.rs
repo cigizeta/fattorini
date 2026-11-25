@@ -13,7 +13,7 @@ use fattorini::features::{halfk, psq, psq_threats};
 use fattorini::labels::S_PAWNS;
 use fattorini::stack_buckets::TAPER_SETS;
 pub use super::stack_head::HeadShape;
-use super::stack_head::{hidden_output_input, kings_stage_input, taper, StackHead, TAPER_PHASE_COLUMN};
+use super::stack_head::{dual_input, hidden_output_input, kings_stage_input, taper, StackHead, TAPER_PHASE_COLUMN};
 use super::value_head::{Activation, ValueHead};
 
 /// `labels::LOGISTIC`'s score on a tensor of evaluations in pawns, `tanh(y / (2 S))`, in `[-1, 1]`:
@@ -119,9 +119,13 @@ impl Network {
             _ => false,
         };
         assert!(
-            !halfk || (halfk_activation && head == HeadShape::Plain),
-            "a halfk network is halfk_threats_screlu, halfk_threats_screlu_hidden or halfk_threats_pairwise_hidden: \
-             a plain head, screlu with no hidden layer or two, or pairwise with two"
+            !halfk || (halfk_activation && (head == HeadShape::Plain || (head == HeadShape::Dual && pairwise))),
+            "a halfk network is halfk_threats_screlu, halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden or \
+             halfk_threats_pairwise_dual: a plain head, screlu with no hidden layer or two, or pairwise with two, plain or dual"
+        );
+        assert!(
+            head != HeadShape::Dual || (halfk && pairwise && value_head_hidden_dims.len() == 2 && value_head_hidden_dims[0] >= 2),
+            "a dual head is halfk_threats_pairwise_dual's, two hidden layers, the first at least 2 wide"
         );
         assert!(
             !screlu
@@ -274,6 +278,10 @@ enum Head {
     Stack(StackHead),
     Taper(nn::Linear),
     HiddenBeside { hidden: nn::Linear, output: nn::Linear },
+    /// A dual head (halfk_threats_pairwise_dual): `value_head.hidden0` over the products, its outputs
+    /// but the last clipped and squared (`dual_input`) into `value_head.hidden1`, clipped, then
+    /// `value_head.output`, plus `hidden0`'s last output, raw.
+    Dual { first: nn::Linear, second: nn::Linear, output: nn::Linear },
 }
 
 impl NetworkPsq {
@@ -296,6 +304,13 @@ impl NetworkPsq {
                 let hidden = nn::linear(vs / "value_head" / "hidden0", head_input, width, Default::default());
                 let output = nn::linear(vs / "value_head" / "output", 2 * width + head_input, 1, Default::default());
                 Head::HiddenBeside { hidden, output }
+            }
+            HeadShape::Dual => {
+                let [first_width, second_width] = [value_head_hidden_dims[0], value_head_hidden_dims[1]];
+                let first = nn::linear(vs / "value_head" / "hidden0", head_input, first_width, Default::default());
+                let second = nn::linear(vs / "value_head" / "hidden1", 2 * (first_width - 1), second_width, Default::default());
+                let output = nn::linear(vs / "value_head" / "output", second_width, 1, Default::default());
+                Head::Dual { first, second, output }
             }
             HeadShape::Plain => {
                 Head::Plain(ValueHead::new(&(vs / "value_head"), head_input, value_head_hidden_dims, Activation::ClippedRelu))
@@ -343,6 +358,10 @@ impl NetworkPsq {
             Head::HiddenBeside { hidden, output } => {
                 let values = kings_stage_input(&accumulator).apply(hidden);
                 hidden_output_input(&values, &accumulator).apply(output)
+            }
+            Head::Dual { first, second, output } => {
+                let (inputs, shortcut) = dual_input(&accumulator.apply(first));
+                Activation::ClippedRelu.apply(&inputs.apply(second)).apply(output) + shortcut
             }
         }
     }

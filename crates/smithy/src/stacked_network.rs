@@ -20,7 +20,7 @@ use super::feature_set::FeatureSet;
 use super::net_config::Architecture;
 use super::nnue_network::{pairwise_products, Network, FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND, TRANSFORM_BOUNDS};
 use fattorini::labels::S_PAWNS;
-use super::stack_head::{hidden_output_input, kings_output_input, kings_stage_input, stacked_stage_forward, taper, their_own_frame, HeadShape, TAPER_PHASE_COLUMN};
+use super::stack_head::{dual_input, hidden_output_input, kings_output_input, kings_stage_input, stacked_stage_forward, taper, their_own_frame, HeadShape, TAPER_PHASE_COLUMN};
 use super::value_head::Activation;
 
 pub struct StackedNetwork {
@@ -220,6 +220,13 @@ impl StackedNetwork {
             return self.linear("value_head.output", &hidden_output_input(&values, &inputs)).squeeze_dim(2);
         }
         let mut hidden = Tensor::cat(&[own, opponent], 2);
+        if self.head == HeadShape::Dual {
+            // The first layer raw, its outputs but the last clipped and squared into the second,
+            // clipped, then the output, plus the first's last output, as `NetworkPsq`'s dual head.
+            let (inputs, shortcut) = dual_input(&self.linear("value_head.hidden0", &hidden));
+            let values = self.activation.apply(&self.linear("value_head.hidden1", &inputs));
+            return (self.linear("value_head.output", &values) + shortcut).squeeze_dim(2);
+        }
         if self.head == HeadShape::Taper {
             let buckets = buckets.expect("a taper reads a psq-form batch's phase");
             return taper(&self.linear("value_head.output", &hidden), &buckets.select(1, TAPER_PHASE_COLUMN));
@@ -726,7 +733,15 @@ mod tests {
         // variable; the transform's and hidden layers' biases inside their clips (0.25 and 0.5), the
         // hidden weights within 0.02 (16 inputs of at most 1 move a unit by at most 0.32), so every
         // unit passes gradient.
-        for (pairwise, hidden) in [(false, &[][..]), (false, &[8, 4][..]), (true, &[8, 4][..])] {
+        // The dual head (halfk_threats_pairwise_dual) too: its shortcut and its squares are the
+        // stack's own code (`dual_input` on both sides), so both are checked arm by arm.
+        let kinds = [
+            (false, HeadShape::Plain, &[][..]),
+            (false, HeadShape::Plain, &[8, 4][..]),
+            (true, HeadShape::Plain, &[8, 4][..]),
+            (true, HeadShape::Dual, &[8, 4][..]),
+        ];
+        for (pairwise, head, hidden) in kinds {
             // Pairwise is halfk_threats_pairwise_hidden's, with the castling and en passant rows. In
             // 8 king buckets: the stack's shapes follow the layout as the network's do.
             let layout = fattorini::features::halfk::Layout::Eight;
@@ -734,7 +749,7 @@ mod tests {
             let networks: Vec<(nn::VarStore, Network)> = (0..3)
                 .map(|arm| {
                     let vs = nn::VarStore::new(Device::Cpu);
-                    let network = Network::with_options(&vs.root(), feature_set, pairwise, !pairwise, HeadShape::Plain, 8, hidden);
+                    let network = Network::with_options(&vs.root(), feature_set, pairwise, !pairwise, head, 8, hidden);
                     tch::no_grad(|| {
                         let mut names: Vec<(String, Tensor)> = vs.variables().into_iter().collect();
                         names.sort_by(|a, b| a.0.cmp(&b.0));
@@ -754,9 +769,12 @@ mod tests {
                     (vs, network)
                 })
                 .collect();
-            let stack = StackedNetwork::with_options(feature_set, pairwise, !pairwise, HeadShape::Plain, 8, hidden, 3, Device::Cpu);
+            let stack = StackedNetwork::with_options(feature_set, pairwise, !pairwise, head, 8, hidden, 3, Device::Cpu);
             if pairwise {
                 assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 8], "the products, half as many");
+            }
+            if head == HeadShape::Dual {
+                assert_eq!(stack.parameters()["value_head.hidden1.weight"].size(), [3, 4, 14], "7 values, each twice");
             }
             for (arm, (vs, _)) in networks.iter().enumerate() {
                 for (name, value) in vs.variables() {
