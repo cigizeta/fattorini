@@ -3,8 +3,10 @@
 **Status:** plan, 2026-11-25 (the developer: "write a plan, then implement for the next
 experiment, with backward compatibility; strength should not change"). **Written the same day,
 steps 1 to 8; `cargo test` and clippy clean the same day** (one test's "far past a won label"
-moved from 20 to 50 pawns, about 29 units of the new S). Left of step 9: the retrained network's
-attempt, its gate and its duels. As written: `S_PAWNS =
+moved from 20 to 50 pawns, about 29 units of the new S). **Then revised the same day:** the unit
+moved from a stamp on each new attempt to the config's `unit:` key ("The unit is a config's"),
+written; `cargo test` and clippy clean the same day. Left of step 9: the retrained network's
+attempt (its config with `unit: elo`), its gate and its duels. As written: `S_PAWNS =
 4 * LOG10_E`; the old teacher check is `refuse_old_teacher` (versions 1 and 2 refused); the frozen
 set's manifest records `<tables> <curve>`, and a manifest from before keeps its set under an atan
 curve (Lc0's, unchanged) and refuses it under the logistic (PeSTO's, read at the old S); the shown
@@ -43,13 +45,25 @@ mini-cpw.md.
 | the old logistic, `S = 70.37` | version-2 network files only | kept for backward compatibility |
 | the atan curve | version-1 network files only | kept, as today |
 
-## No resumed attempts across the change
+## The unit is a config's (revised 2026-11-25, the developer)
 
-The most promising network is retrained from scratch under the new S (the developer,
-2026-11-25). An attempt begun before the change is finished by the build it began with, or
-restarted; the new build never continues one, since its network would be judged by another curve
-halfway through. A new attempt records its unit; the new build refuses to resume an attempt with no
-record, saying why.
+No build can be assumed (the developer: "you cannot assume the old build"): an attempt running when
+the new build arrives must finish under its own S, on that build. So the unit is a key of the
+config, `configs/<name>.yaml`, beside `architecture:` and `training:` (the developer: "unit: elo can
+be put into a configuration, not into an attempt"):
+
+- `unit: elo`: Elo's S, files written as version 3; `unit: lc0`: the old S, version 2. Only these
+  two, for now (no network uses anything else); later, everything retrained, `elo` alone, and the
+  historical networks deleted.
+- An attempt freezes its config at start, as before, so its unit travels with it. A frozen config
+  with no `unit:` predates the key: `lc0`, so the attempt running at the change resumes under the
+  old S on any build, exports version 2, and its training's frozen `curve` line still matches.
+- A **new** attempt from a config with no `unit:` is refused, naming the line to add: forgetting it
+  must never train under the old S unnoticed.
+- The loss takes S from the config (`NetConfig::s_pawns`), export the version
+  (`NetConfig::network_version`), a self-play generation its teacher's curve (`NetConfig::curve`);
+  a teacher or seed must be of the attempt's own unit (`refuse_teacher_in_another_unit`).
+- The most promising network is retrained under `unit: elo` (the developer, 2026-11-25).
 
 ## Steps
 

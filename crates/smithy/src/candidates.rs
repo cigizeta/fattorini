@@ -116,41 +116,43 @@ pub(crate) fn write_engine_network(config: &NetConfig, checkpoint_path: &str, ou
     let _ = nnue_network::Network::of(&vs.root(), feature_set, &config.architecture);
     vs.load(checkpoint_path).unwrap_or_else(|error| panic!("failed to load {checkpoint_path}: {error}"));
 
+    // The format version says the unit the network was trained in (`NetConfig::network_version`).
+    let version = config.network_version();
     let written = match feature_set {
         FeatureSet::Psq | FeatureSet::PsqThreats if config.architecture.stack() => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let threats = feature_set == FeatureSet::PsqThreats;
-            export::stack_network_from(&vs, threats, embedding_dim, hidden_dims, step, learning_rate).write(output_path)
+            export::stack_network_from(&vs, threats, embedding_dim, hidden_dims, step, learning_rate).write_version(output_path, version)
         }
         FeatureSet::PsqThreats if config.architecture.kings() => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
-            export::kings_network_from(&vs, embedding_dim, hidden_dims, step, learning_rate).write(output_path)
+            export::kings_network_from(&vs, embedding_dim, hidden_dims, step, learning_rate).write_version(output_path, version)
         }
         FeatureSet::PsqThreats if config.architecture.hidden_beside() => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let pairwise = config.architecture.pairwise();
-            export::hidden_beside_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate).write(output_path)
+            export::hidden_beside_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate).write_version(output_path, version)
         }
         FeatureSet::PsqThreats if config.architecture.head_shape() == HeadShape::Taper => {
-            export::taper_network_from(&vs, config.architecture.embedding_dim(), step, learning_rate).write(output_path)
+            export::taper_network_from(&vs, config.architecture.embedding_dim(), step, learning_rate).write_version(output_path, version)
         }
         FeatureSet::PsqThreats if config.architecture.material() => {
             let (screlu, buckets) = (config.architecture.screlu(), config.architecture.head_shape().output_buckets());
             export::material_network_from(&vs, screlu, buckets, config.architecture.embedding_dim(), step, learning_rate)
-                .write(output_path)
+                .write_version(output_path, version)
         }
         FeatureSet::Psq => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let pairwise = config.architecture.pairwise();
-            export::psq_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate).write(output_path)
+            export::psq_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate).write_version(output_path, version)
         }
         FeatureSet::PsqThreats if config.architecture.screlu() => {
-            export::screlu_network_from(&vs, config.architecture.embedding_dim(), step, learning_rate).write(output_path)
+            export::screlu_network_from(&vs, config.architecture.embedding_dim(), step, learning_rate).write_version(output_path, version)
         }
         FeatureSet::PsqThreats => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let pairwise = config.architecture.pairwise();
-            export::psq_threats_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate).write(output_path)
+            export::psq_threats_network_from(&vs, pairwise, embedding_dim, hidden_dims, step, learning_rate).write_version(output_path, version)
         }
         // The engine's own quantization first, so that a network whose folded rows do not fit
         // `i16` is refused here, by name, never written to be refused at load.
@@ -158,7 +160,7 @@ pub(crate) fn write_engine_network(config: &NetConfig, checkpoint_path: &str, ou
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let pairwise = config.architecture.pairwise();
             let network = export::halfk_network_from(&vs, layout, pairwise, embedding_dim, hidden_dims, step, learning_rate);
-            QuantizedPsqNetwork::quantize(&network).and_then(|_| network.write(output_path))
+            QuantizedPsqNetwork::quantize(&network).and_then(|_| network.write_version(output_path, version))
         }
     };
     written.unwrap_or_else(|problem| {

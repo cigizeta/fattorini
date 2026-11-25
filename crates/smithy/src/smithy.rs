@@ -162,12 +162,6 @@ struct GenConfig {
     /// `configs/`, so an attempt is scaled or not for its whole life.
     #[serde(default)]
     scale: Option<u64>,
-    /// The networks' unit the attempt trains in, `elo` (`labels::S_PAWNS`): written into the attempt's
-    /// own copy of its config at New attempt (`freeze_attempt_config`), never in `configs/`. An attempt
-    /// without it began under the old unit (`labels::OLD_S_PAWNS`), and this build refuses to continue
-    /// it (`check_attempt_unit`).
-    #[serde(default)]
-    unit: Option<String>,
     /// The source generation 1 trains on, from the file's `labels:`: set by `load_config`, never
     /// written as a forge key, and always there once loaded.
     #[serde(skip)]
@@ -292,7 +286,7 @@ fn check_forge_name(name: &str, source: Option<Source>) -> Result<(), String> {
 /// A forge config's top-level keys that are its network's (`net_config::load`, `labels:` read by
 /// `preprocessing_config::load_labels`). Any other key is a forge key, read strictly, so a retired
 /// key is refused as an unknown one.
-const NETWORK_KEYS: [&str; 3] = ["labels", "architecture", "training"];
+const NETWORK_KEYS: [&str; 4] = ["labels", "architecture", "training", "unit"];
 
 /// The forge config at `path`, one file: its forge keys, strictly, and its network's sections.
 /// An error for a file that is not one (no `architecture:`, as a tune config); a network section
@@ -458,7 +452,7 @@ fn known_attempts(config: &str) -> Vec<u32> {
 }
 
 /// Copies `configs/<config>.yaml` into attempt `attempt`'s directory, the attempt's own from then on,
-/// with `unit: elo` appended, and `scale:` for a scaled attempt; a copy already there is kept.
+/// with `scale:` appended for a scaled attempt; a copy already there is kept.
 fn freeze_attempt_config(attempt: &str, config: &str, scale: Option<u64>) -> Result<(), String> {
     let frozen = format!("{}/{ATTEMPT_CONFIG}", attempt_dir(attempt));
     if Path::new(&frozen).is_file() {
@@ -466,26 +460,19 @@ fn freeze_attempt_config(attempt: &str, config: &str, scale: Option<u64>) -> Res
     }
     let source = preprocessing_config::net_config_path(config);
     let mut text = std::fs::read_to_string(&source).map_err(|error| format!("{source}: {error}"))?;
-    text.push_str(&format!("\n# The networks' unit, Elo's scale, written at New attempt.\nunit: {ELO_UNIT}\n"));
     if let Some(s) = scale {
         text.push_str(&format!("\n# A scaled attempt, chosen at New attempt: its volumes and work 1/{s} of a full attempt's.\nscale: {s}\n"));
     }
     std::fs::write(&frozen, text).map_err(|error| format!("{frozen}: {error}"))
 }
 
-/// The networks' unit an attempt records (`GenConfig::unit`): Elo's scale, `labels::S_PAWNS`.
-const ELO_UNIT: &str = "elo";
-
-/// An error unless `config`, attempt `attempt`'s, trains in Elo's unit: an attempt begun under the old
-/// unit is never continued by this build, since its network, trained so far to mean the old logistic,
-/// would be judged by another curve halfway through.
-fn check_attempt_unit(attempt: &str, config: &GenConfig) -> Result<(), String> {
-    match config.unit.as_deref() {
-        Some(ELO_UNIT) => Ok(()),
-        Some(other) => Err(format!("{attempt}: unit {other}, but this build trains in {ELO_UNIT} alone")),
-        None => Err(format!(
-            "{attempt} began under the old unit (S of 70 centipawns): finish it with the build it began with, or start a new attempt"
-        )),
+/// An error unless config `name` (`net`) names its unit: a new attempt's must be written, since an
+/// absent `unit:` means `lc0` for the attempts begun before the key, and forgetting it would train a
+/// new one under the old S unnoticed.
+fn check_new_attempt_unit(name: &str, net: &NetConfig) -> Result<(), String> {
+    match net.unit {
+        Some(_) => Ok(()),
+        None => Err(format!("{name}: a new attempt needs its networks' unit: add unit: elo to its config")),
     }
 }
 
@@ -3798,13 +3785,13 @@ impl Attempt<'_> {
     }
 
     /// The teacher's network by its name (`publish`), `PESTO` for generation 1. A network trained under
-    /// an old unit is refused (`refuse_old_teacher`).
+    /// another unit than the attempt's is refused (`refuse_teacher_in_another_unit`).
     fn teacher(&self, generation: u32) -> Result<String, String> {
         let path = self.dirs.teacher_nnue(generation);
         if !Path::new(&path).exists() {
             return Ok(PESTO.to_string());
         }
-        refuse_old_teacher(&path)?;
+        refuse_teacher_in_another_unit(&path, self.net.network_version())?;
         publish(&path)
     }
 
@@ -3855,11 +3842,11 @@ impl Attempt<'_> {
 
     fn train(&self, state: &GenState, arms: &[ArmLambda]) -> Result<Ended, String> {
         let generation = state.generation;
-        // The students start from the teacher's weights (`seed`), so a teacher trained under an old unit
+        // The students start from the teacher's weights (`seed`), so a teacher trained in another unit
         // would carry it into the new training.
         let teacher_nnue = self.dirs.teacher_nnue(generation);
         if Path::new(&teacher_nnue).exists() {
-            refuse_old_teacher(&teacher_nnue)?;
+            refuse_teacher_in_another_unit(&teacher_nnue, self.net.network_version())?;
         }
         // Self-play trains on the generation's own games, a sourced attempt's generation 1 on its source's
         // whole corpus; both are judged on the generation's frozen `TestSet`, frozen here the first time.
@@ -3874,13 +3861,13 @@ impl Attempt<'_> {
             None => (game_files(&self.dirs.train(generation))?, players::generation_dir_name(generation)),
         };
         // What the teacher's centipawns are read through: Lc0's curve for Lc0's corpus, the logistic
-        // at Elo's S for PeSTO's and for a self-play generation's, the networks' own unit (a teacher in
-        // an old unit is refused above); nothing fitted.
+        // at Elo's S for PeSTO's, and for a self-play generation's the attempt's own unit, its teacher's
+        // (a teacher in another unit is refused above); nothing fitted.
         let threads = pgn_train_stream::reader_threads();
         let say = |line: String| log::info!("{line}");
         let curve = match on_source {
             Some(on) => on.curve()?,
-            None => LOGISTIC,
+            None => self.net.curve(),
         };
         // A scaled attempt on a source reads a `1/s` share of its corpus, so it starts in minutes on any
         // machine, never scattering the whole corpus first; its own games, self-play's, are scaled
@@ -4032,7 +4019,7 @@ impl Attempt<'_> {
                 upload: |host: &batch::HostBatch| batch::upload(host, device),
             };
             let stack_of = |rule: &Rule, arms: &[Arm], active: &[usize]| {
-                let network = StackedNetwork::new(feature_set, &config.architecture, active.len() as i64, device);
+                let network = StackedNetwork::new(feature_set, &config.architecture, active.len() as i64, device).with_s(config.s_pawns());
                 let bounds = network.weight_bounds();
                 let starting_weights = || {
                     let mut vs = tch::nn::VarStore::new(device);
@@ -4607,15 +4594,15 @@ impl TestSet {
     }
 }
 
-/// An error when the network at `path` was trained under an old curve, the atan
-/// (`nnue::ATAN_VERSION`) or the logistic at the old S (`nnue::OLD_LOGISTIC_VERSION`): it may still
-/// play, but neither teaches self-play nor seeds a student, since its centipawns are in an old unit,
-/// not what `sigma(cp / S)` at Elo's S reads.
-fn refuse_old_teacher(path: &str) -> Result<(), String> {
-    let version = fattorini::nnue::file_version(path)?;
-    if version != fattorini::nnue::VERSION {
+/// An error unless the network at `path` was trained in the unit of the attempt it would teach, its
+/// format `version` (`NetConfig::network_version`): one in another unit, the atan's above all, may
+/// still play, but neither teaches self-play nor seeds a student, since its centipawns are not what
+/// the attempt's `sigma(cp / S)` reads.
+fn refuse_teacher_in_another_unit(path: &str, version: u32) -> Result<(), String> {
+    let found = fattorini::nnue::file_version(path)?;
+    if found != version {
         return Err(format!(
-            "{path} is format version {version}, trained under an old unit: it may still play, but neither teaches nor is trained further; start a new attempt"
+            "{path} is format version {found}, trained in another unit than this attempt's (version {version}): it may still play, but neither teaches nor is trained further here"
         ));
     }
     Ok(())
@@ -5641,8 +5628,9 @@ fn forge(status: &Status, name: &str, attempt: &str, scale: Option<u64>) -> Resu
     }
     // A new attempt is refused before its directory is made, so a refusal leaves no empty attempt behind.
     if attempt == "new" {
-        let (config, _) = load_config(&preprocessing_config::net_config_path(name))?;
+        let (config, net) = load_config(&preprocessing_config::net_config_path(name))?;
         check_forge_name(name, config.source)?;
+        check_new_attempt_unit(name, &net)?;
         // A scaled attempt reads a share of its source, so starts on what is there.
         if let Some(source) = config.source.filter(|source| scale.is_none() && !source.is_complete()) {
             return Err(source.incomplete());
@@ -5667,7 +5655,6 @@ fn forge(status: &Status, name: &str, attempt: &str, scale: Option<u64>) -> Resu
     let _lease = lease::take(&attempt_lease_path(&attempt_name), &attempt_name)?;
     if attempt != "new" {
         sync_down(&attempt_name)?;
-        check_attempt_unit(&attempt_name, &load_attempt_config(&attempt_name)?.0)?;
     }
     // An attempt's state is written as it starts, so one without it, here and on the remote, has lost
     // it: starting it over at generation 1 would overwrite what it had, here and, through the mover, on
@@ -5923,38 +5910,49 @@ fn learned_lambdas(dirs: &Dirs, generation: u32, lambdas: &[f64]) -> Vec<f64> {
 mod tests {
     use super::*;
 
-    /// A teacher's header alone decides: versions 1 and 2, old units, refused; version 3 accepted.
+    /// A teacher's header alone decides: it teaches an attempt of its own unit alone, and an atan one
+    /// none.
     #[test]
-    fn a_teacher_in_an_old_unit_is_refused_and_one_in_elo_s_accepted() {
+    fn a_teacher_teaches_an_attempt_of_its_own_unit_alone() {
+        use fattorini::nnue::{ATAN_VERSION, OLD_LOGISTIC_VERSION, VERSION};
         let path = std::env::temp_dir().join(format!("smithy-teacher-{}.nnue", std::process::id())).to_str().unwrap().to_string();
-        let versions = [
-            (fattorini::nnue::ATAN_VERSION, true),
-            (fattorini::nnue::OLD_LOGISTIC_VERSION, true),
-            (fattorini::nnue::VERSION, false),
-        ];
-        for (version, refused) in versions {
+        for found in [ATAN_VERSION, OLD_LOGISTIC_VERSION, VERSION] {
             let mut bytes = fattorini::nnue::MAGIC.to_vec();
-            bytes.extend_from_slice(&version.to_le_bytes());
+            bytes.extend_from_slice(&found.to_le_bytes());
             std::fs::write(&path, &bytes).unwrap();
-            assert_eq!(refuse_old_teacher(&path).is_err(), refused, "version {version}");
+            for attempt in [OLD_LOGISTIC_VERSION, VERSION] {
+                assert_eq!(refuse_teacher_in_another_unit(&path, attempt).is_ok(), found == attempt, "version {found} teaching {attempt}");
+            }
         }
         std::fs::remove_file(&path).ok();
     }
 
-    /// An attempt in Elo's unit is continued; one with no unit, begun under the old one, refused, and so
-    /// is an unknown unit.
+    /// A config's unit gives its S and its networks' format version; without one it is `lc0`, which an
+    /// attempt begun before the key continues under, but a new attempt is refused; an unknown unit is
+    /// an error.
     #[test]
-    fn only_an_attempt_in_elo_s_unit_is_continued() {
-        let config = |unit: Option<&str>| -> GenConfig {
-            let mut text = "training_positions: 1\ntest_positions: 1\nround_robin_pairs: 1\ngate_elo_d: 35\ntune:\n  length: default\n".to_string();
-            if let Some(unit) = unit {
-                text.push_str(&format!("unit: {unit}\n"));
-            }
-            serde_yaml::from_str(&text).unwrap()
+    fn a_config_s_unit_gives_its_s_and_version_and_a_new_attempt_needs_one() {
+        fattorini::pipeline::repository_root::enter_for_tests();
+        let text = std::fs::read_to_string(preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
+        let text = text.lines().filter(|line| !line.starts_with("unit:")).collect::<Vec<_>>().join("\n");
+        let dir = std::env::temp_dir().join(format!("smithy-unit-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.yaml").to_str().unwrap().to_string();
+        let net_with = |unit: Option<&str>| {
+            std::fs::write(&path, format!("{text}\n{}", unit.map_or(String::new(), |unit| format!("unit: {unit}\n")))).unwrap();
+            load_config(&path).map(|(_, net)| net)
         };
-        assert!(check_attempt_unit("a", &config(Some(ELO_UNIT))).is_ok());
-        assert!(check_attempt_unit("a", &config(None)).unwrap_err().contains("old unit"));
-        assert!(check_attempt_unit("a", &config(Some("lc0"))).is_err());
+        let old = net_with(None).unwrap();
+        assert_eq!((old.unit(), old.s_pawns(), old.network_version()), (net_config::Unit::Lc0, fattorini::labels::OLD_S_PAWNS, 2));
+        assert!(check_new_attempt_unit("c", &old).unwrap_err().contains("unit: elo"));
+        let lc0 = net_with(Some("lc0")).unwrap();
+        assert_eq!((lc0.unit(), lc0.network_version()), (net_config::Unit::Lc0, 2));
+        assert!(check_new_attempt_unit("c", &lc0).is_ok());
+        let elo = net_with(Some("elo")).unwrap();
+        assert_eq!((elo.unit(), elo.s_pawns(), elo.network_version()), (net_config::Unit::Elo, fattorini::labels::S_PAWNS, 3));
+        assert!(check_new_attempt_unit("c", &elo).is_ok());
+        assert!(net_with(Some("pawns")).is_err(), "an unknown unit");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

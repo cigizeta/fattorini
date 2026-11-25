@@ -963,10 +963,19 @@ impl PsqNetwork {
         Ok(())
     }
 
-    /// Serializes to `path`, little-endian throughout. Validates first: writing a file that cannot
-    /// be loaded back helps nobody, and the exporter is the place where a shape mistake is cheapest
-    /// to diagnose.
+    /// Serializes to `path` as format `VERSION`, a network trained in Elo's unit (`write_version`).
     pub fn write(&self, path: &str) -> Result<(), String> {
+        self.write_version(path, VERSION)
+    }
+
+    /// Serializes to `path` as format `version`, the curve the network was trained under: `VERSION`,
+    /// or `OLD_LOGISTIC_VERSION` for one trained under the old S, until every network is retrained.
+    /// Little-endian throughout. Validates first: writing a file that cannot be loaded back helps
+    /// nobody, and the exporter is the place where a shape mistake is cheapest to diagnose.
+    pub fn write_version(&self, path: &str, version: u32) -> Result<(), String> {
+        if version != VERSION && version != OLD_LOGISTIC_VERSION {
+            return Err(format!("{path}: a network is written as version {OLD_LOGISTIC_VERSION} or {VERSION}, not {version}"));
+        }
         self.validate()?;
         if let Some(stack) = &self.stack {
             // A kings network's one width, a side's.
@@ -979,7 +988,7 @@ impl PsqNetwork {
                 FEATURE_SET_PSQ_STACK
             };
             return write_weights(
-                path, feature_set, self.embedding_dim, &self.transform, &self.transform_bias, &widths,
+                path, version, feature_set, self.embedding_dim, &self.transform, &self.transform_bias, &widths,
                 stack.layers(), self.step, self.learning_rate,
             );
         }
@@ -996,7 +1005,7 @@ impl PsqNetwork {
                 FEATURE_SET_PSQ_THREATS_PAIRWISE_MATERIAL
             };
             return write_weights(
-                path, feature_set, self.embedding_dim, &self.transform, &self.transform_bias,
+                path, version, feature_set, self.embedding_dim, &self.transform, &self.transform_bias,
                 &[], material.iter(), self.step, self.learning_rate,
             );
         }
@@ -1023,7 +1032,7 @@ impl PsqNetwork {
         };
         let widths: Vec<usize> = self.hidden.iter().map(|layer| layer.out_dim).collect();
         write_weights(
-            path, feature_set, self.embedding_dim, &self.transform, &self.transform_bias, &widths,
+            path, version, feature_set, self.embedding_dim, &self.transform, &self.transform_bias, &widths,
             self.hidden.iter().chain([&self.output]), self.step, self.learning_rate,
         )
     }
@@ -2895,12 +2904,12 @@ fn validate_transform(rows: usize, embedding_dim: usize, transform: &[f32], tran
 /// stack each layer's weight sets in bucket order. The caller validates first.
 #[allow(clippy::too_many_arguments)]
 fn write_weights<'a>(
-    path: &str, feature_set: u32, embedding_dim: usize, transform: &[f32], transform_bias: &[f32], hidden_widths: &[usize],
-    layers: impl Iterator<Item = &'a Layer>, step: u64, learning_rate: f64,
+    path: &str, version: u32, feature_set: u32, embedding_dim: usize, transform: &[f32], transform_bias: &[f32],
+    hidden_widths: &[usize], layers: impl Iterator<Item = &'a Layer>, step: u64, learning_rate: f64,
 ) -> Result<(), String> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
-    bytes.extend_from_slice(&VERSION.to_le_bytes());
+    bytes.extend_from_slice(&version.to_le_bytes());
     bytes.extend_from_slice(&feature_set.to_le_bytes());
     bytes.extend_from_slice(&(embedding_dim as u32).to_le_bytes());
     bytes.extend_from_slice(&(hidden_widths.len() as u32).to_le_bytes());

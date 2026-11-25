@@ -155,9 +155,10 @@ fn open_arm(
     // doc comment for what each frozen field protects.
     let mut frozen: Vec<(&str, String)> = vec![
         ("architecture", format!("{:?}", config.architecture)),
-        // What the output is trained to mean and the loss: an attempt started under the atan curve and
-        // the matching loss records no such line, so it is refused rather than resumed.
-        ("curve", format!("{} bce", fattorini::labels::LOGISTIC.describe())),
+        // What the output is trained to mean and the loss, the config's unit (`NetConfig::curve`): an
+        // attempt started under the atan curve and the matching loss records no such line, so it is
+        // refused rather than resumed; one begun under the old S, before `unit:`, resumes under it.
+        ("curve", format!("{} bce", config.curve().describe())),
         // The dataset actually trained on.
         ("parent", source.to_string()),
         ("lambda", preprocessing_config::lambda_text(lambda)),

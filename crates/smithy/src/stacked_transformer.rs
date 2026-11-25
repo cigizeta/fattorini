@@ -178,12 +178,12 @@ impl StackedTransformer {
     /// Every arm's training loss, `[arms]`, against label column `columns[k]` (`Int64`, on the
     /// network's device): `stacked_network::arm_training_losses`, the NNUE stack's.
     pub fn training_losses(&self, batch: &TransformerBatch, columns: &Tensor) -> Tensor {
-        arm_training_losses(&self.pawns(batch), &arm_labels(&batch.labels, columns))
+        arm_training_losses(&self.pawns(batch), &arm_labels(&batch.labels, columns), fattorini::labels::S_PAWNS)
     }
 
     /// Every arm's test loss, `[arms]`: the binary cross entropy, the NNUE stack's.
     pub fn test_losses(&self, batch: &TransformerBatch, columns: &Tensor) -> Tensor {
-        arm_test_losses(&self.pawns(batch), &arm_labels(&batch.labels, columns))
+        arm_test_losses(&self.pawns(batch), &arm_labels(&batch.labels, columns), fattorini::labels::S_PAWNS)
     }
 }
 
@@ -264,7 +264,7 @@ mod tests {
                     let unstacked = network.forward(&batch).view([1, -1]);
                     close(&pawns.get(arm as i64), &unstacked.get(0), &format!("{what} pawns"));
                     let labels = batch.labels.select(1, 2 - arm as i64).view([1, -1]);
-                    close(&test.get(arm as i64), &arm_test_losses(&unstacked, &labels).get(0), &format!("{what} test"));
+                    close(&test.get(arm as i64), &arm_test_losses(&unstacked, &labels, fattorini::labels::S_PAWNS).get(0), &format!("{what} test"));
                 }
             }
         }
@@ -289,7 +289,7 @@ mod tests {
         stack.training_losses(&batch, &columns).sum(Kind::Float).backward();
         for (arm, (vs, network)) in networks.iter().enumerate() {
             let labels = batch.labels.select(1, [0, 2][arm]).view([1, -1]);
-            arm_training_losses(&network.forward(&batch).view([1, -1]), &labels).sum(Kind::Float).backward();
+            arm_training_losses(&network.forward(&batch).view([1, -1]), &labels, fattorini::labels::S_PAWNS).sum(Kind::Float).backward();
             for (name, value) in vs.variables() {
                 let stacked_grad = stack.parameters()[&name].grad().get(arm as i64);
                 close(&stacked_grad, &value.grad(), &format!("arm {arm} {name}"));

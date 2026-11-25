@@ -24,6 +24,55 @@ use super::stack_head::HeadShape;
 pub struct NetConfig {
     pub architecture: Architecture,
     pub training: Training,
+    /// The networks' unit, the S the loss reads the output through and the format version an export
+    /// writes: `elo` (`labels::S_PAWNS`, version 3) or `lc0` (`labels::OLD_S_PAWNS`, version 2), the
+    /// latter only until every network is retrained under Elo's. Absent in configs written before the
+    /// key, so in the frozen copy of every attempt begun before it, which therefore continues under
+    /// `lc0`; a new attempt needs it written (the smithy's `forge`).
+    #[serde(default)]
+    pub unit: Option<Unit>,
+}
+
+/// The networks' unit (`NetConfig::unit`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Unit {
+    /// Lc0's slope at equality, the old S: version 2.
+    Lc0,
+    /// Elo's scale, `400 / ln 10` centipawns: version 3.
+    Elo,
+}
+
+impl NetConfig {
+    /// The unit this config trains in: its own, or `lc0` for a config written before the key.
+    pub fn unit(&self) -> Unit {
+        self.unit.unwrap_or(Unit::Lc0)
+    }
+
+    /// The unit's S, in pawns.
+    pub fn s_pawns(&self) -> f64 {
+        match self.unit() {
+            Unit::Lc0 => fattorini::labels::OLD_S_PAWNS,
+            Unit::Elo => fattorini::labels::S_PAWNS,
+        }
+    }
+
+    /// The curve a network trained under this config means, what a self-play generation reads its
+    /// teacher's centipawns through.
+    pub fn curve(&self) -> fattorini::labels::Curve {
+        match self.unit() {
+            Unit::Lc0 => fattorini::labels::OLD_LOGISTIC,
+            Unit::Elo => fattorini::labels::LOGISTIC,
+        }
+    }
+
+    /// The format version a network trained under this config is written as.
+    pub fn network_version(&self) -> u32 {
+        match self.unit() {
+            Unit::Lc0 => fattorini::nnue::OLD_LOGISTIC_VERSION,
+            Unit::Elo => fattorini::nnue::VERSION,
+        }
+    }
 }
 
 /// The model's own shape. `embedding_dim` and `value_head` belong to every kind: each ends in the

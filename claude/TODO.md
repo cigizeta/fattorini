@@ -15,10 +15,11 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 ## 2026-11-25: the networks' unit on Elo's scale
 
 - **S = 400 / ln 10 centipawns (elo-scale.md), written, tests and clippy clean 2026-11-25:** the
-  network's unit, PeSTO's reading, format version 3; versions 1 and 2 still play. The
-  attempt training now finishes on the build it began with; the new build refuses to continue an
-  attempt without `unit: elo`. The most promising network is retrained under it, then duelled
-  against the one it retrains.
+  network's unit, a config's `unit:` key (`elo`, version 3; `lc0`, the old S, version 2); PeSTO's
+  reading on Elo's scale; versions 1 and 2 still play. The attempt training now has no `unit:` in
+  its frozen config, so it finishes under the old S on any build. A new attempt needs `unit:`
+  written. The most promising network is retrained under `unit: elo`, then duelled against the one
+  it retrains. Later, everything retrained: `elo` alone, the historical networks deleted.
 
 ## 2026-11-22: the larger corpus, the first attempt on it
 

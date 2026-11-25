@@ -39,6 +39,9 @@ pub struct StackedNetwork {
     /// The head: plain, or bucketed per position (`stack_head`), a stack's or a material output's,
     /// as `NetworkPsq`'s.
     head: HeadShape,
+    /// The networks' unit, S in pawns, the loss reads the output through (`with_s`): Elo's
+    /// (`labels::S_PAWNS`) unless the attempt's config says `unit: lc0`.
+    s_pawns: f64,
 }
 
 impl StackedNetwork {
@@ -98,7 +101,14 @@ impl StackedNetwork {
         };
         StackedNetwork {
             feature_set, parameters, arms, hidden_layers: value_head_hidden_dims.len(), activation, pairwise, screlu, head,
+            s_pawns: S_PAWNS,
         }
+    }
+
+    /// This stack trained in the unit `s_pawns` (`NetConfig::s_pawns`), not Elo's.
+    pub fn with_s(mut self, s_pawns: f64) -> StackedNetwork {
+        self.s_pawns = s_pawns;
+        self
     }
 
     #[cfg(test)]
@@ -260,12 +270,12 @@ impl StackedNetwork {
     /// column `columns[k]` (an `Int64` tensor of `arms` entries, on the network's device). Its sum is
     /// what a step descends.
     pub fn training_losses(&self, batch: &DenseBatch, columns: &Tensor) -> Tensor {
-        arm_training_losses(&self.pawns(batch), &arm_labels(batch.labels(), columns))
+        arm_training_losses(&self.pawns(batch), &arm_labels(batch.labels(), columns), self.s_pawns)
     }
 
     /// Every arm's test loss, `[arms]`: `Network::test_loss` per arm, the binary cross entropy.
     pub fn test_losses(&self, batch: &DenseBatch, columns: &Tensor) -> Tensor {
-        arm_test_losses(&self.pawns(batch), &arm_labels(batch.labels(), columns))
+        arm_test_losses(&self.pawns(batch), &arm_labels(batch.labels(), columns), self.s_pawns)
     }
 }
 
@@ -277,17 +287,17 @@ pub fn arm_labels(labels: &Tensor, columns: &Tensor) -> Tensor {
 
 /// Every arm's training loss, `[arms]`, from its evaluations in pawns and its labels, both
 /// `[arms, batch]`: `nnue_network::bce_loss` per arm, the binary cross entropy of `sigma(pawns / S)`
-/// against `(label + 1) / 2`. Every stack trains on this one, so an NNUE's and a transformer's losses
-/// cannot differ.
-pub fn arm_training_losses(pawns: &Tensor, labels: &Tensor) -> Tensor {
-    (pawns / S_PAWNS)
+/// against `(label + 1) / 2`, S the attempt's unit in pawns, `s_pawns`. Every stack trains on this
+/// one, so an NNUE's and a transformer's losses cannot differ.
+pub fn arm_training_losses(pawns: &Tensor, labels: &Tensor, s_pawns: f64) -> Tensor {
+    (pawns / s_pawns)
         .binary_cross_entropy_with_logits(&((labels + 1.0) / 2.0), None::<Tensor>, None::<Tensor>, Reduction::None)
         .mean_dim(1, false, Kind::Float)
 }
 
 /// Every arm's test loss, `[arms]`: the same binary cross entropy as `arm_training_losses`.
-pub fn arm_test_losses(pawns: &Tensor, labels: &Tensor) -> Tensor {
-    arm_training_losses(pawns, labels)
+pub fn arm_test_losses(pawns: &Tensor, labels: &Tensor, s_pawns: f64) -> Tensor {
+    arm_training_losses(pawns, labels, s_pawns)
 }
 
 /// `keep` as an `Int64` index on `device`, after checking it names at least one of `arms` arms, each
