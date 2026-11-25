@@ -20,6 +20,7 @@ use super::feature_set::FeatureSet;
 use super::net_config::Architecture;
 use super::nnue_network::{pairwise_products, Network, FIRST_HIDDEN_WEIGHT, FIRST_HIDDEN_WEIGHT_BOUND, TRANSFORM_BOUNDS};
 use fattorini::labels::S_PAWNS;
+use super::stack_head::{stacked_bucketed_forward, COUNT_COLUMN};
 use super::stack_head::{dual_input, hidden_output_input, kings_output_input, kings_stage_input, stacked_stage_forward, taper, their_own_frame, HeadShape, TAPER_PHASE_COLUMN};
 use super::value_head::Activation;
 
@@ -226,6 +227,17 @@ impl StackedNetwork {
             let (inputs, shortcut) = dual_input(&self.linear("value_head.hidden0", &hidden));
             let values = self.activation.apply(&self.linear("value_head.hidden1", &inputs));
             return (self.linear("value_head.output", &values) + shortcut).squeeze_dim(2);
+        }
+        if self.head == HeadShape::DualCount {
+            // The dual head's three layers, every row through its own piece count's set.
+            let bucket = buckets.expect("a dual count head reads a psq-form batch's piece count").select(1, COUNT_COLUMN);
+            let layer = |name: &str, input: &Tensor| {
+                let parameter = |part: &str| self.parameter(&format!("value_head.{name}.{part}"));
+                stacked_bucketed_forward(input, parameter("weight"), parameter("bias"), &bucket)
+            };
+            let (inputs, shortcut) = dual_input(&layer("hidden0", &hidden));
+            let values = self.activation.apply(&layer("hidden1", &inputs));
+            return (layer("output", &values) + shortcut).squeeze_dim(2);
         }
         if self.head == HeadShape::Taper {
             let buckets = buckets.expect("a taper reads a psq-form batch's phase");
@@ -740,6 +752,7 @@ mod tests {
             (false, HeadShape::Plain, &[8, 4][..]),
             (true, HeadShape::Plain, &[8, 4][..]),
             (true, HeadShape::Dual, &[8, 4][..]),
+            (true, HeadShape::DualCount, &[8, 4][..]),
         ];
         for (pairwise, head, hidden) in kinds {
             // Pairwise is halfk_threats_pairwise_hidden's, with the castling and en passant rows. In
@@ -770,11 +783,19 @@ mod tests {
                 })
                 .collect();
             let stack = StackedNetwork::with_options(feature_set, pairwise, !pairwise, head, 8, hidden, 3, Device::Cpu);
-            if pairwise {
-                assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 8], "the products, half as many");
-            }
-            if head == HeadShape::Dual {
-                assert_eq!(stack.parameters()["value_head.hidden1.weight"].size(), [3, 4, 14], "7 values, each twice");
+            match head {
+                HeadShape::DualCount => {
+                    assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 8, 8], "8 count buckets of 8 products in");
+                    assert_eq!(stack.parameters()["value_head.hidden1.weight"].size(), [3, 8, 4, 14], "7 values, each twice");
+                }
+                HeadShape::Dual => {
+                    assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 8], "the products, half as many");
+                    assert_eq!(stack.parameters()["value_head.hidden1.weight"].size(), [3, 4, 14], "7 values, each twice");
+                }
+                _ if pairwise => {
+                    assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 8], "the products, half as many");
+                }
+                _ => {}
             }
             for (arm, (vs, _)) in networks.iter().enumerate() {
                 for (name, value) in vs.variables() {

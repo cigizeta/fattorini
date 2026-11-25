@@ -13,7 +13,11 @@ use fattorini::features::{halfk, psq, psq_threats};
 use fattorini::labels::S_PAWNS;
 use fattorini::stack_buckets::TAPER_SETS;
 pub use super::stack_head::HeadShape;
-use super::stack_head::{dual_input, hidden_output_input, kings_stage_input, taper, StackHead, TAPER_PHASE_COLUMN};
+use super::stack_head::{
+    bucketed_forward, bucketed_linear, dual_input, hidden_output_input, kings_stage_input, taper, StackHead, COUNT_COLUMN,
+    TAPER_PHASE_COLUMN,
+};
+use fattorini::stack_buckets::COUNT_BUCKETS;
 use super::value_head::{Activation, ValueHead};
 
 /// `labels::LOGISTIC`'s score on a tensor of evaluations in pawns, `tanh(y / (2 S))`, in `[-1, 1]`:
@@ -119,13 +123,16 @@ impl Network {
             _ => false,
         };
         assert!(
-            !halfk || (halfk_activation && (head == HeadShape::Plain || (head == HeadShape::Dual && pairwise))),
+            !halfk
+                || (halfk_activation
+                    && (head == HeadShape::Plain || (matches!(head, HeadShape::Dual | HeadShape::DualCount) && pairwise))),
             "a halfk network is halfk_threats_screlu, halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden or \
              halfk_threats_pairwise_dual: a plain head, screlu with no hidden layer or two, or pairwise with two, plain or dual"
         );
         assert!(
-            head != HeadShape::Dual || (halfk && pairwise && value_head_hidden_dims.len() == 2 && value_head_hidden_dims[0] >= 2),
-            "a dual head is halfk_threats_pairwise_dual's, two hidden layers, the first at least 2 wide"
+            !matches!(head, HeadShape::Dual | HeadShape::DualCount)
+                || (halfk && pairwise && value_head_hidden_dims.len() == 2 && value_head_hidden_dims[0] >= 2),
+            "a dual head is halfk_threats_pairwise_dual's or _dual_count's, two hidden layers, the first at least 2 wide"
         );
         assert!(
             !screlu
@@ -282,6 +289,9 @@ enum Head {
     /// but the last clipped and squared (`dual_input`) into `value_head.hidden1`, clipped, then
     /// `value_head.output`, plus `hidden0`'s last output, raw.
     Dual { first: nn::Linear, second: nn::Linear, output: nn::Linear },
+    /// `Dual` with each layer one independent set per piece-count bucket (`stack_head::bucketed_linear`),
+    /// `(weight, bias)` each, every row through its own count's (halfk_threats_pairwise_dual_count).
+    DualCount { first: (Tensor, Tensor), second: (Tensor, Tensor), output: (Tensor, Tensor) },
 }
 
 impl NetworkPsq {
@@ -311,6 +321,15 @@ impl NetworkPsq {
                 let second = nn::linear(vs / "value_head" / "hidden1", 2 * (first_width - 1), second_width, Default::default());
                 let output = nn::linear(vs / "value_head" / "output", second_width, 1, Default::default());
                 Head::Dual { first, second, output }
+            }
+            HeadShape::DualCount => {
+                let [first_width, second_width] = [value_head_hidden_dims[0], value_head_hidden_dims[1]];
+                let buckets = COUNT_BUCKETS as i64;
+                let path = vs / "value_head";
+                let first = bucketed_linear(&(&path / "hidden0"), buckets, head_input, first_width);
+                let second = bucketed_linear(&(&path / "hidden1"), buckets, 2 * (first_width - 1), second_width);
+                let output = bucketed_linear(&(&path / "output"), buckets, second_width, 1);
+                Head::DualCount { first, second, output }
             }
             HeadShape::Plain => {
                 Head::Plain(ValueHead::new(&(vs / "value_head"), head_input, value_head_hidden_dims, Activation::ClippedRelu))
@@ -362,6 +381,12 @@ impl NetworkPsq {
             Head::Dual { first, second, output } => {
                 let (inputs, shortcut) = dual_input(&accumulator.apply(first));
                 Activation::ClippedRelu.apply(&inputs.apply(second)).apply(output) + shortcut
+            }
+            Head::DualCount { first, second, output } => {
+                let bucket = buckets.select(1, COUNT_COLUMN);
+                let layer = |input: &Tensor, (weight, bias): &(Tensor, Tensor)| bucketed_forward(input, weight, bias, &bucket);
+                let (inputs, shortcut) = dual_input(&layer(&accumulator, first));
+                layer(&Activation::ClippedRelu.apply(&layer(&inputs, second)), output) + shortcut
             }
         }
     }

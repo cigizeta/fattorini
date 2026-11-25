@@ -48,7 +48,14 @@ pub enum HeadShape {
     Kings,
     Hidden,
     Dual,
+    /// `Dual`'s three layers, each one set per piece-count bucket, independent, the position's picked
+    /// by its count (`COUNT_COLUMN`): halfk_threats_pairwise_dual_count.
+    DualCount,
 }
+
+/// The bucket column of a row's piece count (`DenseBatchPsq::buckets`), `HeadShape::Count`'s and
+/// `HeadShape::DualCount`'s.
+pub const COUNT_COLUMN: i64 = 4;
 
 impl HeadShape {
     /// Whether the head reads a row's buckets, a stack's, a single output's, or a taper's phase, or
@@ -76,7 +83,7 @@ impl HeadShape {
             HeadShape::Phase => PHASE_BUCKETS,
             HeadShape::Count => COUNT_BUCKETS,
             HeadShape::Taper => TAPER_SETS,
-            HeadShape::Plain | HeadShape::Stack | HeadShape::Kings | HeadShape::Hidden | HeadShape::Dual => {
+            HeadShape::Plain | HeadShape::Stack | HeadShape::Kings | HeadShape::Hidden | HeadShape::Dual | HeadShape::DualCount => {
                 panic!("{self:?} is not a single bucketed output")
             }
         }
@@ -91,12 +98,12 @@ impl HeadShape {
     /// `TAPER_PHASE_COLUMN`.
     pub fn stages(self) -> &'static [(&'static str, i64)] {
         match self {
-            HeadShape::Plain | HeadShape::Taper | HeadShape::Hidden | HeadShape::Dual => &[],
+            HeadShape::Plain | HeadShape::Taper | HeadShape::Hidden | HeadShape::Dual | HeadShape::DualCount => &[],
             HeadShape::Stack => &[("l1", 0), ("l2", 1), ("output", 2)],
             HeadShape::Kings => &[("l1", 0), ("l2", 1)],
             HeadShape::Material => &[("output", 2)],
             HeadShape::Phase => &[("output", 3)],
-            HeadShape::Count => &[("output", 4)],
+            HeadShape::Count => &[("output", COUNT_COLUMN)],
         }
     }
 }
@@ -139,6 +146,46 @@ pub fn dual_input(raw: &Tensor) -> (Tensor, Tensor) {
     let clipped = raw.narrow(last, 0, width - 1).clamp(0.0, 1.0);
     let squared = clipped.square();
     (Tensor::cat(&[clipped, squared], last), raw.narrow(last, width - 1, 1))
+}
+
+/// One layer with a weight set per bucket, independent (no shared part), under `path`: `weight`
+/// `[buckets, out, in]` and `bias` `[buckets, out]`. Every bucket starts as the same layer, one draw
+/// within libtorch's linear bound, `1 / sqrt(in)`, copied to all, as nnue-pytorch starts its layer
+/// stacks; each then learns from its own positions.
+pub fn bucketed_linear(path: &nn::Path, buckets: i64, inputs: i64, outputs: i64) -> (Tensor, Tensor) {
+    let weight = path.zeros("weight", &[buckets, outputs, inputs]);
+    let bias = path.zeros("bias", &[buckets, outputs]);
+    let bound = 1.0 / (inputs as f64).sqrt();
+    tch::no_grad(|| {
+        let options = (Kind::Float, weight.device());
+        let one_weight = Tensor::empty([outputs, inputs], options).uniform_(-bound, bound);
+        let one_bias = Tensor::empty([outputs], options).uniform_(-bound, bound);
+        weight.shallow_clone().copy_(&one_weight.unsqueeze(0).expand([buckets, outputs, inputs], false));
+        bias.shallow_clone().copy_(&one_bias.unsqueeze(0).expand([buckets, outputs], false));
+    });
+    (weight, bias)
+}
+
+/// `x` `[rows, in]` through each row's own bucket's layer, `weight` `[buckets, out, in]` and `bias`
+/// `[buckets, out]` at `bucket` (`Int64 [rows]`): `[rows, out]`. Every bucket's output computed at
+/// once and each row's gathered, as `stage_forward` does with no shared part.
+pub fn bucketed_forward(x: &Tensor, weight: &Tensor, bias: &Tensor, bucket: &Tensor) -> Tensor {
+    let (rows, inputs) = (x.size()[0], x.size()[1]);
+    let (buckets, outputs) = (weight.size()[0], weight.size()[1]);
+    let every_bucket = x.matmul(&weight.reshape([buckets * outputs, inputs]).tr()).view([rows, buckets, outputs]);
+    let index = bucket.view([rows, 1, 1]).expand([rows, 1, outputs], false);
+    every_bucket.gather(1, &index, false).squeeze_dim(1) + bias.index_select(0, bucket)
+}
+
+/// `bucketed_forward` for every arm of a stack at once: `x` `[arms, rows, in]`, `weight`
+/// `[arms, buckets, out, in]`, `bias` `[arms, buckets, out]`, `bucket` (`Int64 [rows]`) the same for
+/// every arm: `[arms, rows, out]`.
+pub fn stacked_bucketed_forward(x: &Tensor, weight: &Tensor, bias: &Tensor, bucket: &Tensor) -> Tensor {
+    let (arms, rows, inputs) = (x.size()[0], x.size()[1], x.size()[2]);
+    let (buckets, outputs) = (weight.size()[1], weight.size()[2]);
+    let every_bucket = x.bmm(&weight.reshape([arms, buckets * outputs, inputs]).transpose(1, 2)).view([arms, rows, buckets, outputs]);
+    let index = bucket.view([1, rows, 1, 1]).expand([arms, rows, 1, outputs], false);
+    every_bucket.gather(2, &index, false).squeeze_dim(2) + bias.index_select(1, bucket)
 }
 
 /// A kings head's input to its output from each side's stage output, `[..., width]`, and every
@@ -307,6 +354,26 @@ mod tests {
         let vs = nn::VarStore::new(Device::Cpu);
         let head = StackHead::new(&(vs.root() / "value_head"), input, &[4, 3]);
         (vs, head)
+    }
+
+    #[test]
+    fn every_bucket_of_a_bucketed_layer_starts_as_the_same_layer_and_each_row_reads_its_own() {
+        let vs = nn::VarStore::new(Device::Cpu);
+        let (weight, bias) = bucketed_linear(&(vs.root() / "layer"), 8, 6, 4);
+        assert_eq!(weight.size(), [8, 4, 6]);
+        for bucket in 1..8 {
+            assert!(weight.get(bucket).equal(&weight.get(0)) && bias.get(bucket).equal(&bias.get(0)), "bucket {bucket}");
+        }
+        assert!(weight.abs().max().double_value(&[]) > 0.0, "the layer is drawn, not zero");
+        // Once the buckets differ, each row goes through its own.
+        tch::no_grad(|| {
+            let _ = weight.get(3).shallow_clone().fill_(1.0);
+        });
+        let x = Tensor::ones([2, 6], (Kind::Float, Device::Cpu));
+        let bucket = Tensor::from_slice(&[3i64, 0]);
+        let out = bucketed_forward(&x, &weight, &bias, &bucket);
+        let expected = Tensor::stack(&[x.get(0).matmul(&weight.get(3).tr()) + bias.get(3), x.get(1).matmul(&weight.get(0).tr()) + bias.get(0)], 0);
+        assert!(out.allclose(&expected, 1e-6, 1e-6, false));
     }
 
     #[test]

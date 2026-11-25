@@ -98,16 +98,7 @@ pub fn halfk_network_from(
     let (training, transform_bias, hidden, output) =
         weights_from(vs, training_rows as i64, embedding_dim, head_input, hidden_dims, false, dual);
     let dim = embedding_dim as usize;
-    let mut transform = training[..layout.rows() * dim].to_vec();
-    for row in 0..layout.halfk_rows() {
-        let factor = (layout.rows() + halfk::factor_row(row)) * dim;
-        for (weight, shared) in transform[row * dim..(row + 1) * dim].iter_mut().zip(&training[factor..factor + dim]) {
-            *weight += shared;
-        }
-    }
-    if pairwise {
-        transform.extend_from_slice(&training[layout.training_rows() * dim..]);
-    }
+    let transform = folded_halfk_transform(&training, layout, pairwise, dim);
     PsqNetwork {
         embedding_dim: dim,
         transform,
@@ -120,6 +111,80 @@ pub fn halfk_network_from(
         pairwise,
         screlu: !pairwise,
         stack: None,
+        material: None,
+        halfk: true,
+        king_layout: layout,
+    }
+}
+
+/// A halfk transform as the engine reads it, from its training form `training` (`[training rows,
+/// dim]`, transposed): each piece row plus its factor row (`halfk::factor_row`), the factor rows
+/// dropped, the threat rows as they are; with `state` (a pairwise kind's), the castling and en
+/// passant rows after them.
+fn folded_halfk_transform(training: &[f32], layout: halfk::Layout, state: bool, dim: usize) -> Vec<f32> {
+    let mut transform = training[..layout.rows() * dim].to_vec();
+    for row in 0..layout.halfk_rows() {
+        let factor = (layout.rows() + halfk::factor_row(row)) * dim;
+        for (weight, shared) in transform[row * dim..(row + 1) * dim].iter_mut().zip(&training[factor..factor + dim]) {
+            *weight += shared;
+        }
+    }
+    if state {
+        transform.extend_from_slice(&training[layout.training_rows() * dim..]);
+    }
+    transform
+}
+
+/// Builds the engine-side network from a `VarStore` loaded with a halfk_threats_pairwise_dual_count
+/// checkpoint in `layout`'s king buckets: the transform folded as `halfk_network_from`'s, then each
+/// head layer's `COUNT_BUCKETS` sets (`value_head.hidden0`, `hidden1`, `output`, each
+/// `[buckets, out, in]`) as the engine's per-bucket layers, held as a stack's.
+pub fn dual_count_network_from(
+    vs: &nn::VarStore, layout: halfk::Layout, embedding_dim: i64, hidden_dims: &[i64], step: u64, learning_rate: f64,
+) -> PsqNetwork {
+    assert_eq!(hidden_dims.len(), 2, "a dual count network has two hidden layers, not {hidden_dims:?}");
+    let variables = vs.variables();
+    let training_rows = layout.training_rows_with_state() as i64;
+    let transform_weight = parameter(&variables, "transform.weight");
+    assert_eq!(
+        transform_weight.size(), [embedding_dim, training_rows],
+        "transform.weight has an unexpected shape -- does this checkpoint match the config's architecture?"
+    );
+    let dim = embedding_dim as usize;
+    let transform = folded_halfk_transform(&values(&transform_weight.transpose(0, 1)), layout, true, dim);
+    let transform_bias = values(parameter(&variables, "transform.bias"));
+
+    let buckets = fattorini::stack_buckets::COUNT_BUCKETS as i64;
+    let sets = |name: &str, in_dim: i64, out_dim: i64| -> Vec<Layer> {
+        let weight = parameter(&variables, &format!("value_head.{name}.weight"));
+        let bias = parameter(&variables, &format!("value_head.{name}.bias"));
+        assert_eq!(weight.size(), [buckets, out_dim, in_dim], "value_head.{name}.weight has an unexpected shape");
+        assert_eq!(bias.size(), [buckets, out_dim], "value_head.{name}.bias has an unexpected shape");
+        (0..buckets)
+            .map(|bucket| Layer {
+                in_dim: in_dim as usize,
+                out_dim: out_dim as usize,
+                weight: values(&weight.get(bucket)),
+                bias: values(&bias.get(bucket)),
+            })
+            .collect()
+    };
+    let [first, second] = [hidden_dims[0], hidden_dims[1]];
+    let l1 = sets("hidden0", embedding_dim, first);
+    let l2 = sets("hidden1", 2 * (first - 1), second);
+    let output = sets("output", second, 1);
+    PsqNetwork {
+        embedding_dim: dim,
+        transform,
+        transform_bias,
+        hidden: Vec::new(),
+        output: Layer::default(),
+        step,
+        learning_rate,
+        threats: true,
+        pairwise: true,
+        screlu: false,
+        stack: Some(StackLayers { l1, l2, output }),
         material: None,
         halfk: true,
         king_layout: layout,
@@ -915,16 +980,31 @@ mod tests {
         // no hidden layer and with two, over the squares and over the products, the first hidden
         // layer's weights drawn beyond psq's bound, which halfk does not keep.
         // Each kind in every king layout, its tag the layout's (`fattorini::nnue`, 3 a layout), the
-        // dual head's apart (29 to 31).
-        for (layout, first_tag, dual_tag) in [
-            (halfk::Layout::Squares, fattorini::nnue::FEATURE_SET_HALFK_THREATS_SCRELU, fattorini::nnue::FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL),
-            (halfk::Layout::Eight, fattorini::nnue::FEATURE_SET_HALFK8_THREATS_SCRELU, fattorini::nnue::FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL),
-            (halfk::Layout::Ten, fattorini::nnue::FEATURE_SET_HALFK10_THREATS_SCRELU, fattorini::nnue::FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL),
+        // dual head's apart (29 to 31), and the dual count head's (32 to 34), whose positions span
+        // several piece-count buckets, each bucket's first layer drawn apart.
+        use fattorini::nnue::{
+            FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL_COUNT, FEATURE_SET_HALFK10_THREATS_SCRELU,
+            FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL_COUNT, FEATURE_SET_HALFK8_THREATS_SCRELU,
+            FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL_COUNT, FEATURE_SET_HALFK_THREATS_SCRELU,
+        };
+        for (layout, first_tag, dual_tag, dual_count_tag) in [
+            (halfk::Layout::Squares, FEATURE_SET_HALFK_THREATS_SCRELU, FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL_COUNT),
+            (halfk::Layout::Eight, FEATURE_SET_HALFK8_THREATS_SCRELU, FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL_COUNT),
+            (halfk::Layout::Ten, FEATURE_SET_HALFK10_THREATS_SCRELU, FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL_COUNT),
         ] {
-        let kinds = [(false, false, &[][..]), (false, false, &[16, 32][..]), (true, false, &[16, 32][..]), (true, true, &[16, 32][..])];
-        for (index, (pairwise, dual, hidden_dims)) in kinds.into_iter().enumerate() {
-            let tag = if dual { dual_tag } else { first_tag + index as u32 };
-            let head = if dual { HeadShape::Dual } else { HeadShape::Plain };
+        let kinds = [
+            (false, HeadShape::Plain, &[][..]),
+            (false, HeadShape::Plain, &[16, 32][..]),
+            (true, HeadShape::Plain, &[16, 32][..]),
+            (true, HeadShape::Dual, &[16, 32][..]),
+            (true, HeadShape::DualCount, &[16, 32][..]),
+        ];
+        for (index, (pairwise, head, hidden_dims)) in kinds.into_iter().enumerate() {
+            let tag = match head {
+                HeadShape::Dual => dual_tag,
+                HeadShape::DualCount => dual_count_tag,
+                _ => first_tag + index as u32,
+            };
             let path = std::env::temp_dir()
                 .join(format!("fattorini-export-halfk-agreement-{tag}-{}.nnue", std::process::id()))
                 .to_str()
@@ -944,14 +1024,23 @@ mod tests {
                 }
             });
 
-            halfk_network_from(&vs, layout, pairwise, dual, 32, hidden_dims, 512, 1e-3).write(&path).expect("export should succeed");
+            let network = if head == HeadShape::DualCount {
+                dual_count_network_from(&vs, layout, 32, hidden_dims, 512, 1e-3)
+            } else {
+                halfk_network_from(&vs, layout, pairwise, head == HeadShape::Dual, 32, hidden_dims, 512, 1e-3)
+            };
+            network.write(&path).expect("export should succeed");
             let bytes = std::fs::read(&path).unwrap();
             assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), tag, "{layout:?}");
             let engine = load_psq(&path);
             assert!(engine.halfk && engine.threats && engine.screlu != engine.pairwise, "a halfk export must load as one");
             assert_eq!(engine.king_layout, layout);
             assert_eq!(engine.pairwise, pairwise);
-            assert_eq!(engine.hidden.len(), hidden_dims.len());
+            if head == HeadShape::DualCount {
+                assert!(engine.hidden.is_empty() && engine.stack.as_ref().is_some_and(|stack| stack.l1.len() == 8));
+            } else {
+                assert_eq!(engine.hidden.len(), hidden_dims.len());
+            }
 
             for fen in AGREEMENT_POSITIONS {
                 let (board, _) = Board::from_fen(fen).expect("fixture FENs are valid");

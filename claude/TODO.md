@@ -52,6 +52,13 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   `unit: elo`. Tests and clippy clean 2026-11-25 (the developer). **Next:** its attempt, when the
   training machine is free; its order against the piece-count buckets still open.
 
+- **The piece-count buckets on dual, written ahead (2026-11-25)** (pairwise-dual-count.md, its plan
+  pairwise-dual-count-implementation.md), the developer optimistic that dual wins: 8 independent
+  dual heads by `(count - 1) / 4`, the transform shared; tags 32 to 34;
+  `configs/lc0-halfk-threats-pairwise-dual-count-512-8-budget.yaml`, `unit: elo`. **Next:** the
+  developer's `cargo test` and clippy; trained only after dual wins its duels (else the buckets
+  go on the winner, as 2026-11-23 says).
+
 ## 2026-11-25: the networks' unit on Elo's scale
 
 - **S = 400 / ln 10 centipawns (elo-scale.md), written, tests and clippy clean 2026-11-25:** the

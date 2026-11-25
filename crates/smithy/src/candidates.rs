@@ -48,6 +48,7 @@ fn export_candidate(
         ArchitectureKind::HalfkThreatsScreluHidden => None,
         ArchitectureKind::HalfkThreatsPairwiseHidden => None,
         ArchitectureKind::HalfkThreatsPairwiseDual => None,
+        ArchitectureKind::HalfkThreatsPairwiseDualCount => None,
         ArchitectureKind::PsqThreatsScreluMaterial => None,
         ArchitectureKind::PsqThreatsScreluPhase => None,
         ArchitectureKind::PsqThreatsScreluCount => None,
@@ -160,8 +161,13 @@ pub(crate) fn write_engine_network(config: &NetConfig, checkpoint_path: &str, ou
         FeatureSet::HalfKav2Hm(layout) | FeatureSet::HalfKav2HmState(layout) => {
             let (embedding_dim, hidden_dims) = (config.architecture.embedding_dim(), config.architecture.value_head_hidden_dim());
             let pairwise = config.architecture.pairwise();
-            let dual = config.architecture.head_shape() == HeadShape::Dual;
-            let network = export::halfk_network_from(&vs, layout, pairwise, dual, embedding_dim, hidden_dims, step, learning_rate);
+            let network = match config.architecture.head_shape() {
+                HeadShape::DualCount => export::dual_count_network_from(&vs, layout, embedding_dim, hidden_dims, step, learning_rate),
+                shape => {
+                    let dual = shape == HeadShape::Dual;
+                    export::halfk_network_from(&vs, layout, pairwise, dual, embedding_dim, hidden_dims, step, learning_rate)
+                }
+            };
             QuantizedPsqNetwork::quantize(&network).and_then(|_| network.write_version(output_path, version))
         }
     };
@@ -209,6 +215,8 @@ pub(crate) fn feature_set_of(kind: &ArchitectureKind) -> FeatureSet {
         ArchitectureKind::HalfkThreatsPairwiseHidden => FeatureSet::HalfKav2HmState(Layout::Squares),
         // The same rows and batches: the dual head reads no bucket.
         ArchitectureKind::HalfkThreatsPairwiseDual => FeatureSet::HalfKav2HmState(Layout::Squares),
+        // The same again: the piece count is the fifth of the buckets every psq-form batch carries.
+        ArchitectureKind::HalfkThreatsPairwiseDualCount => FeatureSet::HalfKav2HmState(Layout::Squares),
         // psq_threats' rows; the square the network's, the bucket the batches' third.
         ArchitectureKind::PsqThreatsScreluMaterial => FeatureSet::PsqThreats,
         // psq_threats' rows; the phase bucket is the fourth of the buckets its batches carry.
@@ -378,6 +386,7 @@ mod tests {
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScreluHidden), FeatureSet::HalfKav2Hm(Layout::Squares));
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseHidden), FeatureSet::HalfKav2HmState(Layout::Squares));
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseDual), FeatureSet::HalfKav2HmState(Layout::Squares));
+        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseDualCount), FeatureSet::HalfKav2HmState(Layout::Squares));
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluMaterial), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluPhase), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluCount), FeatureSet::PsqThreats);

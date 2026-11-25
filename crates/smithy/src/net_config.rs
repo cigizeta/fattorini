@@ -123,6 +123,7 @@ impl Architecture {
                 | ArchitectureKind::HalfkThreatsScreluHidden
                 | ArchitectureKind::HalfkThreatsPairwiseHidden
                 | ArchitectureKind::HalfkThreatsPairwiseDual
+                | ArchitectureKind::HalfkThreatsPairwiseDualCount
         )
     }
 
@@ -149,6 +150,7 @@ impl Architecture {
                 | ArchitectureKind::PsqThreatsPairwiseHidden
                 | ArchitectureKind::HalfkThreatsPairwiseHidden
                 | ArchitectureKind::HalfkThreatsPairwiseDual
+                | ArchitectureKind::HalfkThreatsPairwiseDualCount
         )
     }
 
@@ -210,6 +212,8 @@ impl Architecture {
             HeadShape::Stack
         } else if matches!(self.kind, ArchitectureKind::HalfkThreatsPairwiseDual) {
             HeadShape::Dual
+        } else if matches!(self.kind, ArchitectureKind::HalfkThreatsPairwiseDualCount) {
+            HeadShape::DualCount
         } else if self.kings() {
             HeadShape::Kings
         } else if self.hidden_beside() {
@@ -294,6 +298,11 @@ pub enum ArchitectureKind {
     /// first counting the shortcut. Same data as `HalfkThreatsPairwiseHidden`
     /// (`FeatureSet::HalfKav2HmState`).
     HalfkThreatsPairwiseDual,
+    /// `HalfkThreatsPairwiseDual` with its whole head in 8 copies, independent, one picked per position
+    /// by its piece count, kings included, `(count - 1) / 4` (`fattorini::stack_buckets::count_bucket`,
+    /// the fifth of the buckets its batches carry): the transform shared, one dual head computed per
+    /// evaluation. Same data as `HalfkThreatsPairwiseDual`.
+    HalfkThreatsPairwiseDualCount,
     /// `PsqThreatsScrelu` with its one output replaced by `PsqThreatsPairwiseMaterial`'s 78 weight
     /// sets, each reading the `2 * embedding_dim` squares (psq-threats-screlu-material.md). No hidden
     /// layer; trained factorised. Same data as psq_threats.
@@ -500,12 +509,16 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
         );
     } else if matches!(
         config.architecture.kind,
-        ArchitectureKind::HalfkThreatsScreluHidden | ArchitectureKind::HalfkThreatsPairwiseHidden | ArchitectureKind::HalfkThreatsPairwiseDual
+        ArchitectureKind::HalfkThreatsScreluHidden
+            | ArchitectureKind::HalfkThreatsPairwiseHidden
+            | ArchitectureKind::HalfkThreatsPairwiseDual
+            | ArchitectureKind::HalfkThreatsPairwiseDualCount
     ) {
         ensure!(
             config.architecture.value_head_hidden_dim().len() == 2,
-            "{path}: architecture.kind is halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden or \
-             halfk_threats_pairwise_dual, whose head has two hidden layers, but value_head.hidden_dim has {} widths",
+            "{path}: architecture.kind is halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden, \
+             halfk_threats_pairwise_dual or halfk_threats_pairwise_dual_count, whose head has two hidden layers, but \
+             value_head.hidden_dim has {} widths",
             config.architecture.value_head_hidden_dim().len()
         );
     } else if config.architecture.screlu() {
