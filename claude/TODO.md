@@ -12,6 +12,14 @@ Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Ka
 with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
 and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
+## 2026-11-25: the networks' unit on Elo's scale
+
+- **S = 400 / ln 10 centipawns (elo-scale.md), written, tests and clippy clean 2026-11-25:** the
+  network's unit, PeSTO's reading, format version 3; versions 1 and 2 still play. The
+  attempt training now finishes on the build it began with; the new build refuses to continue an
+  attempt without `unit: elo`. The most promising network is retrained under it, then duelled
+  against the one it retrains.
+
 ## 2026-11-22: the larger corpus, the first attempt on it
 
 - **Lc0's Convert ended 2026-11-22.** Next: `lc0-halfk-threats-screlu-hidden-512-8-budget`
@@ -549,6 +557,14 @@ a short scaled run of the same config, on an idle machine, never beside a traini
   across two machines.
 - **The smithy as a window** (smithy-window.md): an idea, not urgent.
 - **An analysis tool, for Mentes, a separate project:** label any PGN with a player's search.
+- **Fattorini owns book generation (the developer, 2026-11-25):** building an opening book is engine
+  work, engine-agnostic, while Aio64 sits on top of engines and only consumes books. So one book
+  builder, here, driving any UCI engine (Fattorini or Stockfish): today's Polyglot book for
+  lichess-bot, and in time Aio64's engine book (now Aio64's `bookGen`: Lichess's CC0 openings,
+  Stockfish 19 at depth 20, evaluations only, no game data), which then moves here. To design
+  before Aio64's book expansion is planned. Aio64's book avoids game data over licence terms;
+  Fattorini's Lichess book is built from LumbrasGigaBase 2400+ games: fine while it only feeds
+  the bot and is never published, to reconsider when the builders merge.
 - **Book lines judged by search, not game results:** to discuss. Fattorini's own book, designed
   here rather than a ready-made one such as Cerebellum (the developer, 2026-11-11), for Lichess
   alone: CCRL testers use their own books, and the arena's matches keep the UHO book. Seen on Lichess:

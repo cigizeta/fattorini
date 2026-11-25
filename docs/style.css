@@ -1,0 +1,167 @@
+/* The mini CPW's one stylesheet. Colours are the logo's (logo/logo-*-small.svg, beside this file): cream, deep green
+   and brass in light; deep green, cream and brass in dark. */
+
+:root {
+  --bg: #f4efe2;
+  --surface: #fffdf7;
+  --text: #24382c;
+  --muted: #5a6b60;
+  --accent: #2f4a3a;
+  --brass: #8a6626;
+  --rule: #ddd4bf;
+  --code-bg: #ebe4d2;
+  --link-blue: #0072b2;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c2c23;
+    --surface: #243a2e;
+    --text: #ece6d6;
+    --muted: #a9b3a7;
+    --accent: #e3c27a;
+    --brass: #c9a04e;
+    --rule: #34503f;
+    --code-bg: #2a4335;
+    --link-blue: #56b4e9;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  /* Generic families only, never a named font: the system's own interface font. */
+  font: 17px/1.6 system-ui, sans-serif;
+}
+
+.page {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 0 1rem 3rem;
+}
+
+/* Header: the logo and name, then the four topics. */
+.site-header {
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 2rem;
+  padding: 1.25rem 0 0.75rem;
+}
+.site-header { text-align: center; }
+.site-title { margin: 0; }
+
+/* The contents: a fold that opens on a tap (<details>, no script), the same on every screen.
+   Each entry a full-width link at least 44px tall, a finger's size. */
+.toc {
+  margin: 1.5rem 0 2rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.toc summary {
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  color: var(--accent);
+  font-weight: bold;
+}
+.chapters { list-style: none; margin: 0; padding: 0 0 0.5rem; }
+.chapters a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 1rem;
+  color: var(--link-blue);
+  font-size: 1.05rem;
+  text-decoration: none;
+}
+.chapters a:hover { color: var(--brass); background: var(--code-bg); }
+
+/* The large logo on top, centred, as in the README. */
+.hero { text-align: center; padding-top: 1.5rem; }
+.hero img { width: 240px; max-width: 70%; height: auto; }
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin-top: 0.75rem;
+  font-size: 0.95rem;
+}
+
+a { color: var(--accent); text-underline-offset: 0.15em; }
+a:hover { color: var(--brass); }
+.site-nav a { text-decoration: none; }
+.site-nav a[aria-current="page"] { color: var(--brass); font-weight: bold; }
+
+h1, h2, h3 {
+  color: var(--accent);
+  line-height: 1.25;
+}
+h1 { font-size: 1.9rem; margin: 0 0 1rem; }
+h2 { font-size: 1.35rem; margin: 2.25rem 0 0.75rem; }
+h3 { font-size: 1.1rem; margin: 1.75rem 0 0.5rem; }
+
+.lead { font-size: 1.1rem; }
+
+/* A chapter heading: its title left, a link back to the top right-aligned. */
+h2.chapter {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+.to-top {
+  margin-left: auto;
+  color: var(--link-blue);
+  font-size: 1rem;
+  font-weight: normal;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.to-top::after { content: " \2191"; }
+
+/* Contents: one list per topic, each entry a title and one line. An entry not yet written is
+   plain text, muted, never a link. */
+.contents { list-style: none; padding: 0 0 0 1.5rem; margin: 0; }
+.contents li {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+/* A technique's title is a link to its page: blue and underlined. One not yet written looks the
+   same: unwritten entries never reach main, so only a local preview shows them. */
+.contents .title {
+  color: var(--link-blue);
+  font-weight: bold;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+.contents a.title:hover { color: var(--brass); text-decoration-thickness: 2px; }
+.contents .what { display: block; color: var(--muted); font-size: 0.95rem; }
+
+code, pre {
+  /* Named twice on purpose: a lone "monospace" makes browsers shrink the text to their old 13px
+     default; any second family, even the same one, turns that off. */
+  font-family: monospace, monospace;
+  font-size: 0.9em;
+  background: var(--code-bg);
+  border-radius: 4px;
+}
+code { padding: 0.1em 0.3em; }
+pre { padding: 0.9rem 1rem; overflow-x: auto; line-height: 1.45; }
+pre code { padding: 0; background: none; }
+
+.site-footer {
+  border-top: 1px solid var(--rule);
+  margin-top: 3rem;
+  padding-top: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 30rem) {
+  body { font-size: 16px; }
+  h1 { font-size: 1.6rem; }
+}

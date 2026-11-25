@@ -454,7 +454,8 @@ mod tests {
     #[test]
     fn the_bce_loss_has_the_logistic_gradient() {
         let sigma = |x: f64| 1.0 / (1.0 + (-x).exp());
-        let (pawns, labels) = ([0.3f64, -2.0, 1.0, 20.0], [0.1f64, 0.5, 1.0, 1.0]);
+        // 50 pawns, about 29 units of S past the won label: far enough for its push to die away.
+        let (pawns, labels) = ([0.3f64, -2.0, 1.0, 50.0], [0.1f64, 0.5, 1.0, 1.0]);
         let tensor = Tensor::from_slice(&pawns.map(|p| p as f32)).set_requires_grad(true);
         // `mean` divides the gradient by the row count, so it is scaled back here.
         (bce_loss(&tensor, &Tensor::from_slice(&labels.map(|t| t as f32))) * 4.0).backward();

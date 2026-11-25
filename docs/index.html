@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inside Fattorini</title>
+  <meta name="description" content="The techniques the Fattorini chess engine uses, from its neural network and its training to its search and tuning, each explained in plain terms and pseudocode.">
+  <link rel="icon" href="logo/logo-light-small.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="logo/logo-dark-small.svg" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page" id="top">
+
+<div class="hero">
+  <picture>
+    <source srcset="logo/logo-dark-large.svg" media="(prefers-color-scheme: dark)">
+    <img src="logo/logo-light-large.svg" alt="Fattorini's logo: two clocks on a tilting beam, a tumbling chess clock">
+  </picture>
+</div>
+
+<header class="site-header">
+  <h1 class="site-title">Inside Fattorini</h1>
+</header>
+
+<main>
+
+<p class="lead"><a href="https://github.com/cigizeta/fattorini">Fattorini</a> is a chess engine:
+a program that plays chess, talking to chess interfaces through the UCI protocol. It is written in
+Rust, and its neural networks are trained on a limited compute
+budget. It is named after Antonio Fattorini, an Italian immigrant to Yorkshire whose
+<a href="https://en.wikipedia.org/wiki/Fattorini_%26_Sons">family's business</a> is credited with
+making the first chess clock, in 1883.</p>
+
+<p>This site is a small chess programming wiki, restricted to the techniques Fattorini uses,
+each explained in plain terms first, then precisely, with a formula or a little pseudocode.</p>
+
+<nav aria-label="Contents">
+<details class="toc" open>
+<summary>Contents</summary>
+<ul class="chapters">
+  <li><a href="#evaluation">Evaluation</a></li>
+  <li><a href="#training">Training</a></li>
+  <li><a href="#search">Search</a></li>
+  <li><a href="#tuning">Tuning</a></li>
+  <li><a href="#trials">Trials</a></li>
+</ul>
+</details>
+</nav>
+
+<h2 id="evaluation" class="chapter">Evaluation <a class="to-top" href="#top">Top</a></h2>
+<ul class="contents">
+  <li class="soon"><span class="title">PeSTO</span><span class="what">A hand-crafted evaluation: tapered piece-square tables, the fixed opponent for new networks.</span></li>
+  <li class="soon"><span class="title">The accumulator</span><span class="what">The sparse first layer, updated move by move, one copy per side.</span></li>
+  <li class="soon"><span class="title">Piece-square inputs</span><span class="what">One input per piece on each square.</span></li>
+  <li class="soon"><span class="title">King-relative inputs</span><span class="what">Pieces seen from each king, the board mirrored, kings grouped into buckets.</span></li>
+  <li class="soon"><span class="title">Threat inputs</span><span class="what">Which pieces attack which of the opponent's.</span></li>
+  <li class="soon"><span class="title">Factorization</span><span class="what">Inputs shared across king buckets while training, folded in at export.</span></li>
+  <li class="soon"><span class="title">Clipped and squared clipped ReLU</span><span class="what">The activations after the first layer.</span></li>
+  <li class="soon"><span class="title">Pairwise products</span><span class="what">Halves of the first layer multiplied together.</span></li>
+  <li class="soon"><span class="title">Hidden layers</span><span class="what">The small dense layers from the first layer to the score.</span></li>
+  <li class="soon"><span class="title">Quantization</span><span class="what">Integer weights and vector instructions for fast inference.</span></li>
+  <li class="soon"><span class="title">Expected score, expected value and centipawns</span><span class="what">Converting between them, on Elo's scale.</span></li></ul>
+
+<h2 id="training" class="chapter">Training <a class="to-top" href="#top">Top</a></h2>
+<ul class="contents">
+  <li class="soon"><span class="title">Lc0's games as data</span><span class="what">Positions and evaluations taken from another engine's training games.</span></li>
+  <li class="soon"><span class="title">Labels</span><span class="what">Blending a position's evaluation with its game's result.</span></li>
+  <li class="soon"><span class="title">The lambda polyline</span><span class="what">How much the result counts, by how far the game has gone.</span></li>
+  <li class="soon"><span class="title">Loss and optimizer</span><span class="what">Cross-entropy on the win probability, AdamW, warmup.</span></li>
+  <li class="soon"><span class="title">A fixed training budget</span><span class="what">A set number of passes, a falling learning rate, checkpoints to choose from.</span></li>
+  <li class="soon"><span class="title">Bounding the first layer</span><span class="what">Keeping weights small enough for integer inference.</span></li>
+</ul>
+
+<h2 id="search" class="chapter">Search <a class="to-top" href="#top">Top</a></h2>
+<ul class="contents">
+  <li class="soon"><span class="title">Terminal positions</span><span class="what">Mate, stalemate, repetition, the fifty-move rule, insufficient material.</span></li>
+  <li class="soon"><span class="title">Alpha-beta</span><span class="what">Negamax, fail-soft alpha-beta, principal variation search.</span></li>
+  <li class="soon"><span class="title">Iterative deepening</span><span class="what">Searching one ply deeper at a time, with aspiration windows.</span></li>
+  <li class="soon"><span class="title">The transposition table</span><span class="what">Remembering positions already searched.</span></li>
+  <li class="soon"><span class="title">Quiescence search</span><span class="what">Resolving captures before trusting an evaluation.</span></li>
+  <li class="soon"><span class="title">Static exchange evaluation</span><span class="what">Whether a capture sequence wins or loses material.</span></li>
+  <li class="soon"><span class="title">Move ordering</span><span class="what">Trying the best moves first, in stages.</span></li>
+  <li class="soon"><span class="title">History heuristics</span><span class="what">Learning during the search which quiet moves work.</span></li>
+  <li class="soon"><span class="title">Correction history</span><span class="what">Adjusting the evaluation by what searches found before.</span></li>
+  <li class="soon"><span class="title">Pruning</span><span class="what">Skipping moves and positions unlikely to matter.</span></li>
+  <li class="soon"><span class="title">Null move pruning</span><span class="what">Passing the turn to prove a position is good enough.</span></li>
+  <li class="soon"><span class="title">Reductions and extensions</span><span class="what">Searching some moves shallower, others deeper.</span></li>
+  <li class="soon"><span class="title">Lazy SMP</span><span class="what">Several threads sharing one transposition table.</span></li>
+  <li class="soon"><span class="title">Endgame tablebases</span><span class="what">Perfect play with few pieces left, in the search and at the root.</span></li>
+  <li class="soon"><span class="title">Time management</span><span class="what">How long to think on each move.</span></li>
+  <li class="soon"><span class="title">Opening books</span><span class="what">Books built from games, their lines judged by search.</span></li>
+</ul>
+
+<h2 id="tuning" class="chapter">Tuning <a class="to-top" href="#top">Top</a></h2>
+<ul class="contents">
+  <li class="soon"><span class="title">SPSA</span><span class="what">Tuning many search constants at once from game results.</span></li>
+  <li class="soon"><span class="title">The pawn scale</span><span class="what">What a pawn is worth in the network's unit, and how the search's margins follow it.</span></li>
+</ul>
+
+<h2 id="trials" class="chapter">Trials <a class="to-top" href="#top">Top</a></h2>
+<ul class="contents">
+  <li class="soon"><span class="title">Testing games</span><span class="what">Unbalanced starting positions, colour-reversed pairs, adjudication.</span></li>
+  <li class="soon"><span class="title">Elo</span><span class="what">Ratings from game results, and their error.</span></li>
+  <li class="soon"><span class="title">Sequential testing</span><span class="what">Stopping a match as soon as the result is clear.</span></li>
+  <li class="soon"><span class="title">Round robin and gate</span><span class="what">Choosing the best of several networks, then checking it.</span></li></ul>
+</main>
+
+<footer class="site-footer">
+  Last revised 2026-11-25. Part of <a href="https://github.com/cigizeta/fattorini">Fattorini</a>,
+  free software under the GNU AGPLv3.
+</footer>
+
+</div>
+</body>
+</html>

@@ -89,6 +89,14 @@ where
     }
 }
 
+/// The reader's threads: half the logical cores, at least 1. The other half builds the batches
+/// (`round::BatchBuilder` runs its CPU half on every core). 4 threads streamed 3.4M positions a
+/// second, far above what a training step consumes.
+pub(crate) fn reader_threads() -> usize {
+    let cores = std::thread::available_parallelism().map_or(2, |cores| cores.get());
+    (cores / 2).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::map_in_order;
@@ -117,12 +125,4 @@ mod tests {
         let items: Vec<u64> = Vec::new();
         assert_eq!(map_in_order(&items, 4, |&item| Ok(item)), Ok(Vec::new()));
     }
-}
-
-/// The reader's threads: half the logical cores, at least 1. The other half builds the batches
-/// (`round::BatchBuilder` runs its CPU half on every core). 4 threads streamed 3.4M positions a
-/// second, far above what a training step consumes.
-pub(crate) fn reader_threads() -> usize {
-    let cores = std::thread::available_parallelism().map_or(2, |cores| cores.get());
-    (cores / 2).max(1)
 }

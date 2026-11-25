@@ -12,7 +12,7 @@
 //! Each unset (or empty) embeds nothing: the PeSTO evaluation, the untuned parameters of each kind, no
 //! description, no notices, not a release, the binary every development build is.
 //!
-//! Every build, whatever is set, also carries the logo as the `.exe`'s icon (`logo/fattorini.ico`,
+//! Every build, whatever is set, also carries the logo as the `.exe`'s icon (`docs/logo/fattorini.ico`,
 //! rendered by `bin/logo.sh`).
 
 use std::path::Path;
@@ -38,7 +38,7 @@ fn main() {
 /// relative one does not matter.
 fn embed_icon(out_dir: &Path) {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR for a build script");
-    let icon = Path::new(&manifest_dir).join("../../logo/fattorini.ico");
+    let icon = Path::new(&manifest_dir).join("../../docs/logo/fattorini.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     let rc = out_dir.join("fattorini.rc");
     let icon_path = icon.display().to_string().replace('\\', "/");

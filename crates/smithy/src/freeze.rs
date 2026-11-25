@@ -56,8 +56,9 @@ const COMPRESSION_LEVEL: i32 = 19;
 /// of `games_dir` that `files` lists, with a label set for each of `lambdas`; or adds the label sets
 /// an already frozen one lacks. `files` is called only for a first freeze: a frozen set reads the
 /// segments its manifest names. Every score read through `curve`, the teacher's (Lc0's curve for
-/// Lc0's corpus, `labels::LOGISTIC` for PeSTO and our networks). The curve is not recorded: a set
-/// labelled under another curve is deleted by hand and frozen again. An error when the set was frozen
+/// Lc0's corpus, `labels::LOGISTIC` for PeSTO and our networks), recorded in the manifest with how
+/// the labels were made (`labels_kind`): a set labelled under another curve is refused, to be deleted
+/// and frozen again, never read as this one's. An error when the set was frozen
 /// at another size or keeping other positions, or the games hold too few positions kept. Every
 /// position the Syzygy tables answer is labelled by them, as the scatter labels the training set, so
 /// the test set judges a network on the labels it trained on; the tables are required.
@@ -69,9 +70,22 @@ pub(crate) fn ensure(
 }
 
 /// How a set is labelled, as its manifest records it: by the tables where they answer, or without
-/// them (the tests alone).
-fn labels_kind(tablebase: Option<&SyzygyTablebase>) -> &'static str {
+/// them (the tests alone), then the curve its scores were read through (`Curve::describe`).
+fn labels_kind(tablebase: Option<&SyzygyTablebase>, curve: &Curve) -> String {
+    format!("{} {}", tables_kind(tablebase), curve.describe())
+}
+
+/// By the tables where they answer, or without them: how a set frozen before the curve was recorded
+/// says it was labelled.
+fn tables_kind(tablebase: Option<&SyzygyTablebase>) -> &'static str {
     if tablebase.is_some() { TABLEBASE_LABELS } else { "plain" }
+}
+
+/// Whether a manifest's `recorded` labels are `labels`, or those of a set frozen before the curve was
+/// recorded under a curve that has not changed since: an atan curve, Lc0's for Lc0's corpus. A set
+/// frozen then under the logistic was read at the old S, PeSTO's, and is refused.
+fn same_labels(recorded: &str, labels: &str, tablebase: Option<&SyzygyTablebase>, curve: &Curve) -> bool {
+    recorded == labels || (recorded == tables_kind(tablebase) && matches!(curve, Curve::Atan(_)))
 }
 
 /// `ensure`, with the tables given or, in the tests, none.
@@ -84,12 +98,12 @@ fn ensure_labelled(
     curve: &Curve,
     tablebase: Option<&SyzygyTablebase>,
 ) -> Result<(), String> {
-    let labels = labels_kind(tablebase);
+    let labels = labels_kind(tablebase, curve);
     if let Some(manifest) = read_manifest(dir, rows)? {
         if manifest.keep != KEPT {
             return Err(format!("{dir} was frozen keeping the {} positions, not the {KEPT}: another set's directory", manifest.keep));
         }
-        if manifest.labels != labels {
+        if !same_labels(&manifest.labels, &labels, tablebase, curve) {
             return Err(format!("{dir} was labelled {}, not {labels}: delete it, and the next training freezes it again", manifest.labels));
         }
         check_polyline(dir, labelling)?;
@@ -142,7 +156,7 @@ fn ensure_labelled(
             "{games_dir} holds only {kept} {KEPT} positions besides K vs K, fewer than the {rows} of its test set: it needs more test games"
         ));
     }
-    let manifest = Manifest { seed: FREEZE_SEED, keep: KEPT.to_string(), labels: labels.to_string(), games: sample.games, positions, rows, segments };
+    let manifest = Manifest { seed: FREEZE_SEED, keep: KEPT.to_string(), labels, games: sample.games, positions, rows, segments };
     std::fs::create_dir_all(dir).map_err(|error| format!("failed to create {dir}: {error}"))?;
     write_positions(dir, sample.positions.as_deref().expect("a first freeze samples positions"));
     write_label_sets(dir, labelling, &sample.labels, &manifest);
@@ -669,6 +683,20 @@ mod tests {
         games_dir: &str, segments: &[String], expected: u64, capacity: u64, with_positions: bool, labelling: &Labelling, curve: &Curve,
     ) -> Sample {
         draw(games_dir, segments, expected, capacity, with_positions, labelling, curve, None)
+    }
+
+    /// A set records its curve; one frozen before that is kept under Lc0's curve, which has not
+    /// changed, and refused under the logistic, whose S has.
+    #[test]
+    fn a_set_s_labels_record_its_curve_and_an_old_pesto_set_is_refused() {
+        let logistic = fattorini::labels::LOGISTIC;
+        let labels = labels_kind(None, &LC0_CURVE);
+        assert_eq!(labels, format!("plain {}", LC0_CURVE.describe()));
+        assert!(same_labels(&labels, &labels, None, &LC0_CURVE));
+        assert!(same_labels("plain", &labels, None, &LC0_CURVE), "an old Lc0 set is kept");
+        let pesto = labels_kind(None, &logistic);
+        assert!(!same_labels("plain", &pesto, None, &logistic), "an old PeSTO set, read at the old S, is refused");
+        assert!(!same_labels(&labels, &pesto, None, &logistic), "another curve is refused");
     }
 
     #[test]

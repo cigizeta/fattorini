@@ -111,14 +111,22 @@ pub const LC0_B: f64 = 1.5637541897;
 /// `LC0_FILES`, so their centipawns are Lc0's own.
 pub static LC0: LazyLock<Scale> = LazyLock::new(|| Scale { a: LC0_A_PAWNS, k: LC0_B, ceiling: LC0_A_PAWNS * LC0_B.tan() });
 
-/// **S, the networks' unit under the logistic curve, in pawns: `A * B / 2`, about 0.7037 (70.37
-/// centipawns).** A network is trained so that `sigma(pawns / S)` is its expected score, that is
-/// `q = tanh(pawns / (2 S))`. S cannot be derived from training: with a linear output layer, scaling
-/// S and the output weights together changes neither predictions nor loss, so S only fixes the unit,
-/// by convention. The convention: near equality a network's centipawns read as Lc0's. Lc0's curve has
-/// slope `1 / (A B)` at `q = 0`, the logistic `1 / (2 S)`, so `2 S = A B`. Strength does not depend
-/// on it: the search's margins are tuned afterwards to whatever unit results.
-pub const S_PAWNS: f64 = LC0_A_PAWNS * LC0_B / 2.0;
+/// **S, the networks' unit under the logistic curve, in pawns: Elo's scale, `4 / ln 10`, about 1.7372
+/// (173.72 centipawns).** A network is trained so that `sigma(pawns / S)` is its expected score, that
+/// is an expected value of `tanh(pawns / (2 S))`. S cannot be derived from training: with a linear
+/// output layer, scaling S and the output weights together changes neither predictions nor loss, so
+/// S only fixes the unit, by convention. The convention: the Elo formula applied to centipawns,
+/// `1 / (1 + 10^(-cp / 400))`, which is `sigma(cp / S)` with `S = 400 / ln 10` centipawns: an
+/// advantage of 400 centipawns means the same expected score as a 400-point rating gap, odds of
+/// ten to one. A pawn up, scoring about 60% in Lc0's games, comes to about 70 of these centipawns.
+/// Strength does not depend on it: the search's margins are tuned afterwards to whatever unit results.
+pub const S_PAWNS: f64 = 4.0 * std::f64::consts::LOG10_E;
+
+/// **The old S, Lc0's slope at equality, `A * B / 2`, about 0.7037 pawns:** the networks' unit until
+/// format version 3. Lc0's curve has slope `1 / (A B)` at `q = 0`, the logistic `1 / (2 S)`, so
+/// `2 S = A B`: near equality those networks' centipawns read as Lc0's. Kept only so that version-2
+/// networks (`nnue::OLD_LOGISTIC_VERSION`) still load and play: never chosen for anything new.
+pub const OLD_S_PAWNS: f64 = LC0_A_PAWNS * LC0_B / 2.0;
 
 /// A curve from pawns to a score in `[-1, 1]`: the atan of a `Scale`, or the logistic of scale `s`
 /// pawns, `score(pawns) = 2 sigma(pawns / s) - 1 = tanh(pawns / (2 s))`. Both odd around `0`, as
@@ -157,10 +165,15 @@ impl Curve {
     }
 }
 
-/// **The logistic curve at S:** how every network's output is read in the loss, and how every
-/// teacher that gives centipawns (PeSTO, our networks) is read into labels, with no fitted scale.
-/// For a network the round trip is exact: it was trained to mean `sigma(pawns / S)`.
+/// **The logistic curve at S, Elo's scale:** how every network's output is read in the loss, and how
+/// every teacher that gives its own centipawns (PeSTO, our networks) is read into labels, with no
+/// fitted scale. For a network the round trip is exact: it was trained to mean `sigma(pawns / S)`.
+/// For PeSTO it reads a pawn up as about 64%, near what games show.
 pub const LOGISTIC: Curve = Curve::Logistic { s: S_PAWNS };
+
+/// **The logistic at the old S:** what a version-2 network was trained to mean, its centipawns read
+/// through it alone (`nnue::curve_of_version`).
+pub const OLD_LOGISTIC: Curve = Curve::Logistic { s: OLD_S_PAWNS };
 
 /// `NETWORK.score`: a network's evaluation in pawns as a score, for the engine and the diagnostics.
 pub fn score(pawns: f64) -> f64 {
@@ -437,7 +450,8 @@ mod tests {
     #[test]
     fn a_curve_describes_itself_for_the_record() {
         assert_eq!(Curve::Atan(LC0_FILES).describe(), "one_pawn 0.500000 ceiling 32");
-        assert!(LOGISTIC.describe().starts_with("logistic s 0.70368"), "{}", LOGISTIC.describe());
+        assert!(LOGISTIC.describe().starts_with("logistic s 1.73717"), "{}", LOGISTIC.describe());
+        assert!(OLD_LOGISTIC.describe().starts_with("logistic s 0.70368"), "{}", OLD_LOGISTIC.describe());
         assert_ne!(Curve::Atan(*LC0).describe(), Curve::Atan(LC0_FILES).describe());
     }
 
@@ -477,9 +491,26 @@ mod tests {
     }
 
     #[test]
-    fn s_is_lc0_s_a_times_b_over_two() {
-        assert!((S_PAWNS - 0.90 * 1.5637541897 / 2.0).abs() < 1e-15);
-        assert!((S_PAWNS * 100.0 - 70.37).abs() < 0.01, "S = {} centipawns", S_PAWNS * 100.0);
+    fn s_is_elo_s_400_over_ln_10_centipawns() {
+        assert!((S_PAWNS * 100.0 - 400.0 / 10f64.ln()).abs() < 1e-9);
+        assert!((S_PAWNS * 100.0 - 173.72).abs() < 0.01, "S = {} centipawns", S_PAWNS * 100.0);
+    }
+
+    #[test]
+    fn the_old_s_is_lc0_s_a_times_b_over_two() {
+        assert!((OLD_S_PAWNS - 0.90 * 1.5637541897 / 2.0).abs() < 1e-15);
+        assert!((OLD_S_PAWNS * 100.0 - 70.37).abs() < 0.01, "S = {} centipawns", OLD_S_PAWNS * 100.0);
+    }
+
+    /// The convention S rests on: the logistic at S is the Elo formula, base 10 and 400, applied to
+    /// centipawns, as an expected value.
+    #[test]
+    fn the_logistic_is_the_elo_formula_on_centipawns() {
+        for cp in [-800.0, -400.0, -70.0, 0.0, 100.0, 400.0, 1200.0] {
+            let elo = 1.0 / (1.0 + 10f64.powf(-cp / 400.0));
+            assert!((LOGISTIC.score(cp / 100.0) - (2.0 * elo - 1.0)).abs() < 1e-12, "{cp}");
+        }
+        assert!((LOGISTIC.score(4.0) - (2.0 * 10.0 / 11.0 - 1.0)).abs() < 1e-12, "400 centipawns: odds of 10 to 1");
     }
 
     /// The logistic is `2 sigma(pawns / S) - 1`, written as a tanh.
@@ -491,12 +522,13 @@ mod tests {
         }
     }
 
-    /// The convention S rests on: at equality the logistic and Lc0's curve have the same slope.
+    /// The convention the old S rested on: at equality the old logistic and Lc0's curve have the same
+    /// slope.
     #[test]
-    fn the_logistic_matches_lc0_s_slope_at_equality() {
+    fn the_old_logistic_matches_lc0_s_slope_at_equality() {
         let h = 1e-6;
         let slope = |curve: &dyn Fn(f64) -> f64| (curve(h) - curve(-h)) / (2.0 * h);
-        let logistic = slope(&|p| LOGISTIC.score(p));
+        let logistic = slope(&|p| OLD_LOGISTIC.score(p));
         let lc0 = slope(&|p| LC0.score(p));
         assert!((logistic - lc0).abs() < 1e-6, "logistic {logistic}, Lc0 {lc0}");
         assert!((lc0 - 1.0 / (LC0_A_PAWNS * LC0_B)).abs() < 1e-6);

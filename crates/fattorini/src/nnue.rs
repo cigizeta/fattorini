@@ -48,19 +48,26 @@ pub const MAGIC: &[u8; 4] = b"FATT";
 /// carrying one: silently reading a newer layout as if it were this one produces a network that
 /// loads cleanly and plays nonsense.
 ///
-/// Version 2 has version 1's layout exactly; it says what the network was trained under: version 2,
-/// the logistic at S with the binary cross entropy (`labels::LOGISTIC`), version 1 the atan curve
-/// (`labels::NETWORK`). Both are read and played; only version 2 may teach or be trained further,
-/// which the smithy checks (`file_version`), and each network's pawn is measured through its own curve
-/// (`curve_of_version`).
-pub const VERSION: u32 = 2;
+/// Versions 1 to 3 share one layout exactly; the version says what the network was trained under:
+/// version 3, the logistic at Elo's S with the binary cross entropy (`labels::LOGISTIC`); version 2,
+/// the logistic at the old S (`labels::OLD_LOGISTIC`); version 1, the atan curve (`labels::NETWORK`).
+/// All three are read and played, each network's centipawns read and its pawn measured through its own
+/// curve (`curve_of_version`); only version 3 may teach, which the smithy checks (`file_version`).
+pub const VERSION: u32 = 3;
+
+/// The version of every network trained under the logistic at the old S, before Elo's.
+pub const OLD_LOGISTIC_VERSION: u32 = 2;
 
 /// The version of every network trained under the atan curve, before the logistic.
 pub const ATAN_VERSION: u32 = 1;
 
 /// The curve a network of format `version` was trained to mean, what its pawn is measured through.
 pub fn curve_of_version(version: u32) -> crate::labels::Curve {
-    if version == ATAN_VERSION { crate::labels::Curve::Atan(*crate::labels::NETWORK) } else { crate::labels::LOGISTIC }
+    match version {
+        ATAN_VERSION => crate::labels::Curve::Atan(*crate::labels::NETWORK),
+        OLD_LOGISTIC_VERSION => crate::labels::OLD_LOGISTIC,
+        _ => crate::labels::LOGISTIC,
+    }
 }
 
 /// The format version of the network file at `path`, read from its header alone.
@@ -2557,9 +2564,11 @@ impl Network {
 
     /// A search score of this network's, in its centipawns (`100 * y`), as a GUI is shown it: Lc0's
     /// centipawns for the same expected score, `100 * LC0.pawns(curve.score(y))`, that is
-    /// `90 * tan(1.5637 * q)`. The network's own unit matches Lc0's only near 0 and falls far behind
-    /// for a clear advantage (`q = 0.9`: 207 against 550), and a material pawn reads as about its
-    /// pawn scale. Monotone, and for display alone: the search keeps its own centipawns. Not for a
+    /// `90 * tan(1.5637 * q)`. Read through the network's own curve, so a GUI sees the same number for
+    /// the same expected value whatever the network's unit: near 0 about 0.41 of a version-3
+    /// network's centipawns (Lc0's slope against Elo's), all of a version-2 network's (the old unit
+    /// matched Lc0's there); for a clear advantage far more (`q = 0.9`: 511 version-3 centipawns,
+    /// shown as 550). Monotone, and for display alone: the search keeps its own centipawns. Not for a
     /// mate or tablebase score, which the caller passes through.
     pub fn shown_centipawns(&self, centipawns: i32) -> i32 {
         let curve = match self {
@@ -2617,8 +2626,8 @@ impl Network {
             return Err(format!("{path}: not a Fattorini network file (bad magic)"));
         }
         let version = reader.u32()?;
-        if version != VERSION && version != ATAN_VERSION {
-            return Err(format!("{path}: format version {version}, but this build reads versions {ATAN_VERSION} and {VERSION}"));
+        if !(ATAN_VERSION..=VERSION).contains(&version) {
+            return Err(format!("{path}: format version {version}, but this build reads versions {ATAN_VERSION} to {VERSION}"));
         }
         let tag = reader.u32()?;
         // From here on one tag a kind, the king layout apart.
@@ -5469,8 +5478,29 @@ pub(crate) mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// A network trained under the old logistic, version 2, still loads and plays, its pawn measured
+    /// through that curve, and its shown score read through it.
+    #[test]
+    fn an_old_logistic_network_still_plays_its_pawn_measured_through_its_own_curve() {
+        let path = temp_path("old-logistic-version");
+        let network = sample_network(16, &[8]);
+        network.write(&path).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[4..8].copy_from_slice(&OLD_LOGISTIC_VERSION.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(file_version(&path).unwrap(), OLD_LOGISTIC_VERSION);
+        let old = Network::load(&path).expect("a version 2 network still loads");
+
+        let Network::Psq(_, quantized) = &old;
+        assert_eq!(quantized.curve, crate::labels::OLD_LOGISTIC);
+        let through_old = measure_label_percent_through(|board| quantized.evaluate(board), &crate::labels::OLD_LOGISTIC);
+        assert_eq!(old.pawn_percent(), through_old);
+        assert!((old.shown_centipawns(10) - 10).abs() <= 1, "near 0, the old unit is Lc0's own");
+        std::fs::remove_file(&path).ok();
+    }
+
     /// A network trained under the atan curve, version 1, still loads and plays, its pawn measured
-    /// through that curve; a new file is version 2, measured through the logistic.
+    /// through that curve; a new file is version 3, measured through the logistic at Elo's S.
     #[test]
     fn an_atan_network_still_plays_its_pawn_measured_through_its_own_curve() {
         let path = temp_path("atan-version");
@@ -5581,26 +5611,29 @@ pub(crate) mod tests {
         assert_eq!(network.pawn_percent(), measure_label_percent(|board| quantized.evaluate(board)));
         assert_eq!(network.pawn_percent() % PAWN_SCALE_STEP_PERCENT, 0);    }
 
-    /// The shown score is Lc0's centipawns for the network's expected score: odd, increasing, equal
-    /// to the network's own near 0 (the two curves share their slope there), larger for a clear
+    /// The shown score is Lc0's centipawns for the network's expected value: odd, increasing, about
+    /// 0.41 of the network's own near 0 (Lc0's slope there against Elo's), larger for a clear
     /// advantage, and Lc0's ceiling at the network's.
     #[test]
-    fn a_shown_score_is_lc0_s_centipawns_for_the_same_expected_score() {
+    fn a_shown_score_is_lc0_s_centipawns_for_the_same_expected_value() {
         let network = Network::from_psq(sample_network(16, &[8])).unwrap();
         assert_eq!(network.shown_centipawns(0), 0);
         for cp in [10, 50, 150, 400, 1500] {
             assert_eq!(network.shown_centipawns(-cp), -network.shown_centipawns(cp), "odd at {cp}");
         }
-        // Not tested far out: past about 1000, `q` is within 1e-6 of 1 and steps under a rounding.
-        for cp in [10, 50, 150, 400] {
+        // Not tested far out: past about 2500, the expected value is within 1e-6 of 1 and steps
+        // under a rounding.
+        for cp in [10, 50, 150, 400, 1000] {
             assert!(network.shown_centipawns(cp + 10) > network.shown_centipawns(cp), "increasing at {cp}");
         }
-        assert!((network.shown_centipawns(10) - 10).abs() <= 1, "near 0, the network's own centipawns");
-        let q = crate::labels::LOGISTIC.score(2.07);
-        assert!((q - 0.9).abs() < 0.001, "207 network centipawns are an expected score of 0.9");
-        assert!((network.shown_centipawns(207) - 550).abs() <= 10, "and Lc0 shows 0.9 as about 550");
+        let near_zero = f64::from(network.shown_centipawns(50)) / 50.0;
+        let slopes = crate::labels::LC0_A_PAWNS * crate::labels::LC0_B / (2.0 * crate::labels::S_PAWNS);
+        assert!((near_zero - slopes).abs() < 0.02, "near 0, {near_zero} of the network's own, not {slopes}");
+        let q = crate::labels::LOGISTIC.score(5.11);
+        assert!((q - 0.9).abs() < 0.001, "511 network centipawns are an expected value of 0.9");
+        assert!((network.shown_centipawns(511) - 550).abs() <= 10, "and Lc0 shows 0.9 as about 550");
         let ceiling = (100.0 * crate::labels::LC0.pawns(1.0)).round() as i32;
-        assert_eq!(network.shown_centipawns(3200), ceiling, "the network's ceiling is Lc0's");
+        assert_eq!(network.shown_centipawns(8000), ceiling, "the network's ceiling is Lc0's");
         assert!(!crate::labels::is_decisive(ceiling), "below the tablebase band");
     }
 

@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="logo/logo-dark-large.svg">
-  <img src="logo/logo-light-large.svg" alt="Fattorini's logo: two clocks on a tilting beam, a tumbling chess clock" width="240">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo/logo-dark-large.svg">
+  <img src="docs/logo/logo-light-large.svg" alt="Fattorini's logo: two clocks on a tilting beam, a tumbling chess clock" width="240">
 </picture>
 
 <br>
@@ -177,6 +177,6 @@ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
 License for more details: the full text is in `LICENSE`.
 
 As an additional term under section 7(e) of the license, no right is granted to use the name
-"Fattorini" or its logo (the files in `logo/`) for a modified version. Forks are welcome, under
+"Fattorini" or its logo (the files in `docs/logo/`) for a modified version. Forks are welcome, under
 another name and without the logo: the engine's UCI name (`id name`) and the `.exe`'s icon
 included. Unmodified copies of this repository and of its releases may of course keep both.
