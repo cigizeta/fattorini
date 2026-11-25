@@ -61,6 +61,18 @@ The second hidden layer reads 30 values instead of 16: about 450 more multiplica
 evaluation, against the 8,192 of the first layer. The transform, the products and the first layer
 are unchanged, so both inference optimizations (sparse and 8-bit first layer) apply as they are.
 
+## Name and unit (the developer, 2026-11-25)
+
+The kind `halfk_threats_pairwise_dual` ("dual": CReLU and SCReLU over the same 15 values; the
+shortcut comes with the head), its config `lc0-halfk-threats-pairwise-dual-512-8-budget`, with
+`unit: elo` (elo-scale.md), as every new config. A screlu twin, if choice 2 makes one, would be
+`halfk_threats_screlu_dual`.
+
+The unit is a third difference from `-pairwise-hidden-512-8-budget` (`unit: lc0`). The loss
+compares expected scores only, so test losses stay comparable round by round, but the network's
+output in pawns spreads about 2.5 times wider under Elo's S (173.7 centipawns against 70.37), so
+the shortcut carries larger values: its learning speed (the factor of 1) to watch in the loss.
+
 ## Choices to make (the developer)
 
 1. **The shortcut too: decided (the developer, 2026-11-25),** with the squares, in one attempt, so
