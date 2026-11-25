@@ -18,7 +18,11 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   network's unit, a config's `unit:` key (`elo`, version 3; `lc0`, the old S, version 2); PeSTO's
   reading on Elo's scale; versions 1 and 2 still play. The attempt training now has no `unit:` in
   its frozen config, so it finishes under the old S on any build: absent, the unit is `lc0`. Every
-  config in `configs/` writes `unit: lc0`; new ones write `unit: elo`. The most promising network is retrained under `unit: elo`, then duelled against the one
+  config in `configs/` writes `unit: lc0`; new ones write `unit: elo`. **The cp scale is judged by a
+  full run only** (the developer, 2026-11-25): no scaled run, no rescaled network; a scaled network's
+  evaluations spread less than a full one's. Order: the pairwise attempt and its duels; every arena
+  and smithy on the new build (the old cannot read version 3); the winner's config copied with
+  `unit: elo`; its full attempt, its scores watched in analysis and on Lichess. The most promising network is retrained under `unit: elo`, then duelled against the one
   it retrains. Later, everything retrained: `elo` alone, the historical networks deleted.
 
 ## 2026-11-22: the larger corpus, the first attempt on it
