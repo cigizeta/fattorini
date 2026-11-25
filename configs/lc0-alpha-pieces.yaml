@@ -18,6 +18,8 @@ tune:
   length: default
   control: 10+0.1
 
+# The networks' unit: the old S, Lc0's slope at equality, files of format version 2.
+unit: lc0
 labels: lc0
 
 # A small shape to start (width 64, 4 layers): [CLS] and one token per piece, each telling its side,

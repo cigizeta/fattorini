@@ -25,6 +25,8 @@ tune:
 
 # The network: (26624 -> 256) x 2, each lane squared after the clip, -> 16 -> 32 -> 1; in training
 # 27328 rows, halfk's and the factor's.
+# The networks' unit: the old S, Lc0's slope at equality, files of format version 2.
+unit: lc0
 labels: lc0
 
 architecture:

@@ -26,9 +26,9 @@ pub struct NetConfig {
     pub training: Training,
     /// The networks' unit, the S the loss reads the output through and the format version an export
     /// writes: `elo` (`labels::S_PAWNS`, version 3) or `lc0` (`labels::OLD_S_PAWNS`, version 2), the
-    /// latter only until every network is retrained under Elo's. Absent in configs written before the
-    /// key, so in the frozen copy of every attempt begun before it, which therefore continues under
-    /// `lc0`; a new attempt needs it written (the smithy's `forge`).
+    /// latter only until every network is retrained under Elo's. Absent, it is `lc0` (the developer,
+    /// 2026-11-25): so the frozen copy of every attempt begun before the key continues under the old
+    /// S; every config in `configs/` writes its unit, new ones `elo`.
     #[serde(default)]
     pub unit: Option<Unit>,
 }

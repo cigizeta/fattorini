@@ -466,16 +466,6 @@ fn freeze_attempt_config(attempt: &str, config: &str, scale: Option<u64>) -> Res
     std::fs::write(&frozen, text).map_err(|error| format!("{frozen}: {error}"))
 }
 
-/// An error unless config `name` (`net`) names its unit: a new attempt's must be written, since an
-/// absent `unit:` means `lc0` for the attempts begun before the key, and forgetting it would train a
-/// new one under the old S unnoticed.
-fn check_new_attempt_unit(name: &str, net: &NetConfig) -> Result<(), String> {
-    match net.unit {
-        Some(_) => Ok(()),
-        None => Err(format!("{name}: a new attempt needs its networks' unit: add unit: elo to its config")),
-    }
-}
-
 /// The coarse grid, 0.10 to 0.90, of the first generation on new labels: one that plays its own
 /// games after a parent trained on a source. Where its best lambda lies is not known: Lc0's
 /// deep-search scores won near 0.02, earlier shallow self-play near 0.98. The next generation is fine
@@ -5628,9 +5618,8 @@ fn forge(status: &Status, name: &str, attempt: &str, scale: Option<u64>) -> Resu
     }
     // A new attempt is refused before its directory is made, so a refusal leaves no empty attempt behind.
     if attempt == "new" {
-        let (config, net) = load_config(&preprocessing_config::net_config_path(name))?;
+        let (config, _) = load_config(&preprocessing_config::net_config_path(name))?;
         check_forge_name(name, config.source)?;
-        check_new_attempt_unit(name, &net)?;
         // A scaled attempt reads a share of its source, so starts on what is there.
         if let Some(source) = config.source.filter(|source| scale.is_none() && !source.is_complete()) {
             return Err(source.incomplete());
@@ -5927,11 +5916,10 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
-    /// A config's unit gives its S and its networks' format version; without one it is `lc0`, which an
-    /// attempt begun before the key continues under, but a new attempt is refused; an unknown unit is
-    /// an error.
+    /// A config's unit gives its S and its networks' format version; without one it is `lc0`; an
+    /// unknown unit is an error.
     #[test]
-    fn a_config_s_unit_gives_its_s_and_version_and_a_new_attempt_needs_one() {
+    fn a_config_s_unit_gives_its_s_and_version_and_is_lc0_unless_written() {
         fattorini::pipeline::repository_root::enter_for_tests();
         let text = std::fs::read_to_string(preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
         let text = text.lines().filter(|line| !line.starts_with("unit:")).collect::<Vec<_>>().join("\n");
@@ -5944,13 +5932,10 @@ mod tests {
         };
         let old = net_with(None).unwrap();
         assert_eq!((old.unit(), old.s_pawns(), old.network_version()), (net_config::Unit::Lc0, fattorini::labels::OLD_S_PAWNS, 2));
-        assert!(check_new_attempt_unit("c", &old).unwrap_err().contains("unit: elo"));
         let lc0 = net_with(Some("lc0")).unwrap();
         assert_eq!((lc0.unit(), lc0.network_version()), (net_config::Unit::Lc0, 2));
-        assert!(check_new_attempt_unit("c", &lc0).is_ok());
         let elo = net_with(Some("elo")).unwrap();
         assert_eq!((elo.unit(), elo.s_pawns(), elo.network_version()), (net_config::Unit::Elo, fattorini::labels::S_PAWNS, 3));
-        assert!(check_new_attempt_unit("c", &elo).is_ok());
         assert!(net_with(Some("pawns")).is_err(), "an unknown unit");
         std::fs::remove_dir_all(&dir).ok();
     }

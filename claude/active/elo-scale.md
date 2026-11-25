@@ -58,8 +58,9 @@ be put into a configuration, not into an attempt"):
 - An attempt freezes its config at start, as before, so its unit travels with it. A frozen config
   with no `unit:` predates the key: `lc0`, so the attempt running at the change resumes under the
   old S on any build, exports version 2, and its training's frozen `curve` line still matches.
-- A **new** attempt from a config with no `unit:` is refused, naming the line to add: forgetting it
-  must never train under the old S unnoticed.
+- **Absent, the unit is `lc0`, everywhere** (the developer, 2026-11-25, for simplicity): every config
+  in `configs/` writes it, `unit: lc0` in all sixteen network configs of that day, `unit: elo` in
+  every new one; no attempt is refused for lacking it.
 - The loss takes S from the config (`NetConfig::s_pawns`), export the version
   (`NetConfig::network_version`), a self-play generation its teacher's curve (`NetConfig::curve`);
   a teacher or seed must be of the attempt's own unit (`refuse_teacher_in_another_unit`).

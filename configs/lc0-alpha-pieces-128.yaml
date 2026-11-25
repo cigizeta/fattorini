@@ -13,6 +13,8 @@ tune:
   length: default
   control: 10+0.1
 
+# The networks' unit: the old S, Lc0's slope at equality, files of format version 2.
+unit: lc0
 labels: lc0
 
 # Width 128, 4 layers, 4 heads of 32 (Lc0's head size), the feed-forward part 4 times the width,

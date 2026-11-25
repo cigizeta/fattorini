@@ -24,6 +24,8 @@ tune:
   control: 10+0.1
 
 # The network: (4876 -> 256) x 2 -> 1, each lane squared after the clip.
+# The networks' unit: the old S, Lc0's slope at equality, files of format version 2.
+unit: lc0
 labels: pesto
 
 architecture:
