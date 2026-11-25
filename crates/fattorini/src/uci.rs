@@ -461,9 +461,9 @@ pub fn split_score(score: i32) -> (Option<i32>, Option<i32>) {
     (Some(score), None)
 }
 
-/// A search score as a GUI is shown it: a network's centipawns as Lc0's for the same expected
-/// score (`Network::shown_centipawns`); a mate or tablebase score, or any score of the PeSTO
-/// evaluation (`evaluator` `None`), unchanged. For display alone: the search, the clock's
+/// A search score as a GUI is shown it: a version-3 network's own centipawns, an older network's as
+/// Lc0's for the same expected value (`Network::shown_centipawns`); a mate or tablebase score, or any
+/// score of the PeSTO evaluation (`evaluator` `None`), unchanged. For display alone: the search, the clock's
 /// `previous_score` and the arena keep the search's own centipawns.
 fn shown_score(score: i32, evaluator: Option<&Network>) -> i32 {
     match evaluator {

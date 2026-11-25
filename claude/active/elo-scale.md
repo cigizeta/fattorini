@@ -100,6 +100,15 @@ be put into a configuration, not into an attempt"):
    first attempt, its pawn percent (about 70), its gate, and its duels against the network it
    retrains: strength unchanged, within the duels' noise.
 
+## The shown score (the developer, 2026-11-25)
+
+A version-3 network's score is shown to a GUI as it is, its own centipawns on Elo's scale, with no
+conversion: "the fair test to see if the new S makes sense". Older networks keep Lc0's centipawns
+for the same expected value (shown-score.md, 2026-11-20), so the release and the networks not yet
+retrained look as before. With every network retrained, Lc0's tangent leaves the display, kept
+only to read Lc0's corpus. For a sense of the scale: a pawn up about +0.70, an expected score of 75%
+about +1.91, 99% about +7.98, where Lc0's display reads +0.29, +0.77 and about +46.
+
 ## Not in scope
 
 - Re-exporting existing networks in the new unit: they stay version 2, with their tunes.

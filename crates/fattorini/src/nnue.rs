@@ -2571,18 +2571,20 @@ impl Network {
         Ok(Network::Psq(network, quantized))
     }
 
-    /// A search score of this network's, in its centipawns (`100 * y`), as a GUI is shown it: Lc0's
-    /// centipawns for the same expected score, `100 * LC0.pawns(curve.score(y))`, that is
-    /// `90 * tan(1.5637 * q)`. Read through the network's own curve, so a GUI sees the same number for
-    /// the same expected value whatever the network's unit: near 0 about 0.41 of a version-3
-    /// network's centipawns (Lc0's slope against Elo's), all of a version-2 network's (the old unit
-    /// matched Lc0's there); for a clear advantage far more (`q = 0.9`: 511 version-3 centipawns,
-    /// shown as 550). Monotone, and for display alone: the search keeps its own centipawns. Not for a
-    /// mate or tablebase score, which the caller passes through.
+    /// A search score of this network's, in its centipawns (`100 * y`), as a GUI is shown it. A
+    /// version-3 network's own centipawns, unchanged: Elo's scale has a meaning of its own (400
+    /// centipawns, odds of ten to one), and showing it as it is lets play judge the unit (the
+    /// developer, 2026-11-25). An older network's are Lc0's centipawns for the same expected value,
+    /// `100 * LC0.pawns(curve.score(y))`, that is `90 * tan(1.5637 * q)`, as since 2026-11-20, so the
+    /// release and the networks not yet retrained look as they did. For display alone: the search keeps
+    /// its own centipawns. Not for a mate or tablebase score, which the caller passes through.
     pub fn shown_centipawns(&self, centipawns: i32) -> i32 {
         let curve = match self {
             Network::Psq(_, quantized) => quantized.curve,
         };
+        if curve == crate::labels::LOGISTIC {
+            return centipawns;
+        }
         let q = curve.score(f64::from(centipawns) / 100.0);
         (100.0 * crate::labels::LC0.pawns(q)).round() as i32
     }
@@ -5620,29 +5622,36 @@ pub(crate) mod tests {
         assert_eq!(network.pawn_percent(), measure_label_percent(|board| quantized.evaluate(board)));
         assert_eq!(network.pawn_percent() % PAWN_SCALE_STEP_PERCENT, 0);    }
 
-    /// The shown score is Lc0's centipawns for the network's expected value: odd, increasing, about
-    /// 0.41 of the network's own near 0 (Lc0's slope there against Elo's), larger for a clear
-    /// advantage, and Lc0's ceiling at the network's.
+    /// A version-3 network's shown score is its own centipawns.
     #[test]
-    fn a_shown_score_is_lc0_s_centipawns_for_the_same_expected_value() {
+    fn a_version_3_network_shows_its_own_centipawns() {
         let network = Network::from_psq(sample_network(16, &[8])).unwrap();
+        for cp in [-3000, -511, -70, 0, 1, 70, 511, 3000] {
+            assert_eq!(network.shown_centipawns(cp), cp, "{cp}");
+        }
+    }
+
+    /// An older network's shown score is Lc0's centipawns for its expected value: odd, increasing,
+    /// equal to its own near 0 (the old S matched Lc0's slope there), larger for a clear advantage,
+    /// and Lc0's ceiling at the network's.
+    #[test]
+    fn an_older_network_s_shown_score_is_lc0_s_centipawns_for_the_same_expected_value() {
+        let network = Network::from_psq_through(sample_network(16, &[8]), &crate::labels::OLD_LOGISTIC).unwrap();
         assert_eq!(network.shown_centipawns(0), 0);
         for cp in [10, 50, 150, 400, 1500] {
             assert_eq!(network.shown_centipawns(-cp), -network.shown_centipawns(cp), "odd at {cp}");
         }
-        // Not tested far out: past about 2500, the expected value is within 1e-6 of 1 and steps
-        // under a rounding.
-        for cp in [10, 50, 150, 400, 1000] {
+        // Not tested far out: past about 1000, the expected value is within 1e-6 of 1 and steps under
+        // a rounding.
+        for cp in [10, 50, 150, 400] {
             assert!(network.shown_centipawns(cp + 10) > network.shown_centipawns(cp), "increasing at {cp}");
         }
-        let near_zero = f64::from(network.shown_centipawns(50)) / 50.0;
-        let slopes = crate::labels::LC0_A_PAWNS * crate::labels::LC0_B / (2.0 * crate::labels::S_PAWNS);
-        assert!((near_zero - slopes).abs() < 0.02, "near 0, {near_zero} of the network's own, not {slopes}");
-        let q = crate::labels::LOGISTIC.score(5.11);
-        assert!((q - 0.9).abs() < 0.001, "511 network centipawns are an expected value of 0.9");
-        assert!((network.shown_centipawns(511) - 550).abs() <= 10, "and Lc0 shows 0.9 as about 550");
+        assert!((network.shown_centipawns(10) - 10).abs() <= 1, "near 0, the network's own centipawns");
+        let q = crate::labels::OLD_LOGISTIC.score(2.07);
+        assert!((q - 0.9).abs() < 0.001, "207 old centipawns are an expected value of 0.9");
+        assert!((network.shown_centipawns(207) - 550).abs() <= 10, "and Lc0 shows 0.9 as about 550");
         let ceiling = (100.0 * crate::labels::LC0.pawns(1.0)).round() as i32;
-        assert_eq!(network.shown_centipawns(8000), ceiling, "the network's ceiling is Lc0's");
+        assert_eq!(network.shown_centipawns(3200), ceiling, "the network's ceiling is Lc0's");
         assert!(!crate::labels::is_decisive(ceiling), "below the tablebase band");
     }
 
