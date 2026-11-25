@@ -143,10 +143,11 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   shields.io, as io-chess's README. **Two CCRL badges, 40/15 and Blitz, single CPU, newest rated
   version, live through a daily GitHub Action** (the developer: no weekly hand edits), designed in
   ccrl-badges.md. CCRL's 40/15 list of 2026-11-20 already rates Fattorini 2026.11.0 (3227 +80 -80,
-  31 games). **The 40/15 badge written 2026-11-25** (ccrl-badges-implementation.md): `bin/ccrl-badge`
-  checked locally, its failure path too (Blitz, no row yet). Left, once on `main`: the badge seen on
-  the front page and the workflow run once by hand. The failed-workflow e-mail goes to whoever last changed the
-  workflow's schedule, under GitHub's Settings, Notifications, Actions ("only failed workflows").
+  31 games). **The 40/15 badge written 2026-11-25** (ccrl-badges-implementation.md), then **given up
+  the same day (the developer):** GitHub disables a scheduled workflow after 60 days without commits,
+  which a mature project will reach; every way around it (a keepalive commit, the API's re-enable, an
+  external converter) was refused, and a link-only badge declined. The badge, the workflow,
+  `bin/ccrl-badge` and `badges/` removed; the README's Strength section states the CCRL estimate.
 - **CCRL's entry: authors and links. Sent 2026-11-25** as a new topic in the CCRL Public forum,
   waiting for a moderator's approval (a new account's first two posts are approved by hand). CCRL's
   per-version page shows "Authors:" and "Links:" lines under the rating (as Stockfish 19's), and

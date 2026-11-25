@@ -1,5 +1,7 @@
 # CCRL badges: implementation plan
 
+**Abandoned 2026-11-25:** superseded, see ccrl-badges.md.
+
 Plan for ccrl-badges.md, its section "The Action" (designed 2026-11-25). The 40/15 badge only:
 Blitz does not rate Fattorini yet.
 

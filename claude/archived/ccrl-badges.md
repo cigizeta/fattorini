@@ -1,5 +1,10 @@
 # CCRL badges in the README
 
+**Abandoned 2026-11-25 (the developer, "give up"):** GitHub disables a scheduled workflow after 60
+days without commits, which a mature project will reach. A keepalive commit, the API's re-enable,
+an external converter and a link-only badge were all declined. The badge and its workflow removed;
+see TODO.md.
+
 Status: design agreed, the Action designed 2026-11-25; plan in ccrl-badges-implementation.md. CCRL's 40/15 list of 2026-11-20 already rates Fattorini
 2026.11.0 (3227 +80 -80, 31 games of a 44-game 12'+8" tournament). The 40/15 badge goes into the
 README tomorrow (the developer, 2026-11-20).
