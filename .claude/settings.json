@@ -1,6 +1,7 @@
 {
   "permissions": {
     "deny": ["Bash", "PowerShell", "NotebookEdit", "Monitor"],
-    "ask": ["Edit", "Write"]
+    "ask": ["Edit", "Write"],
+    "allow": ["WebFetch", "mcp__claude-vscode__getDiagnostics"]
   }
 }
