@@ -14,6 +14,10 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 
 ## 2026-11-25: screlu's and pairwise's inference optimized, then benched, then duelled
 
+- **`-pairwise-hidden-512-8-budget` attempt 1, generation 1, ended 2026-11-25:** 592 rounds, 9h 30m;
+  best test loss 0.614776 at round 590 (screlu-hidden's 0.614117: +0.00066). Round robin, 400 pairs a
+  pairing: epoch 4.000 first, 51.3%, epoch 2.000 last, 47.0%, as screlu-hidden's. Gate passed, 42
+  games, 88.1%. Its duels against screlu-hidden wait for the inference work (below).
 - **Pairwise trails on loss at equal width (2026-11-25):** `-pairwise-hidden-512-8-budget` against
   `-screlu-hidden-512-8-budget`, step by step, test loss about 0.0004 behind at round 50, 0.00065 at
   round 497 (0.61491 against 0.61426), train loss as far behind: less capacity (its head reads 512
