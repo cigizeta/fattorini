@@ -1,5 +1,8 @@
 # Time management from scratch
 
+**Superseded, see reckless-only.md** (archived 2026-11-25): Reckless's time management replaced
+this design in progress before it had a plan.
+
 Status: **design in progress** (the developer, 2026-11-12). No plan, no code yet.
 
 ## Why
