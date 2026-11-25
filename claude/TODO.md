@@ -17,7 +17,11 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 - **`-pairwise-hidden-512-8-budget` attempt 1, generation 1, ended 2026-11-25:** 592 rounds, 9h 30m;
   best test loss 0.614776 at round 590 (screlu-hidden's 0.614117: +0.00066). Round robin, 400 pairs a
   pairing: epoch 4.000 first, 51.3%, epoch 2.000 last, 47.0%, as screlu-hidden's. Gate passed, 42
-  games, 88.1%. Its duels against screlu-hidden wait for the inference work (below).
+  games, 88.1%. **Trial 21, depth 9, against `-screlu-hidden-512-8-budget-g1-a1`, both `@untuned`:
+  drawn, curtailed,** pairwise 367 of 776 (47.3%, +219 -261 =296, about -19 Elo). By the prediction
+  of 2026-11-17 (drawn or won: the theory holds), width helps pairwise: test 15 at 256 was 45.4%,
+  about -32, though the two margins overlap, and pairwise alone has the castling and en passant
+  rows. Depth 9 is equal nodes, so it needed no inference work; the 10+0.1 duel waits for it.
 - **Pairwise trails on loss at equal width (2026-11-25):** `-pairwise-hidden-512-8-budget` against
   `-screlu-hidden-512-8-budget`, step by step, test loss about 0.0004 behind at round 50, 0.00065 at
   round 497 (0.61491 against 0.61426), train loss as far behind: less capacity (its head reads 512
