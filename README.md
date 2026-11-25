@@ -27,6 +27,9 @@ is credited with making the first chess clock in 1883. Its evaluation networks a
 limited compute budget. Each release ships as a single Windows `.exe` with the network embedded:
 about 3250 on CCRL Blitz's scale, by Fattorini's own estimate (below).
 
+How Fattorini works, technique by technique, from its networks and their training to its search, is
+explained in its companion website, [Inside Fattorini](https://cigizeta.github.io/fattorini/).
+
 To build Fattorini or train its networks, see [DEV.md](DEV.md).
 
 Fattorini's account on Lichess is [fattorini-bot](https://lichess.org/@/fattorini-bot). Its Lichess
