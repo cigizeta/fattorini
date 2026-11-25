@@ -94,6 +94,7 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   slow; deleting a tar's rows has the next Convert try it again, no code needed. Tars over
   `max_tar_bytes` (4 GiB) are a separate pass-over, kept unless that limit is raised.
 - **Every network always encodes castling rights and en passant (the developer, 2026-11-23).**
+  Why (the developer, 2026-11-25): the planned MCTS experiments need them.
   A network without them is not compliant: it will be retrained with them, and deleted. Today
   that is every halfk network but pairwise's, `-hidden-512-8-budget` included.
 - **The polyline re-measured on the whole corpus** (the developer, 2026-11-22: "we absolutely need
