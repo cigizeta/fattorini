@@ -25,15 +25,20 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
   or products alike (`first_layer_values`, `dots_i16_8_avx2`), so pairwise gains only its halved
   inputs. Two optimizations, each for both kinds:
   1. **A sparse first layer:** the inputs' nonzero 4-byte groups found (compare, movemask, a
-     lookup table), only their weight columns accumulated. Exact, the same integers. Both gain; a
-     square is zero when its lane is clipped, a product when either of its lanes is, so pairwise
-     gains more. First measured, for both: the inputs' zero fraction on test positions, and the
+     lookup table), only their weight columns accumulated. Exact, the same integers. Both should gain;
+     a square is zero when its lane is clipped, a product when either of its lanes is, so pairwise
+     should save the larger fraction (a hypothesis, unmeasured; skipping works on groups of four,
+     zero only if all four are). In absolute time screlu, its first layer reading twice the inputs,
+     may save as much or more. First measured, for both: the inputs' zero fraction on test positions, and the
      first layer's share of an evaluation.
   2. **8-bit first layer:** inputs as u8 (squares and products both in 0..=127, `(a * b + 256) >> 9`),
-     weights as i8, `maddubs` + `madd` (or `vpdpbusd`). Both gain alike. Not exact: first measured
+     weights as i8, `maddubs` + `madd` (or `vpdpbusd`). Both gain the same fraction, so screlu saves
+     about twice pairwise's time, narrowing pairwise's speed edge. Not exact: first measured
      on the existing networks (the drift, how often `maddubs` saturates); a weight clamp in smithy,
      and new attempts, only if the drift is too large.
-- **Then the bench:** nodes/s of both networks, before and after, on one idle machine.
+- **The bench, a must (the developer, 2026-11-25):** nodes/s of both networks on one idle machine,
+  before any optimization, after the sparse layer, after the 8-bit layer, so each step's gain is
+  known for each kind; no claim on which kind gains more stands before it.
 - **Then the duels,** pairwise against screlu-hidden, both `-512-8-budget`, at depth 9 and 10+0.1,
   on the optimized engine: equal time is what decides pairwise (2026-11-22's planned duels, moved
   after the optimization).
