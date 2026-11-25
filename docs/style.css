@@ -80,6 +80,19 @@ body {
 }
 .chapters a:hover { color: var(--brass); background: var(--code-bg); }
 
+/* A subpage's header: a link back home. */
+.page-header {
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 2rem;
+  padding: 1rem 0 0.75rem;
+}
+.home-link {
+  color: var(--accent);
+  font-weight: bold;
+  text-decoration: none;
+}
+.home-link::before { content: "\2190  "; }
+
 /* The large logo on top, centred, as in the README. */
 .hero { text-align: center; padding-top: 1.5rem; }
 .hero img { width: 240px; max-width: 70%; height: auto; }

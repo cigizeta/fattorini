@@ -10,7 +10,6 @@ changed, dropped where nothing uses it, and new techniques added.
 docs/
   .nojekyll
   index.html            home: one paragraph, the topics, a link to the README
-  notation.html         depth, ply, alpha and beta, side to move, centipawns, score in [0, 1]
   style.css
   network/   training/   search/   tuning/
 ```
@@ -125,7 +124,8 @@ grid trained in lockstep, patience and learning-rate stages, tablebase adjudicat
 ## Steps
 
 1. `docs/.nojekyll`, `style.css` (the logo's palette, light and dark, readable widths), the page
-   template, `index.html` and `notation.html`. Previewed locally by the developer.
+   template, `index.html`. Previewed locally by the developer. No notation or glossary page: terms
+   are defined in context and kept consistent (mini-cpw.md).
 2. The developer merges to `main` and turns Pages on (Settings, Pages, Deploy from a branch, `main`,
    `/docs`); the home page seen at the site's address.
 3. Search (pages 18 to 32), one page at a time: drafted by Claude from the code, reviewed by the

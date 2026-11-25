@@ -43,8 +43,13 @@ and the Lichess bot is seldom online, so a challenge button would mostly fail.
 - **No references or citations** (the developer, 2026-11-25): no source can claim to be first any
   more; what matters is the content. Unlike companion-book.md's "where it comes from".
 - **Pseudocode language-neutral**, short, only where it says more than a formula or a sentence.
-- **Notation fixed once**, on a page of its own: depth, ply, alpha and beta, side to move,
-  centipawns, and the two ranges of a game's outcome (the developer, 2026-11-25):
+- **Terminology consistent across pages, no glossary page** (the developer, 2026-11-25: "a bunch of
+  info nobody will read"; a glossary was written and dropped the same day). Each term is defined in
+  context, on the page where a reader first needs it, and used with exactly that meaning everywhere:
+  ply (one move by one side), depth (plies searched ahead), side to move (scores are from its point
+  of view), alpha and beta (the window a search is still interested in), node (one position a search
+  visits), centipawns (a network's are its own unit, set by S), and the two ranges of a game's
+  outcome:
   **expected score**, from 0 to 1, draws counted as half (Elo's term; never "winning
   percentage", which reads as wins only); **expected value**, from -1 to 1, a game counted +1, 0, -1
   (the developer: a word, not Lc0's letter q; it equals the chance of winning minus the chance of
