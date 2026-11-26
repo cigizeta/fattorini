@@ -124,6 +124,7 @@ impl Architecture {
                 | ArchitectureKind::HalfkThreatsPairwiseHidden
                 | ArchitectureKind::HalfkThreatsPairwiseDual
                 | ArchitectureKind::HalfkThreatsPairwiseDualCount
+                | ArchitectureKind::HalfkThreatsScreluDual
         )
     }
 
@@ -164,6 +165,7 @@ impl Architecture {
             ArchitectureKind::PsqThreatsScrelu
                 | ArchitectureKind::HalfkThreatsScrelu
                 | ArchitectureKind::HalfkThreatsScreluHidden
+                | ArchitectureKind::HalfkThreatsScreluDual
                 | ArchitectureKind::PsqThreatsScreluMaterial
                 | ArchitectureKind::PsqThreatsScreluPhase
                 | ArchitectureKind::PsqThreatsScreluCount
@@ -210,7 +212,7 @@ impl Architecture {
     pub fn head_shape(&self) -> HeadShape {
         if self.stack() {
             HeadShape::Stack
-        } else if matches!(self.kind, ArchitectureKind::HalfkThreatsPairwiseDual) {
+        } else if matches!(self.kind, ArchitectureKind::HalfkThreatsPairwiseDual | ArchitectureKind::HalfkThreatsScreluDual) {
             HeadShape::Dual
         } else if matches!(self.kind, ArchitectureKind::HalfkThreatsPairwiseDualCount) {
             HeadShape::DualCount
@@ -303,6 +305,11 @@ pub enum ArchitectureKind {
     /// the fifth of the buckets its batches carry): the transform shared, one dual head computed per
     /// evaluation. Same data as `HalfkThreatsPairwiseDual`.
     HalfkThreatsPairwiseDualCount,
+    /// `HalfkThreatsPairwiseDual`'s dual head on `HalfkThreatsScreluHidden`'s squares: every lane
+    /// clipped and squared, `2 * embedding_dim` squares into the first layer. With the castling and en
+    /// passant rows, unlike `HalfkThreatsScreluHidden`: the same data as `HalfkThreatsPairwiseDual`
+    /// (`FeatureSet::HalfKav2HmState`), so that the two duals differ by the transform alone.
+    HalfkThreatsScreluDual,
     /// `PsqThreatsScrelu` with its one output replaced by `PsqThreatsPairwiseMaterial`'s 78 weight
     /// sets, each reading the `2 * embedding_dim` squares (psq-threats-screlu-material.md). No hidden
     /// layer; trained factorised. Same data as psq_threats.
@@ -513,12 +520,13 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
             | ArchitectureKind::HalfkThreatsPairwiseHidden
             | ArchitectureKind::HalfkThreatsPairwiseDual
             | ArchitectureKind::HalfkThreatsPairwiseDualCount
+            | ArchitectureKind::HalfkThreatsScreluDual
     ) {
         ensure!(
             config.architecture.value_head_hidden_dim().len() == 2,
             "{path}: architecture.kind is halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden, \
-             halfk_threats_pairwise_dual or halfk_threats_pairwise_dual_count, whose head has two hidden layers, but \
-             value_head.hidden_dim has {} widths",
+             halfk_threats_pairwise_dual, halfk_threats_pairwise_dual_count or halfk_threats_screlu_dual, whose head \
+             has two hidden layers, but value_head.hidden_dim has {} widths",
             config.architecture.value_head_hidden_dim().len()
         );
     } else if config.architecture.screlu() {

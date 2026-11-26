@@ -112,10 +112,11 @@ impl Network {
         value_head_hidden_dims: &[i64],
     ) -> Network {
         let halfk = feature_set.halfk();
+        let dual = matches!(head, HeadShape::Dual | HeadShape::DualCount);
         assert!(
-            matches!(feature_set, FeatureSet::HalfKav2HmState(_)) == (halfk && pairwise),
-            "halfk's castling and en passant rows are halfk_threats_pairwise_hidden's, and it has them: the engine \
-             reads them from a halfk pairwise network (tag 22) alone"
+            matches!(feature_set, FeatureSet::HalfKav2HmState(_)) == (halfk && (pairwise || dual)),
+            "halfk's castling and en passant rows are a halfk pairwise or dual network's, and it has them: the engine \
+             reads them from those alone (`PsqNetwork::halfk_state`), never from tags 20 and 21"
         );
         let halfk_activation = match value_head_hidden_dims.len() {
             0 => screlu && !pairwise,
@@ -125,14 +126,17 @@ impl Network {
         assert!(
             !halfk
                 || (halfk_activation
-                    && (head == HeadShape::Plain || (matches!(head, HeadShape::Dual | HeadShape::DualCount) && pairwise))),
-            "a halfk network is halfk_threats_screlu, halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden or \
-             halfk_threats_pairwise_dual: a plain head, screlu with no hidden layer or two, or pairwise with two, plain or dual"
+                    && (head == HeadShape::Plain
+                    || head == HeadShape::Dual
+                    || (head == HeadShape::DualCount && pairwise))),
+            "a halfk network is halfk_threats_screlu, halfk_threats_screlu_hidden, halfk_threats_pairwise_hidden, \
+             a dual one or halfk_threats_pairwise_dual_count: a plain head, screlu with no hidden layer or two, or \
+             pairwise with two, plain or dual; a dual head with two, screlu or pairwise"
         );
         assert!(
-            !matches!(head, HeadShape::Dual | HeadShape::DualCount)
-                || (halfk && pairwise && value_head_hidden_dims.len() == 2 && value_head_hidden_dims[0] >= 2),
-            "a dual head is halfk_threats_pairwise_dual's or _dual_count's, two hidden layers, the first at least 2 wide"
+            !dual || (halfk && value_head_hidden_dims.len() == 2 && value_head_hidden_dims[0] >= 2),
+            "a dual head is halfk_threats_pairwise_dual's, _dual_count's or halfk_threats_screlu_dual's, two hidden \
+             layers, the first at least 2 wide"
         );
         assert!(
             !screlu
@@ -150,10 +154,12 @@ impl Network {
             !pairwise || matches!(feature_set, FeatureSet::Psq | FeatureSet::PsqThreats) || halfk,
             "pairwise products exist for psq, psq_threats and halfk only, not {feature_set:?}"
         );
-        // A screlu material, phase, count or kings head reads the squares instead.
+        // A screlu material, phase, count, kings or dual head reads the squares instead.
         assert!(
-            !head.bucketed() || pairwise || (screlu && (head.output_only() || matches!(head, HeadShape::Kings | HeadShape::Hidden))),
-            "a bucketed head reads pairwise products"
+            !head.bucketed()
+                || pairwise
+                || (screlu && (head.output_only() || matches!(head, HeadShape::Kings | HeadShape::Hidden | HeadShape::Dual))),
+            "a bucketed head reads pairwise products, or squares for screlu's output-only, kings, hidden and dual heads"
         );
         assert!(!head.screlu_only() || screlu, "a {head:?} head is screlu's output");
         assert!(
@@ -176,14 +182,16 @@ impl Network {
         }
     }
 
-    /// The feature set its batches are built under: a halfk pairwise network's has the castling and
-    /// en passant rows (`with_options`).
+    /// The feature set its batches are built under: a halfk pairwise or dual network's has the
+    /// castling and en passant rows (`with_options`).
     #[cfg(test)]
     pub fn feature_set(&self) -> FeatureSet {
         match self {
             Network::Psq(_) => FeatureSet::Psq,
             Network::PsqThreats(_) => FeatureSet::PsqThreats,
-            Network::HalfKav2Hm(network, layout) if network.pairwise => FeatureSet::HalfKav2HmState(*layout),
+            Network::HalfKav2Hm(network, layout) if network.pairwise || matches!(network.head, Head::Dual { .. } | Head::DualCount { .. }) => {
+                FeatureSet::HalfKav2HmState(*layout)
+            }
             Network::HalfKav2Hm(_, layout) => FeatureSet::HalfKav2Hm(*layout),
         }
     }

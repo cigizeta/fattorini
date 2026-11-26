@@ -6225,7 +6225,8 @@ mod tests {
             ("lc0-halfk-threats-screlu", Some(Source::Lc0)),
             ("pesto-halfk-threats-screlu", Some(Source::Pesto)), ("lc0-halfk-threats-screlu-hidden", Some(Source::Lc0)),
             ("lc0-halfk-threats-pairwise-hidden", Some(Source::Lc0)), ("lc0-halfk-threats-pairwise-dual-512-8-budget", Some(Source::Lc0)),
-            ("lc0-halfk-threats-pairwise-dual-count-512-8-budget", Some(Source::Lc0))]
+            ("lc0-halfk-threats-pairwise-dual-count-512-8-budget", Some(Source::Lc0)),
+            ("lc0-halfk-threats-screlu-dual-512-8-budget", Some(Source::Lc0))]
         {
             let (config, _) = load_config(&preprocessing_config::net_config_path(name)).unwrap_or_else(|message| panic!("{message}"));
             assert_eq!(config.source, source, "{name}");

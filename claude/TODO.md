@@ -75,7 +75,9 @@ pairwise against screlu-hidden at 512.
   transform, `halfk_threats_screlu_dual`: 1024 squares into the same 16-output first layer, then
   pairwise dual's head unchanged (pairwise-dual-activation.md, choice 2, superseded). With castling
   and en passant rows and `unit: elo`. Its order against pairwise dual and the buckets: decided
-  later. Neither design nor code yet; the engine needs only a `Dual` branch on the screlu path.
+  later. **Written 2026-11-26** (screlu-dual-implementation.md): tags 35 to 37, the castling and en
+  passant rows untied from pairwise (a halfk pairwise or dual network has them),
+  `configs/lc0-halfk-threats-screlu-dual-512-8-budget.yaml`, `unit: elo`. Tests and clippy to run.
 
 - **The piece-count buckets on dual, written ahead (2026-11-25)** (pairwise-dual-count.md, its plan
   pairwise-dual-count-implementation.md), the developer optimistic that dual wins: 8 independent

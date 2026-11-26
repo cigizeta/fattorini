@@ -14,7 +14,8 @@ pub enum FeatureSet {
     /// (`Layout::training_rows`).
     HalfKav2Hm(halfk::Layout),
     /// `HalfKav2Hm` with psq's 12 castling and en passant rows after the factor rows
-    /// (`Layout::training_rows_with_state`, `halfk::push_state_rows`): halfk_threats_pairwise_hidden's.
+    /// (`Layout::training_rows_with_state`, `halfk::push_state_rows`): halfk_threats_pairwise_hidden's
+    /// and every dual kind's, halfk_threats_screlu_dual included.
     HalfKav2HmState(halfk::Layout),
 }
 

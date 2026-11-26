@@ -753,12 +753,14 @@ mod tests {
             (true, HeadShape::Plain, &[8, 4][..]),
             (true, HeadShape::Dual, &[8, 4][..]),
             (true, HeadShape::DualCount, &[8, 4][..]),
+            (false, HeadShape::Dual, &[8, 4][..]),
         ];
         for (pairwise, head, hidden) in kinds {
-            // Pairwise is halfk_threats_pairwise_hidden's, with the castling and en passant rows. In
-            // 8 king buckets: the stack's shapes follow the layout as the network's do.
+            // Pairwise and the duals (halfk_threats_screlu_dual too) have the castling and en passant
+            // rows. In 8 king buckets: the stack's shapes follow the layout as the network's do.
             let layout = fattorini::features::halfk::Layout::Eight;
-            let feature_set = if pairwise { FeatureSet::HalfKav2HmState(layout) } else { FeatureSet::HalfKav2Hm(layout) };
+            let state = pairwise || matches!(head, HeadShape::Dual | HeadShape::DualCount);
+            let feature_set = if state { FeatureSet::HalfKav2HmState(layout) } else { FeatureSet::HalfKav2Hm(layout) };
             let networks: Vec<(nn::VarStore, Network)> = (0..3)
                 .map(|arm| {
                     let vs = nn::VarStore::new(Device::Cpu);
@@ -788,8 +790,12 @@ mod tests {
                     assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 8, 8], "8 count buckets of 8 products in");
                     assert_eq!(stack.parameters()["value_head.hidden1.weight"].size(), [3, 8, 4, 14], "7 values, each twice");
                 }
-                HeadShape::Dual => {
+                HeadShape::Dual if pairwise => {
                     assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 8], "the products, half as many");
+                    assert_eq!(stack.parameters()["value_head.hidden1.weight"].size(), [3, 4, 14], "7 values, each twice");
+                }
+                HeadShape::Dual => {
+                    assert_eq!(stack.parameters()["value_head.hidden0.weight"].size(), [3, 8, 16], "both perspectives' squares");
                     assert_eq!(stack.parameters()["value_head.hidden1.weight"].size(), [3, 4, 14], "7 values, each twice");
                 }
                 _ if pairwise => {

@@ -83,22 +83,23 @@ pub fn screlu_network_from(vs: &nn::VarStore, embedding_dim: i64, step: u64, lea
 /// plain per-bucket rows and never the factorisation; the threat rows and the bias as they are.
 /// With `hidden_dims` (halfk_threats_screlu_hidden's two), the head's hidden layers as they are; with
 /// `pairwise` too (halfk_threats_pairwise_hidden), the first reading `embedding_dim` products; with
-/// `dual` too (halfk_threats_pairwise_dual), the second reading the first's outputs but the last, each
-/// twice.
+/// `dual` (halfk_threats_pairwise_dual, or halfk_threats_screlu_dual without `pairwise`), the second
+/// reading the first's outputs but the last, each twice.
 #[allow(clippy::too_many_arguments)]
 pub fn halfk_network_from(
     vs: &nn::VarStore, layout: halfk::Layout, pairwise: bool, dual: bool, embedding_dim: i64, hidden_dims: &[i64], step: u64,
     learning_rate: f64,
 ) -> PsqNetwork {
-    assert!(!dual || (pairwise && hidden_dims.len() == 2), "a dual network is pairwise with two hidden layers, not {hidden_dims:?}");
+    assert!(!dual || hidden_dims.len() == 2, "a dual network has two hidden layers, not {hidden_dims:?}");
     let head_input = if pairwise { embedding_dim } else { 2 * embedding_dim };
-    // Pairwise is halfk_threats_pairwise_hidden or _dual, whose castling and en passant rows follow
-    // the factor rows in training and the threat rows in the engine (`Layout::castling_row`).
-    let training_rows = if pairwise { layout.training_rows_with_state() } else { layout.training_rows() };
+    // A pairwise or dual network has the castling and en passant rows, after the factor rows in
+    // training and after the threat rows in the engine (`Layout::castling_row`).
+    let state = pairwise || dual;
+    let training_rows = if state { layout.training_rows_with_state() } else { layout.training_rows() };
     let (training, transform_bias, hidden, output) =
         weights_from(vs, training_rows as i64, embedding_dim, head_input, hidden_dims, false, dual);
     let dim = embedding_dim as usize;
-    let transform = folded_halfk_transform(&training, layout, pairwise, dim);
+    let transform = folded_halfk_transform(&training, layout, state, dim);
     PsqNetwork {
         embedding_dim: dim,
         transform,
@@ -119,8 +120,8 @@ pub fn halfk_network_from(
 
 /// A halfk transform as the engine reads it, from its training form `training` (`[training rows,
 /// dim]`, transposed): each piece row plus its factor row (`halfk::factor_row`), the factor rows
-/// dropped, the threat rows as they are; with `state` (a pairwise kind's), the castling and en
-/// passant rows after them.
+/// dropped, the threat rows as they are; with `state` (a pairwise or dual kind's), the castling and
+/// en passant rows after them.
 fn folded_halfk_transform(training: &[f32], layout: halfk::Layout, state: bool, dim: usize) -> Vec<f32> {
     let mut transform = training[..layout.rows() * dim].to_vec();
     for row in 0..layout.halfk_rows() {
@@ -986,11 +987,30 @@ mod tests {
             FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL_COUNT, FEATURE_SET_HALFK10_THREATS_SCRELU,
             FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL_COUNT, FEATURE_SET_HALFK8_THREATS_SCRELU,
             FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL_COUNT, FEATURE_SET_HALFK_THREATS_SCRELU,
+            FEATURE_SET_HALFK10_THREATS_SCRELU_DUAL, FEATURE_SET_HALFK8_THREATS_SCRELU_DUAL, FEATURE_SET_HALFK_THREATS_SCRELU_DUAL,
         };
-        for (layout, first_tag, dual_tag, dual_count_tag) in [
-            (halfk::Layout::Squares, FEATURE_SET_HALFK_THREATS_SCRELU, FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL_COUNT),
-            (halfk::Layout::Eight, FEATURE_SET_HALFK8_THREATS_SCRELU, FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL_COUNT),
-            (halfk::Layout::Ten, FEATURE_SET_HALFK10_THREATS_SCRELU, FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL, FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL_COUNT),
+        for (layout, first_tag, dual_tag, dual_count_tag, screlu_dual_tag) in [
+            (
+                halfk::Layout::Squares,
+                FEATURE_SET_HALFK_THREATS_SCRELU,
+                FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL,
+                FEATURE_SET_HALFK_THREATS_PAIRWISE_DUAL_COUNT,
+                FEATURE_SET_HALFK_THREATS_SCRELU_DUAL,
+            ),
+            (
+                halfk::Layout::Eight,
+                FEATURE_SET_HALFK8_THREATS_SCRELU,
+                FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL,
+                FEATURE_SET_HALFK8_THREATS_PAIRWISE_DUAL_COUNT,
+                FEATURE_SET_HALFK8_THREATS_SCRELU_DUAL,
+            ),
+            (
+                halfk::Layout::Ten,
+                FEATURE_SET_HALFK10_THREATS_SCRELU,
+                FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL,
+                FEATURE_SET_HALFK10_THREATS_PAIRWISE_DUAL_COUNT,
+                FEATURE_SET_HALFK10_THREATS_SCRELU_DUAL,
+            ),
         ] {
         let kinds = [
             (false, HeadShape::Plain, &[][..]),
@@ -998,10 +1018,12 @@ mod tests {
             (true, HeadShape::Plain, &[16, 32][..]),
             (true, HeadShape::Dual, &[16, 32][..]),
             (true, HeadShape::DualCount, &[16, 32][..]),
+            (false, HeadShape::Dual, &[16, 32][..]),
         ];
         for (index, (pairwise, head, hidden_dims)) in kinds.into_iter().enumerate() {
             let tag = match head {
-                HeadShape::Dual => dual_tag,
+                HeadShape::Dual if pairwise => dual_tag,
+                HeadShape::Dual => screlu_dual_tag,
                 HeadShape::DualCount => dual_count_tag,
                 _ => first_tag + index as u32,
             };
@@ -1011,7 +1033,8 @@ mod tests {
                 .unwrap()
                 .to_string();
             let vs = nn::VarStore::new(tch::Device::Cpu);
-            let feature_set = if pairwise { FeatureSet::HalfKav2HmState(layout) } else { FeatureSet::HalfKav2Hm(layout) };
+            let state = pairwise || matches!(head, HeadShape::Dual | HeadShape::DualCount);
+            let feature_set = if state { FeatureSet::HalfKav2HmState(layout) } else { FeatureSet::HalfKav2Hm(layout) };
             let oracle = Network::with_options(&vs.root(), feature_set, pairwise, !pairwise, head, 32, hidden_dims);
             // The piece rows start at zero; drawn here, so that a row of the wrong bucket, or a factor
             // folded into the wrong row, moves the value.
@@ -1135,20 +1158,31 @@ mod tests {
         // transpose is the single most likely real mistake on this path, and it produces a file of
         // exactly the right size full of misplaced weights. Reconstructing that mistake here must
         // make the comparison fail.
+        // The weights are random and unseeded, and a draw whose hidden layers saturate answers the
+        // same value whatever its input (seen 2026-11-26): such a draw is drawn again.
         let embedding_dim = 16;
         let hidden_dims = [12, 8];
-        let (vs, oracle) = store(embedding_dim, &hidden_dims);
-        let mut engine = psq_network_from(&vs, false, embedding_dim, &hidden_dims, 0, 0.0);
-        engine.transform = values(parameter(&vs.variables(), "transform.weight"));
-
-        let (board, _) = Board::from_fen(AGREEMENT_POSITIONS[0]).unwrap();
-        let untransposed = engine.evaluate_pawns(&board);
-        let truth = oracle_value(&oracle, &board);
-        assert!(
-            (untransposed - truth).abs() > 1e-4 * truth.abs().max(1.0),
-            "an untransposed transform produced {untransposed} against tch's {truth} -- the agreement test \
-             cannot tell the two apart, so it is not testing what it claims to"
-        );
+        let boards: Vec<Board> = AGREEMENT_POSITIONS.iter().map(|fen| Board::from_fen(fen).unwrap().0).collect();
+        for _ in 0..10 {
+            let (vs, oracle) = store(embedding_dim, &hidden_dims);
+            let truths: Vec<f32> = boards.iter().map(|board| oracle_value(&oracle, board)).collect();
+            if truths.iter().all(|truth| (truth - truths[0]).abs() <= 1e-6) {
+                continue;
+            }
+            let mut engine = psq_network_from(&vs, false, embedding_dim, &hidden_dims, 0, 0.0);
+            engine.transform = values(parameter(&vs.variables(), "transform.weight"));
+            let noticed = boards
+                .iter()
+                .zip(&truths)
+                .any(|(board, &truth)| (engine.evaluate_pawns(board) - truth).abs() > 1e-4 * truth.abs().max(1.0));
+            assert!(
+                noticed,
+                "an untransposed transform agreed with tch on every position -- the agreement test cannot tell \
+                 the two apart, so it is not testing what it claims to"
+            );
+            return;
+        }
+        panic!("ten random networks in a row answered every position alike");
     }
 
     #[test]

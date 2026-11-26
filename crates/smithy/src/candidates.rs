@@ -49,6 +49,7 @@ fn export_candidate(
         ArchitectureKind::HalfkThreatsPairwiseHidden => None,
         ArchitectureKind::HalfkThreatsPairwiseDual => None,
         ArchitectureKind::HalfkThreatsPairwiseDualCount => None,
+        ArchitectureKind::HalfkThreatsScreluDual => None,
         ArchitectureKind::PsqThreatsScreluMaterial => None,
         ArchitectureKind::PsqThreatsScreluPhase => None,
         ArchitectureKind::PsqThreatsScreluCount => None,
@@ -217,6 +218,9 @@ pub(crate) fn feature_set_of(kind: &ArchitectureKind) -> FeatureSet {
         ArchitectureKind::HalfkThreatsPairwiseDual => FeatureSet::HalfKav2HmState(Layout::Squares),
         // The same again: the piece count is the fifth of the buckets every psq-form batch carries.
         ArchitectureKind::HalfkThreatsPairwiseDualCount => FeatureSet::HalfKav2HmState(Layout::Squares),
+        // The pairwise dual's rows and batches, the castling and en passant rows included, so that the
+        // two duals differ by the transform alone.
+        ArchitectureKind::HalfkThreatsScreluDual => FeatureSet::HalfKav2HmState(Layout::Squares),
         // psq_threats' rows; the square the network's, the bucket the batches' third.
         ArchitectureKind::PsqThreatsScreluMaterial => FeatureSet::PsqThreats,
         // psq_threats' rows; the phase bucket is the fourth of the buckets its batches carry.
@@ -387,6 +391,7 @@ mod tests {
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseHidden), FeatureSet::HalfKav2HmState(Layout::Squares));
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseDual), FeatureSet::HalfKav2HmState(Layout::Squares));
         assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsPairwiseDualCount), FeatureSet::HalfKav2HmState(Layout::Squares));
+        assert_eq!(feature_set_of(&ArchitectureKind::HalfkThreatsScreluDual), FeatureSet::HalfKav2HmState(Layout::Squares));
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluMaterial), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluPhase), FeatureSet::PsqThreats);
         assert_eq!(feature_set_of(&ArchitectureKind::PsqThreatsScreluCount), FeatureSet::PsqThreats);
