@@ -120,7 +120,11 @@ pairwise against screlu-hidden at 512.
   by the count of pieces on the board, each a set of the whole head's weights. The design to write
   in `claude/active/` before any code. The screlu networks are not retrained for castling and en
   passant: deleted once superseded.
-- **Lc0's data: test91 alone, up to 10B, but not soon (the developer, 2026-11-23).** The next
+- **Lc0's data to 10B: designed 2026-11-26 (lc0-ten-billion.md),** after a halfk release for CCRL:
+  2026's tars alone up to 10B, converted in the order downloads finish once the test set is
+  complete, every skipped tar retried once, 4 passes an attempt, the polyline re-measured. The
+  notes of 2026-11-23 below, partly superseded by it:
+  **Lc0's data: test91 alone, up to 10B, but not soon (the developer, 2026-11-23).** The next
   release trains on today's corpus, about 5B positions of test91 from 2026-01-01 into July.
   test91 (BT4 in RL mode, 800 visits, active) has data up to today; at about 0.75B a month,
   roughly 8.5B now and 10B around January 2027, a rough estimate. Later: the cap in
