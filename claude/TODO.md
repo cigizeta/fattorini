@@ -27,7 +27,7 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
    the next running trial or training: every bar moves at each redraw, never overshoots, never steps
    back; then the document to `done/`.
 4. Small: the arena's `duel.rs` curtailed text counted pairs (the smithy's says games). **Written
-   2026-11-26:** it counts games now, its test with it; tests and clippy to run.
+   2026-11-26:** it counts games now, its test with it; tests and clippy clean, committed (the developer). Done.
 
 ## 2026-11-25: screlu's and pairwise's inference optimized, then benched, then duelled
 
