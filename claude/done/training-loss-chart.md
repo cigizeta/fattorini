@@ -27,6 +27,8 @@ test loss, best loss, round, stage, patience. With one arm, lambda says `polylin
    - x: the round; y: the loss. Two lines, train and test, with a legend.
    - **Round 0 left out:** it only tests (no training loss), and its test loss, far above the
      rest, would flatten the curve. y scales to the rounds from 1 on, with a few ticks each axis.
+     **Since 2026-11-26 (the developer): always four loss ticks,** the axis running from the first
+     to the last, the step 1, 2 or 5 times a power of ten; seen working the same day.
      **Revised 2026-11-16 (the developer, after seeing it):** rounds 1 to 3 still took the height;
      y now scales to the rounds after the first tenth alone, linear, the plot clipped as a
      window: earlier lines leave it through its top, never pinned to the edge (the developer). A log of the gap above the lowest loss was weighed and not taken: its shape
