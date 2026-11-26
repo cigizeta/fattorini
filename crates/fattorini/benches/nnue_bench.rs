@@ -146,6 +146,16 @@
 //!
 //! `cargo bench --bench nnue_bench -- --network <player> --threat-parts data/matches/<a test>`
 //!
+//! `--first-layer [dir]` times a network's first hidden layer, dense and sparse (after checking both
+//! give the same sums on every position), against its whole evaluation
+//! (the developer, 2026-11-26), then prints the zero squares or products, pairs
+//! and blocks of four, on the positions of the games under `dir`, or the seven above:
+//!
+//! `dir` a folder of subfolders each with a `games.pgn` (an arena's `data/tournaments/`), or one PGN
+//! file; an absolute path, as cargo runs the bench from the crate's folder:
+//!
+//! `cargo bench --bench nnue_bench -- --network <player> --first-layer "$(pwd)/data/lichess/<a pgn>"`
+//!
 //! `--search-only` skips every timing above and only searches Stockfish's 49 bench positions with the
 //! network, at `--depth` (9 by default): the run to profile.
 //!
@@ -2115,6 +2125,12 @@ fn main() {
         threat_parts(psq_network, quantized, &parts_boards, &network, depth.unwrap_or(9));
         return;
     }
+    if let Some(at) = arguments.iter().position(|argument| argument == "--first-layer") {
+        let dir = arguments.get(at + 1).filter(|value| !value.starts_with("--") && !value.ends_with(".nnue"));
+        let layer_boards = dir.map_or_else(|| boards.clone(), |dir| selection_positions(dir));
+        first_layer(psq_network, quantized, &layer_boards);
+        return;
+    }
     let one_bucket = arguments.iter().any(|argument| argument == "--one-bucket");
     let per_evaluation = time_psq(psq_network, quantized, &boards, one_bucket);
     if psq_network.halfk && psq_network.hidden.len() == 2 {
@@ -2138,6 +2154,7 @@ fn zero_squares(quantized: &QuantizedPsqNetwork, boards: &[Board], pairwise: boo
     let shift = quantized.accumulator_shift;
     let rounding = if shift == 0 { 0 } else { 1 << (shift - 1) };
     let (mut zeros, mut all, mut zero_blocks, mut blocks) = (0usize, 0usize, 0usize, 0usize);
+    let (mut zero_pairs, mut pairs) = (0usize, 0usize);
     for board in boards {
         for perspective in [Color::White, Color::Black] {
             let activations: Vec<i32> =
@@ -2151,13 +2168,91 @@ fn zero_squares(quantized: &QuantizedPsqNetwork, boards: &[Board], pairwise: boo
                 zero_blocks += chunk.iter().all(|&square| square == 0) as usize;
                 blocks += 1;
             }
+            // The sparse first layer (i16 inputs, `madd_epi16`) skips pairs, one i32 each.
+            for pair in squares.chunks(2) {
+                zero_pairs += pair.iter().all(|&square| square == 0) as usize;
+                pairs += 1;
+            }
         }
     }
     println!(
-        "  zero squares: {:.1}% of {all}; all-zero blocks of 4 (what a skip saves): {:.1}%",
+        "  zero squares: {:.1}% of {all}; all-zero pairs: {:.1}%; all-zero blocks of 4: {:.1}%",
         100.0 * zeros as f64 / all as f64,
+        100.0 * zero_pairs as f64 / pairs as f64,
         100.0 * zero_blocks as f64 / blocks as f64
     );
+}
+
+/// `--first-layer`: the first hidden layer's share of an evaluation (the developer, 2026-11-26:
+/// it bounds what skipping its zero inputs can gain), on `boards`: the whole evaluation from built piece-square accumulators,
+/// and the first layer's integer sums alone over the squares or products computed beforehand, the
+/// part a sparse layer can shrink. Then the zero fractions (`zero_squares`).
+fn first_layer(network: &PsqNetwork, quantized: &QuantizedPsqNetwork, boards: &[Board]) {
+    let built: Vec<[Vec<i16>; 2]> = boards.iter().map(|board| quantized.refresh_by_color(board)).collect();
+    let inputs: Vec<Vec<i16>> = boards.iter().map(|board| quantized.first_layer_inputs(board)).collect();
+    let mut sums = [0i32; 64];
+    let out_dim = quantized.first_layer_sums_for_bench(&inputs[0], &boards[0], false, &mut sums);
+    assert!(out_dim > 0, "--first-layer takes a network with a quantized first hidden layer");
+    // The two kernels must give the same integers on every position before either is timed.
+    let mut sparse_sums = [0i32; 64];
+    for (index, board) in boards.iter().enumerate() {
+        quantized.first_layer_sums_for_bench(&inputs[index], board, false, &mut sums);
+        quantized.first_layer_sums_for_bench(&inputs[index], board, true, &mut sparse_sums);
+        assert_eq!(sums[..out_dim], sparse_sums[..out_dim], "the sparse sums differ at position {index}");
+    }
+
+    let whole = time_per_item(boards.len(), |index| {
+        black_box(quantized.evaluate_by_color_cp(black_box(&built[index]), &boards[index]));
+    });
+    let mut layer = |sparse: bool| {
+        time_per_item(boards.len(), |index| {
+            black_box(quantized.first_layer_sums_for_bench(black_box(&inputs[index]), &boards[index], sparse, &mut sums));
+            black_box(&sums);
+        })
+    };
+    let (dense, sparse) = (layer(false), layer(true));
+    println!("  {} positions; per evaluation, both perspectives:", boards.len());
+    println!("    whole           {whole:7.1} ns");
+    println!("    first, dense    {dense:7.1} ns  ({} inputs into {out_dim})", inputs[0].len());
+    println!("    first, sparse   {sparse:7.1} ns  {:5.1}% of the whole, {:.2}x faster", 100.0 * sparse / whole, dense / sparse);
+    zero_squares(quantized, boards, network.pairwise);
+
+    // The lanes reordered so that the most often zero sit side by side, as Stockfish reorders its
+    // transform: exact in the engine, the same permutation applied to the transform's columns and
+    // the first layer's, without retraining. One permutation for both perspectives, whose transform
+    // is shared; a pairwise network's input `i` is lanes `i` and `i + half` together, so permuting
+    // its products permutes those pairs of lanes. Timed with the weights left in place: the sums are
+    // wrong, but the work depends only on which pairs are zero.
+    let per_perspective = inputs[0].len() / 2;
+    let mut zero_counts = vec![0usize; per_perspective];
+    for position in &inputs {
+        for (index, &input) in position.iter().enumerate() {
+            zero_counts[index % per_perspective] += (input == 0) as usize;
+        }
+    }
+    let mut order: Vec<usize> = (0..per_perspective).collect();
+    order.sort_by_key(|&index| std::cmp::Reverse(zero_counts[index]));
+    let reordered: Vec<Vec<i16>> = inputs
+        .iter()
+        .map(|position| position.chunks(per_perspective).flat_map(|half| order.iter().map(|&index| half[index])).collect())
+        .collect();
+    let (mut zero_pairs, mut zero_blocks) = (0usize, 0usize);
+    for position in &reordered {
+        zero_pairs += position.chunks(2).filter(|pair| pair.iter().all(|&input| input == 0)).count();
+        zero_blocks += position.chunks(4).filter(|block| block.iter().all(|&input| input == 0)).count();
+    }
+    let all = reordered.len() * reordered[0].len();
+    let never_active = zero_counts.iter().filter(|&&count| count == 2 * inputs.len()).count();
+    println!(
+        "  reordered by zero frequency: all-zero pairs {:.1}%, all-zero blocks of 4 {:.1}%; inputs never nonzero: {never_active} of {per_perspective}",
+        200.0 * zero_pairs as f64 / all as f64,
+        400.0 * zero_blocks as f64 / all as f64
+    );
+    let reordered_sparse = time_per_item(boards.len(), |index| {
+        black_box(quantized.first_layer_sums_for_bench(black_box(&reordered[index]), &boards[index], true, &mut sums));
+        black_box(&sums);
+    });
+    println!("    first, sparse, reordered {reordered_sparse:7.1} ns, {:.2}x the dense kernel's speed", dense / reordered_sparse);
 }
 
 /// `--threat-parts`: a psq_threats network's evaluation split into its parts, on `boards`, and

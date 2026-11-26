@@ -36,7 +36,10 @@ pairwise against screlu-hidden at 512.
   or products alike (`first_layer_values`, `dots_i16_8_avx2`), so pairwise gains only its halved
   inputs. Two optimizations, each for both kinds:
   1. **A sparse first layer** (sparse-first-layer.md, its plan sparse-first-layer-implementation.md,
-     designed 2026-11-26: pairs of i16 skipped, not groups of four; measured first): the inputs' nonzero 4-byte groups found (compare, movemask, a
+     designed 2026-11-26: pairs of i16 skipped, not groups of four; measured first). **Closed at
+     i16, 2026-11-26:** written and exact, but 4% to 10% slower than dense, both bound by loads;
+     lanes reordered by zero frequency gave 1.07x and 0.93x. The engine stays dense, the kernels
+     kept for the 8-bit layer, where sparse with reordering is retried on blocks of four. The inputs' nonzero 4-byte groups found (compare, movemask, a
      lookup table), only their weight columns accumulated. Exact, the same integers. Both should gain;
      a square is zero when its lane is clipped, a product when either of its lanes is, so pairwise
      should save the larger fraction (a hypothesis, unmeasured; skipping works on groups of four,

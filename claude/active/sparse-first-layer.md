@@ -44,7 +44,59 @@ outputs. A square is zero when its lane is clipped; a product when either of its
 - **The first layer's share of an evaluation:** a new `--first-layer` diagnostic in `nnue_bench`,
   as `--threat-parts`: the whole evaluation, the first layer's sums alone (dense, then sparse once
   written), and their share.
-- **The bench,** `bin/fattorini bench` with each network on one idle machine (CLAUDE.md), before
+- **The bench,** `nnue_bench --search-only` with each network (`bin/fattorini bench` embeds none) on one idle machine (CLAUDE.md), before
   and after: nodes/s, and the node counts equal, which checks exactness end to end.
 
 No claim on which kind gains more stands before the bench (TODO.md, 2026-11-25).
+
+## Step 1's figures (2026-11-26)
+
+`--first-layer` on the bot's Lichess games (33,064 positions), both `-512-8-budget-g1-a1`, one
+machine, dense kernel:
+
+| network       | whole evaluation | first layer      | zero inputs | zero pairs | zero blocks of 4 |
+|---------------|------------------|------------------|-------------|------------|------------------|
+| screlu-hidden | 556.3 ns         | 244.5 ns (44.0%) | 76.5%       | 58.7%      | 35.5%            |
+| pairwise      | 429.7 ns         | 121.7 ns (28.3%) | 72.4%       | 52.1%      | 26.4%            |
+
+- **The first layer is a large share, so the work goes on.** The sparse kernel does as many
+  multiply-adds per instruction as the dense one (two inputs into eight rows against sixteen inputs
+  into one row), so the layer's time should fall roughly with the zero pairs, less the finding pass:
+  at best about 143 ns off screlu's evaluation (26%) and 63 ns off pairwise's (15%).
+- **The hypothesis that pairwise saves the larger fraction is refuted:** fewer of its pairs are
+  zero (52.1% against 58.7%). A product is zero when either of its lanes is, but pairwise's lanes are
+  zero less often than screlu's. In absolute time screlu gains about twice as much, which narrows
+  pairwise's speed edge.
+- **Nodes/s before, dense,** `nnue_bench --search-only --depth 9`, 49 positions, one thread, one
+  run each (short, so noisy): screlu-hidden 1,410,737 (2,483,194 nodes in 1.76 s), pairwise
+  1,566,534 (1,385,108 nodes in 0.88 s).
+- **The sparse kernel, written and exact, does not pay (2026-11-26).** The same bench and machine:
+  screlu's first layer 242.6 ns dense, 252.7 ns sparse (0.96x); pairwise's 120.9 and 134.9 ns
+  (0.90x). The sums equal on every position, and `--search-only` gave the same node counts as
+  before (2,483,194 and 1,385,108), its nodes/s within noise (1,492,733 and 1,554,072). Why: at i16
+  both kernels are bound by loads, not multiply-adds. The dense one loads one input block and
+  sixteen weight registers per sixteen inputs, about 1,088 loads for screlu. The sparse one loads an
+  index, the pair and two weight registers per nonzero pair, 211 of 512, about 844, and the finding
+  pass makes up the rest. **The engine stays dense;** the kernels, their tests and the bench's
+  dense-against-sparse timing are kept.
+- **Next, two levers (the developer, 2026-11-26):** zeros clustered by reordering the lanes, as
+  Stockfish does: 76% of inputs are zero but only 59% of pairs, so they are scattered. Exact: the
+  same permutation applied at load to the transform's columns and the first layer's weights, with no
+  retraining. Measured first in the bench alone (`--first-layer` reprints the zero pairs and the
+  sparse timing on reordered inputs). Then the 8-bit layer (item 2), where an index covers four
+  inputs and a load twice the products: the setting in which Stockfish's sparse layer pays.
+- **Reordering measured, too little (2026-11-26).** The inputs sorted by how often each is zero
+  over the same positions, one order for both perspectives:
+
+  | network       | zero pairs     | zero blocks of 4 | inputs never nonzero | sparse, reordered, against dense |
+  |---------------|----------------|------------------|----------------------|----------------------------------|
+  | screlu-hidden | 58.7% -> 63.1% | 35.5% -> 46.3%   | 0 of 512             | 1.07x                            |
+  | pairwise      | 52.1% -> 58.2% | 26.4% -> 41.9%   | 0 of 256             | 0.93x                            |
+
+  No input is always zero, and the zero frequencies are too even to cluster much. The screlu run
+  was disturbed (its whole evaluation 721 ns against 547 before), so its 1.07x is uncertain and at
+  best marginal. **The sparse layer at i16 is closed.** Blocks of four gain the most from
+  reordering, and they are the 8-bit layer's unit: sparse with reordering is retried there, measured
+  the same way, and nowhere sooner.
+- **Pairs, not blocks of four, confirmed:** at i16, a block of four is all zero far less often (35.5%
+  and 26.4%).

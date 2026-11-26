@@ -8,16 +8,17 @@ The plan of sparse-first-layer.md. Each step leaves tests and clippy clean.
    beside the blocks of four.
 2. `--first-layer [dir]` in `nnue_bench`, on a halfk network with two hidden layers: the whole
    evaluation from built accumulators, the first layer's sums alone over precomputed squares or
-   products, and their share, per evaluation. The bench reaches `first_layer_sums` through a `pub`
-   method on `QuantizedPsqNetwork`, `#[doc(hidden)]`, taking a board's built accumulators and a
-   `sparse: bool` (false until step 3).
+   products, and their share, per evaluation, then `zero_squares`. The bench reaches the layer
+   through two `#[doc(hidden)]` methods on `QuantizedPsqNetwork`: `first_layer_inputs(board)` and
+   `first_layer_sums_for_bench(inputs, board, sums)`. **Written 2026-11-26.** Step 3 adds the
+   `sparse: bool` to the second, to time dense against sparse.
 3. The developer runs, on one idle machine, for `-screlu-hidden-512-8-budget-g1-a1` and the pairwise
-   twin: the zero fractions, `--first-layer` on a test's games, and `bin/fattorini bench` with each
-   network. The figures go in sparse-first-layer.md before step 2.
+   twin: `--first-layer` on a test's games (the zero fractions with it), and `nnue_bench
+   --search-only` with each network for nodes/s (`bin/fattorini bench` embeds no network). The figures go in sparse-first-layer.md before step 2.
 
 **Stop here if** the first layer's share is small: the gain is bounded by it.
 
-## Step 2: the layout and the kernels
+## Step 2: the layout and the kernels (written 2026-11-26, with step 3)
 
 1. `QuantizedRows::columns: Vec<i16>`, built in `quantize` from `weight`: for pair `p`, output `o`,
    `columns[(p * out_dim + o) * 2 + k] = weight[o * in_dim + 2 * p + k]`.
@@ -40,6 +41,6 @@ The plan of sparse-first-layer.md. Each step leaves tests and clippy clean.
 ## Step 4: measure after
 
 The developer reruns step 1.3 on the same machine: `--first-layer` (dense against sparse) and
-`bin/fattorini bench` for both networks, the node counts equal to step 1's. The figures go in
+`nnue_bench --search-only` for both networks, the node counts equal to step 1's. The figures go in
 sparse-first-layer.md, and TODO.md's item 1 is marked done. Fusing the nonzero pass into the
 activation kernels is considered only here, from these figures.
