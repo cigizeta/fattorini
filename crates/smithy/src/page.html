@@ -171,6 +171,42 @@ function bar(done, total, reached = done) {
     + (tentative > 0 ? `<div class="tentative" style="width:${tentative}%"></div>` : "") + `</div>`;
 }
 
+// Every bar moves at every redraw, not only when a result arrives (the developer, 2026-11-26): it
+// shows what is done plus an estimate of the part under way, which never reaches the next real step,
+// so it never overshoots nor steps back when the result comes. The count in the text stays whole, a
+// fact; the percent and the ETA follow the bar. A training bar takes the round under way's live share
+// (`budgetProgress`); a bar of games, which say nothing until they end, estimates by time:
+// `underWay` below, capped at the work in play (`inPlay`).
+
+// When each game bar's count last changed, by its place: the page's own clock, so no server field; a
+// reload starts it at zero, the bar under-estimating for a moment, never overshooting.
+const countChanged = new Map();
+
+// The part under way of the bar at `key`, whose count is `count`: the seconds since that count last
+// changed at `perSecond` units a second, capped at `cap`, the units in play; 0 without a pace.
+function underWay(key, count, perSecond, cap) {
+  const now = performance.now();
+  const seen = countChanged.get(key);
+  if (!seen || seen.count !== count) {
+    countChanged.set(key, { count, at: now });
+    return 0;
+  }
+  if (!perSecond || perSecond <= 0 || cap <= 0) return 0;
+  return Math.min(cap, (now - seen.at) / 1000 * perSecond);
+}
+
+// Tasks the arenas' workers are playing, from each one's last poll: a pair each for trials, tunes
+// and round robins, a game for self-play.
+function inPlay() {
+  return (state.arenas || []).reduce((sum, a) => sum + (a.in_play || 0), 0);
+}
+
+// The ETA of a bar at `position` of `total` at `perSecond`, as `times` words it; none without a pace
+// or with nothing left.
+function etaAt(position, total, perSecond) {
+  return perSecond && perSecond > 0 && total - position > 0 ? `, ETA about ${duration(Math.round((total - position) / perSecond))}` : "";
+}
+
 // The gate's progress, which no count of games can give, an SPRT ending whenever its evidence is
 // enough: its LLR marked between the fail bound, left, and the pass bound, right, a tick where it starts.
 // Once a bound is reached the mark takes the verdict's colour, red failed and green passed. A duel's
@@ -229,11 +265,24 @@ function rate(perSecond, unit = "game") {
 // A phase's time as its record gives it, after its count: `, 11m elapsed, 7.3 games/s, ETA about
 // 54m`; each part only once its record gives it.
 // `pairs` for a line counting pairs, as a tune's: its pace in pairs, two games each.
-function times(view, pairs = false) {
+// `eta`, a continuous bar's own (`etaAt`), in place of the record's.
+function times(view, pairs = false, eta = null) {
   const t = view.time;
   return (t.elapsed_seconds === null ? "" : `, elapsed ${duration(t.elapsed_seconds)}`)
     + (t.games_per_second === null ? "" : `, ${pairs ? rate(t.games_per_second / 2, "pair") : rate(t.games_per_second)}`)
-    + (t.eta_seconds === null ? "" : `, ETA about ${duration(t.eta_seconds)}`);
+    + (eta !== null ? eta : t.eta_seconds === null ? "" : `, ETA about ${duration(t.eta_seconds)}`);
+}
+
+// A bar of games (or a tune's pairs) under a `times` record: `count` done of `total`, the part under
+// way by time at its games a second, capped at the pairs in play (`perTask` units each) and below
+// `total`. Its position, and the ETA from it. Nothing under way unless a job runs and `live`: a past
+// trial, shown while another job plays, is not the one in play.
+function gamesUnderWay(key, view, count, total, perTask, pairs = false, live = true) {
+  const t = view.time;
+  if (!state.running || !live) return { position: count, eta: null };
+  const perSecond = t && t.games_per_second ? (pairs ? t.games_per_second / 2 : t.games_per_second) : null;
+  const position = count + underWay(key, count, perSecond, Math.min(perTask * inPlay(), Math.max(0, total - count)));
+  return { position, eta: perSecond ? etaAt(position, total, perSecond) : null };
 }
 
 // `stop`, a trial's Stop beside its title, while it runs on its own screen.
@@ -248,10 +297,15 @@ function work(view, waiting, stop = "") {
       const time = (left) => !t ? ""
         : (t.time.elapsed_seconds === null ? "" : `, elapsed ${duration(t.time.elapsed_seconds)}`)
           + (pace === null ? "" : `, ${whole(Math.round(pace))} positions/s`)
-          + (pace === null || left === 0 ? "" : `, ETA about ${duration(Math.round(left / pace))}`);
-      const set = (name, got, wanted, timed) =>
-        `<div>${name}: ${whole(got)} of ${whole(wanted)} positions (${percent(wanted > 0 ? got / wanted : 0)})`
-        + `${timed ? time(Math.max(0, wanted - got)) : ""}</div>${bar(got, wanted)}`;
+          + (pace === null || left <= 0 ? "" : `, ETA about ${duration(Math.round(left / pace))}`);
+      // The set being played moves continuously: its positions under way by time at its pace, capped
+      // at the games in play times this play's average positions a game.
+      const set = (name, got, wanted, timed) => {
+        const cap = Math.min(inPlay() * (view.positions_per_game || 0), Math.max(0, wanted - got));
+        const position = timed && t ? got + underWay(`self-play ${name}`, got, pace, cap) : got;
+        return `<div>${name}: ${whole(got)} of ${whole(wanted)} positions (${percent(wanted > 0 ? position / wanted : 0)})`
+          + `${timed ? time(wanted - position) : ""}</div>${bar(position, wanted)}`;
+      };
       const testing = view.test_got < view.test_wanted;
       return `<h2>Self-play with ${escape(view.teacher)}</h2>`
         + set("Test set", view.test_got, view.test_wanted, testing)
@@ -261,8 +315,10 @@ function work(view, waiting, stop = "") {
       // Games, not pairings complete: a tournament chore plays every pairing at once, the one furthest
       // behind first, so pairings complete only near the end. Each game counts in both its players'.
       const played = view.standings.reduce((sum, s) => sum + s.games, 0) / 2, total = view.pairings * view.wanted * 2;
+      const going = gamesUnderWay("round robin", view, played, total, 2);
       return `<h2>Round robin: ${view.wanted} pairs a pairing</h2><div class="muted">${escape(view.limit)}</div>`
-        + `<div>${whole(played)} of ${whole(total)} games (${percent(total > 0 ? played / total : 0)})${times(view)}</div>${bar(played, total)}`
+        + `<div>${whole(played)} of ${whole(total)} games (${percent(total > 0 ? going.position / total : 0)})${times(view, false, going.eta)}</div>`
+        + bar(going.position, total)
         + table(["rank", "candidate", "points", "games", "score"],
           // The score and its margin each in a slot of its own width, so both align whatever their digits.
           // A candidate by its label: a grid's `lambda 0.05`, a budget's `epoch 2.25`.
@@ -282,10 +338,13 @@ function work(view, waiting, stop = "") {
       // A match knows its length and a duel projects it: a bar of its games with its ETA. A duel's and
       // an SPRT's gauge too, which end whenever the evidence is enough: a duel's starting at an even
       // score, an SPRT's at zero; a match's would only repeat its bar.
+      // Under way only while it runs, its verdict not yet given.
+      const going = view.expected_games === null ? null
+        : gamesUnderWay(`trial ${view.champion} ${view.challenger}`, view, view.games, view.expected_games, 2, false, !view.verdict);
       const length = view.expected_games === null ? ""
         : `<div>${whole(view.games)} of ${view.trial === "duel" ? "about " : ""}${whole(view.expected_games)} games`
-          + ` (${percent(view.expected_games > 0 ? view.games / view.expected_games : 0)})${times(view)}</div>`
-          + bar(view.games, view.expected_games);
+          + ` (${percent(view.expected_games > 0 ? going.position / view.expected_games : 0)})${times(view, false, going.eta)}</div>`
+          + bar(going.position, view.expected_games);
       const evidence = view.trial === "match" ? ""
         : gauge(view.gauge.value, view.gauge.lower, view.gauge.upper, view.gauge.left, view.gauge.right, view.trial === "duel" ? 0.5 : 0,
           view.verdict === "won by the challenger" ? "challenger" : view.verdict === "won by the champion" ? "champion" : null);
@@ -312,9 +371,11 @@ function work(view, waiting, stop = "") {
     case "tune":
       // As a trial's: the count and its time above the bar, the time only while it deals; in games,
       // two a pair (the developer, 2026-11-13).
+      // Continuous in pairs, a task each.
+      const going = view.time ? gamesUnderWay("tune", view, view.done, view.pairs, 1, true) : { position: view.done, eta: null };
       return `<h2>Tune of ${escape(view.player)}</h2>`
-        + `<div>${whole(2 * view.done)} of ${whole(2 * view.pairs)} games (${percent(view.pairs > 0 ? view.done / view.pairs : 0)})`
-        + `${view.time ? times(view) : ""}</div>${bar(view.done, view.pairs)}`
+        + `<div>${whole(2 * view.done)} of ${whole(2 * view.pairs)} games (${percent(view.pairs > 0 ? going.position / view.pairs : 0)})`
+        + `${view.time ? times(view, false, going.eta) : ""}</div>${bar(going.position, view.pairs)}`
         + (view.reference_nps ? `<div class="muted">Bench: ${whole(Math.round(view.reference_nps))} nodes/s per thread on this machine, every arena's clock scaled to it</div>` : "")
         + table(["parameter", "what it does", "start", "now", "moved"], (() => {
           // One count of decimals for the whole table, the most any start has and one more, both
@@ -365,13 +426,20 @@ function trainingProgress(lambdas, round) {
     return r && !r.finished && r.schedule.stage && r.schedule.waiting < r.schedule.patience ? sum + r.schedule.waiting : sum;
   }, 0);
   const total = share * lambdas.length;
+  // The round under way, continuous as the budget's: its share for each lambda still waiting on
+  // patience, added to the tentative stretch, as the waiting it would add.
+  const going = lambdas.reduce((sum, l) => {
+    const r = l.last;
+    return r && !r.finished && r.schedule.stage && r.schedule.waiting < r.schedule.patience ? sum + roundShare(r, round) : sum;
+  }, 0);
+  const position = Math.min(total, done + going);
   // The training's elapsed time as its histories record it, the longest one's: the lambdas train in
   // lockstep, and the last to finish has every round. The ETA at its average pace, approximate, the
   // bar not moving at an even pace.
   const elapsed = Math.max(...lambdas.filter((l) => l.last).map((l) => l.last.elapsed_seconds));
-  const eta = done > 0 && done < total ? `, ETA about ${duration(Math.round(elapsed * (total - done) / done))}` : "";
-  return `${roundLine(round)}<div>${whole(done)} of ${whole(total)} patience rounds (${percent(done / total)}), `
-    + `elapsed ${duration(Math.round(elapsed))}${eta}</div>${bar(settled, total, done)}`;
+  const eta = done > 0 && position < total ? `, ETA about ${duration(Math.round(elapsed * (total - position) / done))}` : "";
+  return `${roundLine(round)}<div>${whole(done)} of ${whole(total)} patience rounds (${percent(position / total)}), `
+    + `elapsed ${duration(Math.round(elapsed))}${eta}</div>${bar(settled, total, position)}`;
 }
 
 // One arm's progress by its stages (the developer, 2026-11-16). The stages done took `stage_round`
@@ -399,8 +467,17 @@ function stageProgress(r, round) {
   const estimate = Math.ceil(p.stages * p.stage_round / done) - r.round;
   const left = Math.max(estimate, minimum);
   const total = r.round + left;
-  return `${roundLine(round)}<div>${whole(r.round)} of about ${whole(total)} rounds (${percent(r.round / total)}), ${elapsed}, `
-    + `ETA about ${duration(Math.round(left * pace))}; ${bound}</div>${bar(r.round, total, r.round)}`;
+  // The round under way, continuous as the budget's.
+  const position = Math.min(total, r.round + roundShare(r, round));
+  return `${roundLine(round)}<div>${whole(r.round)} of about ${whole(total)} rounds (${percent(position / total)}), ${elapsed}, `
+    + `ETA about ${duration(Math.round((total - position) * pace))}; ${bound}</div>${bar(position, total, position)}`;
+}
+
+// The share of the round under way done, as `budgetProgress` counts it: its training half by its
+// share, 1 once testing; none for a finished arm or with no live pass.
+function roundShare(r, round) {
+  if (r.finished || !round) return 0;
+  return round.half === "test" ? 1 : Math.min(1, round.done / Math.max(1, round.total));
 }
 
 // A budgeted attempt's progress: its rounds of the budget's, its ETA the rounds left at the average pace of

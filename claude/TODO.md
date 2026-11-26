@@ -60,7 +60,11 @@ pairwise against screlu-hidden at 512.
   known for each kind; no claim on which kind gains more stands before it.
 - **Then the duels,** pairwise against screlu-hidden, both `-512-8-budget`, at depth 9 and 10+0.1,
   on the optimized engine: equal time is what decides pairwise (2026-11-22's planned duels, moved
-  after the optimization).
+  after the optimization). **10+0.1 done 2026-11-26, drawn, curtailed** (a non-training machine's
+  trial 1, both `@untuned`, i8): pairwise 384.5 of 754 (51.0%, +214 -199 =341 from its side, about
+  +7 Elo, ±9 one sigma). Its last minutes overlapped a test and clippy run (brief, on both sides
+  alike). With depth 9's 47.3%: pairwise's speed makes up its weaker evaluation, no more. Neither
+  wins: the dual attempts decide between the transforms.
 
 ## 2026-11-25: halfk_threats_pairwise_dual
 
@@ -77,7 +81,7 @@ pairwise against screlu-hidden at 512.
   and en passant rows and `unit: elo`. Its order against pairwise dual and the buckets: decided
   later. **Written 2026-11-26** (screlu-dual-implementation.md): tags 35 to 37, the castling and en
   passant rows untied from pairwise (a halfk pairwise or dual network has them),
-  `configs/lc0-halfk-threats-screlu-dual-512-8-budget.yaml`, `unit: elo`. Tests and clippy to run.
+  `configs/lc0-halfk-threats-screlu-dual-512-8-budget.yaml`, `unit: elo`. Tests and clippy clean 2026-11-26 (the developer).
 
 - **The piece-count buckets on dual, written ahead (2026-11-25)** (pairwise-dual-count.md, its plan
   pairwise-dual-count-implementation.md), the developer optimistic that dual wins: 8 independent

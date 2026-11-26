@@ -817,6 +817,9 @@ struct Shared {
     /// Self-play positions received for the test set and the training set, this phase.
     test_got: u64,
     train_got: u64,
+    /// Self-play games received this phase, both sets: the page's average positions a game, which
+    /// turns the games in play into positions under way.
+    self_play_games: u64,
     /// When this self-play began dealing, a resume's start included: its box's time, as the other
     /// phases' (`self_play_time`).
     self_play_started: Option<Instant>,
@@ -1005,6 +1008,8 @@ impl Shared {
                 train_wanted: targets.1,
                 // Each set counted up to its own target, the test set's last game overshooting it.
                 time: Some(self_play_time(self.self_play_started, self.test_got.min(test_left) + self.train_got, test_left + train_left)),
+                positions_per_game: (self.self_play_games > 0)
+                    .then(|| (self.test_got + self.train_got) as f64 / self.self_play_games as f64),
             },
             (Work::Pairs { wanted, .. }, View::RoundRobin { labels, players, .. }) => {
                 round_robin_view(labels, players, &self.pairs, wanted, &self.pair_times, self.depth())
@@ -1636,6 +1641,7 @@ impl Shared {
                 } else {
                     self.train_got += counted;
                 }
+                self.self_play_games += 1;
             }
             (Work::Pairs { record, wanted, .. }, Some(pairing)) => {
                 // A pair past what its pairing wants is dropped, unrecorded: one played by an arena
@@ -3069,7 +3075,17 @@ struct ForgeView {
 enum WorkView {
     Idle,
     /// `time` while it plays (`self_play_time`); none for a phase shown from its files, not running.
-    SelfPlay { teacher: String, test_got: u64, test_wanted: u64, train_got: u64, train_wanted: u64, time: Option<SelfPlayTime> },
+    /// `positions_per_game` this play's average, none before a game: the page's estimate of the
+    /// positions under way, from the games in play.
+    SelfPlay {
+        teacher: String,
+        test_got: u64,
+        test_wanted: u64,
+        train_got: u64,
+        train_wanted: u64,
+        time: Option<SelfPlayTime>,
+        positions_per_game: Option<f64>,
+    },
     /// `time` from its record's arrivals (`pairs_eta`); `limit` its games' search, `depth <d>`.
     RoundRobin { pairings: usize, wanted: u32, standings: Vec<StandingView>, time: PlayTime, limit: String },
     /// The gate in champion and challenger's words: the champion is the generation's teacher, the
@@ -3435,6 +3451,7 @@ impl Status {
                 train_got: positions_in(&dirs.train(generation)).unwrap_or(0),
                 train_wanted: config.training_positions(),
                 time: None,
+                positions_per_game: None,
             }),
         };
         let training: Vec<LambdaView> = lambdas
@@ -4212,7 +4229,7 @@ impl Attempt<'_> {
 fn set_work(shared: &Mutex<Shared>, work: Work) {
     let mut shared = shared.lock().expect("the lock should not be poisoned");
     shared.epoch += 1;
-    (shared.test_got, shared.train_got) = (0, 0);
+    (shared.test_got, shared.train_got, shared.self_play_games) = (0, 0, 0);
     shared.self_play_started = matches!(work, Work::SelfPlay { .. }).then(Instant::now);
     shared.work = Some(work);
 }

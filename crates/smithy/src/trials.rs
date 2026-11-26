@@ -334,7 +334,7 @@ fn judge_duel(pairs: &[i32]) -> Judged {
         } else if side.count >= DUEL_MAX_PAIRS {
             Some("drawn at the cap".to_string())
         } else if !side.can_still_win() && !side.other_side().can_still_win() {
-            Some(format!("drawn, curtailed: neither can pass its bound by {} pairs", progress::grouped(DUEL_MAX_PAIRS)))
+            Some(format!("drawn, curtailed: neither can pass its bound by {} games", progress::grouped(2 * DUEL_MAX_PAIRS)))
         } else {
             None
         };
