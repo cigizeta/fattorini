@@ -252,3 +252,35 @@ from the material below and the run log.
    an inaccuracy rarely played.
 8. **What it does not do.** No human statistics, no frequencies; no positions beyond the cost
    budget; the engine's opinion at depth 20, no more.
+9. **Two layers, and what they are like (the developer and Claude, 2026-11-26).** The inner layer
+   is still Stockfish's depth-first alpha-beta, one search per expansion; the outer one is
+   Dijkstra, best-first in order of cost, never breadth-first by ply. Unlike alpha-beta nothing is
+   backed up: a position's value never changes with what lies below it, Dijkstra only chooses
+   where to spend the next search. The cost reads like minus the log of the chance the game goes
+   that way (a fixed charge a ply, more for a worse move), so positions are expanded in the order
+   the game is likely to reach them: akin to Tsuruoka's realization probability search in shogi,
+   which cut lines inside a search by their accumulated log probability.
+10. **Prior art, and what is ours (web searches, 2026-11-26; Lincke's paper itself not read).**
+    The central trade, deep along good moves and shallow along weaker ones, is Thomas Lincke's
+    drop-out expansion ("Strategies for the Automatic Construction of Opening Books", Computers
+    and Games 2000), the most popular automatic book method for alpha-beta engines since: it
+    expands the move maximizing the score minus a depth penalty. Also known: never expanding
+    positions outside a score window (H.G. Muller on Talkchess, as our +/-3.00 cutoff), dropping
+    moves a fixed cp below the best (Rebel's book builder, 200 cp by default), search-based
+    construction in general (John Fishburn, 2016; ianfab's bookgen, MultiPV with Stockfish).
+    Found nowhere in these searches, so presented as Fattorini's own: Dijkstra's cumulative path
+    cost (transpositions at their cheapest, a budget that stops exactly); the exact parallel band;
+    nested fragments by a rising budget, one run continued; trimming by `searchmoves` instead of
+    MultiPV; losses in Stockfish's own expected score (`wdl`), with no backup. The page presents
+    it as a shortest-path take on drop-out expansion, Lincke cited as the origin. Sources:
+    - https://dblp.uni-trier.de/rec/conf/cg/Lincke00.html
+    - https://dke.maastrichtuniversity.nl/m.winands/documents/ouvertures9x9.pdf (Chaslot et al.,
+      describing drop-out expansion)
+    - https://ipsj.ixsq.nii.ac.jp/record/95805/files/IPSJ-GPWS2013002.pdf (expansion policies)
+    - https://talkchess.com/viewtopic.php?p=524876 and https://talkchess.com/viewtopic.php?p=713881
+      (search-based books, score windows)
+    - https://talkchess.com/viewtopic.php?p=707878 (generating a book from scratch)
+    - https://www.chessprogramming.org/Opening_Book (bibliography, Fishburn 2016)
+    - https://rebel13.nl/rebel13/pgn-annotator.html (Rebel's book builder)
+    Before the page is written: read Lincke's paper and Fishburn's, to state the difference from
+    first-hand reading.

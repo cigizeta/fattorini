@@ -34,7 +34,8 @@ never expanded, loss weight 4, fragment 0 at budget 60, +10 a fragment.
 3. Then `book-polyglot stockfish`, the book checked by eye in a GUI on a few openings; lichess-bot's
    config pointed at it when the developer chooses.
 4. Later, not today: "Inside Fattorini"'s "Opening books" page, from the plan's last section and
-   its run log.
+   its run log. That section now holds the prior art (Lincke's drop-out expansion, 2000, the
+   origin of the idea) and what is Fattorini's own; read Lincke's and Fishburn's papers first.
 5. The old book code (book.rs, book_scores.rs, the arena's `score` chore, the page's Books screen)
    is deprecated, deleted only when the developer says so.
 
