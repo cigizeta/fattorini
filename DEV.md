@@ -362,6 +362,28 @@ commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`); its UCI na
 (below) drops the `-dev`. lichess-bot's
 `config.yml` names the snapshot it plays. A release on GitHub is built the same way.
 
+## The opening book
+
+The book lichess-bot plays is judged by a UCI engine of `data/engines.yaml` (any entry with a
+path), over every position of Lichess's chess-openings files, a CC0 snapshot in
+`crates/smithy/openings/`. Two commands of the smithy, run by hand, in no usage line. First the
+evaluations, every position searched to depth 20 on one thread per engine, one engine per core;
+stopped by Ctrl+C or a crash, the same command resumes:
+
+```bash
+./bin/smithy uci-book stockfish 1
+```
+
+It writes `data/books/uci-book-stockfish-v1.bin`, each position's evaluation from White's side,
+beside its progress file. Then the Polyglot book, each move weighing e^(score / T) against its
+position's best, T = 20 cp unless `--temperature` says otherwise; a new T needs no new search:
+
+```bash
+./bin/smithy uci-book-polyglot data/books/uci-book-stockfish-v1.bin
+```
+
+It writes `data/books/uci-book-stockfish-v1-t20.bin`, which lichess-bot's `config.yml` names.
+
 ## Releases
 
 A release is a snapshot built at a tag: the C runtime static, the third-party notices embedded

@@ -59,6 +59,7 @@ mod buckets;
 mod tasks;
 mod trials;
 mod tune;
+mod uci_book;
 mod value_head;
 
 use std::env;
@@ -94,6 +95,9 @@ fn main() {
         }
         // The book job's child, likewise.
         Some(book::CHILD_COMMAND) => book::run(&rest),
+        // The book judged by a UCI engine, and its Polyglot book: run by hand, in no usage line.
+        Some(uci_book::BUILD_COMMAND) => uci_book::run_build(&rest),
+        Some(uci_book::POLYGLOT_COMMAND) => uci_book::run_polyglot(&rest),
         Some(verb @ ("start" | "stop" | "status")) => smithy::run(verb, &rest),
         _ => {
             eprintln!("{}", USAGE);
@@ -120,6 +124,11 @@ mod tests {
     #[test]
     fn the_usage_offers_no_dev_smithy() {
         assert!(!USAGE.contains("--dev"), "a scaled run is asked from the page, on any smithy");
+    }
+
+    #[test]
+    fn the_usage_offers_no_uci_book_command() {
+        assert!(!USAGE.contains(uci_book::BUILD_COMMAND), "the UCI-judged book is run by hand, a hidden feature");
     }
 
     #[test]
