@@ -1,5 +1,8 @@
 # Search optimizations: the candidate list
 
+**Superseded, see TODO.md** (the developer, 2026-11-26): its "Speed" and "Search" sections hold the
+live list. Archived as written, from the Rotor era.
+
 Drawn up with the developer on 2026-10-06, after Lichess showed Rotor at about 1M nodes/s with
 4 threads on the Lichess machine (about 250k per thread), against Stockfish's 1 to 2M per thread with a far
 larger network. A list to choose from, not a plan: each item picked gets its own design discussion
