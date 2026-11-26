@@ -1,6 +1,8 @@
 # A book judged by any UCI engine -- Design
 
-Status: in discussion (2026-11-26). A full redesign of book building, ported from aio64's book
+Status: **superseded, see book-expansion.md** (2026-11-26). Built (uci-book-implementation.md),
+then replaced the same day: the Lichess openings are not in the book, and the code is rewritten.
+The engine, evaluations from White's side, the Polyglot softmax and the files' place carry over. A full redesign of book building, ported from aio64's book
 (master-book-v1.md and book-expansion-v1.md in aio64) and rewritten in Rust here. No plan yet.
 
 ## Decided

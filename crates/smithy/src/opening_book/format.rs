@@ -1,0 +1,211 @@
+//! A fragment's file: the positions one fragment expanded, each with its evaluation and its moves.
+//! Little-endian.
+//!
+//! Header: magic `FBKF` (4), format version (2), fragment index (2), budget (4, f32), charge (4,
+//! f32), threshold in points (4, f32), depth (1), reserved (3), the engine's `id name` as length
+//! (2) and UTF-8 bytes, entry count (4).
+//!
+//! Entry, sorted by key: the position's Polyglot key (8); its evaluation from White's side (2);
+//! the number of moves (1); per move, best first, its Polyglot encoding (2) and its score from
+//! White's side (2). A score is centipawns within +/-`MAX_CP`, or a mate in N as +/-(`MATE` - N).
+
+use super::unit::Score;
+
+const MAGIC: &[u8; 4] = b"FBKF";
+pub const FORMAT_VERSION: u16 = 1;
+const MAX_CP: i32 = 30_000;
+const MATE: i32 = 32_000;
+
+/// What every fragment of one book must agree on, and which fragment this is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Header {
+    pub index: u16,
+    pub budget: f32,
+    pub charge: f32,
+    pub threshold: f32,
+    pub depth: u8,
+    pub engine: String,
+}
+
+impl Header {
+    /// Why two fragments cannot belong to one book, if they cannot: a different charge, threshold,
+    /// depth or engine.
+    pub fn mismatch(&self, other: &Header) -> Option<String> {
+        let differs = |what: &str, a: String, b: String| (a != b).then(|| format!("{what} {a} against {b}"));
+        differs("charge", self.charge.to_string(), other.charge.to_string())
+            .or_else(|| differs("threshold", self.threshold.to_string(), other.threshold.to_string()))
+            .or_else(|| differs("depth", self.depth.to_string(), other.depth.to_string()))
+            .or_else(|| differs("engine", self.engine.clone(), other.engine.clone()))
+    }
+}
+
+/// One expanded position, scores from White's side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Position {
+    pub key: u64,
+    pub eval: Score,
+    /// Polyglot move encoding and score, best first.
+    pub moves: Vec<(u16, Score)>,
+}
+
+pub fn encode(score: Score) -> i16 {
+    let raw = match score {
+        Score::Cp(cp) => cp.clamp(-MAX_CP, MAX_CP),
+        Score::Mate(n) => {
+            assert!(n != 0 && n.abs() < MATE - MAX_CP, "a mate in {n} cannot be stored");
+            if n > 0 { MATE - n } else { -MATE - n }
+        }
+    };
+    raw as i16
+}
+
+pub fn decode(raw: i16) -> Score {
+    let raw = raw as i32;
+    if raw > MAX_CP {
+        Score::Mate(MATE - raw)
+    } else if raw < -MAX_CP {
+        Score::Mate(-MATE - raw)
+    } else {
+        Score::Cp(raw)
+    }
+}
+
+/// The fragment's bytes, its positions sorted by key.
+pub fn write(header: &Header, positions: &[Position]) -> Vec<u8> {
+    let mut sorted: Vec<&Position> = positions.iter().collect();
+    sorted.sort_by_key(|position| position.key);
+    let engine = header.engine.as_bytes();
+    let mut out = Vec::new();
+    out.extend_from_slice(MAGIC);
+    out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&header.index.to_le_bytes());
+    out.extend_from_slice(&header.budget.to_le_bytes());
+    out.extend_from_slice(&header.charge.to_le_bytes());
+    out.extend_from_slice(&header.threshold.to_le_bytes());
+    out.push(header.depth);
+    out.extend_from_slice(&[0; 3]);
+    out.extend_from_slice(&u16::try_from(engine.len()).expect("an engine name under 64 KB").to_le_bytes());
+    out.extend_from_slice(engine);
+    out.extend_from_slice(&(sorted.len() as u32).to_le_bytes());
+    for position in sorted {
+        out.extend_from_slice(&position.key.to_le_bytes());
+        out.extend_from_slice(&encode(position.eval).to_le_bytes());
+        out.push(u8::try_from(position.moves.len()).expect("at most 218 legal moves"));
+        for &(mv, score) in &position.moves {
+            out.extend_from_slice(&mv.to_le_bytes());
+            out.extend_from_slice(&encode(score).to_le_bytes());
+        }
+    }
+    out
+}
+
+/// The header and positions of a fragment's bytes, or why they are not a fragment.
+pub fn read(data: &[u8]) -> Result<(Header, Vec<Position>), String> {
+    let mut reader = Reader { data, pos: 0 };
+    if reader.take(4)? != MAGIC {
+        return Err("not a book fragment (wrong magic)".into());
+    }
+    let format = reader.u16()?;
+    if format != FORMAT_VERSION {
+        return Err(format!("fragment format {format} is not supported (expected {FORMAT_VERSION})"));
+    }
+    let index = reader.u16()?;
+    let budget = reader.f32()?;
+    let charge = reader.f32()?;
+    let threshold = reader.f32()?;
+    let depth = reader.take(1)?[0];
+    reader.take(3)?;
+    let engine_len = reader.u16()? as usize;
+    let engine = String::from_utf8(reader.take(engine_len)?.to_vec()).map_err(|_| "the engine name is not UTF-8".to_string())?;
+    let count = reader.u32()? as usize;
+    let mut positions = Vec::with_capacity(count);
+    for _ in 0..count {
+        let key = reader.u64()?;
+        let eval = decode(reader.i16()?);
+        let moves = (0..reader.take(1)?[0]).map(|_| Ok((reader.u16()?, decode(reader.i16()?)))).collect::<Result<_, String>>()?;
+        positions.push(Position { key, eval, moves });
+    }
+    if reader.pos != data.len() {
+        return Err("the fragment has bytes past its last position".into());
+    }
+    Ok((Header { index, budget, charge, threshold, depth, engine }, positions))
+}
+
+struct Reader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+        let end = self.pos + n;
+        let bytes = self.data.get(self.pos..end).ok_or_else(|| "the fragment ends too early".to_string())?;
+        self.pos = end;
+        Ok(bytes)
+    }
+
+    fn u16(&mut self) -> Result<u16, String> {
+        Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+
+    fn i16(&mut self) -> Result<i16, String> {
+        Ok(i16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    fn u64(&mut self) -> Result<u64, String> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+
+    fn f32(&mut self) -> Result<f32, String> {
+        Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header() -> Header {
+        Header { index: 2, budget: 140.0, charge: 10.0, threshold: 10.0, depth: 20, engine: "Judge 1".into() }
+    }
+
+    #[test]
+    fn a_fragment_reads_back_sorted_by_key() {
+        let positions = [
+            Position { key: 9, eval: Score::Cp(-35), moves: vec![(100, Score::Cp(-35)), (200, Score::Cp(-60))] },
+            Position { key: 2, eval: Score::Mate(-1), moves: Vec::new() },
+        ];
+        let (read_header, read_positions) = read(&write(&header(), &positions)).unwrap();
+        assert_eq!(read_header, header());
+        assert_eq!(read_positions, [positions[1].clone(), positions[0].clone()]);
+    }
+
+    #[test]
+    fn scores_and_mates_keep_apart() {
+        for score in [Score::Mate(1), Score::Mate(-1), Score::Mate(200), Score::Mate(-200), Score::Cp(MAX_CP), Score::Cp(-MAX_CP), Score::Cp(0)] {
+            assert_eq!(decode(encode(score)), score);
+        }
+        assert_eq!(decode(encode(Score::Cp(99_999))), Score::Cp(MAX_CP), "clamped");
+    }
+
+    #[test]
+    fn a_foreign_or_damaged_fragment_is_refused() {
+        assert!(read(b"FUCB").is_err());
+        let mut bytes = write(&header(), &[Position { key: 1, eval: Score::Cp(0), moves: vec![(5, Score::Cp(0))] }]);
+        bytes.pop();
+        assert!(read(&bytes).is_err());
+        bytes.extend_from_slice(&[0, 0, 0]);
+        assert!(read(&bytes).is_err());
+    }
+
+    #[test]
+    fn fragments_of_another_book_are_named_by_their_difference() {
+        let other = Header { depth: 18, ..header() };
+        assert_eq!(header().mismatch(&other), Some("depth 20 against 18".into()));
+        assert_eq!(header().mismatch(&Header { index: 3, budget: 150.0, ..header() }), None);
+    }
+}

@@ -1,15 +1,17 @@
-//! The judge: one UCI engine of `data/engines.yaml`, driven over stdin/stdout to evaluate one
-//! position at a time at a fixed depth. Not the arena's `UciClient`, which is built for matches
-//! (clocks, faults that decide a pairing, CPU pinning): a book needs only `go depth` and the score.
+//! The judge: one UCI engine of `data/engines.yaml`, driven over stdin/stdout. Not the arena's
+//! `UciClient`, which is built for matches (clocks, faults that decide a pairing, CPU pinning): a
+//! book needs `go depth`, `searchmoves`, the score and the best move.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+
+use super::unit::Score;
 
 /// Where each machine names its engines, gitignored; `examples/engines.yaml` shows its shape.
 pub const ENGINE_REGISTRY_PATH: &str = "data/engines.yaml";
@@ -29,9 +31,9 @@ pub struct RegistryEntry {
     #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
-    pub path: Option<String>,
+    path: Option<String>,
     #[serde(default)]
-    pub options: HashMap<String, serde_yaml::Value>,
+    options: HashMap<String, serde_yaml::Value>,
 }
 
 /// The entry `name` of the registry's YAML text, checked to be a UCI engine with a path.
@@ -48,22 +50,28 @@ pub fn registry_entry(yaml: &str, name: &str) -> Result<RegistryEntry, String> {
     Ok(entry)
 }
 
-/// A score as the engine reports it: from the side to move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Score {
-    Cp(i32),
-    Mate(i32),
-}
-
-/// What one search gave: the score of the deepest depth the engine completed, and that depth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What one search gave: the best move in UCI notation, its score from the side to move, the
+/// deepest depth the engine completed, and the nodes and time it took.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Search {
+    pub best_move: String,
     pub score: Score,
     pub depth: u8,
+    pub nodes: u64,
+    pub time: Duration,
+}
+
+/// What an expansion asks of an engine; a trait so a scripted engine tests the expansion.
+pub trait Judge {
+    /// A fresh state before a new position: `ucinewgame`, so a rebuild gives the same searches.
+    fn new_position(&mut self) -> Result<(), String>;
+    /// `fen` searched to `depth`, restricted to `searchmoves` (UCI notation) when given; the
+    /// table is kept from the searches before it since `new_position`.
+    fn search(&mut self, fen: &str, depth: u8, searchmoves: Option<&[String]>) -> Result<Search, String>;
 }
 
 pub struct Engine {
-    /// The engine's `id name`, for the book's header.
+    /// The engine's `id name`, for the fragments' header.
     pub name: String,
     child: Child,
     stdin: ChildStdin,
@@ -71,8 +79,8 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Starts the entry's engine: `uci`, its options, then `Threads` 1 whatever they say (one
-    /// thread, so a rebuild gives the same evaluations), `isready`.
+    /// Starts the entry's engine: `uci`, its options in name order, then `Threads` 1 whatever they
+    /// say (one thread, so a rebuild gives the same searches), `isready`.
     pub fn start(entry: &RegistryEntry) -> Result<Engine, String> {
         let path = entry.path.as_deref().expect("registry_entry checked the path");
         let mut command = Command::new(path);
@@ -107,25 +115,6 @@ impl Engine {
         Ok(engine)
     }
 
-    /// The position of `fen` searched to `depth` from a fresh state (`ucinewgame`). Waits for
-    /// `bestmove` without a timeout: a fixed depth takes what it takes.
-    pub fn search(&mut self, fen: &str, depth: u8) -> Result<Search, String> {
-        self.send("ucinewgame")?;
-        self.ready()?;
-        self.send(&format!("position fen {fen}"))?;
-        self.send(&format!("go depth {depth}"))?;
-        let mut last = None;
-        self.wait_for(None, |line| {
-            if let Some(info) = line.strip_prefix("info ")
-                && let Some(search) = parse_info(info)
-            {
-                last = Some(search);
-            }
-            line.starts_with("bestmove")
-        })?;
-        last.ok_or_else(|| format!("{} gave no score for {fen}", self.name))
-    }
-
     fn ready(&mut self) -> Result<(), String> {
         self.send("isready")?;
         self.wait_for(Some(HANDSHAKE_TIMEOUT), |line| line == "readyok")
@@ -151,6 +140,37 @@ impl Engine {
     }
 }
 
+impl Judge for Engine {
+    fn new_position(&mut self) -> Result<(), String> {
+        self.send("ucinewgame")?;
+        self.ready()
+    }
+
+    /// Waits for `bestmove` without a timeout: a fixed depth takes what it takes.
+    fn search(&mut self, fen: &str, depth: u8, searchmoves: Option<&[String]>) -> Result<Search, String> {
+        self.send(&format!("position fen {fen}"))?;
+        let started = Instant::now();
+        self.send(&go_command(depth, searchmoves))?;
+        let mut last: Option<Info> = None;
+        let mut best_move = None;
+        self.wait_for(None, |line| {
+            if let Some(info) = line.strip_prefix("info ")
+                && let Some(parsed) = parse_info(info)
+            {
+                last = Some(parsed);
+            }
+            if let Some(rest) = line.strip_prefix("bestmove ") {
+                best_move = rest.split_whitespace().next().map(str::to_string);
+                return true;
+            }
+            false
+        })?;
+        let info = last.ok_or_else(|| format!("{} gave no score for {fen}", self.name))?;
+        let best_move = best_move.filter(|mv| mv != "(none)").ok_or_else(|| format!("{} gave no move for {fen}", self.name))?;
+        Ok(Search { best_move, score: info.score, depth: info.depth, nodes: info.nodes, time: started.elapsed() })
+    }
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         let _ = self.send("quit");
@@ -160,15 +180,31 @@ impl Drop for Engine {
     }
 }
 
-/// An `info` line's depth and score, or `None` when it carries no score, or only a bound (a
+/// `go depth <d>`, with `searchmoves` and its moves when given.
+fn go_command(depth: u8, searchmoves: Option<&[String]>) -> String {
+    match searchmoves {
+        Some(moves) => format!("go depth {depth} searchmoves {}", moves.join(" ")),
+        None => format!("go depth {depth}"),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Info {
+    score: Score,
+    depth: u8,
+    nodes: u64,
+}
+
+/// An `info` line's score, depth and nodes, or `None` when it carries no score, or only a bound (a
 /// `lowerbound` or `upperbound` score is a fail-high or fail-low, not the depth's result).
-fn parse_info(info: &str) -> Option<Search> {
+fn parse_info(info: &str) -> Option<Info> {
     let tokens: Vec<&str> = info.split_whitespace().collect();
     let value_after = |key: &str| tokens.iter().position(|&token| token == key).and_then(|index| tokens.get(index + 1));
     if tokens.iter().any(|&token| token == "lowerbound" || token == "upperbound") {
         return None;
     }
     let depth = value_after("depth")?.parse().ok()?;
+    let nodes = value_after("nodes").and_then(|nodes| nodes.parse().ok()).unwrap_or(0);
     let score_index = tokens.iter().position(|&token| token == "score")?;
     let value: i32 = tokens.get(score_index + 2)?.parse().ok()?;
     let score = match *tokens.get(score_index + 1)? {
@@ -176,7 +212,7 @@ fn parse_info(info: &str) -> Option<Search> {
         "mate" => Score::Mate(value),
         _ => return None,
     };
-    Some(Search { score, depth })
+    Some(Info { score, depth, nodes })
 }
 
 /// A YAML option value as `setoption ... value` text.
@@ -214,10 +250,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_info_line_gives_its_depth_and_score() {
+    fn an_info_line_gives_its_score_depth_and_nodes() {
         let line = "depth 20 seldepth 27 multipv 1 score cp -35 nodes 123456 nps 1000000 pv e7e5";
-        assert_eq!(parse_info(line), Some(Search { score: Score::Cp(-35), depth: 20 }));
-        assert_eq!(parse_info("depth 9 seldepth 9 score mate -3 nodes 100 pv e1e2"), Some(Search { score: Score::Mate(-3), depth: 9 }));
+        assert_eq!(parse_info(line), Some(Info { score: Score::Cp(-35), depth: 20, nodes: 123_456 }));
+        let mate = parse_info("depth 9 seldepth 9 score mate -3 nodes 100 pv e1e2").unwrap();
+        assert_eq!(mate.score, Score::Mate(-3));
     }
 
     #[test]
@@ -225,6 +262,13 @@ mod tests {
         assert_eq!(parse_info("depth 20 seldepth 25 score cp 40 lowerbound nodes 99"), None);
         assert_eq!(parse_info("depth 20 currmove e2e4 currmovenumber 1"), None);
         assert_eq!(parse_info("string NNUE evaluation using nn.nnue"), None);
+    }
+
+    #[test]
+    fn go_lists_the_searchmoves() {
+        assert_eq!(go_command(20, None), "go depth 20");
+        let moves = ["d2d4".to_string(), "g1f3".to_string()];
+        assert_eq!(go_command(20, Some(&moves)), "go depth 20 searchmoves d2d4 g1f3");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # A book judged by any UCI engine -- Implementation plan
 
-Status: steps 1 to 8 done (2026-11-26): `cargo test -p smithy --release` passes, clippy's one
-warning fixed. Step 9, the developer's run, next.
+Status: **superseded, see book-expansion-implementation.md** (2026-11-26). Steps 1 to 8 were
+done and pushed; step 9 never ran. The code was deleted by the new plan's step 1.
 Changed on the way: no SHA-256 logged (no hashing crate in the workspace, and nothing pins the
 book); a position with no legal move is written with depth 0.
 Changed on the way: an engine that stops short of the depth (as on a forced mate) is not an

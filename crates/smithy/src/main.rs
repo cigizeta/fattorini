@@ -37,6 +37,7 @@ mod history;
 mod lease;
 mod net_config;
 mod nnue_network;
+mod opening_book;
 mod pesto;
 mod pipeline;
 mod polyline;
@@ -59,7 +60,6 @@ mod buckets;
 mod tasks;
 mod trials;
 mod tune;
-mod uci_book;
 mod value_head;
 
 use std::env;
@@ -95,9 +95,11 @@ fn main() {
         }
         // The book job's child, likewise.
         Some(book::CHILD_COMMAND) => book::run(&rest),
-        // The book judged by a UCI engine, and its Polyglot book: run by hand, in no usage line.
-        Some(uci_book::BUILD_COMMAND) => uci_book::run_build(&rest),
-        Some(uci_book::POLYGLOT_COMMAND) => uci_book::run_polyglot(&rest),
+        // The opening book grown by Dijkstra, its Polyglot book and its probe: run by hand, in no
+        // usage line.
+        Some(opening_book::FRAGMENT_COMMAND) => opening_book::run_fragment(&rest),
+        Some(opening_book::POLYGLOT_COMMAND) => opening_book::run_polyglot(&rest),
+        Some(opening_book::PROBE_COMMAND) => opening_book::run_probe(&rest),
         Some(verb @ ("start" | "stop" | "status")) => smithy::run(verb, &rest),
         _ => {
             eprintln!("{}", USAGE);
@@ -127,8 +129,10 @@ mod tests {
     }
 
     #[test]
-    fn the_usage_offers_no_uci_book_command() {
-        assert!(!USAGE.contains(uci_book::BUILD_COMMAND), "the UCI-judged book is run by hand, a hidden feature");
+    fn the_usage_offers_no_opening_book_command() {
+        for command in [opening_book::FRAGMENT_COMMAND, opening_book::POLYGLOT_COMMAND, opening_book::PROBE_COMMAND] {
+            assert!(!USAGE.contains(command), "{command} is run by hand, a hidden feature");
+        }
     }
 
     #[test]

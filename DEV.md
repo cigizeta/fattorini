@@ -364,25 +364,35 @@ commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`); its UCI na
 
 ## The opening book
 
-The book lichess-bot plays is judged by a UCI engine of `data/engines.yaml` (any entry with a
-path), over every position of Lichess's chess-openings files, a CC0 snapshot in
-`crates/smithy/openings/`. Two commands of the smithy, run by hand, in no usage line. First the
-evaluations, every position searched to depth 20 on one thread per engine, one engine per core;
-stopped by Ctrl+C or a crash, the same command resumes:
+The book lichess-bot plays is grown from the initial position by a UCI engine of
+`data/engines.yaml` (any entry with a path), in fragments: Dijkstra over the game graph, each move
+costing 10 plus its loss in expected-score points, a move losing 10 points or more never admitted.
+Fragment 0 holds the positions of cost up to 120 (12 plies of best moves), each next fragment 10
+more. Three commands of the smithy, run by hand, in no usage line.
+
+Before a run, how one position expands (every search, its score, loss, nodes and time; nothing
+written), here after 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6:
 
 ```bash
-./bin/smithy uci-book stockfish 1
+./bin/smithy book-probe stockfish e2e4 e7e5 g1f3 b8c6 f1b5 a7a6
 ```
 
-It writes `data/books/uci-book-stockfish-v1.bin`, each position's evaluation from White's side,
-beside its progress file. Then the Polyglot book, each move weighing e^(score / T) against its
-position's best, T = 20 cp unless `--temperature` says otherwise; a new T needs no new search:
+The next fragment, one engine per core, each search at depth 20 on one thread; stopped by Ctrl+C
+or a crash, the same command resumes, and earlier fragments are never searched again:
 
 ```bash
-./bin/smithy uci-book-polyglot data/books/uci-book-stockfish-v1.bin
+./bin/smithy book-fragment stockfish
 ```
 
-It writes `data/books/uci-book-stockfish-v1-t20.bin`, which lichess-bot's `config.yml` names.
+It writes `data/books/book-stockfish-f<k>.bin`. Then the Polyglot book of every fragment so far,
+each move weighing e^(score / T) against its position's best, T = 20 cp unless `--temperature`
+says otherwise:
+
+```bash
+./bin/smithy book-polyglot stockfish
+```
+
+It writes `data/books/book-stockfish-f0-<k>-t20.bin`, which lichess-bot's `config.yml` names.
 
 ## Releases
 

@@ -9,9 +9,6 @@ bin/** text eol=lf
 *.sh text eol=lf
 *.awk text eol=lf
 
-# The openings snapshot, embedded in the smithy by include_str!: the same bytes on every checkout.
-crates/smithy/openings/*.tsv text eol=lf
-
 # Windows batch and PowerShell scripts need CRLF.
 *.bat text eol=crlf
 *.cmd text eol=crlf
