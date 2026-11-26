@@ -3,8 +3,7 @@
 //! what differs between the tracks comes in through its closures.
 //!
 //! It replaced the lockstep of a grid's lambdas over a stacked network (2026-11-26), with the grid
-//! itself and patience: a generation trains one run, its positions labelled at the polyline, its
-//! labels the batches' one column.
+//! itself and patience: a generation trains one run, its positions labelled at the polyline.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,9 +20,6 @@ use crate::{
     attempt_config, batch, checkpoint_store, game_labels, history, nnue_network, round, test_cache, train_stream,
     transformer_batch, transformer_network,
 };
-
-/// The label column a run reads in every batch: the polyline's, the batches' only one.
-const COLUMN: usize = 0;
 
 /// One run: its own files in `run_dir` (`generation::run_dir`), and where it stands.
 pub(crate) struct Arm {
@@ -92,39 +88,39 @@ fn open_arm(config: &NetConfig, budget: &Budget, source: &str, run_dir: String, 
     Arm { run_dir, checkpoints_dir, model_path, optimizer_path, history_path, round_progress_path, standing }
 }
 
-/// A network one run trains: its losses against label column `column` of a batch.
+/// A network one run trains: its losses on a batch.
 pub(crate) trait Model {
     type Batch;
-    fn training_loss(&self, batch: &Self::Batch, column: usize) -> Tensor;
-    fn test_loss(&self, batch: &Self::Batch, column: usize) -> Tensor;
+    fn training_loss(&self, batch: &Self::Batch) -> Tensor;
+    fn test_loss(&self, batch: &Self::Batch) -> Tensor;
 }
 
 impl Model for nnue_network::Network {
     type Batch = batch::DenseBatch;
 
-    fn training_loss(&self, batch: &batch::DenseBatch, column: usize) -> Tensor {
-        nnue_network::Network::training_loss(self, batch, column)
+    fn training_loss(&self, batch: &batch::DenseBatch) -> Tensor {
+        nnue_network::Network::training_loss(self, batch)
     }
 
-    fn test_loss(&self, batch: &batch::DenseBatch, column: usize) -> Tensor {
-        nnue_network::Network::test_loss(self, batch, column)
+    fn test_loss(&self, batch: &batch::DenseBatch) -> Tensor {
+        nnue_network::Network::test_loss(self, batch)
     }
 }
 
 impl Model for transformer_network::TransformerNetwork {
     type Batch = transformer_batch::TransformerBatch;
 
-    fn training_loss(&self, batch: &transformer_batch::TransformerBatch, column: usize) -> Tensor {
-        transformer_network::TransformerNetwork::training_loss(self, batch, column)
+    fn training_loss(&self, batch: &transformer_batch::TransformerBatch) -> Tensor {
+        transformer_network::TransformerNetwork::training_loss(self, batch)
     }
 
-    fn test_loss(&self, batch: &transformer_batch::TransformerBatch, column: usize) -> Tensor {
-        transformer_network::TransformerNetwork::test_loss(self, batch, column)
+    fn test_loss(&self, batch: &transformer_batch::TransformerBatch) -> Tensor {
+        transformer_network::TransformerNetwork::test_loss(self, batch)
     }
 }
 
 /// The network a run trains, its weights' store and its optimizer, with the files a backup writes:
-/// what `round::run_round` steps, as one arm.
+/// what `round::run_round` steps.
 pub(crate) struct OneArm<M: Model> {
     pub(crate) network: M,
     pub(crate) vs: nn::VarStore,
@@ -147,34 +143,29 @@ impl<M: Model> OneArm<M> {
     }
 }
 
-impl<M: Model> round::Arms<M::Batch> for OneArm<M> {
-    fn count(&self) -> usize {
-        1
-    }
-
+impl<M: Model> round::Trainee<M::Batch> for OneArm<M> {
     // Under a budget nothing rolls back, so the optimizer's count is the run step.
-    fn step_count(&self, _arm: usize) -> u64 {
+    fn step_count(&self) -> u64 {
         self.run_step()
     }
 
-    fn train_step(&mut self, batch: &M::Batch, stepping: &[bool]) -> Tensor {
-        assert!(stepping[0], "one arm always stands where the stream does");
-        let loss = self.network.training_loss(batch, COLUMN);
+    fn train_step(&mut self, batch: &M::Batch) -> Tensor {
+        let loss = self.network.training_loss(batch);
         self.optimizer.zero_grad();
         loss.backward();
         self.optimizer.step();
-        loss.detach().reshape([1])
+        loss.detach()
     }
 
-    fn test_losses(&self, batch: &M::Batch) -> Tensor {
-        self.network.test_loss(batch, COLUMN).reshape([1])
+    fn test_loss(&self, batch: &M::Batch) -> Tensor {
+        self.network.test_loss(batch)
     }
 
     // The stream's position and the rows into the round are derived from the step count on the way
     // back in, so they are persisted as empty and zero: a real value in a field nothing reads is how a
     // stale second copy gets mistaken for state later. The bucket streams' `cursors` return an empty
     // vector for the same reason.
-    fn back_up(&mut self, _arm: usize, _cursors: &[u64], _rows_done: u64, loss_sum: f64, duration_secs: f64) {
+    fn back_up(&mut self, _cursors: &[u64], _rows_done: u64, loss_sum: f64, duration_secs: f64) {
         self.save();
         RoundProgress { train_cursors: Vec::new(), rows_done: 0, loss_sum, train_duration_secs: duration_secs }
             .save(&self.round_progress_path);
@@ -325,7 +316,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
             &one, &mut *test_readers, Some(&mut kept_test_batches), batch_size, to_batch,
             &mut |label: &str, processed: u64, total: u64| print_progress(label, processed, total, "round 0"),
         );
-        let loss = test_losses.global[0];
+        let loss = test_losses.global;
         history::append(
             &arm.history_path,
             &history::EvalRecord {
@@ -337,7 +328,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
                 test_duration_secs,
             },
         );
-        history::append_pieces(&pieces_path(&arm.run_dir), 0, &round::losses_of_arm(&test_losses.by_pieces, 0));
+        history::append_pieces(&pieces_path(&arm.run_dir), 0, &test_losses.by_pieces);
         arm.standing = replay(&arm.history_path, &budget);
         log::info!("training: starting weights measured, test loss {loss:.6}");
     }
@@ -352,8 +343,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
 
     // Only the first round of this process resumes a partially-done round; every later one starts
     // its counters at zero, which is exactly what `None` means to `run_round`.
-    let mut resume =
-        Some(round::RoundResume { rows_done: vec![rows_done], loss_sums: vec![loss_sum], duration_secs: round_duration_secs });
+    let mut resume = Some(round::RoundResume { rows_done, loss_sum, duration_secs: round_duration_secs });
 
     loop {
         let step_at_round_start = one.run_step();
@@ -392,14 +382,14 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
             &history::EvalRecord {
                 step,
                 learning_rate: budget.rate(step),
-                train_loss: outcome.train_loss[0],
-                test_loss: outcome.test_loss[0],
+                train_loss: outcome.train_loss,
+                test_loss: outcome.test_loss,
                 train_duration_secs: outcome.train_duration_secs,
                 test_duration_secs: outcome.test_duration_secs,
             },
         );
         // For reading only, after the row the run replays from.
-        history::append_pieces(&pieces_path(&arm.run_dir), step, &round::losses_of_arm(&outcome.test_loss_by_pieces, 0));
+        history::append_pieces(&pieces_path(&arm.run_dir), step, &outcome.test_loss_by_pieces);
         let checkpoint = checkpoint_store::checkpoint_path(&arm.checkpoints_dir, step);
         one.vs.save(&checkpoint).unwrap_or_else(|error| panic!("failed to save {checkpoint}: {error}"));
         arm.standing = replay(&arm.history_path, &budget);

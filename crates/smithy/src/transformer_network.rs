@@ -195,15 +195,15 @@ impl TransformerNetwork {
         self.value_head.forward(&cls)
     }
 
-    /// The loss one training step descends: `nnue_network::bce_loss` on `forward`, against label
-    /// column `column` (a one-arm batch has column `0` alone), in Elo's unit.
-    pub fn training_loss(&self, batch: &TransformerBatch, column: usize) -> Tensor {
-        bce_loss(&self.forward(batch), &batch.labels.narrow(1, column as i64, 1), S_PAWNS)
+    /// The loss one training step descends: `nnue_network::bce_loss` on `forward`, against the
+    /// batch's labels, in Elo's unit.
+    pub fn training_loss(&self, batch: &TransformerBatch) -> Tensor {
+        bce_loss(&self.forward(batch), &batch.labels, S_PAWNS)
     }
 
-    /// The test loss against label column `column`: the same binary cross entropy as `training_loss`.
-    pub fn test_loss(&self, batch: &TransformerBatch, column: usize) -> Tensor {
-        bce_loss(&self.forward(batch), &batch.labels.narrow(1, column as i64, 1), S_PAWNS)
+    /// The test loss: the same binary cross entropy as `training_loss`.
+    pub fn test_loss(&self, batch: &TransformerBatch) -> Tensor {
+        bce_loss(&self.forward(batch), &batch.labels, S_PAWNS)
     }
 }
 

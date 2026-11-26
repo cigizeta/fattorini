@@ -6,14 +6,16 @@
 //! (`dataset_cache.rs` covers why: a bucketed read makes every NNUE batch materially homogeneous).
 //!
 //! Two differences between the tracks survive, and both are parameters rather than duplicated code:
-//! how a batch of raw records becomes a loss tensor (`to_batch` plus the `Trainee`'s own `loss`), and
+//! how a batch of raw records becomes a loss tensor (`to_batch` plus the `Trainee`'s own losses), and
 //! where the batches come from (`train_stream::TrainStream`). Everything else -- the always-at-least-one-batch loop,
-//! checking the real `optimizer.step_count()` against `steps_per_round` directly rather than a
-//! separate counter, cross-call duration accumulation, backup/stop handling -- lives here once, for
-//! both tracks.
+//! checking the real step count against `steps_per_round` directly rather than a separate counter,
+//! cross-call duration accumulation, backup/stop handling -- lives here once, for both tracks.
 //!
 //! The no-grad sweeps below are generic over `train_stream::BatchSource` for the same reason: both
 //! cache layouts can be swept once in order, so the sweep is written once.
+//!
+//! One network trains at a time (2026-11-26): the lockstep of a grid's lambdas, several networks
+//! stepping on each batch, went with the grid.
 
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
@@ -22,117 +24,28 @@ use std::time::{Duration, Instant};
 
 use tch::{Kind, Tensor};
 
-#[cfg(test)]
-use super::adamw::AdamW;
 use super::cache::CacheRecord;
 use super::pipeline;
 use super::test_cache::{Position, TestCache};
 use super::train_stream::{BatchSource, TrainStream};
 
-/// The network a run trains: its optimizer, the closure that turns an already-built batch into its
-/// loss, and the closure that persists its own state when a backup is due.
+/// The network a round trains, whatever holds it: training's (`training::OneArm`) or the tests'.
 ///
-/// `optimizer` is a borrow rather than an owned field because the optimizer, `VarStore` and network
-/// live together in the caller's own struct, and `loss` and `on_backup` borrow the other two:
-/// splitting the struct's fields is what lets all three coexist.
-///
-/// Test-only: both tracks train through `training::OneArm`. These arms, any number of them, are what
-/// the round's own tests drive.
-#[cfg(test)]
-#[allow(clippy::type_complexity)]
-pub struct Trainee<'a, B> {
-    pub optimizer: &'a mut AdamW,
-    /// `train` is `true` during the training half and `false` during the test pass, for architectures
-    /// whose forward pass has training-only behaviour to gate on; ignored by every architecture
-    /// today, none having any.
-    pub loss: Box<dyn Fn(&B, bool) -> Tensor + 'a>,
-    pub on_backup: Box<dyn FnMut(&AdamW, &[u64], u64, f64, f64) + 'a>,
-}
+/// Losses come back as tensors left on the device, so the loop sums them there and reads them only
+/// at a backup and at the end of the round (`run_training_steps`).
+pub trait Trainee<B> {
+    /// The cumulative step count: where the network stands in its sequence of batches.
+    fn step_count(&self) -> u64;
 
-/// The arms a round trains, whatever holds them: a slice of `Trainee`s, one network and optimizer per
-/// arm (the tests'), or training's one network (`training::OneArm`). The round loop sees only this.
-///
-/// Losses come back as one `[arms]` tensor left on the device, so the loop sums them there and reads
-/// them only at a backup and at the end of the round (`run_training_steps`).
-pub trait Arms<B> {
-    fn count(&self) -> usize;
+    /// One training step on `batch`. Returns the training loss on `batch`, a detached scalar.
+    fn train_step(&mut self, batch: &B) -> Tensor;
 
-    /// Arm `arm`'s cumulative step count: where it stands in its sequence of batches.
-    fn step_count(&self, arm: usize) -> u64;
+    /// The test loss on `batch`, a scalar. Called under `no_grad`.
+    fn test_loss(&self, batch: &B) -> Tensor;
 
-    /// One training step on `batch` of every arm flagged in `stepping`, the rest left exactly as they
-    /// were. Returns each arm's training loss on `batch`, detached, `0` for an arm that did not step.
-    fn train_step(&mut self, batch: &B, stepping: &[bool]) -> Tensor;
-
-    /// Each arm's test loss on `batch`, `[arms]`. Called under `no_grad`.
-    fn test_losses(&self, batch: &B) -> Tensor;
-
-    /// Persists arm `arm`'s state, with what a mid-round resume needs of its round: the stream's
+    /// Persists the network's state, with what a mid-round resume needs of its round: the stream's
     /// cursors, its rows so far, its loss sum and the round's training seconds.
-    fn back_up(&mut self, arm: usize, cursors: &[u64], rows_done: u64, loss_sum: f64, duration_secs: f64);
-}
-
-#[cfg(test)]
-impl<B> Arms<B> for [Trainee<'_, B>] {
-    fn count(&self) -> usize {
-        self.len()
-    }
-
-    fn step_count(&self, arm: usize) -> u64 {
-        self[arm].optimizer.step_count() as u64
-    }
-
-    fn train_step(&mut self, batch: &B, stepping: &[bool]) -> Tensor {
-        let mut losses: Vec<Option<Tensor>> = Vec::with_capacity(self.len());
-        for (trainee, &steps) in self.iter_mut().zip(stepping) {
-            if !steps {
-                losses.push(None);
-                continue;
-            }
-            let value = (trainee.loss)(batch, true);
-            losses.push(Some(value.detach()));
-            trainee.optimizer.zero_grad();
-            value.backward();
-            trainee.optimizer.step();
-        }
-        let like = losses.iter().flatten().next().expect("at least one arm steps").zeros_like();
-        let losses: Vec<Tensor> = losses.into_iter().map(|loss| loss.unwrap_or_else(|| like.shallow_clone())).collect();
-        Tensor::stack(&losses, 0)
-    }
-
-    fn test_losses(&self, batch: &B) -> Tensor {
-        let losses: Vec<Tensor> = self.iter().map(|trainee| (trainee.loss)(batch, false)).collect();
-        Tensor::stack(&losses, 0)
-    }
-
-    fn back_up(&mut self, arm: usize, cursors: &[u64], rows_done: u64, loss_sum: f64, duration_secs: f64) {
-        let Trainee { optimizer, on_backup, .. } = &mut self[arm];
-        on_backup(optimizer, cursors, rows_done, loss_sum, duration_secs);
-    }
-}
-
-/// A `Vec` of trainees is its slice's arms.
-#[cfg(test)]
-impl<B> Arms<B> for Vec<Trainee<'_, B>> {
-    fn count(&self) -> usize {
-        self.as_slice().count()
-    }
-
-    fn step_count(&self, arm: usize) -> u64 {
-        self.as_slice().step_count(arm)
-    }
-
-    fn train_step(&mut self, batch: &B, stepping: &[bool]) -> Tensor {
-        self.as_mut_slice().train_step(batch, stepping)
-    }
-
-    fn test_losses(&self, batch: &B) -> Tensor {
-        self.as_slice().test_losses(batch)
-    }
-
-    fn back_up(&mut self, arm: usize, cursors: &[u64], rows_done: u64, loss_sum: f64, duration_secs: f64) {
-        self.as_mut_slice().back_up(arm, cursors, rows_done, loss_sum, duration_secs);
-    }
+    fn back_up(&mut self, cursors: &[u64], rows_done: u64, loss_sum: f64, duration_secs: f64);
 }
 
 /// How a batch of records becomes what the network reads, in two halves (`pipeline.rs`): `prepare`
@@ -145,16 +58,12 @@ pub struct BatchBuilder<P, U> {
     pub upload: U,
 }
 
-/// What one completed round reports, per arm in the order of the arms: whether the arm completed
-/// its round in this call, and its losses (meaningful only where it did).
+/// What one completed round reports.
 pub struct RoundOutcome {
-    /// Read by the tests' several arms alone; one arm always completes its round.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub completed: Vec<bool>,
-    pub train_loss: Vec<f64>,
-    pub test_loss: Vec<f64>,
+    pub train_loss: f64,
+    pub test_loss: f64,
     /// The test loss per piece count (`TestLosses::by_pieces`).
-    pub test_loss_by_pieces: BTreeMap<usize, Vec<f64>>,
+    pub test_loss_by_pieces: BTreeMap<usize, f64>,
     /// Read by the tests alone: training derives the stream's position from the step count.
     #[cfg_attr(not(test), allow(dead_code))]
     pub cursors: Vec<u64>,
@@ -162,16 +71,11 @@ pub struct RoundOutcome {
     pub test_duration_secs: f64,
 }
 
-/// What a test pass measured: the mean over every row, per arm, and the same over the rows of each
-/// piece count, kings included, of the batches holding a single one (`piece_count_of`), per arm.
+/// What a test pass measured: the mean over every row, and the same over the rows of each piece
+/// count, kings included, of the batches holding a single one (`piece_count_of`).
 pub struct TestLosses {
-    pub global: Vec<f64>,
-    pub by_pieces: BTreeMap<usize, Vec<f64>>,
-}
-
-/// Each piece count's loss for arm `slot`, as `history::append_pieces` writes them.
-pub fn losses_of_arm(by_pieces: &BTreeMap<usize, Vec<f64>>, slot: usize) -> BTreeMap<usize, f64> {
-    by_pieces.iter().map(|(&pieces, losses)| (pieces, losses[slot])).collect()
+    pub global: f64,
+    pub by_pieces: BTreeMap<usize, f64>,
 }
 
 /// The piece count of `records`, kings included, when every one has the same, and `None` for a
@@ -185,16 +89,15 @@ pub fn piece_count_of(records: &[CacheRecord]) -> Option<usize> {
     None
 }
 
-/// Where an interrupted round resumes, per arm in the order of the arms: the rows each has
-/// already trained on in its current round and its loss sum so far; and the training seconds
-/// already spent.
+/// Where an interrupted round resumes: the rows already trained on in the current round and its
+/// loss sum so far; and the training seconds already spent.
 pub struct RoundResume {
-    pub rows_done: Vec<u64>,
-    pub loss_sums: Vec<f64>,
+    pub rows_done: u64,
+    pub loss_sum: f64,
     pub duration_secs: f64,
 }
 
-/// Runs one evaluation round: training batches from `train_stream` until the optimizer's cumulative
+/// Runs one evaluation round: training batches from `train_stream` until the trainee's cumulative
 /// step count reaches the next multiple of `steps_per_round`, then one full no-grad pass over every
 /// row of every one of `test_readers`. `to_batch(records)` builds whichever batch type the network
 /// reads. Returns `None` if `stop_requested` fired mid-round.
@@ -217,59 +120,42 @@ pub struct RoundResume {
 ///
 /// `test_cache`, when given, is the run's kept test batches (`test_cache.rs`): filled by the first
 /// round's test pass, read by every later one.
-///
-/// `arms` are trained in lockstep (lockstep-lambdas.md): every batch is built and uploaded once, then
-/// every arm steps on it (`Arms::train_step`), one after another; the test pass likewise uploads each
-/// batch once for every arm. Training runs one arm.
-///
-/// Arms may stand at different step counts, as a crash between two arms' backups leaves them. The
-/// stream then stands at the lowest, and an arm steps on a batch only when its own count equals the
-/// stream's: an arm further ahead skips the batches it already trained on, then joins (each batch of
-/// its sequence stepped on once, up to the shuffle's restart inexactness). The round ends where the
-/// stream's count reaches the next multiple of `steps_per_round`; an arm completed it only if it got
-/// there in this call (`RoundOutcome::completed`): one that was already past, or that had already
-/// recorded that boundary before the crash, did not, and records nothing.
 #[allow(clippy::too_many_arguments)]
 pub fn run_round<B, H: Send, T: BatchSource + Send>(
-    arms: &mut (impl Arms<B> + ?Sized), train_stream: &mut (impl TrainStream + Send), test_readers: &mut [T],
+    trainee: &mut impl Trainee<B>, train_stream: &mut (impl TrainStream + Send), test_readers: &mut [T],
     test_cache: Option<&mut TestCache<H>>, steps_per_round: u64, batch_size: usize, resume: Option<RoundResume>,
     backup_interval: Duration, to_batch: &BatchBuilder<impl Fn(&[CacheRecord]) -> H + Sync, impl Fn(&H) -> B>,
     on_progress: &mut impl FnMut(&str, u64, u64), stop_requested: &AtomicBool,
 ) -> Option<RoundOutcome> {
-    let count = arms.count();
-    assert!(count > 0, "a round needs at least one arm");
-    let resume = resume.unwrap_or(RoundResume { rows_done: vec![0; count], loss_sums: vec![0.0; count], duration_secs: 0.0 });
-    assert_eq!(resume.loss_sums.len(), count, "a resumed round needs one loss sum per arm");
-    assert_eq!(resume.rows_done.len(), count, "a resumed round needs one row count per arm");
-    let (completed, train_loss, next_cursors, train_duration_secs) = run_training_steps(
-        arms, train_stream, steps_per_round, batch_size, resume, backup_interval, to_batch,
+    let resume = resume.unwrap_or(RoundResume { rows_done: 0, loss_sum: 0.0, duration_secs: 0.0 });
+    let (train_loss, cursors, train_duration_secs) = run_training_steps(
+        trainee, train_stream, steps_per_round, batch_size, resume, backup_interval, to_batch,
         &mut |absolute_step| on_progress("train", absolute_step, steps_per_round), stop_requested,
     )?;
 
-    let (test_losses, test_duration_secs) = run_test_round(arms, test_readers, test_cache, batch_size, to_batch, on_progress);
+    let (test_losses, test_duration_secs) = run_test_round(trainee, test_readers, test_cache, batch_size, to_batch, on_progress);
 
     Some(RoundOutcome {
-        completed,
         train_loss,
         test_loss: test_losses.global,
         test_loss_by_pieces: test_losses.by_pieces,
-        cursors: next_cursors,
+        cursors,
         train_duration_secs,
         test_duration_secs,
     })
 }
 
 /// A test pass alone, with no training before it: `run_round`'s test half, for the round at step 0
-/// that measures the generation's starting weights, every run's first best. Returns each arm's test
-/// losses and the pass's seconds.
+/// that measures the generation's starting weights, every run's first best. Returns the test losses
+/// and the pass's seconds.
 pub fn run_test_round<B, H: Send, T: BatchSource + Send>(
-    arms: &(impl Arms<B> + ?Sized), test_readers: &mut [T], test_cache: Option<&mut TestCache<H>>, batch_size: usize,
+    trainee: &impl Trainee<B>, test_readers: &mut [T], test_cache: Option<&mut TestCache<H>>, batch_size: usize,
     to_batch: &BatchBuilder<impl Fn(&[CacheRecord]) -> H + Sync, impl Fn(&H) -> B>,
     on_progress: &mut impl FnMut(&str, u64, u64),
 ) -> (TestLosses, f64) {
     let test_start = Instant::now();
     let test_loss = tch::no_grad(|| {
-        run_test_pass(arms, test_readers, test_cache, batch_size, to_batch, &mut |processed, total| {
+        run_test_pass(trainee, test_readers, test_cache, batch_size, to_batch, &mut |processed, total| {
             on_progress("test", processed, total)
         })
     });
@@ -278,18 +164,17 @@ pub fn run_test_round<B, H: Send, T: BatchSource + Send>(
 
 /// The training half of one evaluation round: runs batches of up to `batch_size` rows (the
 /// bucketed stream can return fewer, whenever the bucket it picked runs low -- "no padding, ever"),
-/// updating weights through `optimizer` after every batch, until
-/// `optimizer.step_count()` itself lands on a multiple of `steps_per_round` -- always at least one
-/// batch, even if the count already sits on a multiple at entry (otherwise a round that just
-/// completed, or a resumed run started exactly at a boundary, would "complete" a second round for
-/// free with no training at all). Checking the real, persisted, ever-increasing step count
-/// directly, rather than a separate counter that only ever tracked "how far into a round of
-/// exactly this size", means a `steps_per_round` that changes between two runs of the same job can
-/// never desynchronize this decision. Returns `Some((train_loss, cursors, rows_done,
-/// duration_secs))` for a run that reached that boundary, or `None` if `stop_requested` cut it
-/// short instead.
+/// stepping the trainee after every batch, until its step count itself lands on a multiple of
+/// `steps_per_round` -- always at least one batch, even if the count already sits on a multiple at
+/// entry (otherwise a round that just completed, or a resumed run started exactly at a boundary,
+/// would "complete" a second round for free with no training at all). Checking the real, persisted,
+/// ever-increasing step count directly, rather than a separate counter that only ever tracked "how
+/// far into a round of exactly this size", means a `steps_per_round` that changes between two runs
+/// of the same job can never desynchronize this decision. Returns `Some((train_loss, cursors,
+/// duration_secs))` for a run that reached that boundary, or `None` if `stop_requested` cut it short
+/// instead.
 ///
-/// `initial_duration_secs`/the returned `duration_secs` accumulate this round's own training time
+/// `resume.duration_secs`/the returned `duration_secs` accumulate this round's own training time
 /// (never test-pass time) across however many separate calls it takes to actually reach the
 /// boundary: `call_start` only ever measures this one call's own elapsed wall-clock time, added on
 /// top of whatever earlier, now-finished calls already contributed -- so a round interrupted by
@@ -306,23 +191,15 @@ pub fn run_test_round<B, H: Send, T: BatchSource + Send>(
 /// reads exactly the batches this round still needs, one per step up to the boundary, so the stream
 /// ends the round where a one-thread loop would have, and the next round continues from there. Each
 /// batch carries the cursors read right after it, as the one-thread loop read them.
-///
-/// Every arm whose step count equals the stream's steps on each batch (`run_round`); each keeps its own rows and loss sum. Returns, per arm, whether it completed its
-/// round in this call and its train loss.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn run_training_steps<B, H: Send>(
-    arms: &mut (impl Arms<B> + ?Sized), stream: &mut (impl TrainStream + Send), steps_per_round: u64,
+    trainee: &mut impl Trainee<B>, stream: &mut (impl TrainStream + Send), steps_per_round: u64,
     batch_size: usize, resume: RoundResume, backup_interval: Duration,
     to_batch: &BatchBuilder<impl Fn(&[CacheRecord]) -> H + Sync, impl Fn(&H) -> B>, on_progress: &mut impl FnMut(u64),
     stop_requested: &AtomicBool,
-) -> Option<(Vec<bool>, Vec<f64>, Vec<u64>, f64)> {
-    let RoundResume { mut rows_done, mut loss_sums, duration_secs: initial_duration_secs } = resume;
-    let count = arms.count();
-    // The stream stands at the lowest arm's count; `stream_step` is the count of the batch about to
-    // be stepped on.
-    let start_step = (0..count).map(|arm| arms.step_count(arm)).min().expect("at least one arm");
-    let mut stream_step = start_step;
-    let mut stepped = vec![false; count];
+) -> Option<(f64, Vec<u64>, f64)> {
+    let RoundResume { mut rows_done, mut loss_sum, duration_secs: initial_duration_secs } = resume;
+    let start_step = trainee.step_count();
     let mut last_backup = Instant::now();
     let call_start = Instant::now();
     // At least one, even on a boundary already: see above.
@@ -347,55 +224,34 @@ fn run_training_steps<B, H: Send>(
     // never overlap; for a small network, whose step is a few dozen tiny kernels, that wait is most
     // of the step. The weighted losses are summed on the device instead and read only at a backup
     // and at the end of the round, the two places that need the number.
-    let mut unread_losses: Option<Tensor> = None;
+    let mut unread_loss: Option<Tensor> = None;
     let mut finished = None;
     pipeline::pipelined(pipeline::worker_count(), source, prepare, |(prepared, rows_this_batch, cursors)| {
-        // Uploaded once, stepped on by every arm that stands where the stream does.
         let batch = (to_batch.upload)(&prepared);
-        let stepping: Vec<bool> = (0..count).map(|arm| arms.step_count(arm) == stream_step).collect();
-        for (arm, &steps) in stepping.iter().enumerate() {
-            if steps {
-                stepped[arm] = true;
-                rows_done[arm] += rows_this_batch;
-            }
-        }
-        // In double, as the loss sums are: a round sums thousands of batches. An arm that did not
-        // step adds its `0`.
-        let weighted = arms.train_step(&batch, &stepping).to_kind(Kind::Double) * rows_this_batch as f64;
-        unread_losses = Some(match unread_losses.take() {
+        rows_done += rows_this_batch;
+        // In double, as the loss sum is: a round sums thousands of batches.
+        let weighted = trainee.train_step(&batch).to_kind(Kind::Double) * rows_this_batch as f64;
+        unread_loss = Some(match unread_loss.take() {
             Some(sum) => sum + weighted,
             None => weighted,
         });
-        stream_step += 1;
-        // The stream's count, which every arm that stepped now shares.
-        let step = stream_step;
+        let step = trainee.step_count();
         on_progress(step);
 
         let duration_secs = initial_duration_secs + call_start.elapsed().as_secs_f64();
         let stop = stop_requested.load(Ordering::SeqCst);
         if stop || last_backup.elapsed() >= backup_interval {
-            read_losses(&mut unread_losses, &mut loss_sums);
-            for arm in 0..count {
-                // An arm still waiting for the stream has nothing new to save.
-                if stepped[arm] {
-                    arms.back_up(arm, &cursors, rows_done[arm], loss_sums[arm], duration_secs);
-                }
-            }
+            loss_sum += read_loss(&mut unread_loss);
+            trainee.back_up(&cursors, rows_done, loss_sum, duration_secs);
             last_backup = Instant::now();
         }
         if stop {
             return ControlFlow::Break(());
         }
         if step % steps_per_round == 0 {
-            read_losses(&mut unread_losses, &mut loss_sums);
-            // Completed here: stepped in this call, onto the boundary.
-            let completed: Vec<bool> = (0..count).map(|arm| stepped[arm] && arms.step_count(arm) == step).collect();
-            let train_losses = loss_sums
-                .iter()
-                .zip(&rows_done)
-                .map(|(loss_sum, &rows)| if rows == 0 { f64::NAN } else { loss_sum / rows as f64 })
-                .collect();
-            finished = Some((completed, train_losses, cursors, duration_secs));
+            loss_sum += read_loss(&mut unread_loss);
+            let train_loss = if rows_done == 0 { f64::NAN } else { loss_sum / rows_done as f64 };
+            finished = Some((train_loss, cursors, duration_secs));
             return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
@@ -403,16 +259,10 @@ fn run_training_steps<B, H: Send>(
     finished
 }
 
-/// Adds the per-arm losses summed on the device since the last read, if any, to `loss_sums`: the one
+/// The loss summed on the device since the last read, `0` if none, and the sum cleared: the one
 /// place a training round waits for the GPU (`run_training_steps`).
-fn read_losses(unread_losses: &mut Option<Tensor>, loss_sums: &mut [f64]) {
-    if let Some(sum) = unread_losses.take() {
-        let sums = Vec::<f64>::try_from(&sum.to_device(tch::Device::Cpu)).expect("one loss sum per arm");
-        assert_eq!(sums.len(), loss_sums.len(), "one loss sum per arm");
-        for (loss_sum, value) in loss_sums.iter_mut().zip(sums) {
-            *loss_sum += value;
-        }
-    }
+fn read_loss(unread_loss: &mut Option<Tensor>) -> f64 {
+    unread_loss.take().map_or(0.0, |sum| f64::try_from(&sum.to_device(tch::Device::Cpu)).expect("a scalar loss sum"))
 }
 
 /// One full, deterministic, no-grad pass over every row of every one of `readers`, each swept in
@@ -421,9 +271,9 @@ fn read_losses(unread_losses: &mut Option<Tensor>, loss_sums: &mut [f64]) {
 /// always returns cursor `0` once its rows are exhausted), which is precisely one full sweep, no
 /// more and no fewer. The NNUE track passes a one-element slice holding the flat test cache; the
 /// transformer track passes one reader per piece-count bucket per stem. `on_progress` reports
-/// against the grand total across every reader combined. The `loss` is called with `train = false`
-/// throughout, and the mean over every row is returned, with the mean over the rows of each piece
-/// count, from the batches holding a single one (`piece_count_of`).
+/// against the grand total across every reader combined. The mean over every row is returned, with
+/// the mean over the rows of each piece count, from the batches holding a single one
+/// (`piece_count_of`).
 ///
 /// Pipelined as the training half is (`pipeline::pipelined`): the sweep is read in order on one
 /// thread and its batches prepared on every other core.
@@ -433,21 +283,20 @@ fn read_losses(unread_losses: &mut Option<Tensor>, loss_sums: &mut [f64]) {
 /// batches first, then reads and prepares only the rest, from where the cache says it starts. Either
 /// way the batches reach the loss in the same order, so the result is the same.
 fn run_test_pass<B, H: Send, T: BatchSource + Send>(
-    arms: &(impl Arms<B> + ?Sized), readers: &mut [T], mut cache: Option<&mut TestCache<H>>, batch_size: usize,
+    trainee: &impl Trainee<B>, readers: &mut [T], mut cache: Option<&mut TestCache<H>>, batch_size: usize,
     to_batch: &BatchBuilder<impl Fn(&[CacheRecord]) -> H + Sync, impl Fn(&H) -> B>, on_progress: &mut impl FnMut(u64, u64),
 ) -> TestLosses {
     let total: u64 = readers.iter().map(|reader| reader.row_count()).sum();
     let reader_count = readers.len();
     let mut processed = 0u64;
-    // Summed on the device and read once at the end, as in `run_training_steps`; one sum per arm,
-    // and the same per piece count, with the rows each covers.
-    let mut unread_losses: Option<Tensor> = None;
+    // Summed on the device and read once at the end, as in `run_training_steps`; the same per piece
+    // count, with the rows each covers.
+    let mut unread_loss: Option<Tensor> = None;
     let mut unread_by_pieces: BTreeMap<usize, (Option<Tensor>, u64)> = BTreeMap::new();
     let mut add_loss = |prepared: &H, rows_this_batch: u64, pieces: Option<usize>| {
-        // Uploaded once, evaluated by every arm. Each piece count's sum keeps the rows it covers, to
-        // divide by at the end.
+        // Each piece count's sum keeps the rows it covers, to divide by at the end.
         let batch = (to_batch.upload)(prepared);
-        let weighted = arms.test_losses(&batch).to_kind(Kind::Double) * rows_this_batch as f64;
+        let weighted = trainee.test_loss(&batch).to_kind(Kind::Double) * rows_this_batch as f64;
         if let Some(pieces) = pieces {
             let (sum, rows) = unread_by_pieces.entry(pieces).or_insert((None, 0));
             *sum = Some(match sum.take() {
@@ -456,7 +305,7 @@ fn run_test_pass<B, H: Send, T: BatchSource + Send>(
             });
             *rows += rows_this_batch;
         }
-        unread_losses = Some(match unread_losses.take() {
+        unread_loss = Some(match unread_loss.take() {
             Some(sum) => sum + weighted,
             None => weighted,
         });
@@ -509,30 +358,55 @@ fn run_test_pass<B, H: Send, T: BatchSource + Send>(
         && let Some(cache) = cache {
             cache.finish_filling(Position { reader: reader_count, row: 0 });
         }
-    let mut loss_sums = vec![0.0; arms.count()];
-    read_losses(&mut unread_losses, &mut loss_sums);
-    let global = loss_sums.iter().map(|loss_sum| loss_sum / total.max(1) as f64).collect();
-    let mut by_pieces = BTreeMap::new();
-    for (pieces, (mut sum, rows)) in unread_by_pieces {
-        let mut sums = vec![0.0; arms.count()];
-        read_losses(&mut sum, &mut sums);
-        by_pieces.insert(pieces, sums.iter().map(|sum| sum / rows.max(1) as f64).collect());
-    }
+    let global = read_loss(&mut unread_loss) / total.max(1) as f64;
+    let by_pieces = unread_by_pieces
+        .into_iter()
+        .map(|(pieces, (mut sum, rows))| (pieces, read_loss(&mut sum) / rows.max(1) as f64))
+        .collect();
     TestLosses { global, by_pieces }
 }
 
-// The tests spell out their batch builders' closure types, and their loops over arms and rounds read
-// one index across several vectors.
 #[cfg(test)]
-#[allow(clippy::type_complexity, clippy::needless_range_loop)]
+#[allow(clippy::type_complexity)]
 mod tests {
     use super::*;
+    use crate::adamw::AdamW;
     use fattorini::board::castling_rights::CastlingRights;
     use fattorini::board::color::Color;
     use fattorini::board::square::Square;
     use tch::{nn, Reduction};
 
     const TEST_BATCH_SIZE: usize = 2;
+
+    /// A network the tests train: its optimizer, the closure that turns a batch into its loss, and
+    /// the closure called at a backup.
+    struct Probe<'a, B> {
+        optimizer: &'a mut AdamW,
+        loss: Box<dyn Fn(&B) -> Tensor + 'a>,
+        on_backup: Box<dyn FnMut(&AdamW, &[u64], u64, f64, f64) + 'a>,
+    }
+
+    impl<B> Trainee<B> for Probe<'_, B> {
+        fn step_count(&self) -> u64 {
+            self.optimizer.step_count() as u64
+        }
+
+        fn train_step(&mut self, batch: &B) -> Tensor {
+            let value = (self.loss)(batch);
+            self.optimizer.zero_grad();
+            value.backward();
+            self.optimizer.step();
+            value.detach()
+        }
+
+        fn test_loss(&self, batch: &B) -> Tensor {
+            (self.loss)(batch)
+        }
+
+        fn back_up(&mut self, cursors: &[u64], rows_done: u64, loss_sum: f64, duration_secs: f64) {
+            (self.on_backup)(&*self.optimizer, cursors, rows_done, loss_sum, duration_secs);
+        }
+    }
 
     /// These loop tests' stand-in for a real batch: just the labels, `[rows, 1]`. The loop itself
     /// never looks inside a batch, so the smallest thing a trainee's `loss` can be computed from is
@@ -545,14 +419,13 @@ mod tests {
     }
 
     /// A trivial network for these track-agnostic loop tests: one linear layer from a constant input
-    /// to a sigmoid output, wrapped as a trainee's own `loss` closure, the same shape `main.rs` builds
-    /// for either real track. What the network actually computes doesn't matter to anything tested
+    /// to a sigmoid output. What the network actually computes doesn't matter to anything tested
     /// here (the resume/backup/stop/duration bookkeeping, not prediction quality) --
     /// `nnue_network.rs`'s and `transformer_network.rs`'s own tests already cover their real forward
     /// passes.
-    fn sample_loss(vs: &nn::VarStore) -> impl Fn(&Tensor, bool) -> Tensor {
+    fn sample_loss(vs: &nn::VarStore) -> impl Fn(&Tensor) -> Tensor {
         let linear = nn::linear(vs.root() / "probe", 1, 1, Default::default());
-        move |label: &Tensor, _train: bool| {
+        move |label: &Tensor| {
             let batch_size = label.size()[0];
             let input = Tensor::ones([batch_size, 1], (tch::Kind::Float, tch::Device::Cpu));
             let prediction = input.apply(&linear).sigmoid();
@@ -560,17 +433,21 @@ mod tests {
         }
     }
 
-    /// A trainee over `optimizer`, with a backup callback that does nothing.
-    fn sample_trainee<'a>(vs: &'a nn::VarStore, optimizer: &'a mut AdamW) -> Trainee<'a, Tensor> {
-        Trainee {
+    /// A probe over `optimizer`, with a backup callback that does nothing.
+    fn sample_trainee<'a>(vs: &'a nn::VarStore, optimizer: &'a mut AdamW) -> Probe<'a, Tensor> {
+        Probe {
             optimizer,
             loss: Box::new(sample_loss(vs)),
             on_backup: Box::new(|_: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {}),
         }
     }
 
+    fn fresh_resume() -> RoundResume {
+        RoundResume { rows_done: 0, loss_sum: 0.0, duration_secs: 0.0 }
+    }
+
     /// Bare kings, one record per label: these track-agnostic loop tests only care about row counts
-    /// and labels reaching `compute_loss`, never about the positions.
+    /// and labels reaching the loss, never about the positions.
     fn records_of(labels: &[f32]) -> Vec<CacheRecord> {
         use fattorini::features::CanonicalPosition;
         let canonical = CanonicalPosition {
@@ -587,6 +464,40 @@ mod tests {
     /// A test set of `records_of(labels)`, as a sweep takes it.
     fn test_set(labels: &[f32]) -> [RecordsSource; 1] {
         [RecordsSource(records_of(labels))]
+    }
+
+    /// A training stream that cycles through fixed records in order: the same batch sequence on
+    /// every run.
+    struct CyclingStream {
+        records: Vec<CacheRecord>,
+        next: usize,
+    }
+
+    impl TrainStream for CyclingStream {
+        fn next_batch(&mut self, batch_size: usize) -> Vec<CacheRecord> {
+            let batch = (0..batch_size).map(|offset| self.records[(self.next + offset) % self.records.len()].clone()).collect();
+            self.next = (self.next + batch_size) % self.records.len();
+            batch
+        }
+
+        fn cursors(&self) -> Vec<u64> {
+            vec![self.next as u64]
+        }
+    }
+
+    /// A test half held in memory.
+    struct RecordsSource(Vec<CacheRecord>);
+
+    impl BatchSource for RecordsSource {
+        fn row_count(&self) -> u64 {
+            self.0.len() as u64
+        }
+
+        fn read_batch_stop_short(&mut self, cursor: u64, batch_size: usize) -> (Vec<CacheRecord>, u64) {
+            let start = cursor as usize;
+            let end = (start + batch_size).min(self.0.len());
+            (self.0[start..end].to_vec(), if end == self.0.len() { 0 } else { end as u64 })
+        }
     }
 
     #[test]
@@ -631,15 +542,13 @@ mod tests {
         for pass in 0..2 {
             let before = prepared.load(Ordering::SeqCst);
             losses[pass] = tch::no_grad(|| {
-                run_test_pass(std::slice::from_ref(&trainee), &mut readers, Some(&mut cache), TEST_BATCH_SIZE, &to_batch, &mut |_, _| {})
+                run_test_pass(&trainee, &mut readers, Some(&mut cache), TEST_BATCH_SIZE, &to_batch, &mut |_, _| {})
             })
-            .global[0];
+            .global;
             prepared_per_pass[pass] = prepared.load(Ordering::SeqCst) - before;
         }
-        let uncached = tch::no_grad(|| {
-            run_test_pass(std::slice::from_ref(&trainee), &mut readers, None, TEST_BATCH_SIZE, &to_batch, &mut |_, _| {})
-        })
-        .global[0];
+        let uncached =
+            tch::no_grad(|| run_test_pass(&trainee, &mut readers, None, TEST_BATCH_SIZE, &to_batch, &mut |_, _| {})).global;
         (losses, prepared_per_pass, uncached, cache)
     }
 
@@ -668,279 +577,6 @@ mod tests {
         assert_eq!(cache.rows(), 0);
     }
 
-    fn fresh_resume(arms: usize) -> RoundResume {
-        RoundResume { rows_done: vec![0; arms], loss_sums: vec![0.0; arms], duration_secs: 0.0 }
-    }
-
-    /// Records of bare kings with one label per arm, from `labels[arm][row]`.
-    fn lockstep_records(labels: &[Vec<f32>]) -> Vec<CacheRecord> {
-        use fattorini::features::CanonicalPosition;
-        (0..labels[0].len())
-            .map(|row| CacheRecord {
-                canonical: CanonicalPosition {
-                    side_to_move: Color::White,
-                    pieces: vec![],
-                    white_king: Square::E1,
-                    black_king: Square::E8,
-                    castling_rights: CastlingRights::NONE,
-                    en_passant_file: None,
-                },
-                labels: labels.iter().map(|arm_labels| arm_labels[row]).collect(),
-                progress: crate::cache::Progress::UNKNOWN,
-            })
-            .collect()
-    }
-
-    /// A training stream that cycles through fixed records in order: the same batch sequence on
-    /// every run.
-    struct CyclingStream {
-        records: Vec<CacheRecord>,
-        next: usize,
-    }
-
-    impl TrainStream for CyclingStream {
-        fn next_batch(&mut self, batch_size: usize) -> Vec<CacheRecord> {
-            let batch = (0..batch_size).map(|offset| self.records[(self.next + offset) % self.records.len()].clone()).collect();
-            self.next = (self.next + batch_size) % self.records.len();
-            batch
-        }
-
-        fn cursors(&self) -> Vec<u64> {
-            vec![self.next as u64]
-        }
-    }
-
-    /// A test half held in memory.
-    struct RecordsSource(Vec<CacheRecord>);
-
-    impl BatchSource for RecordsSource {
-        fn row_count(&self) -> u64 {
-            self.0.len() as u64
-        }
-
-        fn read_batch_stop_short(&mut self, cursor: u64, batch_size: usize) -> (Vec<CacheRecord>, u64) {
-            let start = cursor as usize;
-            let end = (start + batch_size).min(self.0.len());
-            (self.0[start..end].to_vec(), if end == self.0.len() { 0 } else { end as u64 })
-        }
-    }
-
-    /// The batch every arm reads: the `[rows, arms]` label matrix.
-    fn lockstep_to_batch() -> BatchBuilder<impl Fn(&[CacheRecord]) -> (Vec<f32>, usize) + Sync, impl Fn(&(Vec<f32>, usize)) -> Tensor> {
-        BatchBuilder {
-            prepare: |records: &[CacheRecord]| super::super::cache::label_matrix(records),
-            upload: |(labels, arms): &(Vec<f32>, usize)| Tensor::from_slice(labels).view([-1, *arms as i64]),
-        }
-    }
-
-    /// `sample_loss`'s network against arm `arm`'s column, every weight set to `start` so that a
-    /// lockstep arm and its sequential twin start alike. Set, not seeded: `tch::manual_seed` is one
-    /// generator for the whole process, and tests running in parallel draw from it between a seed and
-    /// the initialisation it was meant for.
-    fn arm_loss_from(vs: &nn::VarStore, start: f64, arm: usize) -> impl Fn(&Tensor, bool) -> Tensor {
-        let loss = sample_loss(vs);
-        tch::no_grad(|| {
-            for (_, mut tensor) in vs.variables() {
-                let _ = tensor.fill_(start);
-            }
-        });
-        move |labels: &Tensor, train: bool| loss(&labels.narrow(1, arm as i64, 1), train)
-    }
-
-    /// Every variable of `vs`, by name, as plain numbers.
-    fn weights(vs: &nn::VarStore) -> Vec<(String, Vec<f32>)> {
-        let mut variables: Vec<(String, Vec<f32>)> = vs
-            .variables()
-            .into_iter()
-            .map(|(name, tensor)| (name, Vec::<f32>::try_from(&tensor.flatten(0, -1)).unwrap()))
-            .collect();
-        variables.sort_by(|a, b| a.0.cmp(&b.0));
-        variables
-    }
-
-    #[test]
-    fn arms_in_lockstep_end_as_the_same_arms_trained_one_after_another() {
-        let labels = vec![vec![0.1f32, 0.9, 0.3, 0.7, 0.5, 0.2], vec![0.8f32, 0.4, 0.6, 0.0, 1.0, 0.3]];
-        let records = lockstep_records(&labels);
-        let test_records = lockstep_records(&[vec![0.2f32, 0.6, 0.9], vec![0.5f32, 0.1, 0.7]]);
-        let stop_requested = AtomicBool::new(false);
-        let steps_per_round = 3;
-        let rounds = 2;
-
-        // Lockstep: both arms over one stream.
-        let stores: Vec<nn::VarStore> = (0..2).map(|_| nn::VarStore::new(tch::Device::Cpu)).collect();
-        let losses: Vec<_> = stores.iter().enumerate().map(|(arm, vs)| arm_loss_from(vs, 0.1 + 0.2 * arm as f64, arm)).collect();
-        let mut optimizers: Vec<AdamW> = stores.iter().map(|vs| AdamW::new(vs, 1e-2)).collect();
-        let mut stream = CyclingStream { records: records.clone(), next: 0 };
-        let mut lockstep_outcomes = Vec::new();
-        {
-            let mut trainees: Vec<Trainee<Tensor>> = optimizers
-                .iter_mut()
-                .zip(&losses)
-                .map(|(optimizer, loss)| Trainee {
-                    optimizer,
-                    loss: Box::new(loss),
-                    on_backup: Box::new(|_: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {}),
-                })
-                .collect();
-            for _ in 0..rounds {
-                let mut test_readers = [RecordsSource(test_records.clone())];
-                lockstep_outcomes.push(
-                    run_round(
-                        &mut trainees, &mut stream, &mut test_readers, None, steps_per_round, 2, None,
-                        Duration::from_secs(3600), &lockstep_to_batch(), &mut |_: &str, _: u64, _: u64| {},
-                        &stop_requested,
-                    )
-                    .expect("never stopped"),
-                );
-            }
-        }
-
-        // One after another: each arm alone, from the same weights, over the same batch sequence.
-        for arm in 0..2 {
-            let vs = nn::VarStore::new(tch::Device::Cpu);
-            let loss = arm_loss_from(&vs, 0.1 + 0.2 * arm as f64, arm);
-            let mut optimizer = AdamW::new(&vs, 1e-2);
-            let mut stream = CyclingStream { records: records.clone(), next: 0 };
-            let mut trainee = Trainee {
-                optimizer: &mut optimizer,
-                loss: Box::new(&loss),
-                on_backup: Box::new(|_: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {}),
-            };
-            for round in 0..rounds {
-                let mut test_readers = [RecordsSource(test_records.clone())];
-                let outcome = run_round(
-                    std::slice::from_mut(&mut trainee), &mut stream, &mut test_readers, None, steps_per_round, 2, None,
-                    Duration::from_secs(3600), &lockstep_to_batch(), &mut |_: &str, _: u64, _: u64| {},
-                    &stop_requested,
-                )
-                .expect("never stopped");
-                assert_eq!(outcome.train_loss[0], lockstep_outcomes[round].train_loss[arm], "arm {arm}, round {round}");
-                assert_eq!(outcome.test_loss[0], lockstep_outcomes[round].test_loss[arm], "arm {arm}, round {round}");
-            }
-            drop(trainee);
-            assert_eq!(weights(&vs), weights(&stores[arm]), "arm {arm}'s weights");
-        }
-    }
-
-    #[test]
-    fn an_arm_ahead_skips_until_the_stream_reaches_it_and_ends_as_if_never_interrupted() {
-        let labels = vec![vec![0.1f32, 0.9, 0.3, 0.7, 0.5, 0.2, 0.8, 0.4], vec![0.8f32, 0.4, 0.6, 0.0, 1.0, 0.3, 0.2, 0.9]];
-        let records = lockstep_records(&labels);
-        let test_records = lockstep_records(&[vec![0.2f32, 0.6], vec![0.5f32, 0.1]]);
-        let steps_per_round = 4;
-        let never = AtomicBool::new(false);
-        let no_backup = || Box::new(|_: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {});
-
-        // Uninterrupted: both arms, one round, from batch 0.
-        let stores: Vec<nn::VarStore> = (0..2).map(|_| nn::VarStore::new(tch::Device::Cpu)).collect();
-        let losses: Vec<_> = stores.iter().enumerate().map(|(arm, vs)| arm_loss_from(vs, 0.1 + 0.2 * arm as f64, arm)).collect();
-        let mut optimizers: Vec<AdamW> = stores.iter().map(|vs| AdamW::new(vs, 1e-2)).collect();
-        let uninterrupted = {
-            let mut trainees: Vec<Trainee<Tensor>> = optimizers
-                .iter_mut()
-                .zip(&losses)
-                .map(|(optimizer, loss)| Trainee { optimizer, loss: Box::new(loss), on_backup: no_backup() })
-                .collect();
-            run_round(
-                &mut trainees, &mut CyclingStream { records: records.clone(), next: 0 },
-                &mut [RecordsSource(test_records.clone())], None, steps_per_round, 2, None, Duration::from_secs(3600),
-                &lockstep_to_batch(), &mut |_: &str, _: u64, _: u64| {}, &never,
-            )
-            .expect("never stopped")
-        };
-
-        // Interrupted: arm 0 alone takes one step and is stopped, its backup kept; then both resume
-        // from the stream's start, where arm 1 still stands.
-        let resumed_stores: Vec<nn::VarStore> = (0..2).map(|_| nn::VarStore::new(tch::Device::Cpu)).collect();
-        let resumed_losses: Vec<_> =
-            resumed_stores.iter().enumerate().map(|(arm, vs)| arm_loss_from(vs, 0.1 + 0.2 * arm as f64, arm)).collect();
-        let mut resumed_optimizers: Vec<AdamW> = resumed_stores.iter().map(|vs| AdamW::new(vs, 1e-2)).collect();
-        let backup = std::cell::Cell::new((0u64, 0.0f64));
-        {
-            let mut ahead = Trainee {
-                optimizer: &mut resumed_optimizers[0],
-                loss: Box::new(&resumed_losses[0]),
-                on_backup: Box::new(|_: &AdamW, _: &[u64], rows: u64, loss_sum: f64, _: f64| backup.set((rows, loss_sum))),
-            };
-            let stop = AtomicBool::new(true);
-            let result = run_training_steps(
-                std::slice::from_mut(&mut ahead), &mut CyclingStream { records: records.clone(), next: 0 }, steps_per_round,
-                2, fresh_resume(1), Duration::from_secs(3600), &lockstep_to_batch(), &mut |_: u64| {}, &stop,
-            );
-            assert!(result.is_none());
-        }
-        assert_eq!(resumed_optimizers[0].step_count(), 1);
-        let (ahead_rows, ahead_loss_sum) = backup.get();
-        let resumed = {
-            let mut trainees: Vec<Trainee<Tensor>> = resumed_optimizers
-                .iter_mut()
-                .zip(&resumed_losses)
-                .map(|(optimizer, loss)| Trainee { optimizer, loss: Box::new(loss), on_backup: no_backup() })
-                .collect();
-            let resume =
-                RoundResume { rows_done: vec![ahead_rows, 0], loss_sums: vec![ahead_loss_sum, 0.0], duration_secs: 0.0 };
-            run_round(
-                &mut trainees, &mut CyclingStream { records: records.clone(), next: 0 },
-                &mut [RecordsSource(test_records.clone())], None, steps_per_round, 2, Some(resume),
-                Duration::from_secs(3600), &lockstep_to_batch(), &mut |_: &str, _: u64, _: u64| {}, &never,
-            )
-            .expect("never stopped")
-        };
-
-        assert_eq!(resumed.completed, vec![true, true]);
-        for arm in 0..2 {
-            assert_eq!(weights(&resumed_stores[arm]), weights(&stores[arm]), "arm {arm}'s weights");
-            assert_eq!(resumed_optimizers[arm].step_count(), steps_per_round as i64);
-            // Summed in another order across the interruption: equal up to rounding.
-            assert!((resumed.train_loss[arm] - uninterrupted.train_loss[arm]).abs() < 1e-12, "arm {arm}'s train loss");
-            assert_eq!(resumed.test_loss[arm], uninterrupted.test_loss[arm], "arm {arm}'s test loss");
-        }
-    }
-
-    #[test]
-    fn an_arm_that_already_recorded_the_boundary_does_not_complete_it_again() {
-        let records = lockstep_records(&[vec![0.1f32, 0.9, 0.3, 0.7], vec![0.8f32, 0.4, 0.6, 0.0]]);
-        let stores: Vec<nn::VarStore> = (0..2).map(|_| nn::VarStore::new(tch::Device::Cpu)).collect();
-        let losses: Vec<_> = stores.iter().enumerate().map(|(arm, vs)| arm_loss_from(vs, 0.1, arm)).collect();
-        let mut optimizers: Vec<AdamW> = stores.iter().map(|vs| AdamW::new(vs, 1e-2)).collect();
-        let never = AtomicBool::new(false);
-        // Arm 0 finishes a round of 2 alone, as if the crash came after its round was recorded.
-        {
-            let mut alone = Trainee {
-                optimizer: &mut optimizers[0],
-                loss: Box::new(&losses[0]),
-                on_backup: Box::new(|_: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {}),
-            };
-            run_training_steps(
-                std::slice::from_mut(&mut alone), &mut CyclingStream { records: records.clone(), next: 0 }, 2, 2,
-                fresh_resume(1), Duration::from_secs(3600), &lockstep_to_batch(), &mut |_: u64| {}, &never,
-            )
-            .expect("never stopped");
-        }
-        let before = weights(&stores[0]);
-        let mut trainees: Vec<Trainee<Tensor>> = optimizers
-            .iter_mut()
-            .zip(&losses)
-            .map(|(optimizer, loss)| Trainee {
-                optimizer,
-                loss: Box::new(loss),
-                on_backup: Box::new(|_: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {}),
-            })
-            .collect();
-        let outcome = run_round(
-            &mut trainees, &mut CyclingStream { records: records.clone(), next: 0 },
-            &mut [RecordsSource(records.clone())], None, 2, 2, None, Duration::from_secs(3600), &lockstep_to_batch(),
-            &mut |_: &str, _: u64, _: u64| {}, &never,
-        )
-        .expect("never stopped");
-        drop(trainees);
-
-        assert_eq!(outcome.completed, vec![false, true]);
-        assert_eq!(weights(&stores[0]), before, "the arm ahead never stepped");
-        assert_eq!(optimizers[1].step_count(), 2);
-    }
-
     #[test]
     fn run_training_steps_produces_a_finite_row_weighted_loss_and_reports_the_stream_s_cursors() {
         let vs = nn::VarStore::new(tch::Device::Cpu);
@@ -948,16 +584,13 @@ mod tests {
         let mut trainee = sample_trainee(&vs, &mut optimizer);
         let mut stream = CyclingStream { records: records_of(&[0.3; 5]), next: 0 };
         let stop_requested = AtomicBool::new(false);
-        let (completed, train_losses, next_cursors, _duration_secs) = run_training_steps(
-            std::slice::from_mut(&mut trainee), &mut stream, 3, TEST_BATCH_SIZE, fresh_resume(1),
-            Duration::from_secs(3600), &sample_to_batch(), &mut |_: u64| {},
-            &stop_requested,
+        let (train_loss, next_cursors, _duration_secs) = run_training_steps(
+            &mut trainee, &mut stream, 3, TEST_BATCH_SIZE, fresh_resume(), Duration::from_secs(3600), &sample_to_batch(),
+            &mut |_: u64| {}, &stop_requested,
         )
         .expect("run_training_steps should complete when stop_requested is never set");
 
-        let train_loss = train_losses[0];
         assert!(train_loss.is_finite() && train_loss >= 0.0, "train_loss = {train_loss}");
-        assert_eq!(completed, vec![true]);
         // 3 steps of 2 rows over 5: the stream stands at row 6 mod 5.
         assert_eq!(next_cursors, vec![1]);
     }
@@ -969,7 +602,7 @@ mod tests {
         let mut stream = CyclingStream { records: records_of(&[0.3; 8]), next: 0 };
         let stop_requested = AtomicBool::new(true);
         let backup_calls = std::cell::RefCell::new(Vec::new());
-        let mut trainee: Trainee<Tensor> = Trainee {
+        let mut trainee: Probe<Tensor> = Probe {
             optimizer: &mut optimizer,
             loss: Box::new(sample_loss(&vs)),
             on_backup: Box::new(|current_optimizer: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {
@@ -978,8 +611,8 @@ mod tests {
         };
 
         let result = run_training_steps(
-            std::slice::from_mut(&mut trainee), &mut stream, 3, TEST_BATCH_SIZE, fresh_resume(1),
-            Duration::from_secs(3600), &sample_to_batch(), &mut |_: u64| {}, &stop_requested,
+            &mut trainee, &mut stream, 3, TEST_BATCH_SIZE, fresh_resume(), Duration::from_secs(3600), &sample_to_batch(),
+            &mut |_: u64| {}, &stop_requested,
         );
 
         assert!(result.is_none(), "a stop request seen mid-pass must report the pass as unfinished");
@@ -996,13 +629,12 @@ mod tests {
         let mut test_readers = test_set(&[0.3; 3]);
         let stop_requested = AtomicBool::new(false);
         let outcome = run_round(
-            std::slice::from_mut(&mut trainee), &mut stream, &mut test_readers, None, 2, TEST_BATCH_SIZE, None,
-            Duration::from_secs(3600), &sample_to_batch(), &mut |_: &str, _: u64, _: u64| {},
-            &stop_requested,
+            &mut trainee, &mut stream, &mut test_readers, None, 2, TEST_BATCH_SIZE, None, Duration::from_secs(3600),
+            &sample_to_batch(), &mut |_: &str, _: u64, _: u64| {}, &stop_requested,
         )
         .expect("run_round should complete when stop_requested is never set");
 
-        let (train_loss, test_loss) = (outcome.train_loss[0], outcome.test_loss[0]);
+        let (train_loss, test_loss) = (outcome.train_loss, outcome.test_loss);
         assert!(train_loss.is_finite() && train_loss >= 0.0, "train_loss = {train_loss}");
         assert!(test_loss.is_finite() && test_loss >= 0.0, "test_loss = {test_loss}");
         assert_eq!(outcome.cursors, vec![2 * TEST_BATCH_SIZE as u64]);
@@ -1021,8 +653,8 @@ mod tests {
             |label: &str, processed: u64, total: u64| calls.borrow_mut().push((label.to_string(), processed, total));
 
         let result = run_round(
-            std::slice::from_mut(&mut trainee), &mut stream, &mut test_readers, None, 3, TEST_BATCH_SIZE, None,
-            Duration::from_secs(3600), &sample_to_batch(), &mut on_progress, &stop_requested,
+            &mut trainee, &mut stream, &mut test_readers, None, 3, TEST_BATCH_SIZE, None, Duration::from_secs(3600),
+            &sample_to_batch(), &mut on_progress, &stop_requested,
         );
 
         assert!(result.is_none(), "a stop request seen mid-training must report the whole round as unfinished");

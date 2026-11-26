@@ -236,17 +236,16 @@ impl Network {
         bounds
     }
 
-    /// The loss one training step descends, for every kind: `bce_loss` on the pawns, against label
-    /// column `column` (`DenseBatch::label`; a one-arm batch has column `0` alone), in this network's
-    /// unit.
-    pub fn training_loss(&self, batch: &DenseBatch, column: usize) -> Tensor {
-        bce_loss(&self.pawns(batch), &batch.label(column), self.psq().s_pawns)
+    /// The loss one training step descends, for every kind: `bce_loss` on the pawns, against the
+    /// batch's labels (`DenseBatch::label`), in this network's unit.
+    pub fn training_loss(&self, batch: &DenseBatch) -> Tensor {
+        bce_loss(&self.pawns(batch), batch.label(), self.psq().s_pawns)
     }
 
-    /// The test loss against label column `column`, for every kind: the same binary cross entropy as
-    /// `training_loss`, comparable across architectures.
-    pub fn test_loss(&self, batch: &DenseBatch, column: usize) -> Tensor {
-        bce_loss(&self.pawns(batch), &batch.label(column), self.psq().s_pawns)
+    /// The test loss, for every kind: the same binary cross entropy as `training_loss`, comparable
+    /// across architectures.
+    pub fn test_loss(&self, batch: &DenseBatch) -> Tensor {
+        bce_loss(&self.pawns(batch), batch.label(), self.psq().s_pawns)
     }
 
     /// The label-space prediction, `score(pawns)`: `[batch, 1]`.
@@ -645,49 +644,10 @@ mod tests {
             &dense_row(&[7], width),
             Tensor::from_slice(&[0.4f32]).view([1, 1]),
         ));
-        let test = network.test_loss(&batch, 0);
-        let loss = network.training_loss(&batch, 0);
+        let test = network.test_loss(&batch);
+        let loss = network.training_loss(&batch);
         let (got, expected) = (f64::try_from(&loss).unwrap(), f64::try_from(&test).unwrap());
         assert!((got - expected).abs() < 1e-6, "{got} against {expected}");
-    }
-
-    #[test]
-    fn each_arms_losses_equal_those_of_a_batch_built_from_its_labels_alone() {
-        use super::super::batch::to_dense_batch;
-        use super::super::cache::CacheRecord;
-        use fattorini::board::Board;
-        use fattorini::features::extract_canonical;
-
-        let fens = [
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-            "8/5k2/8/3P4/8/8/2K5/8 b - - 0 1",
-        ];
-        let arm_labels = [[0.1f32, -0.3, 0.6], [0.2, 0.5, -0.7]];
-        let canonicals: Vec<_> = fens.iter().map(|fen| extract_canonical(&Board::from_fen(fen).unwrap().0)).collect();
-        let lockstep: Vec<CacheRecord> = canonicals
-            .iter()
-            .enumerate()
-            .map(|(row, canonical)| CacheRecord {
-                canonical: canonical.clone(),
-                labels: arm_labels.iter().map(|labels| labels[row]).collect(),
-                progress: crate::cache::Progress::UNKNOWN,
-            })
-            .collect();
-
-        for feature_set in [FeatureSet::Psq, FeatureSet::PsqThreats] {
-            let vs = nn::VarStore::new(tch::Device::Cpu);
-            let network = Network::new(&vs.root(), feature_set, 8, &[4]);
-            let batch = to_dense_batch(&lockstep, feature_set);
-            for (arm, labels) in arm_labels.iter().enumerate() {
-                let single: Vec<CacheRecord> =
-                    canonicals.iter().zip(labels).map(|(canonical, &label)| CacheRecord::new(canonical.clone(), label)).collect();
-                let single = to_dense_batch(&single, feature_set);
-                assert!(batch.label(arm).equal(&single.label(0)), "arm {arm}'s label column");
-                assert!(network.training_loss(&batch, arm).equal(&network.training_loss(&single, 0)));
-                assert!(network.test_loss(&batch, arm).equal(&network.test_loss(&single, 0)));
-            }
-        }
     }
 
     #[test]
@@ -834,7 +794,7 @@ mod tests {
             let _ = vs.variables()["transform.bias"].shallow_clone().fill_(0.5);
             let _ = vs.variables()["transform.weight"].shallow_clone().fill_(0.01);
         });
-        network.training_loss(&batch, 0).backward();
+        network.training_loss(&batch).backward();
         let gradient = vs.variables()["transform.weight"].grad();
         for (half, lanes) in [("first", 0..4), ("second", 4..8)] {
             let magnitude = f64::try_from(gradient.narrow(0, lanes.start, 4).abs().sum(Kind::Float)).unwrap();

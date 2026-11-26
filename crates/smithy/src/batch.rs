@@ -1,6 +1,6 @@
 use tch::{Device, Kind, Tensor};
 
-use super::cache::{label_matrix, CacheRecord};
+use super::cache::CacheRecord;
 use super::feature_set::FeatureSet;
 use fattorini::features::{halfk, psq, psq_threats, CanonicalPosition};
 use fattorini::stack_buckets::{buckets_of_canonical, count_bucket, count_of_canonical, phase_bucket, phase_of_canonical};
@@ -27,13 +27,10 @@ pub enum DenseBatch {
 }
 
 impl DenseBatch {
-    /// `[batch, 1]`: arm `arm`'s already-labeled signed advantage in `[-1, 1]`, a column
-    /// of the batch's `[batch, arms]` labels, regardless of which variant `self` is -- `round.rs`'s
-    /// own training/test loss computation needs this one tensor and nothing else about either
-    /// variant's own dense shape. A batch of one-label records has one arm, `0`. Read by the
-    /// unstacked `Network`'s losses.
-    pub fn label(&self, arm: usize) -> Tensor {
-        self.psq().label.narrow(1, arm as i64, 1)
+    /// `[batch, 1]`: each row's already-labeled signed advantage in `[-1, 1]`, regardless of which
+    /// variant `self` is: the losses need this one tensor and nothing else about the variant's shape.
+    pub fn label(&self) -> &Tensor {
+        &self.psq().label
     }
 
     /// The feature set the batch was built under, its halfk layout included: what `Network` checks its
@@ -84,7 +81,7 @@ pub struct DenseBatchPsq {
     features: Tensor,
     /// `Int64 [2 * rows]`: where each bag's features start in `features`.
     offsets: Tensor,
-    /// `[rows, arms]`.
+    /// `[rows, 1]`: each row's label.
     pub label: Tensor,
     /// `Int64 [rows, 5]`: each row's buckets, our king, their king, material, phase, piece count
     /// (`fattorini::stack_buckets`). Carried by every psq batch, read only by a bucketed head.
@@ -297,7 +294,7 @@ fn active_indices(
     let mut own: Vec<i32> = Vec::new();
     let mut opponent: Vec<i32> = Vec::new();
     let mut buckets: Vec<i32> = Vec::with_capacity(BUCKET_COLUMNS as usize * rows);
-    let (label, _) = label_matrix(records);
+    let label: Vec<f32> = records.iter().map(CacheRecord::label).collect();
     for (row, record) in records.iter().enumerate() {
         let (own_rows, opponent_rows) = expand(&record.canonical);
         let offset = (row * width) as i32;
@@ -320,7 +317,7 @@ fn psq_on(
     let (rows, width) = (rows as i64, width as i64);
     let own = Tensor::from_slice(own).to_device(device).to_kind(Kind::Int64);
     let opponent = Tensor::from_slice(opponent).to_device(device).to_kind(Kind::Int64) + rows * width;
-    let label = Tensor::from_slice(label).view([rows, -1]).to_device(device);
+    let label = Tensor::from_slice(label).view([rows, 1]).to_device(device);
     let buckets = Tensor::from_slice(buckets).view([rows, BUCKET_COLUMNS]).to_device(device).to_kind(Kind::Int64);
     DenseBatchPsq::from_flat(rows, width, Tensor::cat(&[own, opponent], 0), label, buckets)
 }

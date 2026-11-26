@@ -6,7 +6,7 @@
 
 use tch::{Device, Tensor};
 
-use super::cache::{label_matrix, CacheRecord};
+use super::cache::CacheRecord;
 use super::net_config::Attention;
 use super::transformer_vocab::{is_king_token, token_sequence};
 
@@ -20,8 +20,7 @@ use super::transformer_vocab::{is_king_token, token_sequence};
 /// piece-count bucket). The leading `1` (not folded away) is the attention-heads axis, sized so it
 /// broadcasts against `scaled_dot_product_attention`'s own `[batch, heads, seq_len, seq_len]`
 /// score tensor without silently misaligning against the batch axis instead. `labels`:
-/// `[batch, arms]`, column `k` the `k`-th label of every record, one column per lambda when they
-/// train in lockstep, as a `DenseBatch`'s labels are.
+/// `[batch, 1]`, each record's label, as a `DenseBatch`'s labels are.
 pub struct TransformerBatch {
     pub tokens: Tensor,
     pub attention_mask: Option<Tensor>,
@@ -53,7 +52,6 @@ pub struct HostTransformerBatch {
     tokens: Vec<i64>,
     mask: Option<Vec<bool>>,
     labels: Vec<f32>,
-    arms: usize,
 }
 
 impl HostTransformerBatch {
@@ -89,8 +87,8 @@ pub fn host_batch(records: &[CacheRecord], attention: Attention) -> HostTransfor
         Attention::Full => None,
         Attention::KingsOnly => Some(kings_only_mask(&sequences, seq_len)),
     };
-    let (labels, arms) = label_matrix(records);
-    HostTransformerBatch { rows, seq_len, tokens, mask, labels, arms }
+    let labels = records.iter().map(CacheRecord::label).collect();
+    HostTransformerBatch { rows, seq_len, tokens, mask, labels }
 }
 
 /// `host`'s tensors, on `device`.
@@ -99,7 +97,7 @@ pub fn upload(host: &HostTransformerBatch, device: Device) -> TransformerBatch {
     TransformerBatch {
         tokens: Tensor::from_slice(&host.tokens).view([rows, seq_len]).to_device(device),
         attention_mask: host.mask.as_ref().map(|mask| Tensor::from_slice(mask).view([rows, 1, seq_len, seq_len]).to_device(device)),
-        labels: Tensor::from_slice(&host.labels).view([rows, host.arms as i64]).to_device(device),
+        labels: Tensor::from_slice(&host.labels).view([rows, 1]).to_device(device),
     }
 }
 
@@ -219,17 +217,16 @@ mod tests {
     }
 
     #[test]
-    fn a_lockstep_batch_has_one_label_column_per_lambda() {
-        let record = |labels: Vec<f32>| CacheRecord { labels, ..sample_record(vec![], 0.0) };
-        let records = vec![record(vec![0.1, 0.2, 0.3]), record(vec![0.4, 0.5, 0.6])];
+    fn an_uploaded_batch_has_one_label_a_row_and_its_host_counts_its_bytes() {
+        let records = vec![sample_record(vec![], 0.1), sample_record(vec![], 0.4)];
         let host = host_batch(&records, Attention::KingsOnly);
 
         let batch = upload(&host, tch::Device::Cpu);
 
-        let expected = Tensor::from_slice(&[0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6]).view([2, 3]);
+        let expected = Tensor::from_slice(&[0.1f32, 0.4]).view([2, 1]);
         assert!(batch.labels.allclose(&expected, 1e-6, 1e-6, false));
-        // Two rows of 3 tokens: 6 tokens, 18 mask entries, 6 labels.
-        assert_eq!(host.bytes(), 6 * 8 + 18 + 6 * 4);
+        // Two rows of 3 tokens: 6 tokens, 18 mask entries, 2 labels.
+        assert_eq!(host.bytes(), 6 * 8 + 18 + 2 * 4);
     }
 
     #[test]

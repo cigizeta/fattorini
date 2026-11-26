@@ -56,8 +56,8 @@ pub(crate) struct Tally {
 /// How the stream reads its files.
 #[derive(Clone, Debug)]
 pub(crate) struct StreamOptions {
-    /// The direct blend's lambdas: every record carries one label per lambda, in this order, as
-    /// lockstep training's arms read them.
+    /// The direct blend's lambdas: every record carries one label per lambda, in this order (the
+    /// buckets read lambdas 0 and 1, the two ends the polyline blends).
     pub lambdas: Vec<f64>,
     /// Worker threads, at least 1.
     pub threads: usize,

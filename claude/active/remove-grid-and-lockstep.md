@@ -93,7 +93,12 @@ The budget schedule (`Rule::Budget`, its kept checkpoints, which are one arm's r
    resume; `grid_center` refused as unknown. For 2c: `material` needs three label columns, so labels
    stay a matrix there, or `material` reads its sets one at a time) (`smithy.rs`, `ArmLambda::Constant`, `-l` names,
    the page's grid, `lambda:` refused); 2c, labels a scalar, then `Arms` gone and `run_round` on one
-   network; 2d, DEV.md, the page's columns, module docs. The whole, as first planned: `train` on the unstacked loop; lockstep reduced to
+   network (written 2026-11-26: `schedule:` dropped from configs first, folded into 2b's commit,
+   refused in `configs/`, `budget` ignored in a frozen copy; then the training side a scalar, the
+   developer's choice: a batch's labels `[rows, 1]` from `CacheRecord::label`, `label_matrix` and the
+   networks' `column` gone, `round::Trainee` one network, losses `f64`; `CacheRecord.labels` stays a
+   `Vec`, since the buckets carry two ends and `freeze`/`material` several sets, a split of the type
+   left for later if ever); 2d, DEV.md, the page's columns, module docs. The whole, as first planned: `train` on the unstacked loop; lockstep reduced to
    `training.rs`; the stack files, grid, patience, grid-era readers and their tests deleted; labels a
    scalar; configs and DEV.md. Tests and clippy.
 3. **A short budget attempt** on the training machine (after `git pull`, the smithy and arenas

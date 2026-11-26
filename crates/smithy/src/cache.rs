@@ -205,8 +205,8 @@ fn read_pieces(reader: &mut impl Read) -> Vec<u16> {
 /// than duplicating its fields, so `batch.rs` can hand `&record.canonical` straight to it, no adapter
 /// step.
 ///
-/// `labels` holds one label per arm when every lambda of a generation trains in lockstep over one
-/// stream, in arm order; a single lambda's test set gives exactly one.
+/// `labels` holds one label for training, the polyline's; several elsewhere: a bucket's two ends,
+/// lambda 0 and 1, blended when read, or one per label set of a frozen test set (`material`).
 #[derive(Clone)]
 pub struct CacheRecord {
     pub canonical: CanonicalPosition,
@@ -235,9 +235,8 @@ impl CacheRecord {
         CacheRecord { canonical, labels: vec![label], progress: Progress::UNKNOWN }
     }
 
-    /// The label of a one-label record. Panics on a lockstep record, whose callers must say which
-    /// arm's label they mean.
-    #[cfg(test)]
+    /// The label of a one-label record, as training reads it. Panics on a record of several (the
+    /// buckets' two ends, a frozen set's several label sets), whose readers say which they mean.
     pub fn label(&self) -> f32 {
         assert_eq!(self.labels.len(), 1, "a record of {} labels has no single label", self.labels.len());
         self.labels[0]
@@ -250,18 +249,6 @@ impl CacheRecord {
 /// still occurs in the games, as the final position of a game whose last capture left the kings alone.
 pub fn is_bare_kings(position: &CanonicalPosition) -> bool {
     position.pieces.is_empty()
-}
-
-/// `records`' labels as a row-major `[rows, arms]` matrix, and `arms`: a batch's labels, one column
-/// per arm. Every record must carry the same number of labels.
-pub fn label_matrix(records: &[CacheRecord]) -> (Vec<f32>, usize) {
-    let arms = records.first().map_or(1, |record| record.labels.len());
-    let mut matrix = Vec::with_capacity(records.len() * arms);
-    for record in records {
-        assert_eq!(record.labels.len(), arms, "a batch mixes records of {arms} and {} labels", record.labels.len());
-        matrix.extend_from_slice(&record.labels);
-    }
-    (matrix, arms)
 }
 
 #[cfg(test)]
