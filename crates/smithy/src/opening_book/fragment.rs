@@ -369,14 +369,23 @@ pub fn run(engine_name: &str) -> Result<(), String> {
     let (start, _) = Board::from_fen(pgn_replay::STARTING_POSITION_FEN).expect("the starting position parses");
     let started = Instant::now();
     let previous_budget = if index == 0 { -1.0 } else { budget(index - 1) };
+    // A line every `REPORT_EVERY`: the fragment's positions so far (resumed ones included), the
+    // cost reached against the budget, and the rate since this run started.
+    const REPORT_EVERY: f64 = 10.0;
     let mut fragment_size = 0usize;
-    let mut last_report = 0usize;
+    let mut last_report = 0.0;
     let result = dijkstra::run(&mut graph, start, CHARGE, budget(index), |band| {
         fragment_size += band.iter().filter(|expanded| expanded.cost > previous_budget).count();
-        if fragment_size >= last_report + 1000 {
-            last_report = fragment_size;
-            let elapsed = started.elapsed().as_secs_f64();
-            println!("  {fragment_size} positions, cost {:.1}, {:.0} s", band[0].cost, elapsed);
+        let elapsed = started.elapsed().as_secs_f64();
+        if elapsed >= last_report + REPORT_EVERY {
+            last_report = elapsed;
+            println!(
+                "  {:>6.0} s: {fragment_size} positions in the fragment, cost {:.1} of {}, {:.1} positions/s",
+                elapsed,
+                band[0].cost,
+                budget(index),
+                fragment_size as f64 / elapsed
+            );
         }
     });
     let expanded = match result {
