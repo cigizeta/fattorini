@@ -65,5 +65,24 @@ says little here. The duels decide.
 
 ## Step 4: the duels
 
+**Screlu-hidden, i8 against i16 (2026-11-26): drawn, curtailed at 252 of 800 games** (the
+developer), cutechess-cli, 10+0.1, Hash 64, UHO in colour-reversed pairs, concurrency 4:
+screlu-i8 54 - 50 - 148, 50.8%, about +6 Elo, +/-14 one sigma. **i8 kept.** Curtailed because the
+rule is i8 kept unless clearly lost (about -25 Elo at 800 games): that needed the remaining 548 games
+at 44.4%, 4 sigma below even, about 1 in 30,000. Optional stopping biases the estimate, not this
+decision: the +6 is no measured gain. No game lost on time, disconnected, stalled, made an illegal
+move or crashed (the PGN's `grep`, 0).
+
+**Pairwise, i8 against i16 (2026-11-26): drawn, curtailed at 100 of 800 games** (the developer),
+the same settings: pairwise-i8 23 - 14 - 63, 54.5%, about +31 Elo, +/-41 cutechess's 95%. **i8
+kept.** A clear loss needed the remaining 700 games at 45.2%, 3.8 sigma below even, about 1 in
+14,000: a little short of the screlu duel's 4 sigma, accepted (the developer). The +31 is no
+measured gain either: pairwise's i8 gains under 2% in speed, so most of it is chance. White against
+Black was 19 - 18, against UHO's usual clear edge for White (17 - 4 over the screlu duel's first 50):
+too few games to read.
+
+**Both kept: the first hidden layer is i8 for every network** (the developer's "i8 for both",
+2026-11-26). The pairwise against screlu-hidden duels (TODO.md) run on this build.
+
 Both networks, i8 against i16, 10+0.1, two builds (the i16 build the commit before step 3), one
 idle machine, the usual rule. Results in i8-first-layer.md and TODO.md.

@@ -48,7 +48,9 @@ pairwise against screlu-hidden at 512.
      first layer's share of an evaluation.
   2. **8-bit first layer** (i8-first-layer.md, its plan i8-first-layer-implementation.md, designed
      2026-11-26: `maddubs` cannot saturate; gates of 2 cp mean and 20 cp p99 drift from i16, then
-     speed, then a 10+0.1 duel for each network): inputs as u8 (squares and products both in 0..=127, `(a * b + 256) >> 9`),
+     speed, then a 10+0.1 duel for each network). **Done 2026-11-26, i8 for both:** drift 1.34 and
+     1.93 cp mean; the first layer about 1.5x faster for screlu-hidden, about 1.1x for pairwise;
+     both duels against i16 drawn and curtailed (50.8% over 252 games, 54.5% over 100). Inputs as u8 (squares and products both in 0..=127, `(a * b + 256) >> 9`),
      weights as i8, `maddubs` + `madd` (or `vpdpbusd`). Both gain the same fraction, so screlu saves
      about twice pairwise's time, narrowing pairwise's speed edge. Not exact: first measured
      on the existing networks (the drift, how often `maddubs` saturates); a weight clamp in smithy,
