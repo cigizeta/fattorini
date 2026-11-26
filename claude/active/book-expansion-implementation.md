@@ -175,6 +175,33 @@ Losses in points of Stockfish's expected score; the moves found best first.
 The threshold became 7 (book-expansion.md). The Englund position is decided (beyond +/-300 cp),
 so a fragment never expands it.
 
+Fixed during fragment 0's first run (2026-11-26): expansions were recorded, and the console told,
+only when a whole band ended, so a crash lost the band in flight and long bands ran silent. Each
+expansion is now recorded and flushed the moment it is done (`Searcher::expand_each`), and the
+engines report every 10 s; a line also closes each band.
+
+Fragment 0's first bands at budget 120 (2026-11-26): 1, 16, 215, 1,800 positions, about 12
+searches and 0.7 s of 16 engines a position (1.4 positions a second): an eightfold branching a
+ply, so budget 120 would never finish. Cause: in quiet equal positions Stockfish's losses are
+small, about ten moves pass the threshold, and a loss of 3 points cost only 0.3 of a ply. Answer
+(the developer, 2026-11-26): an edge costs `CHARGE + LOSS_WEIGHT * loss`, the weight in the
+fragment's header (format still version 1, nothing written yet), not in the progress file's (an
+expansion does not depend on it); `book-simulate` reruns Dijkstra over the expanded positions
+for several weights, without a search, to choose it.
+
+`book-simulate` over the first 683 positions (positions within each budget; in brackets, those
+still to search, so a lower bound where not 0):
+
+| Weight | 20 | 30 | 40 | 50 | 60 |
+|---|---|---|---|---|---|
+| 1 | 18 (0) | 233 (0) | 2065 (1382) | 7607 (6924) | 7675 (6992) |
+| 2 | 16 (0) | 134 (0) | 900 (228) | 4553 (3870) | 7560 (6877) |
+| 3 | 14 (0) | 91 (0) | 478 (1) | 2263 (1591) | 5897 (5214) |
+| 4 | 11 (0) | 60 (0) | 277 (1) | 1289 (646) | 4002 (3330) |
+| 6 | 8 (0) | 41 (0) | 157 (1) | 581 (155) | 1809 (1185) |
+
+Chosen (the developer, 2026-11-26): weight 4, fragment 0 at budget 60, +10 a fragment.
+
 ### Fragments
 
 For "Inside Fattorini" and for deciding when to stop: per fragment, its budget, positions,

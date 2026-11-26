@@ -29,13 +29,23 @@ use super::unit::{loss, Judged, Score};
 pub const DEPTH: u8 = 20;
 /// What each ply costs beside its loss: a line of best moves costs this much a ply.
 pub const CHARGE: f64 = 10.0;
+/// How much a move's loss weighs in its edge's cost, `CHARGE + LOSS_WEIGHT * loss`. At 1, a loss of
+/// 3 points cost only 0.3 of a ply, and quiet equal positions, where Stockfish's losses are small,
+/// branched eightfold a ply (fragment 0's first bands: 1, 16, 215, 1,800). A heavier weight keeps
+/// the admitted sidelines in the book but makes each cost its depth: deep main lines, shallow
+/// sidelines. Chosen with `book-simulate` over the positions already expanded: at 4 the book grows
+/// about fivefold a ply instead of eightfold to thirteenfold, and 1. Nc3 (loss 2.75) costs 21, a
+/// ply more than 1. e4; at 6 it cut moves nearly as good as the best.
+pub const LOSS_WEIGHT: f64 = 4.0;
 /// A move losing this many points or more is not admitted: a mistake (`?`) in a game review. Chosen
 /// from probes in Stockfish's unit: 7 keeps the established lines of sharp openings (the Two
 /// Knights' Na5, b5 and Fritz; the King's Gambit's exf4, Falkbeer, Classical Declined and Nc6)
 /// and stops just past them, where 5 dropped some and 10 let quiet moves like 2... h6 in.
 pub const THRESHOLD: f64 = 7.0;
-/// Fragment 0's budget, and each next fragment's rise: fragment k reaches 12 + k plies of best moves.
-const FIRST_BUDGET: f64 = 120.0;
+/// Fragment 0's budget, and each next fragment's rise: fragment k reaches 6 + k plies of best moves.
+/// The book grows about fivefold a ply, so fragment 0 at 60 takes about an hour on 16 engines and
+/// each next one about five times its predecessor; 120 would never finish.
+const FIRST_BUDGET: f64 = 60.0;
 const BUDGET_STEP: f64 = 10.0;
 /// A position whose evaluation is beyond this, or a mate, is decided and never expanded: the book's
 /// job is done there. In a lost position every move loses only the few points left, so without
@@ -93,27 +103,29 @@ pub fn read_fragments(books: &str, engine: &str) -> Result<Vec<(Header, Vec<Posi
     Ok(fragments)
 }
 
-/// What a batch of unknown positions is handed to: the engines, or a test's stand-in.
+/// What a batch of unknown positions is handed to: the engines, or a test's stand-in. Each
+/// expansion is handed to `each` the moment it is done, with its index in the batch, so it is on
+/// disk at once: a crash loses only the expansions under way, never a whole band.
 pub trait Searcher {
-    fn expand_all(&mut self, boards: &[Board]) -> Vec<Result<Expansion, String>>;
+    fn expand_each(&mut self, boards: &[Board], each: &mut dyn FnMut(usize, Result<Expansion, String>) -> Result<(), String>);
 }
 
-/// The game graph over the stored positions and a searcher for the others.
-pub struct BookGraph<S: Searcher> {
+/// How often the console hears from a run, whatever the length of its bands.
+const REPORT_EVERY: f64 = 10.0;
+
+/// What a run has expanded and written: the positions known, those searched, the progress file.
+pub struct Store {
     /// Every position expanded so far, by key, scores from White's side.
     pub known: HashMap<u64, Position>,
-    searcher: S,
     /// Positions this run searched, in the order searched, and the searches made.
     pub searched: Vec<u64>,
     pub searches: usize,
     progress: Option<File>,
+    started: Instant,
+    last_report: f64,
 }
 
-impl<S: Searcher> BookGraph<S> {
-    pub fn new(known: HashMap<u64, Position>, searcher: S, progress: Option<File>) -> BookGraph<S> {
-        BookGraph { known, searcher, searched: Vec::new(), searches: 0, progress }
-    }
-
+impl Store {
     fn record(&mut self, board: &Board, expansion: &Expansion) -> Result<(), String> {
         let side = board.side_to_move();
         let position = Position {
@@ -130,6 +142,36 @@ impl<S: Searcher> BookGraph<S> {
         self.searches += expansion.trace.len();
         self.known.insert(position.key, position);
         Ok(())
+    }
+
+    /// A line every `REPORT_EVERY` seconds while the engines work.
+    fn report(&mut self, done_in_band: usize, band: usize) {
+        let elapsed = self.started.elapsed().as_secs_f64();
+        if self.progress.is_none() || elapsed < self.last_report + REPORT_EVERY {
+            return;
+        }
+        self.last_report = elapsed;
+        let expanded = self.searched.len();
+        println!(
+            "  {elapsed:>6.0} s: {expanded} positions searched this run, {:.2} a second, {:.1} searches each; this band {done_in_band} of {band}",
+            expanded as f64 / elapsed,
+            self.searches as f64 / expanded.max(1) as f64
+        );
+    }
+}
+
+/// The game graph over the stored positions and a searcher for the others.
+pub struct BookGraph<S: Searcher> {
+    pub store: Store,
+    searcher: S,
+    /// The weight of a move's loss in its edge's cost (`LOSS_WEIGHT`, or a simulation's).
+    loss_weight: f64,
+}
+
+impl<S: Searcher> BookGraph<S> {
+    pub fn new(known: HashMap<u64, Position>, searcher: S, progress: Option<File>, loss_weight: f64) -> BookGraph<S> {
+        let store = Store { known, searched: Vec::new(), searches: 0, progress, started: Instant::now(), last_report: 0.0 };
+        BookGraph { store, searcher, loss_weight }
     }
 
     /// A known position's edges: each stored move replayed on the board, its loss against the
@@ -153,7 +195,8 @@ impl<S: Searcher> BookGraph<S> {
                 .ok_or_else(|| format!("position {:016x}: stored move {code:#06x} is not legal", position.key))?;
             let mut child = *board;
             child.make_move(mv);
-            edges.push((child, loss(best, score)));
+            // Dijkstra adds the charge; the loss enters weighed.
+            edges.push((child, self.loss_weight * loss(best, score)));
         }
         Ok(edges)
     }
@@ -167,23 +210,27 @@ impl<S: Searcher> Graph for BookGraph<S> {
     }
 
     fn edges(&mut self, batch: &[Board]) -> Result<Edges<Board>, String> {
-        let unknown: Vec<Board> = batch.iter().filter(|board| !self.known.contains_key(&polyglot_key(board))).copied().collect();
+        let unknown: Vec<Board> = batch.iter().filter(|board| !self.store.known.contains_key(&polyglot_key(board))).copied().collect();
         if !unknown.is_empty() {
-            let results = self.searcher.expand_all(&unknown);
+            let store = &mut self.store;
             let mut failure = None;
-            for (board, result) in unknown.iter().zip(results) {
+            let mut done = 0;
+            self.searcher.expand_each(&unknown, &mut |index, result| {
+                done += 1;
                 match result {
-                    Ok(expansion) => self.record(board, &expansion)?,
+                    Ok(expansion) => store.record(&unknown[index], &expansion)?,
                     Err(message) => {
                         failure.get_or_insert(message);
                     }
                 }
-            }
+                store.report(done, unknown.len());
+                Ok(())
+            });
             if let Some(message) = failure {
                 return Err(message);
             }
         }
-        batch.iter().map(|board| self.stored_edges(board, &self.known[&polyglot_key(board)])).collect()
+        batch.iter().map(|board| self.stored_edges(board, &self.store.known[&polyglot_key(board)])).collect()
     }
 }
 
@@ -224,19 +271,27 @@ impl Pool {
 }
 
 impl Searcher for Pool {
-    fn expand_all(&mut self, boards: &[Board]) -> Vec<Result<Expansion, String>> {
+    fn expand_each(&mut self, boards: &[Board], each: &mut dyn FnMut(usize, Result<Expansion, String>) -> Result<(), String>) {
         let jobs = self.jobs.as_ref().expect("the pool is open");
         for (index, board) in boards.iter().enumerate() {
             jobs.send((index, *board)).expect("the workers are alive");
         }
-        let mut results: Vec<Option<Result<Expansion, String>>> = (0..boards.len()).map(|_| None).collect();
-        for _ in 0..boards.len() {
-            match self.results.recv() {
-                Ok((index, result)) => results[index] = Some(result),
-                Err(_) => break,
+        // Every job is answered, even after a failure, so no stale answer reaches the next batch.
+        let mut answered = 0;
+        let mut failed = None;
+        while answered < boards.len() {
+            let Ok((index, result)) = self.results.recv() else {
+                failed.get_or_insert("a worker died".to_string());
+                break;
+            };
+            answered += 1;
+            if let Err(message) = each(index, result) {
+                failed.get_or_insert(message);
             }
         }
-        results.into_iter().map(|result| result.unwrap_or_else(|| Err("a worker died".to_string()))).collect()
+        if let Some(message) = failed {
+            let _ = each(usize::MAX, Err(message));
+        }
     }
 }
 
@@ -249,6 +304,9 @@ impl Drop for Pool {
     }
 }
 
+/// What the rows depend on, and the fragment they are for. Not the loss weight: an expansion does
+/// not depend on it, only which positions a fragment holds does, so rows made under one weight
+/// serve another.
 fn progress_header(engine_id: &str, index: u16) -> String {
     format!("# {engine_id}; depth {DEPTH}; charge {CHARGE}; threshold {THRESHOLD}; cutoff {CUTOFF_CP}; fragment {index}")
 }
@@ -281,6 +339,16 @@ fn parse_progress(text: &str, header_line: &str) -> Result<HashMap<u64, Position
         positions.insert(position.key, position);
     }
     Ok(positions)
+}
+
+/// The rows of the progress file at `path`, whatever its header, none when there is no file: for
+/// a simulation, which reads what was expanded without adding to it.
+pub fn progress_rows(path: &str) -> Result<HashMap<u64, Position>, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text.lines().skip(1).filter_map(parse_row).map(|position| (position.key, position)).collect()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(error) => Err(format!("cannot read {path}: {error}")),
+    }
 }
 
 fn parse_row(line: &str) -> Option<Position> {
@@ -323,6 +391,7 @@ pub fn run(engine_name: &str) -> Result<(), String> {
         budget: budget(index) as f32,
         charge: CHARGE as f32,
         threshold: THRESHOLD as f32,
+        loss_weight: LOSS_WEIGHT as f32,
         depth: DEPTH,
         cutoff: CUTOFF_CP as u16,
         engine: engine_id.clone(),
@@ -365,40 +434,35 @@ pub fn run(engine_name: &str) -> Result<(), String> {
         })
         .map_err(|error| format!("cannot set the Ctrl+C handler: {error}"))?;
     }
-    let mut graph = BookGraph::new(known, Pool::new(engines, Arc::clone(&stop)), Some(progress));
+    let mut graph = BookGraph::new(known, Pool::new(engines, Arc::clone(&stop)), Some(progress), LOSS_WEIGHT);
     let (start, _) = Board::from_fen(pgn_replay::STARTING_POSITION_FEN).expect("the starting position parses");
     let started = Instant::now();
     let previous_budget = if index == 0 { -1.0 } else { budget(index - 1) };
-    // A line every `REPORT_EVERY`: the fragment's positions so far (resumed ones included), the
-    // cost reached against the budget, and the rate since this run started.
-    const REPORT_EVERY: f64 = 10.0;
+    // A line at each band's end: the fragment's positions so far (resumed ones included) and the
+    // cost reached against the budget. The engines' own lines (`Store::report`) fill the time
+    // between, every few seconds.
     let mut fragment_size = 0usize;
-    let mut last_report = 0.0;
     let result = dijkstra::run(&mut graph, start, CHARGE, budget(index), |band| {
         fragment_size += band.iter().filter(|expanded| expanded.cost > previous_budget).count();
-        let elapsed = started.elapsed().as_secs_f64();
-        if elapsed >= last_report + REPORT_EVERY {
-            last_report = elapsed;
-            println!(
-                "  {:>6.0} s: {fragment_size} positions in the fragment, cost {:.1} of {}, {:.1} positions/s",
-                elapsed,
-                band[0].cost,
-                budget(index),
-                fragment_size as f64 / elapsed
-            );
-        }
+        println!(
+            "  {:>6.0} s: band at cost {:.1} of {} done ({} positions); {fragment_size} in the fragment",
+            started.elapsed().as_secs_f64(),
+            band[0].cost,
+            budget(index),
+            band.len()
+        );
     });
     let expanded = match result {
         Ok(expanded) => expanded,
         Err(message) if stop.load(Ordering::SeqCst) => {
-            println!("Stopped ({message}): {} positions searched this run; rerun to resume.", graph.searched.len());
+            println!("Stopped ({message}): {} positions searched this run; rerun to resume.", graph.store.searched.len());
             return Ok(());
         }
         Err(message) => return Err(message),
     };
 
     let new: Vec<_> = expanded.iter().filter(|expanded| expanded.cost > previous_budget).collect();
-    let positions: Vec<Position> = new.iter().map(|expanded| graph.known[&expanded.key].clone()).collect();
+    let positions: Vec<Position> = new.iter().map(|expanded| graph.store.known[&expanded.key].clone()).collect();
     let bytes = format::write(&header, &positions);
     let path = format!("{stem}.bin");
     fs::write(&path, &bytes).map_err(|error| format!("cannot write {path}: {error}"))?;
@@ -438,7 +502,7 @@ mod tests {
     struct Refuses;
 
     impl Searcher for Refuses {
-        fn expand_all(&mut self, boards: &[Board]) -> Vec<Result<Expansion, String>> {
+        fn expand_each(&mut self, boards: &[Board], _: &mut dyn FnMut(usize, Result<Expansion, String>) -> Result<(), String>) {
             panic!("asked to search {} positions", boards.len());
         }
     }
@@ -481,10 +545,36 @@ mod tests {
                 moves: vec![(code(&e4, "e7e5"), white(30, 56))],
             }),
         ]);
-        let mut graph = BookGraph::new(known, Refuses, None);
+        let mut graph = BookGraph::new(known, Refuses, None, 1.0);
         let expanded = dijkstra::run(&mut graph, root, CHARGE, 15.0, |_| {}).unwrap();
         assert_eq!(expanded.len(), 2, "the root at 0, 1. e4 at 10; 1... e5 costs 20");
-        assert!(graph.searched.is_empty());
+        assert!(graph.store.searched.is_empty());
+    }
+
+    /// A searcher whose first position expands into nothing and whose others fail.
+    struct FirstOnly;
+
+    impl Searcher for FirstOnly {
+        fn expand_each(&mut self, boards: &[Board], each: &mut dyn FnMut(usize, Result<Expansion, String>) -> Result<(), String>) {
+            for index in 0..boards.len() {
+                let result = if index == 0 {
+                    Ok(Expansion { eval: white(0, 50), moves: Vec::new(), trace: Vec::new() })
+                } else {
+                    Err("the engine exited".to_string())
+                };
+                each(index, result).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn an_expansion_is_kept_the_moment_it_is_done_even_when_its_band_fails() {
+        let root = start();
+        let mut graph = BookGraph::new(HashMap::new(), FirstOnly, None, 1.0);
+        let failed = graph.edges(&[after(&["e2e4"]), after(&["d2d4"])]);
+        assert!(failed.is_err());
+        assert_eq!(graph.store.searched, [polyglot_key(&after(&["e2e4"]))]);
+        assert!(!graph.store.known.contains_key(&polyglot_key(&root)));
     }
 
     #[test]
@@ -496,10 +586,12 @@ mod tests {
             eval: white(30, 56),
             moves: vec![(code(&e4, "e7e5"), white(30, 56)), (code(&e4, "c7c5"), white(60, 62))],
         };
-        let graph = BookGraph::new(HashMap::new(), Refuses, None);
+        let graph = BookGraph::new(HashMap::new(), Refuses, None, 1.0);
         let edges = graph.stored_edges(&e4, &position).unwrap();
         assert_eq!(edges[0].1, 0.0);
         assert_eq!(edges[1].1, 6.0, "44 points for Black against 38");
+        let heavier = BookGraph::new(HashMap::new(), Refuses, None, 4.0);
+        assert_eq!(heavier.stored_edges(&e4, &position).unwrap()[1].1, 24.0, "the loss weighs four times");
     }
 
     #[test]
@@ -510,7 +602,7 @@ mod tests {
             eval: white(30, 56),
             moves: vec![(code(&root, "e2e4"), white(30, 56)), (code(&root, "d2d4"), white(301, 60))],
         };
-        let graph = BookGraph::new(HashMap::new(), Refuses, None);
+        let graph = BookGraph::new(HashMap::new(), Refuses, None, 1.0);
         assert_eq!(graph.stored_edges(&root, &position).unwrap().len(), 1);
         assert!(decided(Score::Cp(-301)) && decided(Score::Mate(4)) && !decided(Score::Cp(300)));
     }
@@ -534,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn budgets_rise_by_ten_from_120() {
-        assert_eq!((budget(0), budget(1), budget(8)), (120.0, 130.0, 200.0));
+    fn budgets_rise_by_ten_from_60() {
+        assert_eq!((budget(0), budget(1), budget(8)), (60.0, 70.0, 140.0));
     }
 }

@@ -2,7 +2,8 @@
 //! Little-endian.
 //!
 //! Header: magic `FBKF` (4), format version (2), fragment index (2), budget (4, f32), charge (4,
-//! f32), threshold in points (4, f32), depth (1), the decided positions' cutoff in cp (2),
+//! f32), threshold in points (4, f32), loss weight (4, f32), depth (1), the decided positions'
+//! cutoff in cp (2),
 //! reserved (1), the engine's `id name` as length (2) and UTF-8 bytes, entry count (4).
 //!
 //! Entry, sorted by key: the position's Polyglot key (8); its evaluation from White's side (4);
@@ -25,6 +26,7 @@ pub struct Header {
     pub budget: f32,
     pub charge: f32,
     pub threshold: f32,
+    pub loss_weight: f32,
     pub depth: u8,
     pub cutoff: u16,
     pub engine: String,
@@ -37,6 +39,7 @@ impl Header {
         let differs = |what: &str, a: String, b: String| (a != b).then(|| format!("{what} {a} against {b}"));
         differs("charge", self.charge.to_string(), other.charge.to_string())
             .or_else(|| differs("threshold", self.threshold.to_string(), other.threshold.to_string()))
+            .or_else(|| differs("loss weight", self.loss_weight.to_string(), other.loss_weight.to_string()))
             .or_else(|| differs("depth", self.depth.to_string(), other.depth.to_string()))
             .or_else(|| differs("cutoff", self.cutoff.to_string(), other.cutoff.to_string()))
             .or_else(|| differs("engine", self.engine.clone(), other.engine.clone()))
@@ -86,6 +89,7 @@ pub fn write(header: &Header, positions: &[Position]) -> Vec<u8> {
     out.extend_from_slice(&header.budget.to_le_bytes());
     out.extend_from_slice(&header.charge.to_le_bytes());
     out.extend_from_slice(&header.threshold.to_le_bytes());
+    out.extend_from_slice(&header.loss_weight.to_le_bytes());
     out.push(header.depth);
     out.extend_from_slice(&header.cutoff.to_le_bytes());
     out.push(0);
@@ -122,6 +126,7 @@ pub fn read(data: &[u8]) -> Result<(Header, Vec<Position>), String> {
     let budget = reader.f32()?;
     let charge = reader.f32()?;
     let threshold = reader.f32()?;
+    let loss_weight = reader.f32()?;
     let depth = reader.take(1)?[0];
     let cutoff = reader.u16()?;
     reader.take(1)?;
@@ -138,7 +143,7 @@ pub fn read(data: &[u8]) -> Result<(Header, Vec<Position>), String> {
     if reader.pos != data.len() {
         return Err("the fragment has bytes past its last position".into());
     }
-    Ok((Header { index, budget, charge, threshold, depth, cutoff, engine }, positions))
+    Ok((Header { index, budget, charge, threshold, loss_weight, depth, cutoff, engine }, positions))
 }
 
 struct Reader<'a> {
@@ -189,7 +194,7 @@ mod tests {
     use super::*;
 
     fn header() -> Header {
-        Header { index: 2, budget: 140.0, charge: 10.0, threshold: 10.0, depth: 20, cutoff: 300, engine: "Judge 1".into() }
+        Header { index: 2, budget: 140.0, charge: 10.0, threshold: 7.0, loss_weight: 1.0, depth: 20, cutoff: 300, engine: "Judge 1".into() }
     }
 
     fn judged(score: Score, expected: u16) -> Judged {

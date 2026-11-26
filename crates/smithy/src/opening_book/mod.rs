@@ -9,6 +9,7 @@ mod format;
 mod fragment;
 mod polyglot;
 mod probe;
+mod simulate;
 mod unit;
 
 use std::process;
@@ -19,6 +20,21 @@ pub const FRAGMENT_COMMAND: &str = "book-fragment";
 pub const POLYGLOT_COMMAND: &str = "book-polyglot";
 /// `smithy book-probe <engine> <moves>`, likewise.
 pub const PROBE_COMMAND: &str = "book-probe";
+/// `smithy book-simulate <engine> [<loss weight>...]`, likewise.
+pub const SIMULATE_COMMAND: &str = "book-simulate";
+
+pub fn run_simulate(args: &[String]) {
+    let parsed = args.split_first().and_then(|(engine, weights)| {
+        let weights: Option<Vec<f64>> = weights.iter().map(|weight| weight.parse().ok().filter(|&w: &f64| w >= 0.0)).collect();
+        Some((engine, weights?))
+    });
+    let Some((engine, weights)) = parsed else {
+        exit_with(&format!("usage: smithy {SIMULATE_COMMAND} <engine> [<loss weight, 0 or more>...]"));
+    };
+    if let Err(message) = simulate::run(engine, &weights) {
+        exit_with(&message);
+    }
+}
 
 pub fn run_fragment(args: &[String]) {
     let [engine] = args else {

@@ -24,8 +24,10 @@ built (the developer, 2026-11-26).
   weights are the softmax of each position's own move scores; the positions the moves lead to
   need no search of their own. A position with no legal move (mate or stalemate) is expanded
   into no moves and adds nothing.
-- **Which positions are expanded: Dijkstra.** An edge weighs the charge, 10, plus its loss: never
-  negative, and a best move weighs the charge alone. From the initial position at cost 0, the
+- **Which positions are expanded: Dijkstra.** An edge weighs the charge, 10, plus its loss times
+  a loss weight: never negative, and a best move weighs the charge alone. The weight (the
+  developer, 2026-11-26) answers fragment 0's eightfold branching at weight 1: admitted
+  sidelines stay in the book but cost their depth; chosen from `book-simulate`. From the initial position at cost 0, the
   position of least cost is taken from the queue (its cost is then final, the minimum over every
   path, transpositions included), expanded, and its edges offer their positions the cost plus
   the edge's weight. A run stops when the least cost in the queue exceeds its budget: every
@@ -36,10 +38,16 @@ built (the developer, 2026-11-26).
 ## Fragments (the developer, 2026-11-26)
 
 - **A rising budget, the charge fixed:** fragment 0 holds the positions expanded at a cost up to
-  120, and each next fragment raises the budget by 10. A line of best moves costs 10 a ply, so
-  fragment k reaches 12 + k plies of best moves; a loss of 10 points weighs as one ply, at every
-  fragment alike. The edge weights never change, so the fragments are one Dijkstra run cut at
-  120, 130, 140, ...: disjoint and nested by construction. The book is their union.
+  60, and each next fragment raises the budget by 10. A line of best moves costs 10 a ply, so
+  fragment k reaches 6 + k plies of best moves. The edge weights never change, so the fragments
+  are one Dijkstra run cut at 60, 70, 80, ...: disjoint and nested by construction. The book is
+  their union.
+- **Loss weight 4, fragment 0 at 60 (the developer, 2026-11-26),** from `book-simulate` over the
+  first 683 positions expanded (book-expansion-implementation.md's run log): the book grows about
+  fivefold a ply at weight 4 (eight to thirteenfold at 1); weight 6 cut moves nearly as good as
+  the best. At that growth fragment 0 at 120 would never finish; at 60 it takes about an hour on
+  16 engines, and each next fragment about five times its predecessor (estimated: 70 about 6
+  hours, 80 about a day, 90 about five days).
 - **In order, no gaps, no maximum:** fragment k runs only after fragment k - 1; the operator stops
   when the book is big enough.
 - **The format:** per expanded position, its Polyglot key, its evaluation (from White's side) and

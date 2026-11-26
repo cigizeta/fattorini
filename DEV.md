@@ -366,10 +366,11 @@ commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`); its UCI na
 
 The book lichess-bot plays is grown from the initial position by a UCI engine of
 `data/engines.yaml` (Stockfish: its `wdl` gives the expected scores), in fragments: Dijkstra over
-the game graph, each move costing 10 plus its loss in expected-score points, a move losing 7
-points or more never admitted, a decided position (beyond +/-3.00, or a mate) never expanded.
-Fragment 0 holds the positions of cost up to 120 (12 plies of best moves), each next fragment 10
-more. Three commands of the smithy, run by hand, in no usage line.
+the game graph, each move costing 10 plus 4 times its loss in expected-score points, a move losing
+7 points or more never admitted, a decided position (beyond +/-3.00, or a mate) never expanded.
+Fragment 0 holds the positions of cost up to 60 (6 plies of best moves, about an hour on 16
+engines), each next fragment 10 more and about five times bigger. Four commands of the smithy, run
+by hand, in no usage line.
 
 Before a run, how one position expands (every search, its score, loss, nodes and time; nothing
 written), here after 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6:
@@ -394,6 +395,13 @@ says otherwise:
 ```
 
 It writes `data/books/book-stockfish-f0-<k>-t20.bin`, which lichess-bot's `config.yml` names.
+
+How big the fragments would be under other loss weights, from the positions already expanded,
+without a search (the counts by budget, and how many of them would still need one):
+
+```bash
+./bin/smithy book-simulate stockfish 2 4 6
+```
 
 ## Releases
 

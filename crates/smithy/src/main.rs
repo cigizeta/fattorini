@@ -100,6 +100,7 @@ fn main() {
         Some(opening_book::FRAGMENT_COMMAND) => opening_book::run_fragment(&rest),
         Some(opening_book::POLYGLOT_COMMAND) => opening_book::run_polyglot(&rest),
         Some(opening_book::PROBE_COMMAND) => opening_book::run_probe(&rest),
+        Some(opening_book::SIMULATE_COMMAND) => opening_book::run_simulate(&rest),
         Some(verb @ ("start" | "stop" | "status")) => smithy::run(verb, &rest),
         _ => {
             eprintln!("{}", USAGE);
@@ -130,7 +131,9 @@ mod tests {
 
     #[test]
     fn the_usage_offers_no_opening_book_command() {
-        for command in [opening_book::FRAGMENT_COMMAND, opening_book::POLYGLOT_COMMAND, opening_book::PROBE_COMMAND] {
+        for command in
+            [opening_book::FRAGMENT_COMMAND, opening_book::POLYGLOT_COMMAND, opening_book::PROBE_COMMAND, opening_book::SIMULATE_COMMAND]
+        {
             assert!(!USAGE.contains(command), "{command} is run by hand, a hidden feature");
         }
     }
