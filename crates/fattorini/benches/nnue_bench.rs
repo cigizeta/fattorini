@@ -146,8 +146,7 @@
 //!
 //! `cargo bench --bench nnue_bench -- --network <player> --threat-parts data/matches/<a test>`
 //!
-//! `--first-layer [dir]` times a network's first hidden layer, dense and sparse (after checking both
-//! give the same sums on every position), against its whole evaluation
+//! `--first-layer [dir]` times a network's first hidden layer against its whole evaluation
 //! (the developer, 2026-11-26), then prints the zero squares or products, pairs
 //! and blocks of four, on the positions of the games under `dir`, or the seven above:
 //!
@@ -231,9 +230,12 @@
 //! `i8` weights against today's `i16` (both per-row scales, both against f32, over the positions of
 //! the games under `dir`, as `--quantization`), and the first layer's time with `i16` `madd`, `i8`
 //! `maddubs` (AVX2) and `i8` `dpbusd` (AVX-VNNI, when the CPU has it). The kernels are this bench's
-//! own copies: the engine is not changed by it. A network with exactly one hidden layer only.
+//! own copies: the engine is not changed by it. A network with one hidden layer reads plain
+//! activations; one with two (screlu-hidden, pairwise, dual) reads its squares or products, and its
+//! precision is the engine's own, its first layer i8 since 2026-11-26, against f32. `dir` as
+//! `--first-layer`'s:
 //!
-//! `cargo bench --bench nnue_bench -- --network pesto-psq-g1-a1 --i8 data/matches/pesto-vs-self-psq-0001`
+//! `cargo bench --bench nnue_bench -- --network <player> --i8 "$(pwd)/data/lichess/<a pgn>"`
 //!
 //! Weight *values* should not affect the per-evaluation timing, but "should not" is not "do not" --
 //! a ReLU is a data-dependent branch and denormals are real -- so timing a genuine trained network
@@ -1697,6 +1699,10 @@ fn head_activations(quantized: &QuantizedPsqNetwork, board: &Board) -> Vec<i16> 
 /// `--i8 [dir]`: the precision and the speed of an `i8` first hidden layer against today's `i16`.
 fn i8_head(network: &Network, dir: &str) {
     let Network::Psq(network, quantized) = network;
+    if network.hidden.len() == 2 {
+        i8_two_hidden(network, quantized, dir);
+        return;
+    }
     if network.pairwise {
         println!("--i8 reads the activations of plain psq lanes, not a pairwise network's products");
         return;
@@ -1739,46 +1745,118 @@ fn i8_head(network: &Network, dir: &str) {
         println!("    {label:>4}: mean {mean:.2}, p50 {:.2}, p90 {:.2}, p99 {:.2}, max {:.2}", at(0.5), at(0.9), at(0.99), at(1.0));
     }
 
-    // Speed: the first layer alone, all rows, from the activations, per evaluation. The i8 kernels
-    // include packing the activations to u8, which only they need.
-    let sample = &activations[..activations.len().min(1000)];
+    i8_speed(&activations, &weights_i16, &weights_i8, out_dim);
+}
+
+/// `--i8` on a network with two hidden layers (screlu-hidden, pairwise, dual): the engine's
+/// evaluation, its first layer i8 since 2026-11-26, against f32 (i16's figures, for comparison, are
+/// in the commit history and the design notes); then the layer's speed with the bench's own i16 and
+/// i8 kernels, over the squares or products the engine computes.
+fn i8_two_hidden(network: &PsqNetwork, quantized: &QuantizedPsqNetwork, dir: &str) {
+    let boards = selection_positions(dir);
+    assert!(!boards.is_empty(), "no positions found under {dir}");
+    let mut differences = [Vec::with_capacity(boards.len())];
+    for board in &boards {
+        let exact = network.evaluate_pawns(board);
+        differences[0].push(100.0 * (quantized.evaluate_pawns(board) - exact).abs() as f64);
+    }
+    let first = &network.hidden[0];
+    println!("first hidden layer {} x {}, over {} positions from {dir}\n", first.out_dim, first.in_dim, boards.len());
+    println!("  differences in centipawns:");
+    for (label, values) in ["engine from f32"].into_iter().zip(&mut differences) {
+        values.sort_by(|a, b| a.total_cmp(b));
+        let at = |fraction: f64| -> f64 { values[((values.len() - 1) as f64 * fraction).round() as usize] };
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        println!("    {label:>12}: mean {mean:.2}, p50 {:.2}, p90 {:.2}, p99 {:.2}, max {:.2}", at(0.5), at(0.9), at(0.99), at(1.0));
+    }
+
+    let (in_dim, out_dim) = (first.in_dim, first.out_dim);
+    assert!(in_dim % 32 == 0 && out_dim % 8 == 0, "the kernels need inputs in 32s and rows in 8s, not {in_dim} x {out_dim}");
+    let (weights_i16, _) = quantize_rows(first, i16::MAX as f32, |w| w as i16);
+    let (weights_i8, _) = quantize_rows(first, i8::MAX as f32, |w| w as i8);
+    let inputs: Vec<Vec<i16>> = boards.iter().map(|board| quantized.first_layer_inputs(board)).collect();
+    i8_speed(&inputs, &weights_i16, &weights_i8, out_dim);
+}
+
+/// The first layer alone, all rows, per evaluation, with the i16 `madd` kernel, the i8 `maddubs`
+/// (AVX2) and, when the CPU has it, the i8 `dpbusd` (AVX-VNNI), each checked against scalar sums
+/// first, over at most 1000 of `inputs` (each in `0..=127`). The i8 kernels include packing the
+/// inputs to u8, which only they need.
+fn i8_speed(inputs: &[Vec<i16>], weights_i16: &[i16], weights_i8: &[i8], out_dim: usize) {
+    let in_dim = inputs[0].len();
+    let scalar_sums = |activations: &[i16], weights: &dyn Fn(usize) -> i32| -> Vec<i32> {
+        (0..out_dim).map(|row| (0..in_dim).map(|i| activations[i] as i32 * weights(row * in_dim + i)).sum()).collect()
+    };
+    let checked = &inputs[..inputs.len().min(1000)];
+    // Timed over a few positions only, whose inputs stay in cache, as the engine's are, computed just
+    // before the layer. Over 1000 they were streamed from L3 or memory; suspected of hiding
+    // pairwise's i8 gain, but timing in cache changed nothing (2026-11-26).
+    let sample = &inputs[..inputs.len().min(16)];
     let vnni = std::arch::is_x86_feature_detected!("avxvnni");
-    for activations in sample {
+    for activations in checked {
         let expected_i16 = scalar_sums(activations, &|i| weights_i16[i] as i32);
         let expected_i8 = scalar_sums(activations, &|i| weights_i8[i] as i32);
-        assert_eq!(first_layer_i16(&weights_i16, activations, out_dim), expected_i16, "the i16 kernel");
+        assert_eq!(first_layer_i16(weights_i16, activations, out_dim)[..out_dim], expected_i16[..], "the i16 kernel");
         let mut packed = vec![0u8; in_dim];
-        assert_eq!(first_layer_i8(&weights_i8, activations, &mut packed, out_dim, false), expected_i8, "the AVX2 i8 kernel");
+        assert_eq!(first_layer_i8(weights_i8, activations, &mut packed, out_dim, false)[..out_dim], expected_i8[..], "the AVX2 i8 kernel");
         if vnni {
-            assert_eq!(first_layer_i8(&weights_i8, activations, &mut packed, out_dim, true), expected_i8, "the VNNI i8 kernel");
+            assert_eq!(first_layer_i8(weights_i8, activations, &mut packed, out_dim, true)[..out_dim], expected_i8[..], "the VNNI i8 kernel");
         }
     }
     let mut packed = vec![0u8; in_dim];
     let time_i16 = time_per_item(sample.len(), |index| {
-        std::hint::black_box(first_layer_i16(&weights_i16, std::hint::black_box(&sample[index]), out_dim));
+        std::hint::black_box(first_layer_i16(weights_i16, std::hint::black_box(&sample[index]), out_dim));
     });
     let time_avx2 = time_per_item(sample.len(), |index| {
-        std::hint::black_box(first_layer_i8(&weights_i8, std::hint::black_box(&sample[index]), &mut packed, out_dim, false));
+        std::hint::black_box(first_layer_i8(weights_i8, std::hint::black_box(&sample[index]), &mut packed, out_dim, false));
     });
-    println!("\n  the first layer per evaluation, over {} positions (kernels checked against scalar sums):", sample.len());
+    println!(
+        "\n  the first layer per evaluation, timed over {} positions in cache (kernels checked against scalar sums on {}):",
+        sample.len(),
+        checked.len()
+    );
     println!("    i16 madd:          {time_i16:>6.1} ns");
     println!("    i8 maddubs (AVX2): {time_avx2:>6.1} ns, {:.2}x", time_i16 / time_avx2);
     if vnni {
         let time_vnni = time_per_item(sample.len(), |index| {
-            std::hint::black_box(first_layer_i8(&weights_i8, std::hint::black_box(&sample[index]), &mut packed, out_dim, true));
+            std::hint::black_box(first_layer_i8(weights_i8, std::hint::black_box(&sample[index]), &mut packed, out_dim, true));
         });
         println!("    i8 dpbusd (VNNI):  {time_vnni:>6.1} ns, {:.2}x", time_i16 / time_vnni);
     } else {
         println!("    i8 dpbusd (VNNI):  not available on this CPU");
     }
+
+    // The block-major kernel, for the 16-output layers of the current line.
+    if out_dim != 16 {
+        return;
+    }
+    let columns = block_major_i8(weights_i8, in_dim);
+    for activations in checked {
+        let expected_i8 = scalar_sums(activations, &|i| weights_i8[i] as i32);
+        for use_vnni in [false, vnni] {
+            assert_eq!(first_layer_i8_blocks(&columns, activations, &mut packed, use_vnni)[..16], expected_i8[..], "the block-major kernel, VNNI {use_vnni}");
+        }
+    }
+    let time_blocks_avx2 = time_per_item(sample.len(), |index| {
+        std::hint::black_box(first_layer_i8_blocks(&columns, std::hint::black_box(&sample[index]), &mut packed, false));
+    });
+    println!("    block-major i8, AVX2: {time_blocks_avx2:>6.1} ns, {:.2}x", time_i16 / time_blocks_avx2);
+    if vnni {
+        let time_blocks_vnni = time_per_item(sample.len(), |index| {
+            std::hint::black_box(first_layer_i8_blocks(&columns, std::hint::black_box(&sample[index]), &mut packed, true));
+        });
+        println!("    block-major i8, VNNI: {time_blocks_vnni:>6.1} ns, {:.2}x", time_i16 / time_blocks_vnni);
+    }
 }
 
 /// Every row's sum for the `i16` weights, eight rows at a time, as the engine's `dots_i16_8_avx2`.
-fn first_layer_i16(weights: &[i16], activations: &[i16], out_dim: usize) -> Vec<i32> {
+fn first_layer_i16(weights: &[i16], activations: &[i16], out_dim: usize) -> [i32; 64] {
     use std::arch::x86_64::{__m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_setzero_si256};
 
     let in_dim = activations.len();
-    let mut result = Vec::with_capacity(out_dim);
+    // On the stack: an allocation per call cost pairwise's small layer most of its i8 gain in the
+    // bench's first measurement (2026-11-26), a cost the engine would never pay.
+    let mut result = [0i32; 64];
     for group in 0..out_dim / 8 {
         let rows = &weights[group * 8 * in_dim..(group + 1) * 8 * in_dim];
         let mut sums = [unsafe { _mm256_setzero_si256() }; 8];
@@ -1792,7 +1870,7 @@ fn first_layer_i16(weights: &[i16], activations: &[i16], out_dim: usize) -> Vec<
                 }
             }
         }
-        result.extend(reduce_8(sums));
+        result[group * 8..group * 8 + 8].copy_from_slice(&reduce_8(sums));
     }
     result
 }
@@ -1801,11 +1879,119 @@ fn first_layer_i16(weights: &[i16], activations: &[i16], out_dim: usize) -> Vec<
 /// rows at a time, with `maddubs` then `madd` by ones (AVX2), or `dpbusd` (AVX-VNNI) when `vnni`.
 /// Activations are at most 127, so a `maddubs` pair is at most `2 * 127 * 127`, under `i16::MAX`:
 /// it never saturates, and both kernels give the exact sums.
-fn first_layer_i8(weights: &[i8], activations: &[i16], packed: &mut [u8], out_dim: usize, vnni: bool) -> Vec<i32> {
+fn first_layer_i8(weights: &[i8], activations: &[i16], packed: &mut [u8], out_dim: usize, vnni: bool) -> [i32; 64] {
+    let in_dim = activations.len();
+    pack_u8(activations, packed);
+    // On the stack: an allocation per call cost pairwise's small layer most of its i8 gain in the
+    // bench's first measurement (2026-11-26), a cost the engine would never pay.
+    let mut result = [0i32; 64];
+    for group in 0..out_dim / 8 {
+        let rows = &weights[group * 8 * in_dim..(group + 1) * 8 * in_dim];
+        // Safety: `vnni` is set only when the CPU reports AVX-VNNI.
+        let sums = if vnni { unsafe { rows_i8_vnni(rows, packed) } } else { rows_i8_avx2(rows, packed) };
+        result[group * 8..group * 8 + 8].copy_from_slice(&reduce_8(sums));
+    }
+    result
+}
+
+/// A 16-output layer's i8 weights block-major for `first_layer_i8_blocks`: for each block of four
+/// inputs, every output's four weights, `[block][output][4]`, 64 bytes, two registers.
+fn block_major_i8(weights: &[i8], in_dim: usize) -> Vec<i8> {
+    let mut columns = Vec::with_capacity(weights.len());
+    for block in 0..in_dim / 4 {
+        for output in 0..16 {
+            columns.extend_from_slice(&weights[output * in_dim + 4 * block..output * in_dim + 4 * block + 4]);
+        }
+    }
+    columns
+}
+
+/// A 16-output layer's sums, the weights block-major (`block_major_i8`), the inputs packed to u8 into
+/// `packed` first: per block of four inputs, one broadcast of their four bytes and two multiply-adds
+/// covering all sixteen outputs, each accumulator lane one output, so no horizontal reduction at the
+/// end; four blocks in flight, eight accumulators, to cover the multiply-add's latency. Tried
+/// because the row-major kernel's fixed costs left pairwise's 512 inputs only 1.14x faster than i16
+/// (2026-11-26). The same integers as the row-major kernels.
+fn first_layer_i8_blocks(columns: &[i8], activations: &[i16], packed: &mut [u8], vnni: bool) -> [i32; 64] {
+    pack_u8(activations, packed);
+    // Safety: `vnni` is set only when the CPU reports AVX-VNNI.
+    let sums = if vnni { unsafe { blocks_i8_vnni(columns, packed) } } else { blocks_i8_avx2(columns, packed) };
+    let mut result = [0i32; 64];
+    result[..16].copy_from_slice(&sums);
+    result
+}
+
+/// `first_layer_i8_blocks`'s accumulation with `maddubs` then `madd` by ones.
+fn blocks_i8_avx2(columns: &[i8], packed: &[u8]) -> [i32; 16] {
+    use std::arch::x86_64::{
+        __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16, _mm256_set1_epi16,
+        _mm256_set1_epi32, _mm256_setzero_si256,
+    };
+
+    let mut accumulators = [unsafe { _mm256_setzero_si256() }; 8];
+    for block in (0..packed.len() / 4).step_by(4) {
+        for unroll in 0..4 {
+            unsafe {
+                let input = _mm256_set1_epi32((packed.as_ptr().add(4 * (block + unroll)) as *const i32).read_unaligned());
+                let weights = columns.as_ptr().add((block + unroll) * 64);
+                for half in 0..2 {
+                    let weight = _mm256_loadu_si256(weights.add(32 * half) as *const __m256i);
+                    let pairs = _mm256_maddubs_epi16(input, weight);
+                    let sum = &mut accumulators[2 * unroll + half];
+                    *sum = _mm256_add_epi32(*sum, _mm256_madd_epi16(pairs, _mm256_set1_epi16(1)));
+                }
+            }
+        }
+    }
+    combine_blocks(accumulators)
+}
+
+/// `first_layer_i8_blocks`'s accumulation with `dpbusd`.
+///
+/// # Safety
+/// The CPU must have AVX-VNNI.
+#[target_feature(enable = "avxvnni")]
+unsafe fn blocks_i8_vnni(columns: &[i8], packed: &[u8]) -> [i32; 16] {
+    use std::arch::x86_64::{__m256i, _mm256_dpbusd_avx_epi32, _mm256_loadu_si256, _mm256_set1_epi32};
+
+    let mut accumulators = [unsafe { std::mem::zeroed::<__m256i>() }; 8];
+    for block in (0..packed.len() / 4).step_by(4) {
+        for unroll in 0..4 {
+            unsafe {
+                let input = _mm256_set1_epi32((packed.as_ptr().add(4 * (block + unroll)) as *const i32).read_unaligned());
+                let weights = columns.as_ptr().add((block + unroll) * 64);
+                for half in 0..2 {
+                    let weight = _mm256_loadu_si256(weights.add(32 * half) as *const __m256i);
+                    let sum = &mut accumulators[2 * unroll + half];
+                    *sum = _mm256_dpbusd_avx_epi32(*sum, input, weight);
+                }
+            }
+        }
+    }
+    combine_blocks(accumulators)
+}
+
+/// The eight accumulators of `first_layer_i8_blocks`, four in flight for each half of the outputs,
+/// added into the sixteen sums.
+fn combine_blocks(accumulators: [std::arch::x86_64::__m256i; 8]) -> [i32; 16] {
+    use std::arch::x86_64::{__m256i, _mm256_add_epi32, _mm256_storeu_si256};
+
+    let mut result = [0i32; 16];
+    unsafe {
+        for half in 0..2 {
+            let a = _mm256_add_epi32(accumulators[half], accumulators[2 + half]);
+            let b = _mm256_add_epi32(accumulators[4 + half], accumulators[6 + half]);
+            _mm256_storeu_si256(result.as_mut_ptr().add(8 * half) as *mut __m256i, _mm256_add_epi32(a, b));
+        }
+    }
+    result
+}
+
+/// `activations`, each in `0..=127`, packed to u8 into `packed`, in order.
+fn pack_u8(activations: &[i16], packed: &mut [u8]) {
     use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_packus_epi16, _mm256_permute4x64_epi64, _mm256_storeu_si256};
 
-    let in_dim = activations.len();
-    for chunk in 0..in_dim / 32 {
+    for chunk in 0..activations.len() / 32 {
         let offset = chunk * 32;
         unsafe {
             let low = _mm256_loadu_si256(activations.as_ptr().add(offset) as *const __m256i);
@@ -1815,14 +2001,6 @@ fn first_layer_i8(weights: &[i8], activations: &[i16], packed: &mut [u8], out_di
             _mm256_storeu_si256(packed.as_mut_ptr().add(offset) as *mut __m256i, bytes);
         }
     }
-    let mut result = Vec::with_capacity(out_dim);
-    for group in 0..out_dim / 8 {
-        let rows = &weights[group * 8 * in_dim..(group + 1) * 8 * in_dim];
-        // Safety: `vnni` is set only when the CPU reports AVX-VNNI.
-        let sums = if vnni { unsafe { rows_i8_vnni(rows, packed) } } else { rows_i8_avx2(rows, packed) };
-        result.extend(reduce_8(sums));
-    }
-    result
 }
 
 /// Eight rows' sums in `i32` lanes, by `maddubs` then `madd` by ones.
@@ -2184,45 +2362,34 @@ fn zero_squares(quantized: &QuantizedPsqNetwork, boards: &[Board], pairwise: boo
 }
 
 /// `--first-layer`: the first hidden layer's share of an evaluation (the developer, 2026-11-26:
-/// it bounds what skipping its zero inputs can gain), on `boards`: the whole evaluation from built piece-square accumulators,
-/// and the first layer's integer sums alone over the squares or products computed beforehand, the
-/// part a sparse layer can shrink. Then the zero fractions (`zero_squares`).
+/// it bounds what a faster first layer can gain), on `boards`: the whole evaluation from built
+/// piece-square accumulators, and the first layer's integer sums alone over the squares or products
+/// computed beforehand. Then the zero fractions (`zero_squares`), as they are and reordered.
 fn first_layer(network: &PsqNetwork, quantized: &QuantizedPsqNetwork, boards: &[Board]) {
     let built: Vec<[Vec<i16>; 2]> = boards.iter().map(|board| quantized.refresh_by_color(board)).collect();
     let inputs: Vec<Vec<i16>> = boards.iter().map(|board| quantized.first_layer_inputs(board)).collect();
     let mut sums = [0i32; 64];
-    let out_dim = quantized.first_layer_sums_for_bench(&inputs[0], &boards[0], false, &mut sums);
+    let out_dim = quantized.first_layer_sums_for_bench(&inputs[0], &boards[0], &mut sums);
     assert!(out_dim > 0, "--first-layer takes a network with a quantized first hidden layer");
-    // The two kernels must give the same integers on every position before either is timed.
-    let mut sparse_sums = [0i32; 64];
-    for (index, board) in boards.iter().enumerate() {
-        quantized.first_layer_sums_for_bench(&inputs[index], board, false, &mut sums);
-        quantized.first_layer_sums_for_bench(&inputs[index], board, true, &mut sparse_sums);
-        assert_eq!(sums[..out_dim], sparse_sums[..out_dim], "the sparse sums differ at position {index}");
-    }
 
     let whole = time_per_item(boards.len(), |index| {
         black_box(quantized.evaluate_by_color_cp(black_box(&built[index]), &boards[index]));
     });
-    let mut layer = |sparse: bool| {
-        time_per_item(boards.len(), |index| {
-            black_box(quantized.first_layer_sums_for_bench(black_box(&inputs[index]), &boards[index], sparse, &mut sums));
-            black_box(&sums);
-        })
-    };
-    let (dense, sparse) = (layer(false), layer(true));
+    let layer = time_per_item(boards.len(), |index| {
+        black_box(quantized.first_layer_sums_for_bench(black_box(&inputs[index]), &boards[index], &mut sums));
+        black_box(&sums);
+    });
     println!("  {} positions; per evaluation, both perspectives:", boards.len());
     println!("    whole           {whole:7.1} ns");
-    println!("    first, dense    {dense:7.1} ns  ({} inputs into {out_dim})", inputs[0].len());
-    println!("    first, sparse   {sparse:7.1} ns  {:5.1}% of the whole, {:.2}x faster", 100.0 * sparse / whole, dense / sparse);
+    println!("    first layer     {layer:7.1} ns  {:5.1}%  ({} inputs into {out_dim})", 100.0 * layer / whole, inputs[0].len());
     zero_squares(quantized, boards, network.pairwise);
 
     // The lanes reordered so that the most often zero sit side by side, as Stockfish reorders its
-    // transform: exact in the engine, the same permutation applied to the transform's columns and
-    // the first layer's, without retraining. One permutation for both perspectives, whose transform
-    // is shared; a pairwise network's input `i` is lanes `i` and `i + half` together, so permuting
-    // its products permutes those pairs of lanes. Timed with the weights left in place: the sums are
-    // wrong, but the work depends only on which pairs are zero.
+    // transform: exact, the same permutation applied to the transform's columns and the first
+    // layer's, without retraining. One permutation for both perspectives, whose transform is shared;
+    // a pairwise network's input `i` is lanes `i` and `i + half` together, so permuting its products
+    // permutes those pairs of lanes. What a sparse layer could skip after it; a sparse i16 layer lost
+    // even so (2026-11-26).
     let per_perspective = inputs[0].len() / 2;
     let mut zero_counts = vec![0usize; per_perspective];
     for position in &inputs {
@@ -2248,11 +2415,6 @@ fn first_layer(network: &PsqNetwork, quantized: &QuantizedPsqNetwork, boards: &[
         200.0 * zero_pairs as f64 / all as f64,
         400.0 * zero_blocks as f64 / all as f64
     );
-    let reordered_sparse = time_per_item(boards.len(), |index| {
-        black_box(quantized.first_layer_sums_for_bench(black_box(&reordered[index]), &boards[index], true, &mut sums));
-        black_box(&sums);
-    });
-    println!("    first, sparse, reordered {reordered_sparse:7.1} ns, {:.2}x the dense kernel's speed", dense / reordered_sparse);
 }
 
 /// `--threat-parts`: a psq_threats network's evaluation split into its parts, on `boards`, and

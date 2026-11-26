@@ -49,6 +49,52 @@ bench decides.
 - **Speed:** the i8 first layer clearly faster than i16 on both networks, under the kernel the
   machine has; then `nnue_bench --search-only` nodes/s, on one idle machine.
 
+## Step 1's figures (2026-11-26)
+
+`nnue_bench --i8` on the bot's Lichess games (33,064 positions), both `-512-8-budget-g1-a1`, one
+machine. **It has AVX-VNNI.**
+
+| centipawns          | mean | p50  | p90  | p99   | max   |
+|---------------------|------|------|------|-------|-------|
+| screlu, i8 from i16 | 1.34 | 0.62 | 2.91 | 13.31 | 24.71 |
+| screlu, i16 from f32| 1.10 | 0.66 | 2.66 | 6.61  | 14.32 |
+| screlu, i8 from f32 | 1.83 | 0.96 | 4.27 | 14.50 | 30.18 |
+| pairwise, i8 from i16 | 1.93 | 1.52 | 4.13 | 8.64 | 19.65 |
+| pairwise, i16 from f32| 1.27 | 0.75 | 3.12 | 7.43 | 17.55 |
+| pairwise, i8 from f32 | 2.27 | 1.61 | 5.21 | 11.15 | 32.00 |
+
+**The precision gate passes on both** (mean under 2 cp, p99 under 20), pairwise's mean close to
+the limit.
+
+The first layer, the bench's kernels, 1000 positions: screlu i16 210.3 ns, AVX2 153.5 (1.37x), VNNI
+120.0 (1.75x); pairwise i16 92.3 ns, AVX2 85.9 (1.07x), VNNI 82.4 (1.12x). The kernels then
+allocated their result on every call, a fixed cost weighing most on pairwise's small layer: rerun
+with the result on the stack before the speed gate is judged.
+
+**Rerun, the result on the stack:** screlu i16 179.6 ns, AVX2 127.7 (1.41x), VNNI 91.9 (1.95x):
+about 88 ns saved per evaluation of about 550, **the speed gate passed**. Pairwise i16 69.6 ns,
+AVX2 64.1 (1.08x), VNNI 61.3 (1.14x): about 8 ns of about 430, under 2%, **not clearly faster**.
+Per instruction, pairwise's i8 layer is slower than screlu's (61.3 ns for 256 `dpbusd` against 91.9
+for 512): fixed costs (packing, reductions, the eight-row chains' latency over only 16 blocks)
+that 512 inputs cannot spread as 1024 can.
+
+**A block-major kernel tried (the developer, 2026-11-26: tune the kernel, then decide):** weights
+`[block of 4][16 outputs][4]`, one broadcast of four input bytes and two multiply-adds for all
+sixteen outputs, no reduction, four blocks in flight. Pairwise: AVX2 1.09x, VNNI 1.08x, no better.
+Screlu: AVX2 1.45x, VNNI 1.77x (the row-major VNNI 1.59x in the same run). Three kernels landing at
+62 to 65 ns on pairwise points to a floor common to all of them, most likely the bench itself: it
+timed over 1000 positions' stored inputs, 1 to 2 MB, so every call streamed its inputs from L3 or
+memory, which the engine's freshly computed inputs never do. Rerun timed over 16 positions in cache.
+
+**Timed in cache, the floor was not the bench (2026-11-26):** pairwise i16 69.4 ns, row-major AVX2
+1.10x, VNNI 1.19x, block-major AVX2 1.08x, VNNI 0.89x; screlu i16 181.0 ns, row-major AVX2 1.49x,
+VNNI 1.55x, block-major AVX2 1.47x, VNNI 1.15x. The timings are noisy: screlu's block-major VNNI
+was 102.5 ns in the previous run and 156.9 here, the code unchanged (the machine not idle, or the
+bench moved between core types). What holds across every run: **screlu's first layer about 1.45x to
+1.6x faster in i8, about 60 to 90 ns off an evaluation of about 550; pairwise's 1.07x to 1.19x with
+every kernel tried, about 10 ns of about 430, under 2%, for 1.93 cp mean drift.** More kernel tuning
+in the bench is not expected to change that.
+
 ## Then the duels
 
 **Both networks (the developer, 2026-11-26):** screlu-hidden i8 against screlu-hidden i16, and

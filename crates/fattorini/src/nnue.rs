@@ -33,7 +33,7 @@ use crate::stack_buckets::{
 use crate::simd::{
     activation_dot_i16_avx2, activations_i16_avx2, add_assign_avx2, add_assign_i16_avx2, add_rows_saturating_i16_avx2, clipped_copy_avx2,
     clipped_dot_product_pair_avx2, clipped_dot_products_8_avx2, clipped_relu_avx2, dot_product_avx2, dot_products_8_avx2, dots_i16_8_avx2,
-    hidden_values_avx2, nonzero_pairs_avx2, pair_major_columns, pairwise_activations_i16_avx2, sparse_sums_i16_avx2, pairwise_dot_i16_avx2, screlu_activations_i16_avx2, screlu_dot2_i16_avx2,
+    dots_i8_8, hidden_values_avx2, pack_u8_avx2, pairwise_activations_i16_avx2, pairwise_dot_i16_avx2, screlu_activations_i16_avx2, screlu_dot2_i16_avx2,
     screlu_dot_i16_avx2, update_i16_avx2, whole_products_f32_avx2, Activation,
     DOT_PRODUCT_BLOCK,
 };
@@ -1343,9 +1343,9 @@ thread_local! {
     /// per thread as `ACTIVATION_SCRATCH`.
     static WHOLE_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
 
-    /// The first hidden layer's nonzero input pairs (`nonzero_pairs_avx2`), per thread as
+    /// The first hidden layer's inputs packed to u8 (`pack_u8_avx2`), per thread as
     /// `ACTIVATION_SCRATCH`.
-    static PAIR_SCRATCH: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
+    static BYTE_SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The output of a head with no hidden layer from its integer sum, the same arithmetic on every
@@ -1495,39 +1495,43 @@ fn split_skip(output: &Layer, head_inputs: usize) -> (Vec<i16>, f32, Layer) {
     (skip, skip_scale, head)
 }
 
-/// A first hidden layer quantized: `i16` weights, row `r` on `scales[r]`, `denominators[r]` its
+/// A first hidden layer quantized: `i8` weights, row `r` on `scales[r]`, `denominators[r]` its
 /// input 1.0 times `scales[r]` (`hidden_value`), and the f32 biases.
 #[derive(Debug, Clone, PartialEq)]
 struct QuantizedRows {
-    weight: Vec<i16>,
-    /// `weight` pair-major (`pair_major_columns`), what the sparse first layer reads: each nonzero
-    /// input pair's weights for every output in one place. Built at load; the file holds rows.
-    columns: Vec<i16>,
+    weight: Vec<i8>,
     scales: Vec<f32>,
     denominators: Vec<f32>,
     biases: Vec<f32>,
 }
 
+/// `layer`'s weights quantized row by row, each row scaled so that its largest weight is `levels`;
+/// returns the rounded weights, as `i32` for the caller to narrow, and each row's scale.
+fn quantize_rows(layer: &Layer, levels: f32) -> (Vec<i32>, Vec<f32>) {
+    let mut weight = Vec::with_capacity(layer.weight.len());
+    let mut scales = Vec::with_capacity(layer.out_dim);
+    for row in layer.weight.chunks(layer.in_dim) {
+        let largest = row.iter().fold(0.0f32, |most, weight| most.max(weight.abs()));
+        let scale = if largest > 0.0 { levels / largest } else { 1.0 };
+        weight.extend(row.iter().map(|weight| (weight * scale).round() as i32));
+        scales.push(scale);
+    }
+    (weight, scales)
+}
+
 impl QuantizedRows {
-    /// `layer` quantized row by row, for a head whose input 1.0 is `input_one`. i16, not i8: with i8,
-    /// each row's 127 levels left betty at 3.8 cp mean and 34 cp p99 away from f32, against
-    /// caroline's 1.2 and 7.8 (2026-10-07).
+    /// `layer` quantized row by row to i8, for a head whose input 1.0 is `input_one`. i8 since
+    /// 2026-11-26: on screlu-hidden and pairwise at width 512 (16 outputs over 1024 squares or 512
+    /// products) the first layer was 44% and 28% of an evaluation, and i8 made it about 1.5x and 1.1x
+    /// faster for 1.34 and 1.93 cp mean drift from i16 (p99 13.3 and 8.6), on the bot's Lichess
+    /// games. On betty (2026-10-07) the layer was too small a share to pay.
     fn quantize(layer: &Layer, input_one: f32) -> Result<QuantizedRows, String> {
         if layer.out_dim > MAX_HIDDEN_OUTPUTS {
             return Err(format!("a first hidden layer of {} outputs, beyond the {MAX_HIDDEN_OUTPUTS} the head holds", layer.out_dim));
         }
-        let mut weight = Vec::with_capacity(layer.weight.len());
-        let mut scales = Vec::with_capacity(layer.out_dim);
-        for row in layer.weight.chunks(layer.in_dim) {
-            let largest = row.iter().fold(0.0f32, |most, weight| most.max(weight.abs()));
-            let scale = if largest > 0.0 { i16::MAX as f32 / largest } else { 1.0 };
-            weight.extend(row.iter().map(|weight| (weight * scale).round() as i16));
-            scales.push(scale);
-        }
+        let (weight, scales) = quantize_rows(layer, i8::MAX as f32);
         let denominators = scales.iter().map(|&scale| input_one * scale).collect();
-        // An odd input has no pairs to skip by; the sparse kernel never runs on it (`first_layer_sums`).
-        let columns = if layer.in_dim.is_multiple_of(2) { pair_major_columns(&weight, layer.in_dim) } else { Vec::new() };
-        Ok(QuantizedRows { weight, columns, scales, denominators, biases: layer.bias.clone() })
+        Ok(QuantizedRows { weight: weight.into_iter().map(|weight| weight as i8).collect(), scales, denominators, biases: layer.bias.clone() })
     }
 }
 
@@ -1558,42 +1562,29 @@ fn second_layer_and_output(values: &[f32], second: &Layer, output: &Layer) -> f3
     output.bias[0] + dot_product_avx2(&output.weight, second_values)
 }
 
-/// A quantized first layer's integer sums over `inputs` (products or squares) into `sums`, one per
-/// row: in groups of eight rows when `vectorized` (`dots_i16_8_avx2`; the caller checks the rows
-/// are a multiple of 8), row by row otherwise. Exact either way.
+/// A quantized first layer's integer sums over `inputs` (products or squares, each `0..=127`) into
+/// `sums`, one per row: when `vectorized` and the inputs a multiple of 32, packed to u8 and summed
+/// eight rows at a time against the i8 weights (`dots_i8_8`; the caller checks the rows are a
+/// multiple of 8), row by row otherwise. Exact either way. Skipping zero inputs was tried at i16 and
+/// lost: 58.7% of a screlu network's pairs and 52.1% of a pairwise network's were all zero, yet the
+/// sparse kernel was 4% and 10% slower, both bound by loads, and reordering the lanes by how often
+/// they are zero clustered them too little to change that (2026-11-26).
 fn first_layer_sums(inputs: &[i16], vectorized: bool, first: &QuantizedRows, sums: &mut [i32]) {
-    first_layer_sums_with(inputs, vectorized, false, first, sums);
-}
-
-/// `first_layer_sums`, `sparse` choosing, when `vectorized`, the sparse kernel over the nonzero
-/// input pairs alone (`nonzero_pairs_avx2`, `sparse_sums_i16_avx2`) or the dense one over every
-/// input (`dots_i16_8_avx2`): the same integers either way. The engine takes the dense one. Most
-/// inputs are zero (a square whenever its lane is clipped, a product whenever either of its lanes
-/// is), but scattered: on the bot's Lichess games 58.7% of a screlu network's pairs and 52.1% of a
-/// pairwise network's were all zero, and the sparse kernel was still 4% and 10% slower (2026-11-26).
-/// At i16 both kernels are bound by loads, and the sparse one loads about as much per nonzero pair
-/// (an index, the pair, two weight registers) as the dense one per sixteen inputs. Only the bench
-/// takes the sparse one, to measure it.
-fn first_layer_sums_with(inputs: &[i16], vectorized: bool, sparse: bool, first: &QuantizedRows, sums: &mut [i32]) {
     let in_dim = inputs.len();
-    if vectorized && sparse {
-        PAIR_SCRATCH.with(|scratch| {
-            let mut indices = scratch.borrow_mut();
-            indices.resize(in_dim / 2, 0);
-            let count = nonzero_pairs_avx2(inputs, &mut indices);
-            sparse_sums_i16_avx2(inputs, &indices[..count], &first.columns, sums);
+    if vectorized && in_dim.is_multiple_of(32) {
+        BYTE_SCRATCH.with(|scratch| {
+            let mut packed = scratch.borrow_mut();
+            packed.resize(in_dim, 0);
+            pack_u8_avx2(inputs, &mut packed);
+            for (group, group_sums) in sums.chunks_mut(8).enumerate() {
+                group_sums.copy_from_slice(&dots_i8_8(&first.weight[group * 8 * in_dim..(group + 1) * 8 * in_dim], &packed));
+            }
         });
         return;
     }
-    for (group, group_sums) in sums.chunks_mut(8).enumerate() {
-        if vectorized {
-            group_sums.copy_from_slice(&dots_i16_8_avx2(&first.weight[group * 8 * in_dim..(group + 1) * 8 * in_dim], inputs));
-        } else {
-            for (index, sum) in group_sums.iter_mut().enumerate() {
-                let row = &first.weight[(group * 8 + index) * in_dim..(group * 8 + index + 1) * in_dim];
-                *sum = inputs.iter().zip(row).map(|(&input, &weight)| input as i32 * weight as i32).sum();
-            }
-        }
+    for (row, sum) in sums.iter_mut().enumerate() {
+        let weights = &first.weight[row * in_dim..(row + 1) * in_dim];
+        *sum = inputs.iter().zip(weights).map(|(&input, &weight)| input as i32 * weight as i32).sum();
     }
 }
 
@@ -1722,7 +1713,14 @@ impl QuantizedPsqNetwork {
                 QuantizedHead::HiddenBeside { hidden, skip, skip_scale, head }
             }
             [hidden, rest @ ..] => {
-                let QuantizedRows { weight, scales, denominators, biases, .. } = QuantizedRows::quantize(hidden, input_one)?;
+                // The old single hidden layer stays i16, as it shipped: none of the current line has it.
+                if hidden.out_dim > MAX_HIDDEN_OUTPUTS {
+                    return Err(format!("a first hidden layer of {} outputs, beyond the {MAX_HIDDEN_OUTPUTS} the head holds", hidden.out_dim));
+                }
+                let (weight, scales) = quantize_rows(hidden, i16::MAX as f32);
+                let weight = weight.into_iter().map(|weight| weight as i16).collect();
+                let denominators = scales.iter().map(|&scale| input_one * scale).collect();
+                let biases = hidden.bias.clone();
                 QuantizedHead::Hidden { weight, scales, denominators, biases, rest: rest.to_vec(), output: network.output.clone() }
             }
         };
@@ -2468,16 +2466,15 @@ impl QuantizedPsqNetwork {
 
     /// For the bench only: the first hidden layer's integer sums over `inputs`
     /// (`first_layer_inputs`), through the layer `board` selects, vectorized where the shapes allow,
-    /// into `sums`, by the sparse kernel or the dense one; returns the layer's outputs, 0 for a head
-    /// without such a layer.
+    /// into `sums`; returns the layer's outputs, 0 for a head without such a layer.
     #[doc(hidden)]
-    pub fn first_layer_sums_for_bench(&self, inputs: &[i16], board: &Board, sparse: bool, sums: &mut [i32]) -> usize {
+    pub fn first_layer_sums_for_bench(&self, inputs: &[i16], board: &Board, sums: &mut [i32]) -> usize {
         let Some(first) = self.first_layer_of(board) else {
             return 0;
         };
         let out_dim = first.biases.len();
         let vectorized = inputs.len().is_multiple_of(16) && out_dim.is_multiple_of(8);
-        first_layer_sums_with(inputs, vectorized, sparse, first, &mut sums[..out_dim]);
+        first_layer_sums(inputs, vectorized, first, &mut sums[..out_dim]);
         out_dim
     }
 }

@@ -655,116 +655,85 @@ pub(crate) fn dots_i16_8_avx2(rows: &[i16], activations: &[i16]) -> [i32; 8] {
     reduce_8_epi32(sums)
 }
 
-/// For each 8-bit mask, the positions of its set bits, lowest first, padded with zeros: what
-/// `nonzero_pairs_avx2` stores for a block of eight pairs.
-const NONZERO_TABLE: [[u16; 8]; 256] = {
-    let mut table = [[0u16; 8]; 256];
-    let mut mask = 0;
-    while mask < 256 {
-        let mut count = 0;
-        let mut bit = 0;
-        while bit < 8 {
-            if mask & (1 << bit) != 0 {
-                table[mask][count] = bit as u16;
-                count += 1;
-            }
-            bit += 1;
-        }
-        mask += 1;
-    }
-    table
-};
+/// `inputs`, each in `0..=127` (a first layer's squares or products), packed to u8 into `packed`, in
+/// order. A multiple of 32 long.
+pub(crate) fn pack_u8_avx2(inputs: &[i16], packed: &mut [u8]) {
+    use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_packus_epi16, _mm256_permute4x64_epi64, _mm256_storeu_si256};
 
-/// The indices of `inputs`' pairs (`inputs[2p]`, `inputs[2p + 1]`) that are not both zero, in
-/// order, into `indices`; returns how many. `inputs` a multiple of 16 long, `indices` at least half
-/// as long: each block of eight pairs stores eight indices at once, of which only the nonzero ones
-/// are kept, and the store never reaches past `inputs.len() / 2`.
-pub(crate) fn nonzero_pairs_avx2(inputs: &[i16], indices: &mut [u16]) -> usize {
+    debug_assert_eq!(inputs.len() % 32, 0);
+    assert!(packed.len() >= inputs.len(), "room for every input");
+    for chunk in 0..inputs.len() / 32 {
+        let offset = chunk * 32;
+        unsafe {
+            let low = _mm256_loadu_si256(inputs.as_ptr().add(offset) as *const __m256i);
+            let high = _mm256_loadu_si256(inputs.as_ptr().add(offset + 16) as *const __m256i);
+            // `packus` interleaves the two inputs by 128-bit lane; the permute puts them back in order.
+            let bytes = _mm256_permute4x64_epi64(_mm256_packus_epi16(low, high), 0b11_01_10_00);
+            _mm256_storeu_si256(packed.as_mut_ptr().add(offset) as *mut __m256i, bytes);
+        }
+    }
+}
+
+/// `sum(packed[i] * row[i])` for eight consecutive rows of a layer's row-major i8 weights at once,
+/// u8 inputs (`pack_u8_avx2`), by `dpbusd` where the CPU has AVX-VNNI and by `maddubs` then `madd`
+/// with ones otherwise. Inputs stop at 127 and weights at +/-127, so a `maddubs` pair reaches at
+/// most `2 * 127 * 127 = 32,258` and never saturates: both give the same integers, exact, so the
+/// choice never changes a value. `is_x86_feature_detected!` caches its answer: a load per call.
+pub(crate) fn dots_i8_8(rows: &[i8], packed: &[u8]) -> [i32; 8] {
+    debug_assert_eq!(packed.len() % 32, 0);
+    debug_assert_eq!(rows.len(), 8 * packed.len());
+    if std::arch::is_x86_feature_detected!("avxvnni") {
+        // Safety: the CPU has just reported AVX-VNNI.
+        unsafe { dots_i8_8_vnni(rows, packed) }
+    } else {
+        dots_i8_8_avx2(rows, packed)
+    }
+}
+
+/// `dots_i8_8` by `maddubs` then `madd` with ones.
+fn dots_i8_8_avx2(rows: &[i8], packed: &[u8]) -> [i32; 8] {
     use std::arch::x86_64::{
-        __m128i, __m256i, _mm_add_epi16, _mm_loadu_si128, _mm_set1_epi16, _mm_storeu_si128, _mm256_castsi256_ps,
-        _mm256_cmpeq_epi32, _mm256_loadu_si256, _mm256_movemask_ps, _mm256_setzero_si256,
+        __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16, _mm256_set1_epi16,
+        _mm256_setzero_si256,
     };
 
-    debug_assert_eq!(inputs.len() % 16, 0);
-    assert!(indices.len() >= inputs.len() / 2, "room for every pair's index");
-
-    let mut count = 0;
-    for block in 0..inputs.len() / 16 {
+    let in_dim = packed.len();
+    let mut sums = [unsafe { _mm256_setzero_si256() }; 8];
+    for chunk in 0..in_dim / 32 {
+        let offset = chunk * 32;
         unsafe {
-            let pairs = _mm256_loadu_si256(inputs.as_ptr().add(block * 16) as *const __m256i);
-            let zero = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(pairs, _mm256_setzero_si256())));
-            let mask = !zero as usize & 0xFF;
-            let offsets = _mm_loadu_si128(NONZERO_TABLE[mask].as_ptr() as *const __m128i);
-            let positions = _mm_add_epi16(offsets, _mm_set1_epi16((block * 8) as i16));
-            // `count <= 8 * block`, so the eight stored end by `8 * (block + 1) <= indices.len()`.
-            _mm_storeu_si128(indices.as_mut_ptr().add(count) as *mut __m128i, positions);
-            count += mask.count_ones() as usize;
-        }
-    }
-    count
-}
-
-/// `rows`' row-major `[out][in]` i16 weights rearranged pair-major for `sparse_sums_i16_avx2`:
-/// for each input pair, every output's two weights, `[pair][out][2]`. `in_dim` even.
-pub(crate) fn pair_major_columns(rows: &[i16], in_dim: usize) -> Vec<i16> {
-    debug_assert_eq!(in_dim % 2, 0);
-    let out_dim = rows.len() / in_dim;
-    let mut columns = Vec::with_capacity(rows.len());
-    for pair in 0..in_dim / 2 {
-        for output in 0..out_dim {
-            columns.extend_from_slice(&rows[output * in_dim + 2 * pair..output * in_dim + 2 * pair + 2]);
-        }
-    }
-    columns
-}
-
-/// A layer's integer sums over the pairs `indices` names alone (`nonzero_pairs_avx2`), the
-/// weights pair-major (`pair_major_columns`), into `sums`, one per output, a multiple of 8 and at
-/// most 64. The same integer products as `dots_i16_8_avx2` over every input, the skipped pairs
-/// contributing zero; wrapping `i32` addition gives the same bits in any order, so the sums are
-/// exactly its sums.
-pub(crate) fn sparse_sums_i16_avx2(inputs: &[i16], indices: &[u16], columns: &[i16], sums: &mut [i32]) {
-    debug_assert_eq!(sums.len() % 8, 0);
-    debug_assert_eq!(columns.len(), inputs.len() * sums.len());
-    match sums.len() / 8 {
-        1 => sparse_sums_n::<1>(inputs, indices, columns, sums),
-        2 => sparse_sums_n::<2>(inputs, indices, columns, sums),
-        3 => sparse_sums_n::<3>(inputs, indices, columns, sums),
-        4 => sparse_sums_n::<4>(inputs, indices, columns, sums),
-        5 => sparse_sums_n::<5>(inputs, indices, columns, sums),
-        6 => sparse_sums_n::<6>(inputs, indices, columns, sums),
-        7 => sparse_sums_n::<7>(inputs, indices, columns, sums),
-        8 => sparse_sums_n::<8>(inputs, indices, columns, sums),
-        registers => panic!("a first layer of {} outputs, beyond the sparse kernel's 64", 8 * registers),
-    }
-}
-
-/// `sparse_sums_i16_avx2` for `N` registers of eight outputs, a constant so that the accumulators
-/// stay in registers.
-fn sparse_sums_n<const N: usize>(inputs: &[i16], indices: &[u16], columns: &[i16], sums: &mut [i32]) {
-    use std::arch::x86_64::{
-        __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_set1_epi32, _mm256_setzero_si256,
-        _mm256_storeu_si256,
-    };
-
-    let stride = 16 * N;
-    let mut accumulators = [unsafe { _mm256_setzero_si256() }; N];
-    for &pair in indices {
-        let pair = pair as usize;
-        debug_assert!(2 * pair + 1 < inputs.len());
-        unsafe {
-            let both = (inputs.as_ptr().add(2 * pair) as *const i32).read_unaligned();
-            let broadcast = _mm256_set1_epi32(both);
-            let weights = columns.as_ptr().add(pair * stride);
-            for (register, accumulator) in accumulators.iter_mut().enumerate() {
-                let weight = _mm256_loadu_si256(weights.add(16 * register) as *const __m256i);
-                *accumulator = _mm256_add_epi32(*accumulator, _mm256_madd_epi16(broadcast, weight));
+            let input = _mm256_loadu_si256(packed.as_ptr().add(offset) as *const __m256i);
+            for (row, sum) in sums.iter_mut().enumerate() {
+                let weight = _mm256_loadu_si256(rows.as_ptr().add(row * in_dim + offset) as *const __m256i);
+                let pairs = _mm256_maddubs_epi16(input, weight);
+                *sum = _mm256_add_epi32(*sum, _mm256_madd_epi16(pairs, _mm256_set1_epi16(1)));
             }
         }
     }
-    for (register, accumulator) in accumulators.iter().enumerate() {
-        unsafe { _mm256_storeu_si256(sums.as_mut_ptr().add(8 * register) as *mut __m256i, *accumulator) };
+    reduce_8_epi32(sums)
+}
+
+/// `dots_i8_8` by `dpbusd`: the multiply, the pairing and the accumulation in one instruction.
+///
+/// # Safety
+/// The CPU must have AVX-VNNI.
+#[target_feature(enable = "avxvnni")]
+unsafe fn dots_i8_8_vnni(rows: &[i8], packed: &[u8]) -> [i32; 8] {
+    use std::arch::x86_64::{__m256i, _mm256_dpbusd_avx_epi32, _mm256_loadu_si256, _mm256_setzero_si256};
+
+    let in_dim = packed.len();
+    let mut sums = [_mm256_setzero_si256(); 8];
+    for chunk in 0..in_dim / 32 {
+        let offset = chunk * 32;
+        unsafe {
+            let input = _mm256_loadu_si256(packed.as_ptr().add(offset) as *const __m256i);
+            for (row, sum) in sums.iter_mut().enumerate() {
+                let weight = _mm256_loadu_si256(rows.as_ptr().add(row * in_dim + offset) as *const __m256i);
+                *sum = _mm256_dpbusd_avx_epi32(*sum, input, weight);
+            }
+        }
     }
+    reduce_8_epi32(sums)
 }
 
 /// Eight registers of `i32` lanes reduced to their eight sums, in order: the same reduction as
@@ -1129,56 +1098,32 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_pairs_avx2_lists_exactly_the_pairs_not_both_zero() {
-        for (length, zero_percent, seed) in [(16, 50, 1), (64, 0, 2), (64, 100, 3), (512, 70, 4), (1024, 80, 5), (1024, 30, 6)] {
-            let inputs = sparse_inputs(length, zero_percent, seed);
-            let expected: Vec<u16> =
-                (0..length / 2).filter(|&pair| inputs[2 * pair] != 0 || inputs[2 * pair + 1] != 0).map(|pair| pair as u16).collect();
-            let mut indices = vec![0u16; length / 2];
-            let count = nonzero_pairs_avx2(&inputs, &mut indices);
-            assert_eq!(&indices[..count], &expected[..], "length {length}, {zero_percent}% zero");
-        }
-        // One input of a pair nonzero is enough, in either place, and at either end.
-        let mut inputs = vec![0i16; 64];
-        inputs[1] = 5;
-        inputs[62] = 127;
-        let mut indices = vec![0u16; 32];
-        let count = nonzero_pairs_avx2(&inputs, &mut indices);
-        assert_eq!(&indices[..count], &[0, 31]);
-    }
-
-    #[test]
-    fn sparse_sums_equal_the_dense_and_scalar_sums_exactly() {
-        // Weights over the whole i16 range, so that sums wrap at 1024 inputs: the three must agree
-        // bit for bit even then.
-        let weights = |count: usize, seed: usize| -> Vec<i16> { (0..count).map(|i| (((i + seed) * 7919) % 65536) as u16 as i16).collect() };
-        let mut cases: Vec<Vec<i16>> = [(0, 1), (30, 2), (60, 3), (80, 4), (100, 5)]
+    fn the_i8_kernels_equal_the_scalar_sums_exactly() {
+        // Weights over the whole i8 range the engine uses, +/-127; inputs up to 127, with whole rows
+        // and inputs at both extremes, where a `maddubs` pair is largest.
+        let weights = |count: usize, seed: usize| -> Vec<i8> { (0..count).map(|i| ((((i + seed) * 7919) % 255) as i32 - 127) as i8).collect() };
+        let mut cases: Vec<Vec<i16>> = [(0, 1), (30, 2), (60, 3), (100, 4)]
             .iter()
-            .flat_map(|&(zero_percent, seed)| [512, 1024].map(|length| sparse_inputs(length, zero_percent, seed)))
+            .flat_map(|&(zero_percent, seed)| [32, 512, 1024].map(|length| sparse_inputs(length, zero_percent, seed)))
             .collect();
-        for length in [512, 1024] {
-            // One nonzero pair, first, then last.
-            let mut first = vec![0i16; length];
-            first[0] = 127;
-            let mut last = vec![0i16; length];
-            last[length - 1] = 1;
-            cases.extend([first, last]);
-        }
+        cases.push(vec![127; 1024]);
         for inputs in &cases {
             let in_dim = inputs.len();
-            let mut indices = vec![0u16; in_dim / 2];
-            let count = nonzero_pairs_avx2(inputs, &mut indices);
-            for out_dim in [8, 16, 32, 64] {
-                let rows = weights(out_dim * in_dim, out_dim);
-                let columns = pair_major_columns(&rows, in_dim);
-                let mut sparse = vec![0i32; out_dim];
-                sparse_sums_i16_avx2(inputs, &indices[..count], &columns, &mut sparse);
-                for output in 0..out_dim {
-                    let row = &rows[output * in_dim..(output + 1) * in_dim];
-                    let scalar = inputs.iter().zip(row).fold(0i32, |sum, (&x, &w)| sum.wrapping_add(x as i32 * w as i32));
-                    let dense = dots_i16_8_avx2(&rows[(output / 8) * 8 * in_dim..(output / 8 + 1) * 8 * in_dim], inputs)[output % 8];
-                    assert_eq!(sparse[output], scalar, "{in_dim} inputs, {count} pairs nonzero, output {output} of {out_dim}");
-                    assert_eq!(dense, scalar, "the dense kernel, output {output} of {out_dim}");
+            let mut packed = vec![0u8; in_dim];
+            pack_u8_avx2(inputs, &mut packed);
+            assert!(packed.iter().zip(inputs).all(|(&byte, &input)| byte as i16 == input), "packing, {in_dim} inputs");
+            let mut row_sets = vec![weights(8 * in_dim, in_dim)];
+            row_sets.push(vec![127; 8 * in_dim]);
+            row_sets.push(vec![-127; 8 * in_dim]);
+            for rows in &row_sets {
+                let expected: Vec<i32> = (0..8)
+                    .map(|row| inputs.iter().zip(&rows[row * in_dim..(row + 1) * in_dim]).map(|(&x, &w)| x as i32 * w as i32).sum())
+                    .collect();
+                assert_eq!(dots_i8_8_avx2(rows, &packed)[..], expected[..], "AVX2, {in_dim} inputs");
+                assert_eq!(dots_i8_8(rows, &packed)[..], expected[..], "the dispatched kernel, {in_dim} inputs");
+                if std::arch::is_x86_feature_detected!("avxvnni") {
+                    // Safety: checked just above.
+                    assert_eq!(unsafe { dots_i8_8_vnni(rows, &packed) }[..], expected[..], "VNNI, {in_dim} inputs");
                 }
             }
         }
