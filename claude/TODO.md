@@ -35,7 +35,8 @@ pairwise against screlu-hidden at 512.
   `claude/active/` first. Today the first hidden layer is dense i16 by i16 over every input, squares
   or products alike (`first_layer_values`, `dots_i16_8_avx2`), so pairwise gains only its halved
   inputs. Two optimizations, each for both kinds:
-  1. **A sparse first layer:** the inputs' nonzero 4-byte groups found (compare, movemask, a
+  1. **A sparse first layer** (sparse-first-layer.md, its plan sparse-first-layer-implementation.md,
+     designed 2026-11-26: pairs of i16 skipped, not groups of four; measured first): the inputs' nonzero 4-byte groups found (compare, movemask, a
      lookup table), only their weight columns accumulated. Exact, the same integers. Both should gain;
      a square is zero when its lane is clipped, a product when either of its lanes is, so pairwise
      should save the larger fraction (a hypothesis, unmeasured; skipping works on groups of four,
