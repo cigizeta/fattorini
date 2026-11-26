@@ -1,12 +1,13 @@
-//! The one-network NNUE, arm by arm what `StackedNetwork` trains. The binary only builds it, for the
-//! parameters a checkpoint is loaded into and exported from; its forward passes are the stack's test
-//! reference, so outside the tests they are unread.
+//! The one-network NNUE, arm by arm what `StackedNetwork` trains. The binary builds it for the
+//! parameters a checkpoint is loaded into and exported from, and its losses, sparse transform and
+//! bounds are ready for the one-arm training loop that will replace the stack; until then the
+//! binary leaves some of it unread.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use tch::nn;
 use tch::Tensor;
 
-use super::batch::DenseBatch;
+use super::batch::{DenseBatch, DenseBatchPsq};
 use super::feature_set::FeatureSet;
 use super::net_config::Architecture;
 use fattorini::features::{halfk, psq, psq_threats};
@@ -31,11 +32,11 @@ pub fn score(pawns: &Tensor) -> Tensor {
 /// the logit `y / S` for numerical stability. Its gradient on the pawns is `(sigma(y / S) - (t + 1) / 2)
 /// / S`: bounded, never zero while the prediction is wrong, so every position keeps a gradient, and a
 /// decisive label (`t = ±1`) pushes the output ever more weakly as it grows, never to a finite optimum.
-/// Training computes it per arm (`stacked_network::arm_training_losses`, for the NNUE's stack and the
-/// transformer's alike), tested against this one-arm form.
-#[cfg(test)]
-pub fn bce_loss(pawns: &Tensor, label: &Tensor) -> Tensor {
-    (pawns / S_PAWNS).binary_cross_entropy_with_logits(&((label + 1.0) / 2.0), None::<Tensor>, None::<Tensor>, tch::Reduction::Mean)
+/// S is the attempt's unit in pawns, `s_pawns` (`labels::S_PAWNS`, Elo's, unless its config says
+/// `unit: lc0`). The stack computes it per arm (`stacked_network::arm_training_losses`); the one-arm
+/// networks, NNUE and transformer, through this.
+pub fn bce_loss(pawns: &Tensor, label: &Tensor, s_pawns: f64) -> Tensor {
+    (pawns / s_pawns).binary_cross_entropy_with_logits(&((label + 1.0) / 2.0), None::<Tensor>, None::<Tensor>, tch::Reduction::Mean)
 }
 
 /// The bound on a psq network's first hidden layer weights: what an `i8` holds at a fixed scale of
@@ -204,6 +205,25 @@ impl Network {
         )
     }
 
+    /// This network trained in the unit `s_pawns` (`NetConfig::s_pawns`), not Elo's, as
+    /// `StackedNetwork::with_s`.
+    pub fn with_s(mut self, s_pawns: f64) -> Network {
+        self.psq_mut().s_pawns = s_pawns;
+        self
+    }
+
+    fn psq(&self) -> &NetworkPsq {
+        match self {
+            Network::Psq(network) | Network::PsqThreats(network) | Network::HalfKav2Hm(network, _) => network,
+        }
+    }
+
+    fn psq_mut(&mut self) -> &mut NetworkPsq {
+        match self {
+            Network::Psq(network) | Network::PsqThreats(network) | Network::HalfKav2Hm(network, _) => network,
+        }
+    }
+
     /// The parameters training keeps within a bound (`AdamW::bound`), by name: a psq or psq_threats
     /// network's first hidden layer weights, for the engine's `i8` layer. None for any other, a stack
     /// included: the bound served the shelved `i8` layer, and one on its shared part and its deltas
@@ -211,7 +231,6 @@ impl Network {
     /// one scale per row, which fits any range. `StackedNetwork::weight_bounds` is tested to agree
     /// with it.
     /// Every network's transform is bounded too (`TRANSFORM_BOUNDS`), first.
-    #[cfg(test)]
     pub fn weight_bounds(&self) -> Vec<(&'static str, f64)> {
         let mut bounds = TRANSFORM_BOUNDS.to_vec();
         if let Network::Psq(network) | Network::PsqThreats(network) = self
@@ -223,20 +242,17 @@ impl Network {
         bounds
     }
 
-    /// The loss one training step descends, for every kind: `bce_loss` on the pawns, against arm
-    /// `arm`'s labels (`DenseBatch::label`). Training steps the stacked network; this is the reference
-    /// it is tested against.
-    #[cfg(test)]
-    pub fn training_loss(&self, batch: &DenseBatch, arm: usize) -> Tensor {
-        bce_loss(&self.pawns(batch), &batch.label(arm))
+    /// The loss one training step descends, for every kind: `bce_loss` on the pawns, against label
+    /// column `column` (`DenseBatch::label`; a one-arm batch has column `0` alone), in this network's
+    /// unit.
+    pub fn training_loss(&self, batch: &DenseBatch, column: usize) -> Tensor {
+        bce_loss(&self.pawns(batch), &batch.label(column), self.psq().s_pawns)
     }
 
-    /// The test loss against arm `arm`'s label, for every kind: the same binary cross entropy as
-    /// `training_loss`, the number the learning-rate stages and early stopping read, comparable across
-    /// architectures. The reference `StackedNetwork::test_losses` is tested against.
-    #[cfg(test)]
-    pub fn test_loss(&self, batch: &DenseBatch, arm: usize) -> Tensor {
-        bce_loss(&self.pawns(batch), &batch.label(arm))
+    /// The test loss against label column `column`, for every kind: the same binary cross entropy as
+    /// `training_loss`, comparable across architectures.
+    pub fn test_loss(&self, batch: &DenseBatch, column: usize) -> Tensor {
+        bce_loss(&self.pawns(batch), &batch.label(column), self.psq().s_pawns)
     }
 
     /// The label-space prediction, `score(pawns)`: `[batch, 1]`.
@@ -246,18 +262,36 @@ impl Network {
 
     /// The evaluation in pawns, from the side to move's view: `[batch, 1]`, unbounded (the engine
     /// clamps it to `±CEILING_PAWNS`; in training a clamp would zero the gradient of any overshoot,
-    /// while `score` saturates anyway). Dispatches to whichever concrete network `self` is, matched
+    /// while `score` saturates anyway). The transform sums the active weight columns
+    /// (`NetworkPsq::sparse_transform`). Dispatches to whichever concrete network `self` is, matched
     /// against the same-variant `DenseBatch`. The mismatched combinations (a psq network handed a
     /// psq_threats batch) have no real arm -- training builds one `Network` and feeds it batches
     /// built under that same `FeatureSet` for the run's whole lifetime, so the wildcard arm below is
     /// an assertion against a logic bug.
     pub fn pawns(&self, batch: &DenseBatch) -> Tensor {
+        let (network, batch) = self.matched(batch);
+        let (own, opponent) = network.sparse_transform(batch);
+        network.head_pawns(own, opponent, batch.buckets())
+    }
+
+    /// `pawns` through the dense transform, the matmul over every input that the sparse one
+    /// replaces: the reference the tests compare it against.
+    #[cfg(test)]
+    pub fn dense_pawns(&self, batch: &DenseBatch) -> Tensor {
+        let (network, batch) = self.matched(batch);
+        let (own_dense, opponent_dense) = batch.dense();
+        let own = Activation::ClippedRelu.apply(&own_dense.apply(&network.transform));
+        let opponent = Activation::ClippedRelu.apply(&opponent_dense.apply(&network.transform));
+        network.head_pawns(own, opponent, batch.buckets())
+    }
+
+    /// The network and the batch's psq form, once their kinds are checked to match.
+    fn matched<'a>(&'a self, batch: &'a DenseBatch) -> (&'a NetworkPsq, &'a DenseBatchPsq) {
         match (self, batch) {
             (Network::Psq(network), DenseBatch::Psq(batch))
             | (Network::PsqThreats(network), DenseBatch::PsqThreats(batch))
             | (Network::HalfKav2Hm(network, _), DenseBatch::HalfKav2Hm(batch, _) | DenseBatch::HalfKav2HmState(batch, _)) => {
-                let (own_dense, opponent_dense) = batch.dense();
-                network.pawns(&own_dense, &opponent_dense, batch.buckets())
+                (network, batch)
             }
             _ => panic!("Network/DenseBatch feature-set mismatch"),
         }
@@ -281,6 +315,9 @@ pub struct NetworkPsq {
     head: Head,
     pairwise: bool,
     screlu: bool,
+    /// The unit, S in pawns, the losses read the output through (`Network::with_s`): Elo's
+    /// (`labels::S_PAWNS`) unless the attempt's config says `unit: lc0`.
+    s_pawns: f64,
 }
 
 /// A psq network's head: one MLP, or bucketed stages per position (`stack_head::StackHead`), a
@@ -343,7 +380,7 @@ impl NetworkPsq {
                 Head::Plain(ValueHead::new(&(vs / "value_head"), head_input, value_head_hidden_dims, Activation::ClippedRelu))
             }
         };
-        NetworkPsq { transform, head, pairwise, screlu }
+        NetworkPsq { transform, head, pairwise, screlu, s_pawns: S_PAWNS }
     }
 
     /// A halfk network's starting weights, factorised: its piece rows (`layout`'s) at zero, so that every
@@ -366,10 +403,28 @@ impl NetworkPsq {
         });
     }
 
-    /// `buckets` (`Int64 [batch, 5]`) are read by a bucketed head only.
-    fn pawns(&self, own_dense: &Tensor, opponent_dense: &Tensor, buckets: &Tensor) -> Tensor {
-        let own = Activation::ClippedRelu.apply(&own_dense.apply(&self.transform));
-        let opponent = Activation::ClippedRelu.apply(&opponent_dense.apply(&self.transform));
+    /// Both perspectives of `batch` through the transform and its clipped ReLU, `[batch, embedding]`
+    /// each: the dense product as a sum of the active weight columns, every active input being
+    /// exactly 1.0. The weight is `[embedding, width]`; as a `[width, embedding]` table, one
+    /// `embedding_bag` sums both perspectives' columns at once (the bags are the own rows, then the
+    /// opponent's), as `StackedNetwork::sparse_transform` does for every arm. Its gradient is dense,
+    /// zero on the rows no position touched, as the matmul's.
+    fn sparse_transform(&self, batch: &DenseBatchPsq) -> (Tensor, Tensor) {
+        let table = self.transform.ws.tr().contiguous();
+        let (sums, _, _, _) =
+            Tensor::embedding_bag(&table, batch.features(), batch.offsets(), false, 0, false, None::<Tensor>, false);
+        let sums = match &self.transform.bs {
+            Some(bias) => sums + bias,
+            None => sums,
+        };
+        let both = Activation::ClippedRelu.apply(&sums);
+        let rows = batch.rows();
+        (both.narrow(0, 0, rows), both.narrow(0, rows, rows))
+    }
+
+    /// The head on both perspectives' activated transforms, `[batch, embedding]` each. `buckets`
+    /// (`Int64 [batch, 5]`) are read by a bucketed head only.
+    fn head_pawns(&self, own: Tensor, opponent: Tensor, buckets: &Tensor) -> Tensor {
         let (own, opponent) = if self.pairwise {
             (pairwise_products(&own, 1), pairwise_products(&opponent, 1))
         } else if self.screlu {
@@ -510,7 +565,7 @@ mod tests {
         let (pawns, labels) = ([0.3f64, -2.0, 1.0, 50.0], [0.1f64, 0.5, 1.0, 1.0]);
         let tensor = Tensor::from_slice(&pawns.map(|p| p as f32)).set_requires_grad(true);
         // `mean` divides the gradient by the row count, so it is scaled back here.
-        (bce_loss(&tensor, &Tensor::from_slice(&labels.map(|t| t as f32))) * 4.0).backward();
+        (bce_loss(&tensor, &Tensor::from_slice(&labels.map(|t| t as f32)), S_PAWNS) * 4.0).backward();
         let gradient = Vec::<f32>::try_from(&tensor.grad()).unwrap();
         for i in 0..4 {
             let expected = (sigma(pawns[i] / S_PAWNS) - (labels[i] + 1.0) / 2.0) / S_PAWNS;
@@ -535,7 +590,7 @@ mod tests {
             })
             .sum::<f64>()
             / 3.0;
-        let loss = bce_loss(&Tensor::from_slice(&pawns.map(|p| p as f32)), &Tensor::from_slice(&labels.map(|t| t as f32)));
+        let loss = bce_loss(&Tensor::from_slice(&pawns.map(|p| p as f32)), &Tensor::from_slice(&labels.map(|t| t as f32)), S_PAWNS);
         let got = f64::try_from(&loss).unwrap();
         assert!((got - expected).abs() < 1e-5, "{got} against {expected}");
     }

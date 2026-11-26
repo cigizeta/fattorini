@@ -20,7 +20,9 @@ use tch::nn;
 use tch::Tensor;
 
 use super::net_config::{Architecture, ArchitectureKind};
+use super::nnue_network::bce_loss;
 use super::transformer_batch::TransformerBatch;
+use fattorini::labels::S_PAWNS;
 use super::transformer_vocab::VOCAB_SIZE;
 use super::value_head::{Activation, ValueHead};
 
@@ -194,6 +196,17 @@ impl TransformerNetwork {
         }
         let cls = hidden.select(1, 0).apply(&self.final_norm);
         self.value_head.forward(&cls)
+    }
+
+    /// The loss one training step descends: `nnue_network::bce_loss` on `forward`, against label
+    /// column `column` (a one-arm batch has column `0` alone), in Elo's unit, as `StackedTransformer`'s.
+    pub fn training_loss(&self, batch: &TransformerBatch, column: usize) -> Tensor {
+        bce_loss(&self.forward(batch), &batch.labels.narrow(1, column as i64, 1), S_PAWNS)
+    }
+
+    /// The test loss against label column `column`: the same binary cross entropy as `training_loss`.
+    pub fn test_loss(&self, batch: &TransformerBatch, column: usize) -> Tensor {
+        bce_loss(&self.forward(batch), &batch.labels.narrow(1, column as i64, 1), S_PAWNS)
     }
 }
 

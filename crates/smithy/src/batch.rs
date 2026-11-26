@@ -30,9 +30,8 @@ impl DenseBatch {
     /// `[batch, 1]`: arm `arm`'s already-labeled signed advantage in `[-1, 1]`, a column
     /// of the batch's `[batch, arms]` labels, regardless of which variant `self` is -- `round.rs`'s
     /// own training/test loss computation needs this one tensor and nothing else about either
-    /// variant's own dense shape. A batch of one-label records has one arm, `0`. Used by the unstacked
-    /// `Network`'s losses, the reference the stacked network is tested against.
-    #[cfg(test)]
+    /// variant's own dense shape. A batch of one-label records has one arm, `0`. Read by the
+    /// unstacked `Network`'s losses.
     pub fn label(&self, arm: usize) -> Tensor {
         self.psq().label.narrow(1, arm as i64, 1)
     }
@@ -134,8 +133,10 @@ impl DenseBatchPsq {
         &self.offsets
     }
 
-    /// The dense `[rows, width]` rows of both perspectives, own first: what the unstacked `Network`
-    /// (export, and the reference of the stacked network's tests) multiplies.
+    /// The dense `[rows, width]` rows of both perspectives, own first: what the networks' dense
+    /// transforms multiply, the reference their sparse ones are tested against. Only the tests read
+    /// it, but it stays built so that `flat`, which only it reads, is not dead in the binary.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn dense(&self) -> (Tensor, Tensor) {
         let both = Tensor::zeros([2 * self.rows * self.width], (Kind::Float, self.flat.device()))
             .index_fill(0, &self.flat, 1.0)

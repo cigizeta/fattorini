@@ -62,7 +62,16 @@ The budget schedule (`Rule::Budget`, its kept checkpoints, which are one arm's r
 1. **Commit 1, the unstacked loop beside the stack:** `Network::training_loss` and
    `test_loss` out of `cfg(test)` (and the transformer's); a one-network AdamW step matching
    `stacked_adamw`'s (decay, bounds such as `TRANSFORM_BOUND`, the rate schedule); the equality test.
-   The developer runs tests and clippy.
+   The developer runs tests and clippy. Two gaps found when the code was read (2026-11-26):
+   - **The sparse transform:** `Network::pawns` multiplied the dense rows, which halfk at batch
+     8192 cannot afford; `NetworkPsq` gains the stack's `embedding_bag` sum of the active columns,
+     one arm, the dense path kept as the tests' reference.
+   - **The unit:** `bce_loss` read `S_PAWNS`; `Network` carries `s_pawns` and `with_s`, as the
+     stack does, so `unit: lc0` attempts train right. The transformer stays on `S_PAWNS`, as its
+     stack does.
+   `AdamW` gains `set_budget` (the rate `budget.rate(t)` on the host; with no rollback the count is
+   the run step). The equality test (`unstacked_equality.rs`, deleted in commit 2 with the stack)
+   covers psq, halfk screlu-hidden, halfk pairwise dual and the transformer, one label column.
 2. **Commit 2, the switch and the deletion:** `train` on the unstacked loop; lockstep reduced to
    `training.rs`; the stack files, grid, patience, grid-era readers and their tests deleted; labels a
    scalar; configs and DEV.md. Tests and clippy.

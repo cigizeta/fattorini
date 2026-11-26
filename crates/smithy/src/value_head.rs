@@ -59,7 +59,6 @@ impl ValueHead {
         ValueHead { hidden_layers, output, activation }
     }
 
-    #[cfg(test)]
     pub fn has_hidden_layer(&self) -> bool {
         !self.hidden_layers.is_empty()
     }

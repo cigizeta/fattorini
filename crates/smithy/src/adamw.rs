@@ -1,7 +1,13 @@
+// Built outside the tests ahead of the one-arm training loop, which will read it; until then the
+// binary leaves it unread.
+#![cfg_attr(not(test), allow(dead_code))]
+
 use std::collections::HashMap;
 
 use tch::nn;
 use tch::Tensor;
+
+use super::budget::Budget;
 
 /// A hand-rolled AdamW (Loshchilov & Hutter, "Decoupled Weight Decay Regularization"), reimplementing
 /// `tch`'s own built-in `nn::AdamW`/`nn::Optimizer` rather than using it directly. The reason: that
@@ -33,6 +39,10 @@ pub struct AdamW {
     /// Derived from `t` at every step rather than persisted, so a resume partway through the ramp
     /// continues it.
     warmup_steps: i64,
+    /// A budgeted run's falling rate (`budget.rs`), which replaces `lr` and the warmup above: each
+    /// step's rate is `budget.rate(t)`, its warmup included. `t` is the run step, since nothing rolls
+    /// a budgeted run back.
+    budget: Option<Budget>,
     parameters: HashMap<String, Tensor>,
     moments: HashMap<String, (Tensor, Tensor)>,
     /// Parameters kept within `±bound` after every step (`bound`). Not persisted: the caller sets
@@ -57,6 +67,7 @@ impl AdamW {
             wd: 0.01,
             t: 0,
             warmup_steps: 0,
+            budget: None,
             parameters,
             moments,
             bounds: HashMap::new(),
@@ -67,10 +78,6 @@ impl AdamW {
     /// elsewhere start inside, and again after every step. Call after the weights are loaded. The
     /// moments are left as they are, so a weight held at the bound stays there while its gradient
     /// pushes outward, as nnue-pytorch's clipping does.
-    ///
-    /// This and the rate and warmup setters below are the NNUE track's, which now trains through
-    /// `StackedAdamW`; they stay as the reference its tests compare against.
-    #[cfg(test)]
     pub fn bound(&mut self, name: &str, bound: f64) {
         assert!(bound.is_finite() && bound > 0.0, "a bound of {bound} is meaningless");
         let param = self.parameters.get_mut(name).unwrap_or_else(|| panic!("no parameter named {name} to bound"));
@@ -85,10 +92,16 @@ impl AdamW {
     /// A zero-moment AdamW's first updates are close to `lr * sign(grad)` on every parameter at once,
     /// because `v_hat` is estimated from a handful of gradients: harmless for random weights, a jolt for
     /// trained ones. The ramp absorbs it until `v` has seen about `1 / (1 - beta2)` gradients.
-    #[cfg(test)]
     pub fn set_warmup_steps(&mut self, steps: i64) {
         assert!(steps >= 0, "a warmup of {steps} steps is meaningless");
         self.warmup_steps = steps;
+    }
+
+    /// Trains on `budget`'s schedule from now on: step `t` at `budget.rate(t)`, its warmup and its
+    /// geometric fall, as `StackedAdamW::set_budget` does per arm. The fixed rate and warmup are
+    /// ignored.
+    pub fn set_budget(&mut self, budget: Budget) {
+        self.budget = Some(budget);
     }
 
     /// Changes the rate from the next step on, keeping the moments: moving to the next rate of a run's
@@ -138,7 +151,10 @@ impl AdamW {
         // itself -- exactly what `tests::step_matches_the_closed_form_update_at_t_equals_1` checks.
         let bias_correction1 = 1.0 - self.beta1.powi(self.t as i32);
         let bias_correction2 = 1.0 - self.beta2.powi(self.t as i32);
-        let lr = self.lr * self.warmup_factor();
+        let lr = match &self.budget {
+            Some(budget) => budget.rate(self.t as u64),
+            None => self.lr * self.warmup_factor(),
+        };
 
         tch::no_grad(|| {
             for (name, param) in self.parameters.iter_mut() {
