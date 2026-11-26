@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use super::unit::Score;
+use super::unit::{Judged, Score};
 
 /// Where each machine names its engines, gitignored; `examples/engines.yaml` shows its shape.
 pub const ENGINE_REGISTRY_PATH: &str = "data/engines.yaml";
@@ -50,12 +50,14 @@ pub fn registry_entry(yaml: &str, name: &str) -> Result<RegistryEntry, String> {
     Ok(entry)
 }
 
-/// What one search gave: the best move in UCI notation, its score from the side to move, the
-/// deepest depth the engine completed, and the nodes and time it took.
+/// What one search gave: the best move in UCI notation, its score and expected score from the
+/// side to move, the win, draw and loss thousandths they came from, the deepest depth the engine
+/// completed, and the nodes and time it took.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Search {
     pub best_move: String,
-    pub score: Score,
+    pub score: Judged,
+    pub wdl: [u16; 3],
     pub depth: u8,
     pub nodes: u64,
     pub time: Duration,
@@ -80,7 +82,8 @@ pub struct Engine {
 
 impl Engine {
     /// Starts the entry's engine: `uci`, its options in name order, then `Threads` 1 whatever they
-    /// say (one thread, so a rebuild gives the same searches), `isready`.
+    /// say (one thread, so a rebuild gives the same searches) and `UCI_ShowWDL` on (the book's unit
+    /// is the engine's own expected score), `isready`.
     pub fn start(entry: &RegistryEntry) -> Result<Engine, String> {
         let path = entry.path.as_deref().expect("registry_entry checked the path");
         let mut command = Command::new(path);
@@ -105,12 +108,14 @@ impl Engine {
             line == "uciok"
         })?;
         engine.name = name.ok_or("the engine sent no id name")?;
-        let mut options: Vec<_> = entry.options.iter().filter(|(option, _)| option.as_str() != "Threads").collect();
+        let forced = ["Threads", "UCI_ShowWDL"];
+        let mut options: Vec<_> = entry.options.iter().filter(|(option, _)| !forced.contains(&option.as_str())).collect();
         options.sort_by(|a, b| a.0.cmp(b.0));
         for (option, value) in options {
             engine.send(&format!("setoption name {option} value {}", option_value(value)?))?;
         }
         engine.send("setoption name Threads value 1")?;
+        engine.send("setoption name UCI_ShowWDL value true")?;
         engine.ready()?;
         Ok(engine)
     }
@@ -166,8 +171,18 @@ impl Judge for Engine {
             false
         })?;
         let info = last.ok_or_else(|| format!("{} gave no score for {fen}", self.name))?;
+        let [win, draw, lost] = info
+            .wdl
+            .ok_or_else(|| format!("{} gave no wdl for {fen}: the book needs an engine that honours UCI_ShowWDL", self.name))?;
         let best_move = best_move.filter(|mv| mv != "(none)").ok_or_else(|| format!("{} gave no move for {fen}", self.name))?;
-        Ok(Search { best_move, score: info.score, depth: info.depth, nodes: info.nodes, time: started.elapsed() })
+        Ok(Search {
+            best_move,
+            score: Judged::from_wdl(info.score, win, draw),
+            wdl: [win, draw, lost],
+            depth: info.depth,
+            nodes: info.nodes,
+            time: started.elapsed(),
+        })
     }
 }
 
@@ -191,12 +206,14 @@ fn go_command(depth: u8, searchmoves: Option<&[String]>) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Info {
     score: Score,
+    wdl: Option<[u16; 3]>,
     depth: u8,
     nodes: u64,
 }
 
-/// An `info` line's score, depth and nodes, or `None` when it carries no score, or only a bound (a
-/// `lowerbound` or `upperbound` score is a fail-high or fail-low, not the depth's result).
+/// An `info` line's score, win/draw/loss thousandths, depth and nodes, or `None` when it carries no
+/// score, or only a bound (a `lowerbound` or `upperbound` score is a fail-high or fail-low, not the
+/// depth's result).
 fn parse_info(info: &str) -> Option<Info> {
     let tokens: Vec<&str> = info.split_whitespace().collect();
     let value_after = |key: &str| tokens.iter().position(|&token| token == key).and_then(|index| tokens.get(index + 1));
@@ -205,6 +222,10 @@ fn parse_info(info: &str) -> Option<Info> {
     }
     let depth = value_after("depth")?.parse().ok()?;
     let nodes = value_after("nodes").and_then(|nodes| nodes.parse().ok()).unwrap_or(0);
+    let wdl = tokens.iter().position(|&token| token == "wdl").and_then(|index| {
+        let parse = |offset: usize| tokens.get(index + offset).and_then(|value| value.parse::<u16>().ok());
+        Some([parse(1)?, parse(2)?, parse(3)?]).filter(|values| values.iter().sum::<u16>() == 1000)
+    });
     let score_index = tokens.iter().position(|&token| token == "score")?;
     let value: i32 = tokens.get(score_index + 2)?.parse().ok()?;
     let score = match *tokens.get(score_index + 1)? {
@@ -212,7 +233,7 @@ fn parse_info(info: &str) -> Option<Info> {
         "mate" => Score::Mate(value),
         _ => return None,
     };
-    Some(Info { score, depth, nodes })
+    Some(Info { score, wdl, depth, nodes })
 }
 
 /// A YAML option value as `setoption ... value` text.
@@ -250,11 +271,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_info_line_gives_its_score_depth_and_nodes() {
-        let line = "depth 20 seldepth 27 multipv 1 score cp -35 nodes 123456 nps 1000000 pv e7e5";
-        assert_eq!(parse_info(line), Some(Info { score: Score::Cp(-35), depth: 20, nodes: 123_456 }));
-        let mate = parse_info("depth 9 seldepth 9 score mate -3 nodes 100 pv e1e2").unwrap();
+    fn an_info_line_gives_its_score_wdl_depth_and_nodes() {
+        let line = "depth 20 seldepth 27 multipv 1 score cp -35 wdl 12 870 118 nodes 123456 nps 1000000 pv e7e5";
+        assert_eq!(parse_info(line), Some(Info { score: Score::Cp(-35), wdl: Some([12, 870, 118]), depth: 20, nodes: 123_456 }));
+        let mate = parse_info("depth 9 seldepth 9 score mate -3 wdl 0 0 1000 nodes 100 pv e1e2").unwrap();
         assert_eq!(mate.score, Score::Mate(-3));
+        assert_eq!(parse_info("depth 9 score cp 10 nodes 100").unwrap().wdl, None, "no UCI_ShowWDL");
     }
 
     #[test]

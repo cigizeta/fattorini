@@ -54,17 +54,37 @@ built (the developer, 2026-11-26).
 
 ## Units and thresholds
 
-- **The unit: expected score by the Elo formula (the developer, 2026-11-26),** Fattorini's own
-  (`labels.rs`, `S_PAWNS`), not Lc0's atan: `100 / (1 + 10^(-cp / 400))` points, 0 to 100, from
-  the mover's side, the engine's centipawns taken as they come. A mate counts as 100 or 0. Losses
-  shrink by themselves in decided positions, so no cutoff for them is needed.
+- **The unit: Stockfish's own expected score (the developer, 2026-11-26),** replacing the Elo
+  formula chosen the same morning: this is Stockfish's book ("not Fattorini's, not really
+  another engine's, until Stockfish loses its crown"), so its scores are read in its own
+  calibration. With `UCI_ShowWDL` on, each `info` line carries `wdl <win> <draw> <loss>` in
+  thousandths, fitted by Stockfish to its own games (its model also weighs the material on the
+  board); a score is `(win + draw / 2) / 10` points, 0 to 100, from the mover's side. An engine
+  that does not send `wdl` is refused: one unit per book, no fallback. The probes before this
+  change (Elo formula) showed it too lenient at equality: 16 of the 20 first moves admitted.
+- **Decided positions are not expanded (the developer, 2026-11-26),** reversing "losses shrink by
+  themselves, no cutoff needed": the probe of the Englund Gambit's trap (-708 cp, about 1.7
+  points left to lose) admitted all 27 legal moves, a mate in one among them, each ply costing
+  barely more than the charge, so decided positions would flood the book. A position whose
+  evaluation is beyond +/-300 cp is never expanded: the game is decided, the book's job done.
+  Known without searching it: the move leading to it was scored by its parent's search, so a
+  move scored beyond +/-300 cp keeps its place among its parent's moves, but its position is
+  never queued.
+- **A move into a forced mate is never admitted (the developer, 2026-11-26),** unless the best
+  move is itself a mate: its loss counts as infinite.
 - **Admission: below the review's mistake, `?` (the developer, 2026-11-26):** a move is admitted
   unless it would be a mistake or worse in aio64's game review; inaccuracies (`?!`) are admitted,
   so the book covers the opponent's inaccuracies. The softmax keeps the damage small: at
   T = 20 cp, a move 70 cp worse weighs about 3% of the best, 110 cp worse about 0.4%.
-- **The `?` threshold, until aio64's review fixes it: 10 points,** about 70 cp around equality,
-  110 cp from +3.00: a drop of about a pawn's worth in an even game. Judged on the critical
-  positions below; when the review fixes its own, the book follows it.
+- **The `?` threshold: 7 points (the developer, 2026-11-26),** chosen from the probes in
+  Stockfish's unit (book-expansion-implementation.md's run log), not for being a round number:
+  Stockfish's scale is flat near equality (nearly every game a draw) and steep beyond about
+  +/-0.5. At 7, the sharp openings keep their established lines and stop just past them (Two
+  Knights: Na5, b5, Nd4, not Nb4 at 9.6 nor Nxd5 at 22.9; King's Gambit: exf4, d5, Bc5, Nc6,
+  not d6 at 7.3); at 5 the Fritz and the Classical Declined fell out, at 10 the King's Gambit
+  took in 2... h6 and 2... g6. In the initial position 16 of 20 moves stay admitted, all draws
+  in Stockfish's view; their cost (1. h4 costs 16.5 against 1. e4's 10) is what limits them.
+  When aio64's review fixes its own `?`, the book follows it (the review runs Stockfish too).
 
 ## Critical positions for the threshold
 

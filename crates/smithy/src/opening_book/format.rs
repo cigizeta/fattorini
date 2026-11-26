@@ -2,14 +2,16 @@
 //! Little-endian.
 //!
 //! Header: magic `FBKF` (4), format version (2), fragment index (2), budget (4, f32), charge (4,
-//! f32), threshold in points (4, f32), depth (1), reserved (3), the engine's `id name` as length
-//! (2) and UTF-8 bytes, entry count (4).
+//! f32), threshold in points (4, f32), depth (1), the decided positions' cutoff in cp (2),
+//! reserved (1), the engine's `id name` as length (2) and UTF-8 bytes, entry count (4).
 //!
-//! Entry, sorted by key: the position's Polyglot key (8); its evaluation from White's side (2);
+//! Entry, sorted by key: the position's Polyglot key (8); its evaluation from White's side (4);
 //! the number of moves (1); per move, best first, its Polyglot encoding (2) and its score from
-//! White's side (2). A score is centipawns within +/-`MAX_CP`, or a mate in N as +/-(`MATE` - N).
+//! White's side (4). A score is its centipawns within +/-`MAX_CP`, or a mate in N as
+//! +/-(`MATE` - N) (2, signed), then its expected score in half-thousandths (2): Stockfish's own,
+//! which cp alone cannot give back, and which a replay needs for the losses.
 
-use super::unit::Score;
+use super::unit::{Judged, Score};
 
 const MAGIC: &[u8; 4] = b"FBKF";
 pub const FORMAT_VERSION: u16 = 1;
@@ -24,17 +26,19 @@ pub struct Header {
     pub charge: f32,
     pub threshold: f32,
     pub depth: u8,
+    pub cutoff: u16,
     pub engine: String,
 }
 
 impl Header {
     /// Why two fragments cannot belong to one book, if they cannot: a different charge, threshold,
-    /// depth or engine.
+    /// depth, cutoff or engine.
     pub fn mismatch(&self, other: &Header) -> Option<String> {
         let differs = |what: &str, a: String, b: String| (a != b).then(|| format!("{what} {a} against {b}"));
         differs("charge", self.charge.to_string(), other.charge.to_string())
             .or_else(|| differs("threshold", self.threshold.to_string(), other.threshold.to_string()))
             .or_else(|| differs("depth", self.depth.to_string(), other.depth.to_string()))
+            .or_else(|| differs("cutoff", self.cutoff.to_string(), other.cutoff.to_string()))
             .or_else(|| differs("engine", self.engine.clone(), other.engine.clone()))
     }
 }
@@ -43,9 +47,9 @@ impl Header {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Position {
     pub key: u64,
-    pub eval: Score,
+    pub eval: Judged,
     /// Polyglot move encoding and score, best first.
-    pub moves: Vec<(u16, Score)>,
+    pub moves: Vec<(u16, Judged)>,
 }
 
 pub fn encode(score: Score) -> i16 {
@@ -83,17 +87,22 @@ pub fn write(header: &Header, positions: &[Position]) -> Vec<u8> {
     out.extend_from_slice(&header.charge.to_le_bytes());
     out.extend_from_slice(&header.threshold.to_le_bytes());
     out.push(header.depth);
-    out.extend_from_slice(&[0; 3]);
+    out.extend_from_slice(&header.cutoff.to_le_bytes());
+    out.push(0);
     out.extend_from_slice(&u16::try_from(engine.len()).expect("an engine name under 64 KB").to_le_bytes());
     out.extend_from_slice(engine);
     out.extend_from_slice(&(sorted.len() as u32).to_le_bytes());
+    let judged = |out: &mut Vec<u8>, judged: Judged| {
+        out.extend_from_slice(&encode(judged.score).to_le_bytes());
+        out.extend_from_slice(&judged.expected.to_le_bytes());
+    };
     for position in sorted {
         out.extend_from_slice(&position.key.to_le_bytes());
-        out.extend_from_slice(&encode(position.eval).to_le_bytes());
+        judged(&mut out, position.eval);
         out.push(u8::try_from(position.moves.len()).expect("at most 218 legal moves"));
         for &(mv, score) in &position.moves {
             out.extend_from_slice(&mv.to_le_bytes());
-            out.extend_from_slice(&encode(score).to_le_bytes());
+            judged(&mut out, score);
         }
     }
     out
@@ -114,21 +123,22 @@ pub fn read(data: &[u8]) -> Result<(Header, Vec<Position>), String> {
     let charge = reader.f32()?;
     let threshold = reader.f32()?;
     let depth = reader.take(1)?[0];
-    reader.take(3)?;
+    let cutoff = reader.u16()?;
+    reader.take(1)?;
     let engine_len = reader.u16()? as usize;
     let engine = String::from_utf8(reader.take(engine_len)?.to_vec()).map_err(|_| "the engine name is not UTF-8".to_string())?;
     let count = reader.u32()? as usize;
     let mut positions = Vec::with_capacity(count);
     for _ in 0..count {
         let key = reader.u64()?;
-        let eval = decode(reader.i16()?);
-        let moves = (0..reader.take(1)?[0]).map(|_| Ok((reader.u16()?, decode(reader.i16()?)))).collect::<Result<_, String>>()?;
+        let eval = reader.judged()?;
+        let moves = (0..reader.take(1)?[0]).map(|_| Ok((reader.u16()?, reader.judged()?))).collect::<Result<_, String>>()?;
         positions.push(Position { key, eval, moves });
     }
     if reader.pos != data.len() {
         return Err("the fragment has bytes past its last position".into());
     }
-    Ok((Header { index, budget, charge, threshold, depth, engine }, positions))
+    Ok((Header { index, budget, charge, threshold, depth, cutoff, engine }, positions))
 }
 
 struct Reader<'a> {
@@ -163,6 +173,15 @@ impl<'a> Reader<'a> {
     fn f32(&mut self) -> Result<f32, String> {
         Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
+
+    fn judged(&mut self) -> Result<Judged, String> {
+        let score = decode(self.i16()?);
+        let expected = self.u16()?;
+        if expected > super::unit::WHOLE {
+            return Err(format!("an expected score of {expected} half-thousandths"));
+        }
+        Ok(Judged { score, expected })
+    }
 }
 
 #[cfg(test)]
@@ -170,14 +189,22 @@ mod tests {
     use super::*;
 
     fn header() -> Header {
-        Header { index: 2, budget: 140.0, charge: 10.0, threshold: 10.0, depth: 20, engine: "Judge 1".into() }
+        Header { index: 2, budget: 140.0, charge: 10.0, threshold: 10.0, depth: 20, cutoff: 300, engine: "Judge 1".into() }
+    }
+
+    fn judged(score: Score, expected: u16) -> Judged {
+        Judged { score, expected }
     }
 
     #[test]
     fn a_fragment_reads_back_sorted_by_key() {
         let positions = [
-            Position { key: 9, eval: Score::Cp(-35), moves: vec![(100, Score::Cp(-35)), (200, Score::Cp(-60))] },
-            Position { key: 2, eval: Score::Mate(-1), moves: Vec::new() },
+            Position {
+                key: 9,
+                eval: judged(Score::Cp(-35), 940),
+                moves: vec![(100, judged(Score::Cp(-35), 940)), (200, judged(Score::Cp(-60), 901))],
+            },
+            Position { key: 2, eval: judged(Score::Mate(-1), 0), moves: Vec::new() },
         ];
         let (read_header, read_positions) = read(&write(&header(), &positions)).unwrap();
         assert_eq!(read_header, header());
@@ -195,7 +222,8 @@ mod tests {
     #[test]
     fn a_foreign_or_damaged_fragment_is_refused() {
         assert!(read(b"FUCB").is_err());
-        let mut bytes = write(&header(), &[Position { key: 1, eval: Score::Cp(0), moves: vec![(5, Score::Cp(0))] }]);
+        let even = judged(Score::Cp(0), 1000);
+        let mut bytes = write(&header(), &[Position { key: 1, eval: even, moves: vec![(5, even)] }]);
         bytes.pop();
         assert!(read(&bytes).is_err());
         bytes.extend_from_slice(&[0, 0, 0]);

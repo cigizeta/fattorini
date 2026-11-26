@@ -365,8 +365,9 @@ commit and when (`pesto@untuned 7b89e3f-dirty 2026-11-06 09:36 UTC`); its UCI na
 ## The opening book
 
 The book lichess-bot plays is grown from the initial position by a UCI engine of
-`data/engines.yaml` (any entry with a path), in fragments: Dijkstra over the game graph, each move
-costing 10 plus its loss in expected-score points, a move losing 10 points or more never admitted.
+`data/engines.yaml` (Stockfish: its `wdl` gives the expected scores), in fragments: Dijkstra over
+the game graph, each move costing 10 plus its loss in expected-score points, a move losing 7
+points or more never admitted, a decided position (beyond +/-3.00, or a mate) never expanded.
 Fragment 0 holds the positions of cost up to 120 (12 plies of best moves), each next fragment 10
 more. Three commands of the smithy, run by hand, in no usage line.
 

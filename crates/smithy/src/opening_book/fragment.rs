@@ -23,17 +23,32 @@ use super::dijkstra::{self, Edges, Graph};
 use super::engine::{self, Engine, RegistryEntry};
 use super::expand::{expand, Expansion};
 use super::format::{self, Header, Position};
-use super::unit::{loss, Score};
+use super::unit::{loss, Judged, Score};
 
 /// Every position is searched to this depth, on one thread, from a fresh table.
 pub const DEPTH: u8 = 20;
 /// What each ply costs beside its loss: a line of best moves costs this much a ply.
 pub const CHARGE: f64 = 10.0;
-/// A move losing this many points or more is not admitted: a mistake (`?`) in a game review.
-pub const THRESHOLD: f64 = 10.0;
+/// A move losing this many points or more is not admitted: a mistake (`?`) in a game review. Chosen
+/// from probes in Stockfish's unit: 7 keeps the established lines of sharp openings (the Two
+/// Knights' Na5, b5 and Fritz; the King's Gambit's exf4, Falkbeer, Classical Declined and Nc6)
+/// and stops just past them, where 5 dropped some and 10 let quiet moves like 2... h6 in.
+pub const THRESHOLD: f64 = 7.0;
 /// Fragment 0's budget, and each next fragment's rise: fragment k reaches 12 + k plies of best moves.
 const FIRST_BUDGET: f64 = 120.0;
 const BUDGET_STEP: f64 = 10.0;
+/// A position whose evaluation is beyond this, or a mate, is decided and never expanded: the book's
+/// job is done there. In a lost position every move loses only the few points left, so without
+/// this the threshold would admit every move and decided positions would flood the book.
+pub const CUTOFF_CP: i32 = 300;
+
+/// Whether a score, from either side, says the game is decided.
+pub fn decided(score: Score) -> bool {
+    match score {
+        Score::Cp(cp) => cp.abs() > CUTOFF_CP,
+        Score::Mate(_) => true,
+    }
+}
 
 pub fn budget(index: u16) -> f64 {
     FIRST_BUDGET + BUDGET_STEP * index as f64
@@ -48,9 +63,9 @@ pub fn books_dir() -> String {
     format!("{}/books", data_root())
 }
 
-/// A score from the side to move, from White's side.
-pub fn to_white(score: Score, side_to_move: Color) -> Score {
-    if side_to_move == Color::White { score } else { score.negated() }
+/// A score from the side to move, from White's side; and back, since the turn is its own inverse.
+pub fn to_white(judged: Judged, side_to_move: Color) -> Judged {
+    if side_to_move == Color::White { judged } else { judged.negated() }
 }
 
 /// The engine's fragments in order, each checked: indices from 0 with no gap, each at its budget,
@@ -118,25 +133,29 @@ impl<S: Searcher> BookGraph<S> {
     }
 
     /// A known position's edges: each stored move replayed on the board, its loss against the
-    /// position's evaluation, both from the side to move.
+    /// position's evaluation, both from the side to move. A move into a decided position stays
+    /// among the position's moves, for the Polyglot book, but is no edge: its position is never
+    /// expanded.
     fn stored_edges(&self, board: &Board, position: &Position) -> Result<Vec<(Board, f64)>, String> {
         let side = board.side_to_move();
         let best = to_white(position.eval, side);
         let legal = legal_moves(board, side);
-        position
-            .moves
-            .iter()
-            .map(|&(code, score)| {
-                let mv = legal
-                    .iter()
-                    .copied()
-                    .find(|&mv| polyglot_move(mv) == code)
-                    .ok_or_else(|| format!("position {:016x}: stored move {code:#06x} is not legal", position.key))?;
-                let mut child = *board;
-                child.make_move(mv);
-                Ok((child, loss(best, to_white(score, side))))
-            })
-            .collect()
+        let mut edges = Vec::new();
+        for &(code, score) in &position.moves {
+            let score = to_white(score, side);
+            if decided(score.score) {
+                continue;
+            }
+            let mv = legal
+                .iter()
+                .copied()
+                .find(|&mv| polyglot_move(mv) == code)
+                .ok_or_else(|| format!("position {:016x}: stored move {code:#06x} is not legal", position.key))?;
+            let mut child = *board;
+            child.make_move(mv);
+            edges.push((child, loss(best, score)));
+        }
+        Ok(edges)
     }
 }
 
@@ -231,14 +250,21 @@ impl Drop for Pool {
 }
 
 fn progress_header(engine_id: &str, index: u16) -> String {
-    format!("# {engine_id}; depth {DEPTH}; charge {CHARGE}; threshold {THRESHOLD}; fragment {index}")
+    format!("# {engine_id}; depth {DEPTH}; charge {CHARGE}; threshold {THRESHOLD}; cutoff {CUTOFF_CP}; fragment {index}")
 }
 
-/// One row: key in hex, FEN (for a human), the evaluation and each move with its score, encoded
-/// as in the fragment.
+/// One row: key in hex, FEN (for a human), the evaluation and each move with its score, a score
+/// written as its encoded cp and its expected score, `cp/expected`.
 fn progress_row(board: &Board, position: &Position) -> String {
-    let moves: Vec<String> = position.moves.iter().map(|&(code, score)| format!("{code}:{}", format::encode(score))).collect();
-    format!("{:016x}\t{}\t{}\t{}", position.key, board.to_fen(1), format::encode(position.eval), moves.join(","))
+    let judged = |judged: Judged| format!("{}/{}", format::encode(judged.score), judged.expected);
+    let moves: Vec<String> = position.moves.iter().map(|&(code, score)| format!("{code}:{}", judged(score))).collect();
+    format!("{:016x}\t{}\t{}\t{}", position.key, board.to_fen(1), judged(position.eval), moves.join(","))
+}
+
+fn parse_judged(text: &str) -> Option<Judged> {
+    let (score, expected) = text.split_once('/')?;
+    let expected = expected.parse().ok().filter(|&expected| expected <= super::unit::WHOLE)?;
+    Some(Judged { score: format::decode(score.parse().ok()?), expected })
 }
 
 /// The progress file's positions, refused when its header is another book's or fragment's. A row
@@ -261,7 +287,7 @@ fn parse_row(line: &str) -> Option<Position> {
     let fields: Vec<&str> = line.split('\t').collect();
     let [key, _fen, eval, moves] = fields[..] else { return None };
     let key = u64::from_str_radix(key, 16).ok()?;
-    let eval = format::decode(eval.parse().ok()?);
+    let eval = parse_judged(eval)?;
     let moves = if moves.is_empty() {
         Vec::new()
     } else {
@@ -269,7 +295,7 @@ fn parse_row(line: &str) -> Option<Position> {
             .split(',')
             .map(|item| {
                 let (code, score) = item.split_once(':')?;
-                Some((code.parse().ok()?, format::decode(score.parse().ok()?)))
+                Some((code.parse().ok()?, parse_judged(score)?))
             })
             .collect::<Option<Vec<_>>>()?
     };
@@ -292,7 +318,15 @@ pub fn run(engine_name: &str) -> Result<(), String> {
     {
         return Err(format!("the fragments were made by {}, the engine is now {engine_id}", first.engine));
     }
-    let header = Header { index, budget: budget(index) as f32, charge: CHARGE as f32, threshold: THRESHOLD as f32, depth: DEPTH, engine: engine_id.clone() };
+    let header = Header {
+        index,
+        budget: budget(index) as f32,
+        charge: CHARGE as f32,
+        threshold: THRESHOLD as f32,
+        depth: DEPTH,
+        cutoff: CUTOFF_CP as u16,
+        engine: engine_id.clone(),
+    };
     if let Some((first, _)) = fragments.first()
         && let Some(difference) = first.mismatch(&header)
     {
@@ -417,6 +451,11 @@ mod tests {
         polyglot_move(fattorini::uci::parse_move(text, &legal_moves(board, board.side_to_move())).unwrap())
     }
 
+    /// A score from White's side: its cp and its expected score in points.
+    fn white(cp: i32, points: u16) -> Judged {
+        Judged { score: Score::Cp(cp), expected: points * 20 }
+    }
+
     #[test]
     fn a_rerun_over_known_positions_searches_nothing() {
         let root = start();
@@ -424,13 +463,13 @@ mod tests {
         let known = HashMap::from([
             (polyglot_key(&root), Position {
                 key: polyglot_key(&root),
-                eval: Score::Cp(30),
-                moves: vec![(code(&root, "e2e4"), Score::Cp(30))],
+                eval: white(30, 56),
+                moves: vec![(code(&root, "e2e4"), white(30, 56))],
             }),
             (polyglot_key(&e4), Position {
                 key: polyglot_key(&e4),
-                eval: Score::Cp(30),
-                moves: vec![(code(&e4, "e7e5"), Score::Cp(30))],
+                eval: white(30, 56),
+                moves: vec![(code(&e4, "e7e5"), white(30, 56))],
             }),
         ]);
         let mut graph = BookGraph::new(known, Refuses, None);
@@ -441,27 +480,43 @@ mod tests {
 
     #[test]
     fn a_stored_loss_is_from_the_side_to_move() {
-        // Black to move after 1. e4: e5 at +30 for White is Black's best, c5 at +60 is worse.
+        // Black to move after 1. e4: e5 at 56 points for White is Black's best, c5 at 62 is worse.
         let e4 = after(&["e2e4"]);
         let position = Position {
             key: polyglot_key(&e4),
-            eval: Score::Cp(30),
-            moves: vec![(code(&e4, "e7e5"), Score::Cp(30)), (code(&e4, "c7c5"), Score::Cp(60))],
+            eval: white(30, 56),
+            moves: vec![(code(&e4, "e7e5"), white(30, 56)), (code(&e4, "c7c5"), white(60, 62))],
         };
         let graph = BookGraph::new(HashMap::new(), Refuses, None);
         let edges = graph.stored_edges(&e4, &position).unwrap();
         assert_eq!(edges[0].1, 0.0);
-        let expected = loss(Score::Cp(-30), Score::Cp(-60));
-        assert!((edges[1].1 - expected).abs() < 1e-12 && expected > 4.0);
+        assert_eq!(edges[1].1, 6.0, "44 points for Black against 38");
+    }
+
+    #[test]
+    fn a_move_into_a_decided_position_is_no_edge() {
+        let root = start();
+        let position = Position {
+            key: polyglot_key(&root),
+            eval: white(30, 56),
+            moves: vec![(code(&root, "e2e4"), white(30, 56)), (code(&root, "d2d4"), white(301, 60))],
+        };
+        let graph = BookGraph::new(HashMap::new(), Refuses, None);
+        assert_eq!(graph.stored_edges(&root, &position).unwrap().len(), 1);
+        assert!(decided(Score::Cp(-301)) && decided(Score::Mate(4)) && !decided(Score::Cp(300)));
     }
 
     #[test]
     fn the_progress_resumes_and_refuses_another_fragment() {
         let header = progress_header("Judge 1", 3);
         let board = start();
-        let position = Position { key: polyglot_key(&board), eval: Score::Cp(25), moves: vec![(code(&board, "e2e4"), Score::Cp(25)), (code(&board, "d2d4"), Score::Cp(20))] };
+        let position = Position {
+            key: polyglot_key(&board),
+            eval: white(25, 55),
+            moves: vec![(code(&board, "e2e4"), white(25, 55)), (code(&board, "d2d4"), Judged { score: Score::Mate(-2), expected: 0 })],
+        };
         let row = progress_row(&board, &position);
-        let text = format!("{header}\n{row}\n0000000000000100\tfen\t31\n");
+        let text = format!("{header}\n{row}\n0000000000000100\tfen\t31/1000\n");
         let read = parse_progress(&text, &header).unwrap();
         assert_eq!(read.len(), 1, "a row cut short is searched again");
         assert_eq!(read[&position.key], position);

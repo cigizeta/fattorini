@@ -12,6 +12,8 @@ use fattorini::polyglot::{book_bytes, polyglot_key, polyglot_move, Entry};
 use super::format::Position;
 use super::fragment::{books_dir, read_fragments, to_white};
 use super::unit::Score;
+#[cfg(test)]
+use super::unit::Judged;
 
 /// The softmax temperature unless `--temperature` says otherwise, in centipawns: a move 46 cp
 /// below its position's best is played about 10 times less often.
@@ -88,7 +90,7 @@ fn weigh(positions: &HashMap<u64, Position>, boards: &HashMap<u64, Board>, tempe
     let mut left_out = 0;
     for (key, position) in positions {
         let side = boards[key].side_to_move();
-        let scores: Vec<f64> = position.moves.iter().map(|&(_, score)| centipawns(to_white(score, side))).collect();
+        let scores: Vec<f64> = position.moves.iter().map(|&(_, score)| centipawns(to_white(score, side).score)).collect();
         let best = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         for (&(mv, _), score) in position.moves.iter().zip(scores) {
             let weight = (u16::MAX as f64 * ((score - best) / temperature).exp()).round() as u16;
@@ -130,20 +132,26 @@ mod tests {
         next
     }
 
+    /// A score from White's side; the softmax reads its cp alone.
+    fn white(score: Score) -> Judged {
+        Judged { score, expected: 1000 }
+    }
+
     /// The root with e4 and d4; after 1. e4, Black's e5 and c5; scores from White's side.
     fn book(e4: i32, d4: i32, e5: i32, c5: i32) -> HashMap<u64, Position> {
         let root = start();
         let after_e4 = child(&root, "e2e4");
+        let cp = |cp| white(Score::Cp(cp));
         HashMap::from([
             (polyglot_key(&root), Position {
                 key: polyglot_key(&root),
-                eval: Score::Cp(e4),
-                moves: vec![(code(&root, "e2e4"), Score::Cp(e4)), (code(&root, "d2d4"), Score::Cp(d4))],
+                eval: cp(e4),
+                moves: vec![(code(&root, "e2e4"), cp(e4)), (code(&root, "d2d4"), cp(d4))],
             }),
             (polyglot_key(&after_e4), Position {
                 key: polyglot_key(&after_e4),
-                eval: Score::Cp(e5),
-                moves: vec![(code(&after_e4, "e7e5"), Score::Cp(e5)), (code(&after_e4, "c7c5"), Score::Cp(c5))],
+                eval: cp(e5),
+                moves: vec![(code(&after_e4, "e7e5"), cp(e5)), (code(&after_e4, "c7c5"), cp(c5))],
             }),
         ])
     }
@@ -175,7 +183,7 @@ mod tests {
         let mut positions = book(30, 30, 30, 30);
         let root = start();
         let entry = positions.get_mut(&polyglot_key(&root)).unwrap();
-        entry.moves = vec![(code(&root, "e2e4"), Score::Mate(5)), (code(&root, "d2d4"), Score::Cp(500))];
+        entry.moves = vec![(code(&root, "e2e4"), white(Score::Mate(5))), (code(&root, "d2d4"), white(Score::Cp(500)))];
         let boards = reach(root, &positions).unwrap();
         let (book, left_out) = weigh(&positions, &boards, 20.0);
         assert_eq!(left_out, 1);
@@ -186,7 +194,7 @@ mod tests {
     fn a_position_out_of_reach_is_refused() {
         let mut positions = book(30, 30, 30, 30);
         let stray = child(&child(&start(), "g1f3"), "g8f6");
-        positions.insert(polyglot_key(&stray), Position { key: polyglot_key(&stray), eval: Score::Cp(0), moves: Vec::new() });
+        positions.insert(polyglot_key(&stray), Position { key: polyglot_key(&stray), eval: white(Score::Cp(0)), moves: Vec::new() });
         assert!(reach(start(), &positions).is_err());
     }
 }

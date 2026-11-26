@@ -1,7 +1,7 @@
 # Book expansion -- Implementation plan
 
-Status: steps 1 to 10 done (2026-11-26): `cargo test -p smithy --release` and
-`cargo clippy --workspace --all-targets` clean. Step 11, the developer's run, next.
+Status: steps 1 to 10 done (2026-11-26); the amendment below written, awaiting `cargo test` and
+`cargo clippy`; then step 11's probes again.
 Changed on the way: the conversion replays the book from the initial position to learn each
 position's side to move (a Polyglot key does not say it, and the softmax needs the mover's side);
 a stored position it does not reach is refused as a broken book.
@@ -129,7 +129,53 @@ fragment or the progress file) are relaxed from their stored moves at once, neve
     then fragment 0, its size and time read; then fragments while the growth allows. Each
     fragment's numbers go into the run log below.
 
+## Amendment after the first probes (2026-11-26)
+
+The probes (run log below) showed the Elo formula too lenient at equality and every move admitted
+in a decided position. The design now reads Stockfish's own expected score, never expands a
+decided position, and never admits a move into a forced mate. Changes:
+
+- `engine.rs`: `setoption name UCI_ShowWDL value true` at start; `info`'s `wdl` read; a search
+  whose last scored line has no `wdl` is refused, naming `UCI_ShowWDL`.
+- `unit.rs`: a judged score is the cp or mate and the expected score in thousandths,
+  `win + draw / 2`; the loss in points from the expected scores; a move into a forced mate (its
+  score a mate against the mover) loses infinitely, unless the best move is one too. The Elo
+  formula goes.
+- `format.rs`: the evaluation and every move store the expected score too (2 bytes each), since a
+  replay recomputes losses and Stockfish's expected score cannot be derived from cp. Still
+  version 1: nothing was generated before.
+- `fragment.rs`: a move scored beyond +/-300 cp, or a mate, keeps its place among its position's
+  moves but its position is never queued (`CUTOFF_CP`); the cutoff is in the fragment's header
+  (two of its reserved bytes) and in the progress file's, checked as the others.
+- `probe.rs`: win/draw/loss shown beside cp.
+
 ## Run log
+
+### Probes with the Elo formula (2026-11-26, before the amendment)
+
+| Position | Admitted | Legal | Searches | Time | Note |
+|---|---|---|---|---|---|
+| Initial | 16 | 20 | 17 | 4.5 s | even h4 and b4 admitted; Nh3 stops |
+| 3. Bb5 a6 | 4 | 32 | 5 | 1.3 s | Ba4, Bxc6, Bc4, Be2; Bf1 stops |
+| 5. exd5 (Two Knights) | 4 | 37 | 5 | 3.7 s | Na5, b5, Nd4, Nb4; Nxd5 stops |
+| 2. f4 | 4 | 30 | 5 | 2.6 s | exf4, d5, Bc5, Nc6; d6 stops |
+| Englund trap | 27 | 27 | 27 | 5.1 s | all admitted, Qc1 mate in one among them |
+
+### Probes in Stockfish's unit (2026-11-26, after the amendment, threshold then 10)
+
+Losses in points of Stockfish's expected score; the moves found best first.
+
+| Position | Losses | 10 admits |
+|---|---|---|
+| Initial | e4 0, Nf3 0.15, d4 0.95, c4 1.25, g3 0.85, e3 1.65, c3 1.9, Nc3 2.75, a3 2.5, d3 2.35, h3 3.1, b3 4.05, a4 3.25, f4 4.65, b4 5.45, h4 6.5; Nh3 11.8 | 16 of 20 |
+| Two Knights, 5. exd5 | Na5 0, b5 3.4, Nd4 5.85, Nb4 9.6; Nxd5 22.9 | 4 of 37 |
+| King's Gambit, 2. f4 | exf4 0, d5 4.2, Bc5 6.2, Nc6 6.85, d6 7.3, c6 7.65, Nf6 8.4, h6 7.35, c5 9.05, g6 7.35; a6 10.25 | 10 of 30 |
+| Englund trap | every move 0 (all lost); Qc1 mate in one infinite | 26 of 27 |
+
+The threshold became 7 (book-expansion.md). The Englund position is decided (beyond +/-300 cp),
+so a fragment never expands it.
+
+### Fragments
 
 For "Inside Fattorini" and for deciding when to stop: per fragment, its budget, positions,
 moves, deepest ply, time and machine role; per critical position, the moves admitted and

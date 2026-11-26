@@ -27,14 +27,20 @@ pub fn run(engine_name: &str, moves: &[String]) -> Result<(), String> {
     println!("{} at depth {DEPTH}, threshold {THRESHOLD} points", engine.name);
     println!("{}", board.to_fen(1));
     let expansion = expand(&board, &mut engine, DEPTH, THRESHOLD)?;
-    println!("{:>4}  {:<6}  {:>9}  {:>6}  {:<8}  {:>5}  {:>12}  {:>8}", "#", "move", "score", "loss", "", "depth", "nodes", "time");
+    println!(
+        "{:>4}  {:<6}  {:>9}  {:>14}  {:>6}  {:>6}  {:<8}  {:>5}  {:>12}  {:>8}",
+        "#", "move", "score", "w/d/l", "points", "loss", "", "depth", "nodes", "time"
+    );
     for (number, (search, lost)) in expansion.trace.iter().enumerate() {
         let admitted = if *lost < THRESHOLD { "admitted" } else { "stops" };
+        let [win, draw, lost_games] = search.wdl;
         println!(
-            "{:>4}  {:<6}  {:>9}  {:>6.2}  {:<8}  {:>5}  {:>12}  {:>7.1}s",
+            "{:>4}  {:<6}  {:>9}  {:>14}  {:>6.2}  {:>6.2}  {:<8}  {:>5}  {:>12}  {:>7.1}s",
             number + 1,
             search.best_move,
-            format!("{:?}", search.score),
+            format!("{:?}", search.score.score),
+            format!("{win}/{draw}/{lost_games}"),
+            search.score.points(),
             lost,
             admitted,
             search.depth,
