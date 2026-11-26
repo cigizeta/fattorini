@@ -46,7 +46,9 @@ pairwise against screlu-hidden at 512.
      zero only if all four are). In absolute time screlu, its first layer reading twice the inputs,
      may save as much or more. First measured, for both: the inputs' zero fraction on test positions, and the
      first layer's share of an evaluation.
-  2. **8-bit first layer:** inputs as u8 (squares and products both in 0..=127, `(a * b + 256) >> 9`),
+  2. **8-bit first layer** (i8-first-layer.md, its plan i8-first-layer-implementation.md, designed
+     2026-11-26: `maddubs` cannot saturate; gates of 2 cp mean and 20 cp p99 drift from i16, then
+     speed, then a 10+0.1 duel for each network): inputs as u8 (squares and products both in 0..=127, `(a * b + 256) >> 9`),
      weights as i8, `maddubs` + `madd` (or `vpdpbusd`). Both gain the same fraction, so screlu saves
      about twice pairwise's time, narrowing pairwise's speed edge. Not exact: first measured
      on the existing networks (the drift, how often `maddubs` saturates); a weight clamp in smithy,
