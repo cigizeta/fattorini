@@ -12,6 +12,21 @@ Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Ka
 with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
 and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
+## 2026-11-26: next session starts here
+
+1. **Remove the grid, lockstep and patience** (remove-grid-and-lockstep.md, design agreed
+   2026-11-26, nothing written yet): start at its "Order of work", step 1, the unstacked loop beside
+   the stack with the equality test. Read the code afresh: the survey's line numbers in the plan
+   drift. Claude writes, the developer runs tests and clippy and commits.
+2. **The dual attempts on the training machine,** screlu dual first (Claude's recommendation, not
+   yet decided), then pairwise dual, then their duels at depth 9 and 10+0.1. Before the first:
+   `git pull` there, its smithy and arenas restarted. Whether they wait for step 1's removal or
+   run before it is the developer's choice (they train on the current, stacked code either way).
+3. **Check the continuous bars by eye** (continuous-bars.md, written and committed 2026-11-26) on
+   the next running trial or training: every bar moves at each redraw, never overshoots, never steps
+   back; then the document to `done/`.
+4. Small: the arena's `duel.rs` curtailed text still counts pairs (the smithy's says games).
+
 ## 2026-11-25: screlu's and pairwise's inference optimized, then benched, then duelled
 
 **Next session (the developer, 2026-11-25):** the inference work below, then the 10+0.1 duel of
