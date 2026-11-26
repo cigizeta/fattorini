@@ -43,7 +43,7 @@ pub const LOSS_WEIGHT: f64 = 4.0;
 /// and stops just past them, where 5 dropped some and 10 let quiet moves like 2... h6 in.
 pub const THRESHOLD: f64 = 7.0;
 /// Fragment 0's budget, and each next fragment's rise: fragment k reaches 6 + k plies of best moves.
-/// The book grows about fivefold a ply, so fragment 0 at 60 takes about an hour on 16 engines and
+/// The book grows about fivefold a ply, so fragment 0 at 60 took about an hour where it first ran, and
 /// each next one about five times its predecessor; 120 would never finish.
 const FIRST_BUDGET: f64 = 60.0;
 const BUDGET_STEP: f64 = 10.0;

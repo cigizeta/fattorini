@@ -368,8 +368,8 @@ The book lichess-bot plays is grown from the initial position by a UCI engine of
 `data/engines.yaml` (Stockfish: its `wdl` gives the expected scores), in fragments: Dijkstra over
 the game graph, each move costing 10 plus 4 times its loss in expected-score points, a move losing
 7 points or more never admitted, a decided position (beyond +/-3.00, or a mate) never expanded.
-Fragment 0 holds the positions of cost up to 60 (6 plies of best moves, about an hour on 16
-engines), each next fragment 10 more and about five times bigger. Four commands of the smithy, run
+Fragment 0 holds the positions of cost up to 60 (6 plies of best moves, about an hour), each
+next fragment 10 more and about five times bigger. Four commands of the smithy, run
 by hand, in no usage line.
 
 Before a run, how one position expands (every search, its score, loss, nodes and time; nothing

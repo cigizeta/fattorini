@@ -181,7 +181,7 @@ expansion is now recorded and flushed the moment it is done (`Searcher::expand_e
 engines report every 10 s; a line also closes each band.
 
 Fragment 0's first bands at budget 120 (2026-11-26): 1, 16, 215, 1,800 positions, about 12
-searches and 0.7 s of 16 engines a position (1.4 positions a second): an eightfold branching a
+searches a position (1.4 positions a second, one engine a core): an eightfold branching a
 ply, so budget 120 would never finish. Cause: in quiet equal positions Stockfish's losses are
 small, about ten moves pass the threshold, and a loss of 3 points cost only 0.3 of a ply. Answer
 (the developer, 2026-11-26): an edge costs `CHARGE + LOSS_WEIGHT * loss`, the weight in the

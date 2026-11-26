@@ -46,7 +46,7 @@ built (the developer, 2026-11-26).
   first 683 positions expanded (book-expansion-implementation.md's run log): the book grows about
   fivefold a ply at weight 4 (eight to thirteenfold at 1); weight 6 cut moves nearly as good as
   the best. At that growth fragment 0 at 120 would never finish; at 60 it takes about an hour on
-  16 engines, and each next fragment about five times its predecessor (estimated: 70 about 6
+  the machine that ran the first bands, and each next fragment about five times its predecessor (estimated: 70 about 6
   hours, 80 about a day, 90 about five days).
 - **In order, no gaps, no maximum:** fragment k runs only after fragment k - 1; the operator stops
   when the book is big enough.

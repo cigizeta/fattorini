@@ -12,7 +12,33 @@ Kalo Games from 2026-11-06, its engine Kalo Chess (kalo-chess-rename.md), and Ka
 with no `chess/` level in `data/` or `configs/`, since later that day (kalo-chess-repository.md),
 and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the older names and paths.
 
-## 2026-11-26: next session starts here
+## 2026-11-26, evening: next session starts here
+
+Two threads, on two machines: the opening book on this one (below), the trainings on the training
+machine (the list of the morning, next section, its items 2 and 3 still open).
+
+**The opening book** (book-expansion.md, its plan book-expansion-implementation.md, both in
+`active/`): Stockfish's book grown by Dijkstra from the initial position, in fragments. Built,
+tested, committed and pushed: `book-probe`, `book-fragment`, `book-polyglot`, `book-simulate`
+(DEV.md, "The opening book"). Settled by probes and a simulation, all in the plan's run log:
+Stockfish's own expected score (`wdl`), threshold 7 points, decided positions (beyond +/-300 cp)
+never expanded, loss weight 4, fragment 0 at budget 60, +10 a fragment.
+
+1. **Fragment 0 from a clean slate** (the developer, 2026-11-26): the first run's progress file
+   is deleted, so the run log measures fragment 0 from zero. Run on this machine, idle beside it:
+   `./bin/smithy book-fragment stockfish`. About an hour, about 17 searches a
+   position; Ctrl+C or a crash loses nothing, the same command resumes. Its "Wrote" line, size
+   and time go into the plan's run log.
+2. Then `book-simulate stockfish` again over fragment 0, to check the growth (about fivefold a
+   fragment expected) before fragment 1 (about 5 hours) and fragment 2 (about a day).
+3. Then `book-polyglot stockfish`, the book checked by eye in a GUI on a few openings; lichess-bot's
+   config pointed at it when the developer chooses.
+4. Later, not today: "Inside Fattorini"'s "Opening books" page, from the plan's last section and
+   its run log.
+5. The old book code (book.rs, book_scores.rs, the arena's `score` chore, the page's Books screen)
+   is deprecated, deleted only when the developer says so.
+
+## 2026-11-26: the morning's list
 
 1. **Remove the grid, lockstep and patience** (remove-grid-and-lockstep.md): **written and
    committed 2026-11-26,** its steps 1 and 2a to 2d. **Done 2026-11-26:** step 3 was a scaled
