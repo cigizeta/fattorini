@@ -5,8 +5,8 @@
 //! The reason is that the NNUE track derives, rather than persists, everything it can: the training
 //! stream's read position is `training_batch_size * optimizer.step_count()` taken modulo the train
 //! cache's row count, how far into the current round a resumed attempt is is `step_count %
-//! steps_per_round`, and which rate of its list it trains at is replayed from `history.tsv` with
-//! `warmup_rounds` and `patience_rounds`. Deriving beats persisting -- a second counter beside the step count can only
+//! steps_per_round`, and the rate it trains at is the budget's at that step, from `warmup_rounds`,
+//! `epochs` and the training rows. Deriving beats persisting -- a second counter beside the step count can only
 //! ever disagree with it -- but it makes the derivation's inputs load-bearing *across* invocations.
 //! Lower `steps_per_round` between two invocations of one job and the persisted step count is
 //! reinterpreted into a different position in a different round; change `training_batch_size` and the

@@ -350,8 +350,8 @@ fn scale_forge(config: &mut GenConfig, net: &mut NetConfig, s: u64) {
     config.round_robin_pairs = scale::games(config.round_robin_pairs, s, scale::MIN_PAIRS);
 }
 
-/// A budget's epochs in an attempt scaled by `s`, so that it keeps the full attempt's count of rounds, as
-/// patience keeps its own: a round's rows go from `full_round` to the scaled batch times the scaled
+/// A budget's epochs in an attempt scaled by `s`, so that it keeps the full attempt's count of rounds: a
+/// round's rows go from `full_round` to the scaled batch times the scaled
 /// round, the training set's rows by `1/s`, so the epochs scale by `s` times the round's ratio. That is
 /// `1/s` when both shrink by `s`, more once the batch stops at `scale::MIN_BATCH` (found 2026-11-18: at
 /// 1/1024 a plain `1/s` left a few rounds, the candidates collapsing to five).
@@ -955,8 +955,8 @@ enum View {
     Trial { number: u32, spec: trials::Spec },
 }
 
-/// Where the page reads a forge's phases: its attempt directory, its config, and the rates' schedule its
-/// lambdas' stages are replayed by.
+/// Where the page reads a forge's phases: its attempt directory, its config, and the budget its
+/// lambdas' standings are replayed by.
 #[derive(Clone)]
 struct ForgeFiles {
     root: String,
@@ -968,16 +968,10 @@ impl ForgeFiles {
     fn of(name: &str, config: &GenConfig, net: &NetConfig) -> ForgeFiles {
         let training = &net.training;
         let schedule = Schedule {
-            stage_count: training.learning_rate.len(),
             steps_per_round: training.steps_per_round,
             warmup_rounds: training.warmup_rounds.expect("net_config::load already validated this is Some"),
-            patience_rounds: training.patience_rounds,
-            budget: (training.schedule == net_config::Schedule::Budget).then(|| {
-                (
-                    training.epochs.expect("net_config::load already validated this is Some"),
-                    training.training_batch_size as u64,
-                )
-            }),
+            epochs: training.epochs.expect("net_config::load already validated this is Some"),
+            training_batch_size: training.training_batch_size as u64,
             rates: training.learning_rate.clone(),
         };
         ForgeFiles { root: attempt_dir(name), config: config.clone(), schedule }
@@ -2898,36 +2892,26 @@ struct SlotView {
     book: Option<book::BookLive>,
 }
 
-/// A training's rates and its patience or budget, which replay a lambda's stages from its
-/// `history.tsv`.
+/// A training's budget in the config's figures, which replays a lambda's standing from its
+/// `history.tsv` once its training rows are known.
 #[derive(Clone)]
 struct Schedule {
     rates: Vec<f64>,
-    stage_count: usize,
     steps_per_round: u64,
     warmup_rounds: u64,
-    /// Patience's; none for a budget.
-    patience_rounds: Option<u64>,
-    /// A budget's (`budget.rs`): its epochs and the batch its steps are counted in; none for patience.
-    budget: Option<(f64, u64)>,
+    epochs: f64,
+    /// The batch its steps are counted in.
+    training_batch_size: u64,
 }
 
 impl Schedule {
-    /// The rule an arm in `arm_dir` trains by: a budget's figures need the rows it trains on, which
-    /// its frozen `attempt_config.txt` records; none before that file exists.
-    fn rule(&self, arm_dir: &str) -> Option<training::Rule> {
-        let Some((epochs, training_batch_size)) = self.budget else {
-            return Some(training::Rule::Patience {
-                warmup_rounds: self.warmup_rounds,
-                patience_rounds: self.patience_rounds.expect("a patience schedule has its patience"),
-                stage_count: self.stage_count,
-            });
-        };
+    /// The budget an arm in `arm_dir` trains on: its figures need the rows it trains on, which its
+    /// frozen `attempt_config.txt` records; none before that file exists.
+    fn budget(&self, arm_dir: &str) -> Option<Budget> {
         let text = std::fs::read_to_string(format!("{arm_dir}/{}", attempt_config::FILE)).ok()?;
         let train_rows: u64 = text.lines().find_map(|line| line.strip_prefix("train_rows\t"))?.trim().parse().ok()?;
-        Budget::checked(train_rows, training_batch_size, self.steps_per_round, self.warmup_rounds, epochs, &self.rates)
+        Budget::checked(train_rows, self.training_batch_size, self.steps_per_round, self.warmup_rounds, self.epochs, &self.rates)
             .ok()
-            .map(training::Rule::Budget)
     }
 }
 
@@ -2986,10 +2970,9 @@ struct RoundRow {
     best_loss: f64,
     best_round: u64,
     finished: bool,
-    /// What the row's schedule adds: patience's stages, or a budget's length.
+    /// What the row's budget adds: its length and its rates.
     schedule: ScheduleRow,
-    /// How long the round took, training and test: alike for every lambda trained in it, which
-    /// train in lockstep.
+    /// How long the round took, training and test.
     train_seconds: f64,
     test_seconds: f64,
     /// Every round's training and test seconds so far, round 0's initial loss left out: the training's elapsed
@@ -3001,20 +2984,9 @@ struct RoundRow {
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ScheduleRow {
-    Patience {
-        /// The round's rate, counted from 1, of `stages`; `None` for a rate the schedule does not name.
-        stage: Option<usize>,
-        stages: usize,
-        /// The round the current stage began at, its latest switch's; 0 in the first stage. The page's
-        /// estimate of a one-arm attempt's length.
-        stage_round: u64,
-        /// Rounds without a new best, of `patience`.
-        waiting: u64,
-        patience: u64,
-    },
     /// A budget's length in rounds, which the page's progress and ETA read, and its rate falling
     /// geometrically from `start` to `end` over `epochs` passes, which the page says under the
-    /// polyline. No stage, no patience. `candidate_rounds` places the loss chart's lines, one at each
+    /// polyline. `candidate_rounds` places the loss chart's lines, one at each
     /// round robin candidate's round.
     Budget { total_rounds: u64, start: f64, end: f64, epochs: f64, candidate_rounds: Vec<u64> },
 }
@@ -3230,8 +3202,8 @@ impl Status {
         self.shared.lock().expect("the lock should not be poisoned")
     }
 
-    /// The latest round of the `history.tsv` at `path`, its stages replayed by `schedule` as
-    /// training replays them, and every round's losses and rate (`LambdaView::curve`); `None` and
+    /// The latest round of the `history.tsv` at `path`, its standing replayed on `schedule`'s budget
+    /// as training replays it, and every round's losses and rate (`LambdaView::curve`); `None` and
     /// none before its first. Cached by the file's modification time, so a poll reads only the
     /// files that grew.
     fn arm_rounds(&self, path: &str, schedule: &Schedule) -> (Option<RoundRow>, Vec<[f64; 4]>) {
@@ -3263,36 +3235,24 @@ impl Status {
             .map(|record| [(record.step / per_round) as f64, record.train_loss, record.test_loss, record.learning_rate])
             .collect();
         let arm_dir = Path::new(path).parent().map_or(String::new(), |dir| dir.to_string_lossy().into_owned());
-        let rule = schedule.rule(&arm_dir);
-        let row = rule.and_then(|rule| training::latest_of(records, per_round, &rule).map(|round| (rule, round))).map(
-            |(rule, (record, standing))| {
-                let schedule_row = match (standing, rule) {
-                    (training::Standing::Patience(stages), training::Rule::Patience { patience_rounds, stage_count, .. }) => {
-                        ScheduleRow::Patience {
-                            stage: schedule.rates.iter().position(|&rate| rate == record.learning_rate).map(|index| index + 1),
-                            stages: stage_count,
-                            stage_round: stages.switch_step / per_round,
-                            waiting: stages.rounds_without_improvement(record.step, per_round),
-                            patience: patience_rounds,
-                        }
-                    }
-                    (_, training::Rule::Budget(budget)) => ScheduleRow::Budget {
-                        total_rounds: budget.total_rounds(),
-                        start: budget.start,
-                        end: budget.end,
-                        epochs: budget.epochs,
-                        candidate_rounds: budget.candidate_rounds(),
-                    },
-                    (training::Standing::Budget(_), training::Rule::Patience { .. }) => unreachable!("an arm stands by its rule"),
+        let budget = schedule.budget(&arm_dir);
+        let row = budget.and_then(|budget| training::latest_of(records, &budget).map(|round| (budget, round))).map(
+            |(budget, (record, standing))| {
+                let schedule_row = ScheduleRow::Budget {
+                    total_rounds: budget.total_rounds(),
+                    start: budget.start,
+                    end: budget.end,
+                    epochs: budget.epochs,
+                    candidate_rounds: budget.candidate_rounds(),
                 };
                 RoundRow {
                     round: record.step / per_round,
                     learning_rate: record.learning_rate,
                     train_loss: record.train_loss,
                     test_loss: record.test_loss,
-                    best_loss: standing.best_loss(),
-                    best_round: standing.best_step() / per_round,
-                    finished: standing.finished(),
+                    best_loss: standing.best_loss,
+                    best_round: standing.best_step / per_round,
+                    finished: standing.finished,
                     schedule: schedule_row,
                     train_seconds: record.train_duration_secs,
                     test_seconds: record.test_duration_secs,
@@ -3465,9 +3425,8 @@ impl Status {
             WorkView::RoundRobin { .. } => Some(live.clone()),
             _ => {
                 // Its players as the round robin chose them: a budget's, its arm's checkpoints in
-                // `candidates.txt`; a grid's, its constants that learned. A polyline attempt under patience
-                // has none.
-                let (labels, wanted) = if files.schedule.budget.is_some() {
+                // `candidates.txt`; a grid's, its constants that learned.
+                let (labels, wanted) = if config.lambda == LambdaMode::Polyline {
                     let listed = lambdas
                         .first()
                         .and_then(|&arm| candidates::read_budget_candidates(&dirs.arm(generation, arm)).ok())
@@ -5996,9 +5955,9 @@ mod tests {
         // The server reads every config in `configs/`: one written for a newer binary must leave it
         // running, that config simply not a forge to it.
         fattorini::pipeline::repository_root::enter_for_tests();
-        let text = std::fs::read_to_string(preprocessing_config::net_config_path("lc0-psq-threats-screlu")).unwrap();
+        let text = std::fs::read_to_string(preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
         let (kind, unknown) = ("kind: psq_threats_screlu", "kind: a_kind_from_the_future");
-        assert!(text.contains(kind), "lc0-psq-threats-screlu's kind line");
+        assert!(text.contains(kind), "pesto-psq-threats-screlu's kind line");
         let dir = std::env::temp_dir().join(format!("smithy-unknown-kind-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.yaml").to_str().unwrap().to_string();
@@ -6220,10 +6179,9 @@ mod tests {
     #[test]
     fn every_committed_forge_config_loads_and_the_others_are_not_forges() {
         fattorini::pipeline::repository_root::enter_for_tests();
-        for (name, source) in [("pesto-psq-threats-screlu", Some(Source::Pesto)), ("lc0-psq-threats-screlu", Some(Source::Lc0)),
-            ("lc0-halfk-threats-screlu", Some(Source::Lc0)),
-            ("pesto-halfk-threats-screlu", Some(Source::Pesto)), ("lc0-halfk-threats-screlu-hidden", Some(Source::Lc0)),
-            ("lc0-halfk-threats-pairwise-hidden", Some(Source::Lc0)), ("lc0-halfk-threats-pairwise-dual-512-8-budget", Some(Source::Lc0)),
+        for (name, source) in [("pesto-psq-threats-screlu", Some(Source::Pesto)), ("pesto-halfk-threats-screlu", Some(Source::Pesto)),
+            ("lc0-halfk-threats-screlu-hidden-512-8-budget", Some(Source::Lc0)),
+            ("lc0-halfk-threats-pairwise-hidden-512-8-budget", Some(Source::Lc0)), ("lc0-halfk-threats-pairwise-dual-512-8-budget", Some(Source::Lc0)),
             ("lc0-halfk-threats-pairwise-dual-count-512-8-budget", Some(Source::Lc0)),
             ("lc0-halfk-threats-screlu-dual-512-8-budget", Some(Source::Lc0))]
         {
@@ -6316,14 +6274,14 @@ mod tests {
     #[test]
     fn only_a_source_s_generation_1_trains_on_its_corpus() {
         fattorini::pipeline::repository_root::enter_for_tests();
-        let (config, _) = load_config(&preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
-        assert_eq!((config.on_source(1), config.on_source(2)), (Some(Source::Pesto), None));
+        let (config, _) = load_config(&preprocessing_config::net_config_path("lc0-halfk-threats-screlu-hidden-512-8-budget")).unwrap();
+        assert_eq!((config.on_source(1), config.on_source(2)), (Some(Source::Lc0), None));
     }
 
     #[test]
     fn a_scaled_run_s_scale_shrinks_a_forge_by_kind_and_one_is_the_config_itself() {
         fattorini::pipeline::repository_root::enter_for_tests();
-        let load = || load_config(&preprocessing_config::net_config_path("pesto-psq-threats-screlu")).unwrap();
+        let load = || load_config(&preprocessing_config::net_config_path("lc0-halfk-threats-screlu-hidden-512-8-budget")).unwrap();
         let (config, net) = load();
         let sizes = |config: &GenConfig, net: &NetConfig| {
             let training = &net.training;
@@ -6334,7 +6292,7 @@ mod tests {
                 training.training_batch_size,
                 training.test_batch_size,
                 training.steps_per_round,
-                training.patience_rounds,
+                training.warmup_rounds,
             )
         };
         let (mut same, mut same_net) = load();
@@ -6342,12 +6300,12 @@ mod tests {
         assert_eq!(sizes(&same, &same_net), sizes(&config, &net), "a scale of 1 is the config itself");
         let (mut small, mut small_net) = load();
         scale_forge(&mut small, &mut small_net, scale::DEFAULT);
-        assert_eq!(sizes(&small, &small_net), (1_048_576, 4_096, 12, 256, 256, 4, net.training.patience_rounds), "the shape is kept");
+        assert_eq!(sizes(&small, &small_net), (1_048_576, 4_096, 12, 256, 256, 4, net.training.warmup_rounds), "the shape is kept");
         let (mut tiny, mut tiny_net) = load();
         scale_forge(&mut tiny, &mut tiny_net, u64::MAX);
         assert_eq!(
             sizes(&tiny, &tiny_net),
-            (scale::MIN_POSITIONS, scale::MIN_BATCH, scale::MIN_PAIRS, 256, 256, 1, net.training.patience_rounds),
+            (scale::MIN_POSITIONS, scale::MIN_BATCH, scale::MIN_PAIRS, 256, 256, 1, net.training.warmup_rounds),
             "every floor holds"
         );
     }
@@ -6356,9 +6314,9 @@ mod tests {
     fn a_forge_config_is_one_file_of_forge_keys_and_network_sections() {
         let dir = scratch("one-file-config");
         let network = "labels: lc0\narchitecture:\n  kind: psq\n  embedding_dim: 8\n  value_head:\n    hidden_dim: []\n\
-                       training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-                       warmup_rounds: 0\n  patience_rounds: 1\n";
-        let forge = "grid_center: 0.05\ntest_positions: 1\nround_robin_pairs: 1\ngate_elo_d: 35\n\
+                       training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+                       warmup_rounds: 0\n  epochs: 1\n";
+        let forge = "lambda: polyline\ntest_positions: 1\nround_robin_pairs: 1\ngate_elo_d: 35\n\
                      tune:\n  length: 100\n  control: {depth: 2}\n";
         let load = |name: &str, text: String| {
             let path = format!("{dir}/{name}.yaml");
@@ -6379,24 +6337,15 @@ mod tests {
         let bad_tune = format!("{without_tune}tune:\n  length: 10\ntraining_positions: 7\n{network}");
         assert!(load("bad-tune", bad_tune).unwrap_err().contains("pairs"), "tune: is checked as the words it stands for");
 
-        // The grid is the default; a polyline attempt has no grid centre, a grid attempt needs one.
-        assert_eq!(config.lambda, LambdaMode::Grid);
-        let rest = forge.strip_prefix("grid_center: 0.05\n").unwrap();
-        let (polyline, _) = load("polyline", format!("lambda: polyline\n{rest}training_positions: 7\n{network}")).unwrap();
-        assert_eq!((polyline.lambda, polyline.grid_center), (LambdaMode::Polyline, None));
-        assert!(load("both", format!("lambda: polyline\n{forge}training_positions: 7\n{network}")).unwrap_err().contains("grid_center"));
-        assert!(load("no-center", format!("{rest}training_positions: 7\n{network}")).unwrap_err().contains("grid_center"));
-        assert!(load("unknown-mode", format!("lambda: curve\n{forge}training_positions: 7\n{network}")).is_err());
-
-        // A budget trains one arm: the polyline's, never a grid.
-        let budget = network.replace(
-            "learning_rate: 0.1\n",
-            "schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n",
-        )
-        .replace("  patience_rounds: 1\n", "");
-        let (_, net) = load("budget", format!("lambda: polyline\n{rest}training_positions: 7\n{budget}")).unwrap();
+        // A polyline attempt has no grid centre; a budget, the one schedule, trains one arm, the
+        // polyline's, never a grid.
+        assert_eq!((config.lambda, config.grid_center), (LambdaMode::Polyline, None));
         assert_eq!(net.training.schedule, net_config::Schedule::Budget);
-        assert!(load("budget-grid", format!("{forge}training_positions: 7\n{budget}")).unwrap_err().contains("lambda: polyline"));
+        let rest = forge.strip_prefix("lambda: polyline\n").unwrap();
+        assert!(load("both", format!("grid_center: 0.05\n{forge}training_positions: 7\n{network}")).unwrap_err().contains("grid_center"));
+        let grid = format!("grid_center: 0.05\n{rest}training_positions: 7\n{network}");
+        assert!(load("grid", grid).unwrap_err().contains("lambda: polyline"));
+        assert!(load("unknown-mode", format!("lambda: curve\n{rest}training_positions: 7\n{network}")).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -6832,12 +6781,12 @@ mod tests {
 
     #[test]
     fn an_arms_rounds_give_its_latest_row_and_every_rounds_losses_and_rate() {
-        // Three rounds, the rate switching at the third: the curve has each, in order, and a file
-        // grown since is read again rather than served from the cache.
+        // Three rounds, the rate falling: the curve has each, in order, and a file grown since is read
+        // again rather than served from the cache.
         let dir = scratch("arm-rounds");
         let path = format!("{dir}/history.tsv");
-        let schedule =
-            Schedule { rates: vec![1e-3, 1e-4], stage_count: 2, steps_per_round: 10, warmup_rounds: 1, patience_rounds: Some(6), budget: None };
+        std::fs::write(format!("{dir}/{}", attempt_config::FILE), "schedule\tbudget\ntrain_rows\t1000\n").unwrap();
+        let schedule = Schedule { rates: vec![1e-3, 1e-5], steps_per_round: 10, warmup_rounds: 1, epochs: 2.0, training_batch_size: 10 };
         let record = |step: u64, rate: f64, train: f64, test: f64| super::super::history::EvalRecord {
             step, learning_rate: rate, train_loss: train, test_loss: test, train_duration_secs: 1.0, test_duration_secs: 0.5,
         };
@@ -6858,18 +6807,11 @@ mod tests {
     }
 
     #[test]
-    fn a_budget_arm_s_row_has_its_length_and_no_stage_nor_patience_at_all() {
+    fn a_budget_arm_s_row_has_its_length() {
         let dir = scratch("budget-rounds");
         let path = format!("{dir}/history.tsv");
         // 100 steps an epoch, rounds of 10, 2 epochs: 20 rounds.
-        let schedule = Schedule {
-            rates: vec![1e-3, 1e-5],
-            stage_count: 2,
-            steps_per_round: 10,
-            warmup_rounds: 1,
-            patience_rounds: None,
-            budget: Some((2.0, 10)),
-        };
+        let schedule = Schedule { rates: vec![1e-3, 1e-5], steps_per_round: 10, warmup_rounds: 1, epochs: 2.0, training_batch_size: 10 };
         let status = test_status(Arc::new(Mutex::new(Shared::default())));
         super::super::history::append(
             &path,
@@ -6889,7 +6831,7 @@ mod tests {
         );
         let row = status.arm_rounds(&path, &schedule).0.expect("a round");
         assert_eq!((row.round, row.finished), (2, false));
-        assert!(matches!(row.schedule, ScheduleRow::Budget { total_rounds: 20, .. }), "a budget's length, no stage nor patience");
+        assert!(matches!(row.schedule, ScheduleRow::Budget { total_rounds: 20, .. }), "a budget's length");
         std::fs::remove_dir_all(&dir).ok();
     }
 

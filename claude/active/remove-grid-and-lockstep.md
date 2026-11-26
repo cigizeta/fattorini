@@ -78,7 +78,12 @@ The budget schedule (`Rule::Budget`, its kept checkpoints, which are one arm's r
    stack files and `arm_slice.rs` deleted, rollback gone, a patience schedule refused when training
    starts, a grid's lambdas trained one after another meanwhile; 2a' (split off when 2a was written:
    patience reaches about 20 config fixtures, the page and `smithy.rs`), patience deleted everywhere,
-   a patience config refused at load, patience configs archived; 2b, the grid (`smithy.rs`, `ArmLambda::Constant`, `-l` names,
+   a patience config refused at load, patience configs archived (written 2026-11-26: `schedule:`
+   defaults to `budget`, its one value, `patience` refused as an unknown variant and
+   `patience_rounds` by name; the two `examples/` configs moved to a budget; the page's patience
+   bars, stage and patience columns and stage lines gone; with every config a budget, `load_config`
+   already refuses any grid, so the grid is dead at the config level before 2b removes its code);
+   2b, the grid (`smithy.rs`, `ArmLambda::Constant`, `-l` names,
    the page's grid, `lambda:` refused); 2c, labels a scalar, then `Arms` gone and `run_round` on one
    network; 2d, DEV.md, the page's columns, module docs. The whole, as first planned: `train` on the unstacked loop; lockstep reduced to
    `training.rs`; the stack files, grid, patience, grid-era readers and their tests deleted; labels a

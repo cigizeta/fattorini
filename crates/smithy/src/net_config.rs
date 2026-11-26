@@ -359,10 +359,8 @@ pub enum ArchitectureKind {
 /// value or start the attempt over, never to edit around it.
 #[derive(Debug, Deserialize)]
 pub struct Training {
-    /// The rates one run steps down through, in order: training starts at the first, moves abruptly
-    /// to the next each time `patience_rounds` rounds pass without a new best test loss, and stops when
-    /// the last one runs out of patience (`stages.rs`). Strictly decreasing. A scalar in the file is a
-    /// one-stage run.
+    /// The budget's two rates, start then end: the rate falls geometrically from the first to the
+    /// second (`budget.rs`). A scalar in the file reads as one rate, which `load` refuses.
     #[serde(deserialize_with = "one_or_many_rates")]
     pub learning_rate: Vec<f64>,
     /// Rows per gradient step. Together with `steps_per_round` this fixes one evaluation round's own
@@ -380,8 +378,8 @@ pub struct Training {
     /// spends less time per row.
     pub test_batch_size: i64,
     /// Gradient steps in one evaluation round -- the round being the unit both tracks measure in: one
-    /// full no-grad pass over the test set follows every one of them, and `warmup_rounds` and
-    /// `patience_rounds` count in it too.
+    /// full no-grad pass over the test set follows every one of them, and `warmup_rounds` counts in it
+    /// too.
     pub steps_per_round: u64,
     pub attention: Option<Attention>,
     /// Rounds over which the rate ramps linearly up from a fresh optimizer. A zero-moment AdamW's
@@ -390,17 +388,16 @@ pub struct Training {
     /// moment has seen about `1 / (1 - beta2)` = 1000 gradients. `0` for none. Every kind; `load`
     /// requires it.
     pub warmup_rounds: Option<u64>,
-    /// Rounds a run may go without a new best test loss at one rate before moving to the next, or
-    /// stopping at the last. Counted from the latest of the last new best, the last switch of rate and
-    /// the end of warmup. At least 1. Every kind; `load` requires it.
+    /// Patience's, which is no longer trained (2026-11-26): read only so that `load` refuses a config
+    /// still carrying it, naming the key, rather than ignoring it.
     pub patience_rounds: Option<u64>,
-    /// How the rate moves and when training ends: `patience` (the default, deprecated), the stages
-    /// above stepped down by `patience_rounds`; or `budget`, `epochs` passes over the training set, the
-    /// rate falling geometrically from `learning_rate`'s first rate to its second, the candidate chosen
-    /// afterwards by a round robin among checkpoints from half the budget to its end (`budget.rs`).
+    /// How the rate moves and when training ends: `budget`, the only one and the default, `epochs`
+    /// passes over the training set, the rate falling geometrically from `learning_rate`'s first rate
+    /// to its second, the candidate chosen afterwards by a round robin among checkpoints from half the
+    /// budget to its end (`budget.rs`). Patience is refused by name, as an unknown variant.
     #[serde(default)]
     pub schedule: Schedule,
-    /// A budget's length in passes over the training set; a budget's alone, required by it.
+    /// The budget's length in passes over the training set; `load` requires it.
     pub epochs: Option<f64>,
     /// Read by nothing: every architecture trains on its training set fully shuffled, scattered into
     /// buckets and shuffled again every epoch, with no buffer to size. Kept so that `load` refuses
@@ -412,10 +409,8 @@ pub struct Training {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Schedule {
-    /// Stages stepped down by patience, the lowest-loss checkpoint the candidate (`stages.rs`).
-    #[default]
-    Patience,
     /// A fixed number of epochs, the rate falling geometrically, candidates chosen by a round robin.
+    #[default]
     Budget,
 }
 
@@ -559,39 +554,25 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
         None => return Err(format!("{path}: training.warmup_rounds is missing")),
     }
     let rates = &config.training.learning_rate;
-    match config.training.schedule {
-        // Every kind trains its lambdas in lockstep through the same stages (`stages.rs`).
-        Schedule::Patience => {
-            match config.training.patience_rounds {
-                Some(value) => ensure!(value >= 1, "{path}: training.patience_rounds must be at least 1, got {value}"),
-                None => return Err(format!("{path}: training.patience_rounds is missing")),
-            }
-            ensure!(config.training.epochs.is_none(), "{path}: training.epochs is a budget's; schedule: patience has none");
+    // The budget, the one schedule. The lambda's mode, polyline only, is a forge key, checked by the
+    // smithy's `load_config`. A transformer's budget ends at its training: no round robin, its
+    // candidates' test losses recorded alone (`candidates::export_budget_candidates`).
+    ensure!(
+        config.training.patience_rounds.is_none(),
+        "{path}: training.patience_rounds is patience's, which is no longer trained: give the config \
+         schedule: budget, its epochs and two rates, start then end"
+    );
+    match config.training.epochs {
+        Some(epochs) => {
+            ensure!(epochs.is_finite() && epochs > 0.0, "{path}: training.epochs must be a positive number, got {epochs}")
         }
-        // The lambda's mode, polyline only, is a forge key, checked by the smithy's `load_config`.
-        // A transformer's budget ends at its training: no round robin, its candidates' test losses
-        // recorded alone (`candidates::export_budget_candidates`).
-        Schedule::Budget => {
-            ensure!(
-                config.training.patience_rounds.is_none(),
-                "{path}: training.patience_rounds is patience's; schedule: budget has none"
-            );
-            match config.training.epochs {
-                Some(epochs) => ensure!(
-                    epochs.is_finite() && epochs > 0.0,
-                    "{path}: training.epochs must be a positive number, got {epochs}"
-                ),
-                None => return Err(format!("{path}: training.epochs is missing, and schedule: budget needs it")),
-            }
-            ensure!(
-                rates.len() == 2,
-                "{path}: schedule: budget takes a learning_rate of exactly two rates, start then end, got {}",
-                rates.len()
-            );
-        }
+        None => return Err(format!("{path}: training.epochs is missing, and schedule: budget needs it")),
     }
-
-    ensure!(!rates.is_empty(), "{path}: training.learning_rate is an empty list, so there is no rate to train at");
+    ensure!(
+        rates.len() == 2,
+        "{path}: schedule: budget takes a learning_rate of exactly two rates, start then end, got {}",
+        rates.len()
+    );
     for rate in rates {
         ensure!(
             rate.is_finite() && *rate > 0.0,
@@ -602,8 +583,8 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
     for pair in rates.windows(2) {
         ensure!(
             pair[1] < pair[0],
-            "{path}: training.learning_rate must be strictly decreasing, the order training steps down through it, \
-             but {:e} is followed by {:e}",
+            "{path}: training.learning_rate must be strictly decreasing, the rate falling from the first to the \
+             second, but {:e} is followed by {:e}",
             pair[0],
             pair[1]
         );
@@ -634,10 +615,10 @@ mod tests {
         assert_eq!(config.training.training_batch_size, 1024);
         assert_eq!(config.training.test_batch_size, 16384);
         assert_eq!(config.training.steps_per_round, 8192);
-        assert_eq!(config.training.learning_rate, vec![1.0e-4], "a scalar in the file widens to one stage");
+        assert_eq!(config.training.learning_rate, vec![1.0e-4, 1.0e-6]);
         assert_eq!(config.training.shuffle_buffer, None, "the transformer reads bucketed files, with no buffer to size");
         assert_eq!(config.training.warmup_rounds, Some(1));
-        assert_eq!(config.training.patience_rounds, Some(5));
+        assert_eq!(config.training.epochs, Some(4.0));
     }
 
     #[test]
@@ -650,9 +631,9 @@ mod tests {
         assert!(matches!(config.architecture.kind, ArchitectureKind::Psq));
         assert_eq!(config.training.attention, None);
         assert_eq!(config.training.shuffle_buffer, None);
-        assert_eq!(config.training.learning_rate, vec![1.0e-3, 3.0e-4, 1.0e-4]);
+        assert_eq!(config.training.learning_rate, vec![1.0e-3, 1.0e-5]);
         assert_eq!(config.training.warmup_rounds, Some(2));
-        assert_eq!(config.training.patience_rounds, Some(8));
+        assert_eq!(config.training.epochs, Some(4.0));
     }
 
     #[test]
@@ -664,8 +645,8 @@ mod tests {
             &path,
             "architecture:\n  kind: transformer\n  embedding_dim: 8\n  \
              value_head:\n    hidden_dim: [4]\n  num_layers: 1\n  num_heads: 1\n  feedforward_dim: 8\n\
-             training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  \
-             steps_per_round: 1\n  warmup_rounds: 0\n  patience_rounds: 1\n",
+             training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  \
+             steps_per_round: 1\n  warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
 
@@ -681,7 +662,7 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: psq\n  embedding_dim: 8\n  \
-             value_head:\n    hidden_dim: [4]\ntraining:\n  attention: full\n  learning_rate: 0.1\n  \
+             value_head:\n    hidden_dim: [4]\ntraining:\n  attention: full\n  learning_rate: [0.1, 0.01]\n  \
              training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n",
         )
         .expect("failed to write the fixture file");
@@ -698,8 +679,8 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: psq\n  embedding_dim: 8\n  \
-             value_head:\n    hidden_dim: [4]\ntraining:\n  learning_rate: 0.1\n  training_batch_size: 1\n  \
-             test_batch_size: 1\n  steps_per_round: 1\n  shuffle_buffer: 16\n  warmup_rounds: 0\n  patience_rounds: 1\n",
+             value_head:\n    hidden_dim: [4]\ntraining:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  \
+             test_batch_size: 1\n  steps_per_round: 1\n  shuffle_buffer: 16\n  warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
 
@@ -708,20 +689,29 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "training.patience_rounds is missing")]
-    fn load_rejects_an_nnue_kind_with_no_patience_rounds_field() {
+    #[should_panic(expected = "training.patience_rounds is patience's, which is no longer trained")]
+    fn load_refuses_a_patience_config_by_its_key() {
         let pid = std::process::id();
-        let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-no-patience-rounds.yaml"));
+        let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-patience-rounds.yaml"));
         std::fs::write(
             &path,
             "architecture:\n  kind: psq\n  embedding_dim: 8\n  \
-             value_head:\n    hidden_dim: [4]\ntraining:\n  learning_rate: 0.1\n  training_batch_size: 1\n  \
-             test_batch_size: 1\n  steps_per_round: 1\n  warmup_rounds: 0\n",
+             value_head:\n    hidden_dim: [4]\ntraining:\n  learning_rate: [0.1, 0.01, 0.001]\n  training_batch_size: 1\n  \
+             test_batch_size: 1\n  steps_per_round: 1\n  warmup_rounds: 0\n  patience_rounds: 6\n",
         )
         .expect("failed to write the fixture file");
 
         let _ = load(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_refuses_a_patience_schedule_by_name() {
+        let path = budget_fixture("schedule-patience", "psq", "  schedule: patience\n  learning_rate: [1.0e-3, 1.0e-5]\n");
+        let result = read(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        let error = result.expect_err("schedule: patience should be refused");
+        assert!(error.contains("patience"), "{error}");
     }
 
     #[test]
@@ -734,8 +724,8 @@ mod tests {
             "architecture:\n  kind: transformer\n  \
              embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\n  num_layers: 1\n  num_heads: 1\n  \
              feedforward_dim: 8\ntraining:\n  attention: full\n  shuffle_buffer: 16\n  \
-             learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-             warmup_rounds: 0\n  patience_rounds: 1\n",
+             learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+             warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
 
@@ -763,27 +753,20 @@ mod tests {
 
     /// `transformer_fixture_with` the schedule every kind needs.
     fn transformer_fixture(name: &str, head: &str) -> std::path::PathBuf {
-        transformer_fixture_with(name, head, "  warmup_rounds: 0\n  patience_rounds: 1\n")
+        transformer_fixture_with(name, head, "  warmup_rounds: 0\n  epochs: 1\n")
     }
 
     #[test]
-    fn load_accepts_a_transformer_stepping_down_rates() {
-        let path = transformer_fixture("lockstep", "");
+    fn load_accepts_a_transformer_on_a_budget() {
+        let path = transformer_fixture("budget-transformer", "");
         let config = load(path.to_str().unwrap());
         assert_eq!(config.training.learning_rate, vec![0.1, 0.01]);
         assert!(matches!(config.architecture.kind, ArchitectureKind::Transformer { num_layers: 1, .. }));
     }
 
-    #[test]
-    #[should_panic(expected = "training.patience_rounds is missing")]
-    fn load_rejects_a_transformer_without_a_patience() {
-        let path = transformer_fixture_with("no-patience", "", "  warmup_rounds: 0\n");
-        let _ = load(path.to_str().unwrap());
-    }
-
-    /// One NNUE fixture body, with `learning_rate` and `patience_rounds` spelled however a test needs
-    /// them, so the tests below differ only in the line they are about.
-    fn nnue_fixture(name: &str, learning_rate: &str, patience_rounds: &str) -> std::path::PathBuf {
+    /// One NNUE fixture body, with `learning_rate` spelled however a test needs it, so the tests below
+    /// differ only in the line they are about.
+    fn nnue_fixture(name: &str, learning_rate: &str) -> std::path::PathBuf {
         let pid = std::process::id();
         let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-{name}.yaml"));
         std::fs::write(
@@ -792,7 +775,7 @@ mod tests {
                 "architecture:\n  kind: psq\n  \
                  embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\ntraining:\n  learning_rate: {learning_rate}\n  \
                  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-                 warmup_rounds: 0\n  patience_rounds: {patience_rounds}\n"
+                 warmup_rounds: 0\n  epochs: 4\n"
             ),
         )
         .expect("failed to write the fixture file");
@@ -800,30 +783,9 @@ mod tests {
     }
 
     #[test]
-    fn load_widens_one_rate_into_one_stage_and_allows_no_warmup() {
-        let path = nnue_fixture("one-rate", "3.0e-4", "12");
-
-        let config = load(path.to_str().unwrap());
-
-        assert_eq!(config.training.learning_rate, vec![3.0e-4]);
-        assert_eq!(config.training.warmup_rounds, Some(0));
-        std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn load_keeps_the_stages_in_order() {
-        let path = nnue_fixture("stages", "[3.0e-3, 1.0e-3, 3.0e-4]", "8");
-
-        let config = load(path.to_str().unwrap());
-
-        assert_eq!(config.training.learning_rate, vec![3.0e-3, 1.0e-3, 3.0e-4]);
-        std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
     #[should_panic(expected = "must be strictly decreasing")]
     fn load_rejects_a_rate_that_goes_back_up() {
-        let path = nnue_fixture("rising", "[1.0e-3, 3.0e-3]", "8");
+        let path = nnue_fixture("rising", "[1.0e-3, 3.0e-3]");
 
         let _ = load(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
@@ -832,16 +794,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "must be strictly decreasing")]
     fn load_rejects_a_repeated_rate() {
-        let path = nnue_fixture("repeated", "[3.0e-4, 0.0003]", "8");
-
-        let _ = load(path.to_str().unwrap());
-        std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    #[should_panic(expected = "is an empty list")]
-    fn load_rejects_an_empty_list() {
-        let path = nnue_fixture("no-rates", "[]", "8");
+        let path = nnue_fixture("repeated", "[3.0e-4, 0.0003]");
 
         let _ = load(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
@@ -850,16 +803,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "not a finite, strictly positive rate")]
     fn load_rejects_a_zero_rate() {
-        let path = nnue_fixture("zero-rate", "[3.0e-4, 0.0]", "12");
-
-        let _ = load(path.to_str().unwrap());
-        std::fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    #[should_panic(expected = "training.patience_rounds must be at least 1")]
-    fn load_rejects_a_patience_of_zero() {
-        let path = nnue_fixture("zero-patience", "3.0e-4", "0");
+        let path = nnue_fixture("zero-rate", "[3.0e-4, 0.0]");
 
         let _ = load(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
@@ -891,17 +835,16 @@ mod tests {
         assert_eq!(config.training.schedule, Schedule::Budget);
         assert_eq!(config.training.epochs, Some(4.0));
         assert_eq!(config.training.learning_rate, vec![1.0e-3, 1.0e-5]);
-        assert_eq!(config.training.patience_rounds, None);
     }
 
     #[test]
-    fn load_defaults_the_schedule_to_patience() {
-        let path = nnue_fixture("default-schedule", "3.0e-4", "8");
+    fn load_defaults_the_schedule_to_the_budget() {
+        let path = nnue_fixture("default-schedule", "[1.0e-3, 1.0e-5]");
 
         let config = load(path.to_str().unwrap());
 
         std::fs::remove_file(&path).ok();
-        assert_eq!(config.training.schedule, Schedule::Patience);
+        assert_eq!(config.training.schedule, Schedule::Budget);
     }
 
     /// `read`'s error for a budget fixture, which must exist.
@@ -945,7 +888,7 @@ mod tests {
             "psq",
             "  schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n  patience_rounds: 6\n",
         );
-        assert!(error.contains("schedule: budget has none"), "{error}");
+        assert!(error.contains("which is no longer trained"), "{error}");
     }
 
     #[test]
@@ -958,15 +901,6 @@ mod tests {
     }
 
     #[test]
-    fn load_refuses_epochs_under_patience() {
-        let path = budget_fixture("epochs-patience", "psq", "  epochs: 4\n  learning_rate: 1.0e-3\n  patience_rounds: 6\n");
-        let result = read(path.to_str().unwrap());
-        std::fs::remove_file(&path).ok();
-        let error = result.expect_err("epochs under patience should be refused");
-        assert!(error.contains("schedule: patience has none"), "{error}");
-    }
-
-    #[test]
     fn king_buckets_default_to_32_and_take_8_or_10_on_a_halfk_kind_alone() {
         use fattorini::features::halfk::Layout;
         let pid = std::process::id();
@@ -976,8 +910,8 @@ mod tests {
                 &path,
                 format!(
                     "architecture:\n  kind: {kind}\n  embedding_dim: 8\n{buckets}  value_head:\n    hidden_dim: []\ntraining:\n  \
-                     learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-                     warmup_rounds: 0\n  patience_rounds: 1\n"
+                     learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+                     warmup_rounds: 0\n  epochs: 1\n"
                 ),
             )
             .expect("failed to write the fixture file");
@@ -1011,8 +945,8 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: psq_pairwise\n  embedding_dim: 7\n  value_head:\n    hidden_dim: []\ntraining:\n  \
-             learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-             warmup_rounds: 0\n  patience_rounds: 1\n",
+             learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+             warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
 
@@ -1028,8 +962,8 @@ mod tests {
                 &path,
                 format!(
                     "architecture:\n  kind: psq_threats_screlu\n  embedding_dim: 8\n  value_head:\n    hidden_dim: {hidden}\n\
-                     training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-                     warmup_rounds: 0\n  patience_rounds: 1\n"
+                     training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+                     warmup_rounds: 0\n  epochs: 1\n"
                 ),
             )
             .expect("failed to write the fixture file");
@@ -1053,8 +987,8 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: psq_threats_screlu_phase\n  embedding_dim: 8\n  value_head:\n    hidden_dim: []\n\
-             training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-             warmup_rounds: 0\n  patience_rounds: 1\n",
+             training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+             warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
         let config = load(path.to_str().unwrap());
@@ -1070,8 +1004,8 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: psq_threats_screlu_count\n  embedding_dim: 8\n  value_head:\n    hidden_dim: []\n\
-             training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-             warmup_rounds: 0\n  patience_rounds: 1\n",
+             training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+             warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
         let config = load(path.to_str().unwrap());
@@ -1087,8 +1021,8 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: psq_threats_screlu_taper\n  embedding_dim: 8\n  value_head:\n    hidden_dim: []\n\
-             training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-             warmup_rounds: 0\n  patience_rounds: 1\n",
+             training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+             warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
         let config = load(path.to_str().unwrap());
@@ -1107,8 +1041,8 @@ mod tests {
                 &path,
                 format!(
                     "architecture:\n  kind: psq_threats_screlu_kings\n  embedding_dim: 8\n  value_head:\n    hidden_dim: {hidden}\n\
-                     training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-                     warmup_rounds: 0\n  patience_rounds: 1\n"
+                     training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+                     warmup_rounds: 0\n  epochs: 1\n"
                 ),
             )
             .expect("failed to write the fixture file");
@@ -1138,8 +1072,8 @@ mod tests {
                 &path,
                 format!(
                     "architecture:\n  kind: {kind}\n  embedding_dim: 8\n  value_head:\n    hidden_dim: {hidden}\n\
-                     training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-                     warmup_rounds: 0\n  patience_rounds: 1\n"
+                     training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+                     warmup_rounds: 0\n  epochs: 1\n"
                 ),
             )
             .expect("failed to write the fixture file");
@@ -1172,8 +1106,8 @@ mod tests {
                 &path,
                 format!(
                     "architecture:\n  kind: psq_threats_screlu_material\n  embedding_dim: 8\n  value_head:\n    hidden_dim: {hidden}\n\
-                     training:\n  learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-                     warmup_rounds: 0\n  patience_rounds: 1\n"
+                     training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+                     warmup_rounds: 0\n  epochs: 1\n"
                 ),
             )
             .expect("failed to write the fixture file");
@@ -1199,8 +1133,8 @@ mod tests {
         std::fs::write(
             &path,
             "architecture:\n  kind: psq_stack\n  embedding_dim: 8\n  value_head:\n    hidden_dim: [16]\ntraining:\n  \
-             learning_rate: 0.1\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
-             warmup_rounds: 0\n  patience_rounds: 1\n",
+             learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
+             warmup_rounds: 0\n  epochs: 1\n",
         )
         .expect("failed to write the fixture file");
 
@@ -1210,11 +1144,6 @@ mod tests {
     #[test]
     fn every_committed_forge_config_s_network_loads() {
         fattorini::pipeline::repository_root::enter_for_tests();
-        for name in ["pesto-psq-threats-screlu", "lc0-psq-threats-screlu"] {
-            let config = load(&format!("configs/{name}.yaml"));
-            assert!(matches!(config.architecture.kind, ArchitectureKind::PsqThreatsScrelu), "{name}");
-            assert!(config.training.patience_rounds.is_some(), "{name}");
-        }
         for name in ["lc0-halfk-threats-screlu-hidden-budget", "lc0-halfk-threats-screlu-hidden-512-budget"] {
             let config = load(&format!("configs/{name}.yaml"));
             assert_eq!(config.training.schedule, Schedule::Budget, "{name}");

@@ -3,8 +3,8 @@
 //! what differs between the tracks comes in through its closures.
 //!
 //! It replaced the lockstep of a grid's lambdas over a stacked network (2026-11-26): no config trains a
-//! grid any more, and patience, which only the stack could roll back, is no longer trained. A grid's
-//! lambdas, while the grid's code lasts, train one after another.
+//! grid any more, and patience, its stages and rollbacks, went with it. A grid's lambdas, while the
+//! grid's code lasts, train one after another.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -15,10 +15,10 @@ use crate::adamw::AdamW;
 use crate::budget::{Budget, BudgetStanding};
 use crate::cache::CacheRecord;
 use crate::game_labels::RoundProgress;
-use crate::net_config::{NetConfig, Schedule};
+use crate::net_config::NetConfig;
 use crate::rounds_display::{print_progress, timing_line};
 use crate::{
-    attempt_config, batch, checkpoint_store, game_labels, history, nnue_network, round, stages, test_cache, train_stream,
+    attempt_config, batch, checkpoint_store, game_labels, history, nnue_network, round, test_cache, train_stream,
     transformer_batch, transformer_network,
 };
 
@@ -33,81 +33,19 @@ pub(crate) struct Arm {
     pub(crate) optimizer_path: String,
     pub(crate) history_path: String,
     pub(crate) round_progress_path: String,
-    pub(crate) standing: Standing,
+    pub(crate) standing: BudgetStanding,
 }
 
-/// Where a run stands, by its rule: patience's stages (read by the page for old runs alone), or a
-/// budget's progress, which has no stage and no patience.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Standing {
-    Patience(stages::Stages),
-    Budget(BudgetStanding),
-}
-
-impl Standing {
-    pub(crate) fn finished(&self) -> bool {
-        match self {
-            Standing::Patience(stages) => stages.finished,
-            Standing::Budget(standing) => standing.finished,
-        }
-    }
-
-    /// The step of the lowest test loss so far: patience's candidate, a budget's for the page alone.
-    pub(crate) fn best_step(&self) -> u64 {
-        match self {
-            Standing::Patience(stages) => stages.best_step,
-            Standing::Budget(standing) => standing.best_step,
-        }
-    }
-
-    pub(crate) fn best_loss(&self) -> f64 {
-        match self {
-            Standing::Patience(stages) => stages.best_loss,
-            Standing::Budget(standing) => standing.best_loss,
-        }
-    }
-}
-
-/// How a run's rate moves and when it ends, its config's `training.schedule` in figures.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Rule {
-    /// Deprecated, no longer trained: stages stepped down by patience (`stages.rs`). Kept for the page's
-    /// reading of old runs.
-    Patience { warmup_rounds: u64, patience_rounds: u64, stage_count: usize },
-    /// A fixed budget, the rate falling with the step (`budget.rs`).
-    Budget(Budget),
-}
-
-impl Rule {
-    /// `config`'s rule for a run over `train_rows` training rows.
-    pub(crate) fn of(config: &NetConfig, train_rows: u64) -> Rule {
-        let warmup_rounds = config.training.warmup_rounds.expect("net_config::load already validated this is Some");
-        match config.training.schedule {
-            Schedule::Patience => Rule::Patience {
-                warmup_rounds,
-                patience_rounds: config.training.patience_rounds.expect("net_config::load already validated this is Some"),
-                stage_count: config.training.learning_rate.len(),
-            },
-            Schedule::Budget => Rule::Budget(Budget::new(
-                train_rows,
-                config.training.training_batch_size as u64,
-                config.training.steps_per_round,
-                warmup_rounds,
-                config.training.epochs.expect("net_config::load already validated this is Some"),
-                &config.training.learning_rate,
-            )),
-        }
-    }
-
-    /// Where a run whose rounds are `rounds` stands under this rule.
-    pub(crate) fn standing(&self, rounds: &[(u64, f64)], steps_per_round: u64) -> Standing {
-        match *self {
-            Rule::Patience { warmup_rounds, patience_rounds, stage_count } => {
-                Standing::Patience(stages::stage_after(rounds, steps_per_round, warmup_rounds, patience_rounds, stage_count))
-            }
-            Rule::Budget(budget) => Standing::Budget(budget.standing(rounds)),
-        }
-    }
+/// `config`'s budget for a run over `train_rows` training rows.
+pub(crate) fn budget_of(config: &NetConfig, train_rows: u64) -> Budget {
+    Budget::new(
+        train_rows,
+        config.training.training_batch_size as u64,
+        config.training.steps_per_round,
+        config.training.warmup_rounds.expect("net_config::load already validated this is Some"),
+        config.training.epochs.expect("net_config::load already validated this is Some"),
+        &config.training.learning_rate,
+    )
 }
 
 /// Opens one run's training, in `run_dir`: freezes or checks its `attempt_config.txt` and replays where
@@ -154,7 +92,7 @@ fn open_arm(
     ];
     attempt_config::freeze_or_verify(&format!("{run_dir}/{}", attempt_config::FILE), &frozen);
 
-    let standing = replay(&history_path, steps_per_round, &Rule::Budget(*budget));
+    let standing = replay(&history_path, budget);
     Arm { lambda, column, run_dir, checkpoints_dir, model_path, optimizer_path, history_path, round_progress_path, standing }
 }
 
@@ -351,9 +289,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
         "one round is {steps_per_round} steps, {:.4} passes over the train cache",
         (steps_per_round * batch_size as u64) as f64 / train_rows as f64
     );
-    let Rule::Budget(budget) = Rule::of(config, train_rows) else {
-        panic!("patience is no longer trained: give the config `schedule: budget` and its `epochs`")
-    };
+    let budget = budget_of(config, train_rows);
     log::info!(
         "a budget of {} rounds, {} epochs: {warmup_rounds} warmup rounds, then the rate from {:e} to {:e}, geometric; \
          candidates at rounds {}",
@@ -367,7 +303,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
 
     let mut arm = open_arm(config, &budget, source, parts.run_dir, parts.lambda, parts.column, train_rows, test_rows);
     // A run interrupted between meeting its budget's end and finishing finishes now.
-    if arm.standing.finished() {
+    if arm.standing.finished {
         finish(&arm, &budget);
         return true;
     }
@@ -414,7 +350,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
             },
         );
         history::append_pieces(&pieces_path(&arm.run_dir), 0, &round::losses_of_arm(&test_losses.by_pieces, 0));
-        arm.standing = replay(&arm.history_path, steps_per_round, &Rule::Budget(budget));
+        arm.standing = replay(&arm.history_path, &budget);
         log::info!("lambda {}: starting weights measured, test loss {loss:.6}", arm.lambda);
     }
 
@@ -479,7 +415,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
         history::append_pieces(&pieces_path(&arm.run_dir), step, &round::losses_of_arm(&outcome.test_loss_by_pieces, 0));
         let checkpoint = checkpoint_store::checkpoint_path(&arm.checkpoints_dir, step);
         one.vs.save(&checkpoint).unwrap_or_else(|error| panic!("failed to save {checkpoint}: {error}"));
-        arm.standing = replay(&arm.history_path, steps_per_round, &Rule::Budget(budget));
+        arm.standing = replay(&arm.history_path, &budget);
         // The candidates kept for the round robin, and this round's for nothing but a look (a resume
         // reads `model.vs`, never a checkpoint).
         let mut keep = budget.candidate_steps();
@@ -491,11 +427,11 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
             .save(&arm.round_progress_path);
 
         let mut line = timing_line(step / steps_per_round, outcome.train_duration_secs, outcome.test_duration_secs);
-        if arm.standing.best_step() == step {
-            line.push_str(&format!("; a new best, loss {:.6}", arm.standing.best_loss()));
+        if arm.standing.best_step == step {
+            line.push_str(&format!("; a new best, loss {:.6}", arm.standing.best_loss));
         }
         log::info!("{line}");
-        if arm.standing.finished() {
+        if arm.standing.finished {
             finish(&arm, &budget);
             return true;
         }
@@ -508,16 +444,17 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
     }
 }
 
-/// Where the run in `history_path` stands under `rule`, replayed from its recorded test losses.
-fn replay(history_path: &str, steps_per_round: u64, rule: &Rule) -> Standing {
-    rule.standing(&recorded_rounds(history_path), steps_per_round)
+/// Where the run in `history_path` stands on `budget`, replayed from its recorded test losses.
+fn replay(history_path: &str, budget: &Budget) -> BudgetStanding {
+    budget.standing(&recorded_rounds(history_path))
 }
 
-/// `latest_round` of `records` already read: the status page reads them itself, tolerating a line
-/// the trainer is still writing (`history::read_complete`). `None` before its first round.
-pub(crate) fn latest_of(mut records: Vec<history::EvalRecord>, steps_per_round: u64, rule: &Rule) -> Option<(history::EvalRecord, Standing)> {
+/// The latest of `records` already read and where the run stands at it: the status page reads them
+/// itself, tolerating a line the trainer is still writing (`history::read_complete`). `None` before
+/// its first round.
+pub(crate) fn latest_of(mut records: Vec<history::EvalRecord>, budget: &Budget) -> Option<(history::EvalRecord, BudgetStanding)> {
     let rounds: Vec<(u64, f64)> = records.iter().map(|record| (record.step, record.test_loss)).collect();
-    let standing = rule.standing(&rounds, steps_per_round);
+    let standing = budget.standing(&rounds);
     Some((records.pop()?, standing))
 }
 
@@ -558,8 +495,8 @@ mod tests {
     #[test]
     fn a_budget_replays_as_unfinished_for_a_run_with_no_history() {
         let budget = Budget::new(80, 10, 2, 1, 2.0, &[1e-2, 1e-4]);
-        let standing = replay("data/networks/train-main-test-no-such-run/history.tsv", 2, &Rule::Budget(budget));
-        assert!(!standing.finished());
+        let standing = replay("data/networks/train-main-test-no-such-run/history.tsv", &budget);
+        assert!(!standing.finished);
     }
 
     /// A flat test set over `records`, read in order and stopping short at its end.

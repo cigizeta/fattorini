@@ -48,7 +48,6 @@ mod scale;
 mod smithy;
 mod sprt;
 mod stack_head;
-mod stages;
 mod test_cache;
 mod train_stream;
 mod training;

@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn the_committed_forge_configs_name_their_labels() {
         crate::pipeline::repository_root::enter_for_tests();
-        for (config, labels) in [("pesto-psq-threats-screlu", Labels::Pesto), ("lc0-psq-threats-screlu", Labels::Lc0)] {
+        for (config, labels) in [("pesto-psq-threats-screlu", Labels::Pesto), ("lc0-halfk-threats-screlu-hidden-512-8-budget", Labels::Lc0)] {
             assert_eq!(load_labels(&net_config_path(config)), labels, "{config}");
         }
     }
