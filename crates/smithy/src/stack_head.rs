@@ -177,17 +177,6 @@ pub fn bucketed_forward(x: &Tensor, weight: &Tensor, bias: &Tensor, bucket: &Ten
     every_bucket.gather(1, &index, false).squeeze_dim(1) + bias.index_select(0, bucket)
 }
 
-/// `bucketed_forward` for every arm of a stack at once: `x` `[arms, rows, in]`, `weight`
-/// `[arms, buckets, out, in]`, `bias` `[arms, buckets, out]`, `bucket` (`Int64 [rows]`) the same for
-/// every arm: `[arms, rows, out]`.
-pub fn stacked_bucketed_forward(x: &Tensor, weight: &Tensor, bias: &Tensor, bucket: &Tensor) -> Tensor {
-    let (arms, rows, inputs) = (x.size()[0], x.size()[1], x.size()[2]);
-    let (buckets, outputs) = (weight.size()[1], weight.size()[2]);
-    let every_bucket = x.bmm(&weight.reshape([arms, buckets * outputs, inputs]).transpose(1, 2)).view([arms, rows, buckets, outputs]);
-    let index = bucket.view([1, rows, 1, 1]).expand([arms, rows, 1, outputs], false);
-    every_bucket.gather(2, &index, false).squeeze_dim(2) + bias.index_select(1, bucket)
-}
-
 /// A kings head's input to its output from each side's stage output, `[..., width]`, and every
 /// square, `[..., 2 * embedding]`: each side's values clipped, then squared, ours first, then the
 /// squares, along the last dimension, the engine's order (`nnue::kings_head`).
@@ -329,20 +318,6 @@ pub fn stage_forward(x: &Tensor, weight: &Tensor, bias: &Tensor, delta_weight: &
     let index = bucket.view([rows, 1, 1]).expand([rows, 1, outputs], false);
     let delta = every_bucket.gather(1, &index, false).squeeze_dim(1);
     shared + delta + delta_bias.index_select(0, bucket)
-}
-
-/// `stage_forward` for every arm of a stack at once: `x` `[arms, rows, in]`, each parameter with a
-/// leading arm dimension, `bucket` (`Int64 [rows]`) the same for every arm: `[arms, rows, out]`.
-pub fn stacked_stage_forward(
-    x: &Tensor, weight: &Tensor, bias: &Tensor, delta_weight: &Tensor, delta_bias: &Tensor, bucket: &Tensor,
-) -> Tensor {
-    let (arms, rows, inputs) = (x.size()[0], x.size()[1], x.size()[2]);
-    let (buckets, outputs) = (delta_weight.size()[1], delta_weight.size()[2]);
-    let shared = bias.unsqueeze(1).baddbmm(x, &weight.transpose(1, 2), 1.0, 1.0);
-    let every_bucket = x.bmm(&delta_weight.view([arms, buckets * outputs, inputs]).transpose(1, 2)).view([arms, rows, buckets, outputs]);
-    let index = bucket.view([1, rows, 1, 1]).expand([arms, rows, 1, outputs], false);
-    let delta = every_bucket.gather(2, &index, false).squeeze_dim(2);
-    shared + delta + delta_bias.index_select(1, bucket)
 }
 
 #[cfg(test)]
@@ -605,22 +580,5 @@ mod tests {
         let arms = Tensor::stack(&[outputs.detach(), outputs.detach() * 2.0], 0);
         let doubled: Vec<f32> = expected.iter().map(|value| 2.0 * value).collect();
         assert_eq!(Vec::<f32>::try_from(&taper(&arms, &phase).get(1)).unwrap(), doubled);
-    }
-
-    #[test]
-    fn every_arm_of_a_stacked_stage_computes_its_own_stage() {
-        let (arms, rows, inputs, outputs, buckets) = (2, 5, 6, 4, 7);
-        let options = (Kind::Float, Device::Cpu);
-        let x = Tensor::randn([arms, rows, inputs], options);
-        let weight = Tensor::randn([arms, outputs, inputs], options);
-        let bias = Tensor::randn([arms, outputs], options);
-        let delta_weight = Tensor::randn([arms, buckets, outputs, inputs], options);
-        let delta_bias = Tensor::randn([arms, buckets, outputs], options);
-        let bucket = Tensor::from_slice(&[0i64, 6, 3, 3, 1]);
-        let stacked = stacked_stage_forward(&x, &weight, &bias, &delta_weight, &delta_bias, &bucket);
-        for arm in 0..arms {
-            let alone = stage_forward(&x.get(arm), &weight.get(arm), &bias.get(arm), &delta_weight.get(arm), &delta_bias.get(arm), &bucket);
-            assert!(stacked.get(arm).allclose(&alone, 1e-5, 1e-6, false), "arm {arm}");
-        }
     }
 }

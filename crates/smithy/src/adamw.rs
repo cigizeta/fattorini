@@ -1,7 +1,3 @@
-// Built outside the tests ahead of the one-arm training loop, which will read it; until then the
-// binary leaves it unread.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::collections::HashMap;
 
 use tch::nn;
@@ -91,15 +87,16 @@ impl AdamW {
     ///
     /// A zero-moment AdamW's first updates are close to `lr * sign(grad)` on every parameter at once,
     /// because `v_hat` is estimated from a handful of gradients: harmless for random weights, a jolt for
-    /// trained ones. The ramp absorbs it until `v` has seen about `1 / (1 - beta2)` gradients.
+    /// trained ones. The ramp absorbs it until `v` has seen about `1 / (1 - beta2)` gradients. Training
+    /// ramps through its budget instead (`set_budget`), so only the tests set it.
+    #[cfg(test)]
     pub fn set_warmup_steps(&mut self, steps: i64) {
         assert!(steps >= 0, "a warmup of {steps} steps is meaningless");
         self.warmup_steps = steps;
     }
 
     /// Trains on `budget`'s schedule from now on: step `t` at `budget.rate(t)`, its warmup and its
-    /// geometric fall, as `StackedAdamW::set_budget` does per arm. The fixed rate and warmup are
-    /// ignored.
+    /// geometric fall. The fixed rate and warmup are ignored.
     pub fn set_budget(&mut self, budget: Budget) {
         self.budget = Some(budget);
     }

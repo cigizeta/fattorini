@@ -1,6 +1,7 @@
-//! What a finished lambda's run leaves behind: its candidate, the best checkpoint of the run, exported
-//! to the engine's `.nnue` format beside `candidate.txt` (`export_best`), and the helpers every export
-//! shares (`write_engine_network`, `write_record`, `feature_set_of`).
+//! What a finished lambda's run leaves behind: its budget's candidates (`export_budget_candidates`),
+//! then the round robin's winner exported to the engine's `.nnue` format beside `candidate.txt`
+//! (`export_budget_winner`), and the helpers every export shares (`write_engine_network`,
+//! `write_record`, `feature_set_of`).
 
 use std::process;
 
@@ -15,11 +16,8 @@ use crate::stack_head::HeadShape;
 use crate::{checkpoint_store, export, history, nnue_network};
 
 /// Exports one lambda's candidate to `gen-<g>/lambda-<l>/candidate.nnue`, with `candidate.txt`
-/// beside it naming the checkpoint. Called by `export_best` when the lambda's run stops, so the
-/// round robin always has every candidate without a separate command.
-///
-/// The candidate is the lowest-test-loss checkpoint over every round of the lambda's run. The
-/// checkpoint cannot have been pruned: pruning keeps the best rounds. `learning_rate` is the rate
+/// beside it naming the checkpoint. Called by `export_budget_winner` for the checkpoint the budget's
+/// round robin chose, which pruning keeps, as every candidate. `learning_rate` is the rate
 /// that round trained at, written into the `.nnue` header only: `candidate.txt` records none, as
 /// `champion.txt` does not (a run steps down through every rate; `history.tsv` keeps each round's).
 ///
@@ -236,20 +234,6 @@ pub(crate) fn feature_set_of(kind: &ArchitectureKind) -> FeatureSet {
         ArchitectureKind::PsqThreatsPairwiseHidden => FeatureSet::PsqThreats,
         ArchitectureKind::Transformer { .. } => panic!("feature_set_of called with a transformer architecture"),
     }
-}
-
-/// Ends one lambda's run: exports its candidate, the best checkpoint of the whole run, into the run's
-/// directory. Returns the line saying so, and the best round's test loss, for the server to say in
-/// its own way.
-pub(crate) fn export_best(config: &NetConfig, run_dir: &str, lambda: preprocessing_config::ArmLambda, best_step: u64) -> (String, f64) {
-    let history_path = format!("{run_dir}/history.tsv");
-    let Some(best) = history::read_all(&history_path).into_iter().find(|record| record.step == best_step) else {
-        log::error!("{history_path} records no finite test loss, so there is no candidate to export. Stop and look at the run.");
-        process::exit(1);
-    };
-    let checkpoints_dir = format!("{run_dir}/checkpoints");
-    let line = export_candidate(config, run_dir, lambda, &checkpoints_dir, best.learning_rate, best.step, best.test_loss);
-    (line, best.test_loss)
 }
 
 /// One candidate of a budgeted run (`budget.rs`): a checkpoint at a quarter epoch, as `candidates.txt`

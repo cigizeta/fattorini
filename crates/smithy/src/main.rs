@@ -20,11 +20,8 @@ mod grouped_test_set;
 mod pgn_stream;
 mod pgn_train_stream;
 
-// The one-network optimizer: training still steps every arm through `StackedAdamW`, which is
-// tested to match it and reads and writes its files, until the one-arm loop replaces the stack.
 mod adamw;
 mod archive;
-mod arm_slice;
 mod batch;
 mod book;
 mod book_scores;
@@ -38,7 +35,6 @@ mod feature_set;
 mod freeze;
 mod history;
 mod lease;
-mod lockstep;
 mod net_config;
 mod nnue_network;
 mod pesto;
@@ -52,14 +48,10 @@ mod scale;
 mod smithy;
 mod sprt;
 mod stack_head;
-mod stacked_adamw;
-mod stacked_network;
-mod stacked_transformer;
-#[cfg(test)]
-mod unstacked_equality;
 mod stages;
 mod test_cache;
 mod train_stream;
+mod training;
 mod transformer_batch;
 mod transformer_network;
 mod transformer_vocab;

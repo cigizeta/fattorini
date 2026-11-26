@@ -1,7 +1,5 @@
-//! The one-network NNUE, arm by arm what `StackedNetwork` trains. The binary builds it for the
-//! parameters a checkpoint is loaded into and exported from, and its losses, sparse transform and
-//! bounds are ready for the one-arm training loop that will replace the stack; until then the
-//! binary leaves some of it unread.
+//! The NNUE network training steps (`training.rs`), and the parameters a checkpoint is loaded into
+//! and exported from. Some of it, as the dense transform, is the tests' reference alone.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use tch::nn;
@@ -33,8 +31,7 @@ pub fn score(pawns: &Tensor) -> Tensor {
 /// / S`: bounded, never zero while the prediction is wrong, so every position keeps a gradient, and a
 /// decisive label (`t = ±1`) pushes the output ever more weakly as it grows, never to a finite optimum.
 /// S is the attempt's unit in pawns, `s_pawns` (`labels::S_PAWNS`, Elo's, unless its config says
-/// `unit: lc0`). The stack computes it per arm (`stacked_network::arm_training_losses`); the one-arm
-/// networks, NNUE and transformer, through this.
+/// `unit: lc0`). Both tracks train on it, NNUE and transformer.
 pub fn bce_loss(pawns: &Tensor, label: &Tensor, s_pawns: f64) -> Tensor {
     (pawns / s_pawns).binary_cross_entropy_with_logits(&((label + 1.0) / 2.0), None::<Tensor>, None::<Tensor>, tch::Reduction::Mean)
 }
@@ -185,7 +182,6 @@ impl Network {
 
     /// The feature set its batches are built under: a halfk pairwise or dual network's has the
     /// castling and en passant rows (`with_options`).
-    #[cfg(test)]
     pub fn feature_set(&self) -> FeatureSet {
         match self {
             Network::Psq(_) => FeatureSet::Psq,
@@ -205,8 +201,7 @@ impl Network {
         )
     }
 
-    /// This network trained in the unit `s_pawns` (`NetConfig::s_pawns`), not Elo's, as
-    /// `StackedNetwork::with_s`.
+    /// This network trained in the unit `s_pawns` (`NetConfig::s_pawns`), not Elo's.
     pub fn with_s(mut self, s_pawns: f64) -> Network {
         self.psq_mut().s_pawns = s_pawns;
         self
@@ -228,8 +223,7 @@ impl Network {
     /// network's first hidden layer weights, for the engine's `i8` layer. None for any other, a stack
     /// included: the bound served the shelved `i8` layer, and one on its shared part and its deltas
     /// apart would not bound their sum. Nor halfk's: the engine quantizes its first hidden layer on
-    /// one scale per row, which fits any range. `StackedNetwork::weight_bounds` is tested to agree
-    /// with it.
+    /// one scale per row, which fits any range.
     /// Every network's transform is bounded too (`TRANSFORM_BOUNDS`), first.
     pub fn weight_bounds(&self) -> Vec<(&'static str, f64)> {
         let mut bounds = TRANSFORM_BOUNDS.to_vec();
@@ -285,8 +279,11 @@ impl Network {
         network.head_pawns(own, opponent, batch.buckets())
     }
 
-    /// The network and the batch's psq form, once their kinds are checked to match.
+    /// The network and the batch's psq form, once their kinds are checked to match, a halfk layout
+    /// and its castling and en passant rows included: a halfk batch of another layout has the same
+    /// variant and could be read with the wrong rows.
     fn matched<'a>(&'a self, batch: &'a DenseBatch) -> (&'a NetworkPsq, &'a DenseBatchPsq) {
+        assert_eq!(batch.feature_set(), self.feature_set(), "Network/DenseBatch feature-set mismatch");
         match (self, batch) {
             (Network::Psq(network), DenseBatch::Psq(batch))
             | (Network::PsqThreats(network), DenseBatch::PsqThreats(batch))
@@ -407,8 +404,8 @@ impl NetworkPsq {
     /// each: the dense product as a sum of the active weight columns, every active input being
     /// exactly 1.0. The weight is `[embedding, width]`; as a `[width, embedding]` table, one
     /// `embedding_bag` sums both perspectives' columns at once (the bags are the own rows, then the
-    /// opponent's), as `StackedNetwork::sparse_transform` does for every arm. Its gradient is dense,
-    /// zero on the rows no position touched, as the matmul's.
+    /// opponent's). It fuses the gather and the sum, so the `[nnz, embedding]` gather never exists.
+    /// Its gradient is dense, zero on the rows no position touched, as the matmul's.
     fn sparse_transform(&self, batch: &DenseBatchPsq) -> (Tensor, Tensor) {
         let table = self.transform.ws.tr().contiguous();
         let (sums, _, _, _) =
@@ -456,7 +453,7 @@ impl NetworkPsq {
 }
 
 /// The first half of `x` along `dim` times its second half, element-wise: a pairwise network's
-/// perspective, from its clipped transform. `StackedNetwork::head` uses it too.
+/// perspective, from its clipped transform.
 pub fn pairwise_products(x: &Tensor, dim: i64) -> Tensor {
     let half = x.size()[dim as usize] / 2;
     x.narrow(dim, 0, half) * x.narrow(dim, half, half)
@@ -467,6 +464,49 @@ mod tests {
     use super::*;
     use tch::Kind;
     use super::super::batch::DenseBatchPsq;
+
+    /// The sparse transform, which training steps, computes what the dense matmul over every input
+    /// does, for a plain psq head, halfk screlu-hidden and halfk pairwise dual, with its castling and
+    /// en passant rows; and the gradients it gives the weights are the dense one's.
+    #[test]
+    fn the_sparse_transform_computes_and_differentiates_as_the_dense_one() {
+        use fattorini::board::Board;
+        use fattorini::features::extract_canonical;
+        let fens = [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r3k2r/ppp2ppp/2n1bn2/3pp3/3PP3/2N1BN2/PPP2PPP/R3K2R w KQkq d6 0 8",
+            "8/5k2/8/3P4/8/8/2K5/8 b - - 0 1",
+        ];
+        let records: Vec<super::super::cache::CacheRecord> = fens
+            .iter()
+            .map(|fen| super::super::cache::CacheRecord::new(extract_canonical(&Board::from_fen(fen).unwrap().0), 0.3))
+            .collect();
+        let layout = halfk::Layout::ALL[0];
+        let cases: [(FeatureSet, bool, bool, HeadShape, &[i64]); 3] = [
+            (FeatureSet::Psq, false, false, HeadShape::Plain, &[4]),
+            (FeatureSet::HalfKav2Hm(layout), false, true, HeadShape::Plain, &[4, 4]),
+            (FeatureSet::HalfKav2HmState(layout), true, false, HeadShape::Dual, &[4, 4]),
+        ];
+        for (feature_set, pairwise, screlu, head, hidden) in cases {
+            let vs = nn::VarStore::new(tch::Device::Cpu);
+            let network = Network::with_options(&vs.root(), feature_set, pairwise, screlu, head, 8, hidden);
+            let batch = super::super::batch::to_dense_batch(&records, feature_set);
+            let gradients = |pawns: Tensor| {
+                for (_, mut variable) in vs.variables() {
+                    variable.zero_grad();
+                }
+                pawns.sum(Kind::Float).backward();
+                let mut grads: Vec<(String, Tensor)> = vs.variables().into_iter().map(|(name, value)| (name, value.grad().copy())).collect();
+                grads.sort_by(|a, b| a.0.cmp(&b.0));
+                grads
+            };
+            let (sparse, dense) = (network.pawns(&batch), network.dense_pawns(&batch));
+            assert!(sparse.allclose(&dense, 1e-4, 1e-5, false), "{feature_set:?}: {sparse:?} against {dense:?}");
+            for ((name, sparse), (_, dense)) in gradients(sparse).iter().zip(gradients(dense)) {
+                assert!(sparse.allclose(&dense, 1e-4, 1e-5, false), "{feature_set:?} {name}'s gradient");
+            }
+        }
+    }
 
     fn dense_row(active_rows: &[usize], width: usize) -> Tensor {
         let mut row = vec![0f32; width];

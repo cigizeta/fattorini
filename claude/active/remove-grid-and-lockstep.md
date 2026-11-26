@@ -72,7 +72,15 @@ The budget schedule (`Rule::Budget`, its kept checkpoints, which are one arm's r
    `AdamW` gains `set_budget` (the rate `budget.rate(t)` on the host; with no rollback the count is
    the run step). The equality test (`unstacked_equality.rs`, deleted in commit 2 with the stack)
    covers psq, halfk screlu-hidden, halfk pairwise dual and the transformer, one label column.
-2. **Commit 2, the switch and the deletion:** `train` on the unstacked loop; lockstep reduced to
+2. **Commit 2, split in four (the developer, 2026-11-26),** each built, tested and committed before
+   the next, since 24 files in both crates take part: 2a, one-arm training (`training.rs`, one
+   `Network` or `TransformerNetwork` under `AdamW`, `round::Arms` kept with a one-arm impl), the
+   stack files and `arm_slice.rs` deleted, rollback gone, a patience schedule refused when training
+   starts, a grid's lambdas trained one after another meanwhile; 2a' (split off when 2a was written:
+   patience reaches about 20 config fixtures, the page and `smithy.rs`), patience deleted everywhere,
+   a patience config refused at load, patience configs archived; 2b, the grid (`smithy.rs`, `ArmLambda::Constant`, `-l` names,
+   the page's grid, `lambda:` refused); 2c, labels a scalar, then `Arms` gone and `run_round` on one
+   network; 2d, DEV.md, the page's columns, module docs. The whole, as first planned: `train` on the unstacked loop; lockstep reduced to
    `training.rs`; the stack files, grid, patience, grid-era readers and their tests deleted; labels a
    scalar; configs and DEV.md. Tests and clippy.
 3. **A short budget attempt** on the training machine (after `git pull`, the smithy and arenas

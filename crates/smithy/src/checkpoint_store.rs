@@ -2,9 +2,9 @@
 //!
 //! `checkpoints/` gets one bare weight file per completed evaluation round, named by step so a
 //! step resolves straight to a path. Weights only, with no
-//! optimizer state beside them. After each round only the run's best survives (`keep_only`): it is
-//! the one checkpoint anything reads, a stage switch rolling back to it, the candidate exported from
-//! it, the next generation warm-started from the winner's.
+//! optimizer state beside them. After each round only a budget's candidates and the latest round
+//! survive (`keep_steps`): the candidates are exported from them, the next generation warm-started
+//! from the winner's.
 //!
 //! Everything here is plain filesystem work with no `tch` involvement, which is what lets it be
 //! tested against a temporary directory without building a `VarStore`.
@@ -25,18 +25,6 @@ pub fn checkpoint_steps(checkpoints_dir: &str) -> Vec<u64> {
         .collect();
     found.sort_unstable();
     found
-}
-
-/// Deletes every checkpoint but `best`'s, the run's best as `stages::Stages::best_step` says. Read
-/// from the stages rather than ranked again by test loss here: the two broke a tie in loss
-/// differently (a ranking towards the newer step, `Stages` towards the older), and with one kept a
-/// tie would have deleted the very checkpoint a rollback and the export load.
-pub fn keep_only(checkpoints_dir: &str, best: u64) {
-    for step in checkpoint_steps(checkpoints_dir) {
-        if step != best {
-            std::fs::remove_file(checkpoint_path(checkpoints_dir, step)).ok();
-        }
-    }
 }
 
 /// Deletes every checkpoint but those at `keep`: a budgeted run's (`budget.rs`), which keeps its
@@ -67,18 +55,6 @@ mod tests {
     }
 
     #[test]
-    fn keep_only_leaves_the_best_alone_wherever_it_is() {
-        for best in [0u64, 20, 40] {
-            let checkpoints_dir = format!("{}/checkpoints", temp_dir(&format!("keep-only-{best}")));
-            for step in [0u64, 20, 40] {
-                write_checkpoint(&checkpoints_dir, step);
-            }
-            keep_only(&checkpoints_dir, best);
-            assert_eq!(checkpoint_steps(&checkpoints_dir), vec![best]);
-        }
-    }
-
-    #[test]
     fn keep_steps_keeps_exactly_the_steps_given() {
         let checkpoints_dir = format!("{}/checkpoints", temp_dir("keep-steps"));
         for step in [0u64, 10, 20, 30, 40, 50] {
@@ -90,11 +66,11 @@ mod tests {
     }
 
     #[test]
-    fn keep_only_on_an_empty_or_missing_directory_does_nothing() {
-        let base = temp_dir("keep-only-empty");
-        keep_only(&format!("{base}/checkpoints"), 0);
+    fn keep_steps_on_an_empty_or_missing_directory_does_nothing() {
+        let base = temp_dir("keep-steps-empty");
+        keep_steps(&format!("{base}/checkpoints"), &[0]);
         std::fs::create_dir_all(format!("{base}/checkpoints")).unwrap();
-        keep_only(&format!("{base}/checkpoints"), 0);
+        keep_steps(&format!("{base}/checkpoints"), &[0]);
         assert!(checkpoint_steps(&format!("{base}/checkpoints")).is_empty());
     }
 }

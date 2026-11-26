@@ -36,12 +36,8 @@ impl DenseBatch {
         self.psq().label.narrow(1, arm as i64, 1)
     }
 
-    /// `[batch, arms]`: every arm's labels, the matrix `label` takes one column of. The stacked
-    /// network selects its arms' columns from it at once.
-    pub fn labels(&self) -> &Tensor {
-        &self.psq().label
-    }
-
+    /// The feature set the batch was built under, its halfk layout included: what `Network` checks its
+    /// own against.
     pub fn feature_set(&self) -> FeatureSet {
         match self {
             DenseBatch::Psq(_) => FeatureSet::Psq,

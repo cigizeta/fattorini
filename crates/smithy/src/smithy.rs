@@ -12,8 +12,8 @@
 //!    game appended as it arrives, closed into segments of `SEGMENT_POSITIONS`. Generation 1 plays
 //!    nothing: it trains on its source's whole corpus (`lc0-`, `pesto-`), judged on the source's
 //!    frozen test set.
-//! 2. **Train:** `train_in_lockstep`, 9 lambdas stacked, the direct blend, patience and rollback on
-//!    the frozen test set (`freeze.rs`), warm-started from the teacher.
+//! 2. **Train:** `training::train`, one network on its budget, judged on the frozen test set
+//!    (`freeze.rs`), warm-started from the teacher.
 //! 3. **Round robin** among the 9 candidates.
 //! 4. **Gate:** the winner against the teacher, an SPRT.
 //! 5. **Decide:** a pass promotes the winner and centres the next grid on its lambda, the next
@@ -75,16 +75,14 @@ use super::{book, book_scores, freeze, lc0, pesto, polyline, tasks};
 use super::bucketed_train_stream::BucketedTrainStream;
 use super::grouped_test_set::GroupedTestSet;
 use super::net_config::{self, ArchitectureKind, NetConfig};
-use super::stacked_transformer::StackedTransformer;
 use super::{transformer_batch, transformer_network};
 use super::pgn_stream::StreamFile;
 use super::buckets::{self, BucketStream, Labelling, Prepared};
 use super::pgn_train_stream;
-use super::stacked_network::StackedNetwork;
 use super::train_stream::BatchSource;
-use super::candidates::{export_best, feature_set_for};
+use super::candidates::feature_set_for;
 use super::budget::Budget;
-use super::lockstep::{self, open_stack, train_in_lockstep, Arm, LockstepParts, Rule};
+use super::training::{self, open_one_arm, Arm, RunParts};
 use super::{batch, candidates, checkpoint_store, nnue_network, round, round_robin};
 
 const PREFIX: &str = "smithy";
@@ -2917,9 +2915,9 @@ struct Schedule {
 impl Schedule {
     /// The rule an arm in `arm_dir` trains by: a budget's figures need the rows it trains on, which
     /// its frozen `attempt_config.txt` records; none before that file exists.
-    fn rule(&self, arm_dir: &str) -> Option<lockstep::Rule> {
+    fn rule(&self, arm_dir: &str) -> Option<training::Rule> {
         let Some((epochs, training_batch_size)) = self.budget else {
-            return Some(lockstep::Rule::Patience {
+            return Some(training::Rule::Patience {
                 warmup_rounds: self.warmup_rounds,
                 patience_rounds: self.patience_rounds.expect("a patience schedule has its patience"),
                 stage_count: self.stage_count,
@@ -2929,7 +2927,7 @@ impl Schedule {
         let train_rows: u64 = text.lines().find_map(|line| line.strip_prefix("train_rows\t"))?.trim().parse().ok()?;
         Budget::checked(train_rows, training_batch_size, self.steps_per_round, self.warmup_rounds, epochs, &self.rates)
             .ok()
-            .map(lockstep::Rule::Budget)
+            .map(training::Rule::Budget)
     }
 }
 
@@ -3266,10 +3264,10 @@ impl Status {
             .collect();
         let arm_dir = Path::new(path).parent().map_or(String::new(), |dir| dir.to_string_lossy().into_owned());
         let rule = schedule.rule(&arm_dir);
-        let row = rule.and_then(|rule| lockstep::latest_of(records, per_round, &rule).map(|round| (rule, round))).map(
+        let row = rule.and_then(|rule| training::latest_of(records, per_round, &rule).map(|round| (rule, round))).map(
             |(rule, (record, standing))| {
                 let schedule_row = match (standing, rule) {
-                    (lockstep::Standing::Patience(stages), lockstep::Rule::Patience { patience_rounds, stage_count, .. }) => {
+                    (training::Standing::Patience(stages), training::Rule::Patience { patience_rounds, stage_count, .. }) => {
                         ScheduleRow::Patience {
                             stage: schedule.rates.iter().position(|&rate| rate == record.learning_rate).map(|index| index + 1),
                             stages: stage_count,
@@ -3278,14 +3276,14 @@ impl Status {
                             patience: patience_rounds,
                         }
                     }
-                    (_, lockstep::Rule::Budget(budget)) => ScheduleRow::Budget {
+                    (_, training::Rule::Budget(budget)) => ScheduleRow::Budget {
                         total_rounds: budget.total_rounds(),
                         start: budget.start,
                         end: budget.end,
                         epochs: budget.epochs,
                         candidate_rounds: budget.candidate_rounds(),
                     },
-                    (lockstep::Standing::Budget(_), lockstep::Rule::Patience { .. }) => unreachable!("an arm stands by its rule"),
+                    (training::Standing::Budget(_), training::Rule::Patience { .. }) => unreachable!("an arm stands by its rule"),
                 };
                 RoundRow {
                     round: record.step / per_round,
@@ -3957,26 +3955,11 @@ impl Attempt<'_> {
         let mut test_readers = [GroupedTestSet::load(&mut records, config.training.test_batch_size as usize)];
         drop(records);
         let lambda_dir = |lambda: ArmLambda| self.dirs.arm(generation, lambda);
-        let parts = LockstepParts { source: &source, grid: arms.to_vec(), lambda_dir: &lambda_dir, persists_position: false, device };
         let teacher_vs = self.dirs.teacher_vs(generation);
-        // Said as the rate switches are: what ended, and where its best was.
-        let stage_count = config.training.learning_rate.len();
-        let rule = Rule::of(config, train_rows);
-        let finish = |arm: &Arm| match rule {
-            Rule::Patience { .. } => {
-                let (_, test_loss) = export_best(config, &arm.run_dir, arm.lambda, arm.standing.best_step());
-                log::info!(
-                    "lambda {}: finished after stage {stage_count} of {stage_count}, best at round {} (test loss {test_loss:.6}), \
-                     candidate exported",
-                    arm.lambda,
-                    arm.standing.best_step() / config.training.steps_per_round
-                );
-            }
-            // No candidate yet: the round robin among these chooses it.
-            Rule::Budget(budget) => {
-                let line = candidates::export_budget_candidates(config, &arm.run_dir, &budget);
-                log::info!("lambda {}: its budget of {} rounds trained, {line}", arm.lambda, budget.total_rounds());
-            }
+        // No candidate yet: the round robin among these chooses it.
+        let finish = |arm: &Arm, budget: &Budget| {
+            let line = candidates::export_budget_candidates(config, &arm.run_dir, budget);
+            log::info!("lambda {}: its budget of {} rounds trained, {line}", arm.lambda, budget.total_rounds());
         };
         let stop: &AtomicBool = &self.stop;
         // The training's state to the remote every `COPY_UP_EVERY`, between rounds, when no file is
@@ -3991,61 +3974,60 @@ impl Attempt<'_> {
                 log::warn!("{}: the training's state not copied to the remote: {message}", self.name);
             }
         };
-        // Only the batches, the stream and the stacked network depend on the architecture.
-        let done = if transformer {
-            let counts = piece_counts.as_ref().expect("a transformer's piece counts are ensured above");
-            let attention = config.training.attention.expect("net_config::load requires attention for a transformer");
-            let to_batch = round::BatchBuilder {
-                prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
-                upload: |host: &transformer_batch::HostTransformerBatch| transformer_batch::upload(host, device),
-            };
-            let stack_of = |rule: &Rule, arms: &[Arm], active: &[usize]| {
-                let network = StackedTransformer::new(&config.architecture, active.len() as i64, device);
-                let starting_weights = || {
-                    let mut vs = tch::nn::VarStore::new(device);
-                    let _ = transformer_network::TransformerNetwork::new(&vs.root(), &config.architecture);
-                    self.seed(&mut vs, &teacher_vs);
-                    vs.variables()
+        // Only the batches, the stream and the network depend on the architecture. A grid's lambdas,
+        // while its code lasts, train one after another, each reading its own labels' column.
+        let mut done = true;
+        for (column, &lambda) in arms.iter().enumerate() {
+            let parts = RunParts { source: &source, lambda, run_dir: lambda_dir(lambda), column, device };
+            let starting_weights = |vs: &mut tch::nn::VarStore| self.seed(vs, &teacher_vs);
+            done = if transformer {
+                let counts = piece_counts.as_ref().expect("a transformer's piece counts are ensured above");
+                let attention = config.training.attention.expect("net_config::load requires attention for a transformer");
+                let to_batch = round::BatchBuilder {
+                    prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
+                    upload: |host: &transformer_batch::HostTransformerBatch| transformer_batch::upload(host, device),
                 };
-                open_stack(config, rule, network, Vec::new(), arms, active, starting_weights, false, device)
-            };
-            // The buckets grouped by piece count, so that every batch holds one length. They were
-            // just prepared and counted, so a failure to open them is a disk gone wrong.
-            let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
-                BucketedTrainStream::open(&bucket_dir, labelling.clone(), counts, batch_size, steps_done)
-                    .unwrap_or_else(|message| panic!("{message}"))
-            };
-            train_in_lockstep(
-                config, &parts, arms, train_rows, &mut test_readers, stack_of, stream_from, &to_batch,
-                transformer_batch::HostTransformerBatch::bytes, finish, &after_round, stop,
-            )
-        } else {
-            let feature_set = feature_set_for(&config.architecture);
-            let to_batch = round::BatchBuilder {
-                prepare: |records: &[CacheRecord]| batch::host_batch(records, feature_set),
-                upload: |host: &batch::HostBatch| batch::upload(host, device),
-            };
-            let stack_of = |rule: &Rule, arms: &[Arm], active: &[usize]| {
-                let network = StackedNetwork::new(feature_set, &config.architecture, active.len() as i64, device).with_s(config.s_pawns());
-                let bounds = network.weight_bounds();
-                let starting_weights = || {
-                    let mut vs = tch::nn::VarStore::new(device);
-                    let _ = nnue_network::Network::of(&vs.root(), feature_set, &config.architecture);
-                    self.seed(&mut vs, &teacher_vs);
-                    vs.variables()
+                let open = |budget: Budget, arm: &Arm| {
+                    let vs = tch::nn::VarStore::new(device);
+                    let network = transformer_network::TransformerNetwork::new(&vs.root(), &config.architecture);
+                    open_one_arm(config, budget, arm, network, vs, Vec::new(), starting_weights)
                 };
-                open_stack(config, rule, network, bounds, arms, active, starting_weights, false, device)
+                // The buckets grouped by piece count, so that every batch holds one length. They were
+                // just prepared and counted, so a failure to open them is a disk gone wrong.
+                let stream_from = |steps_done: u64| {
+                    BucketedTrainStream::open(&bucket_dir, labelling.clone(), counts, batch_size, steps_done)
+                        .unwrap_or_else(|message| panic!("{message}"))
+                };
+                training::train(
+                    config, parts, train_rows, &mut test_readers, open, stream_from, &to_batch,
+                    transformer_batch::HostTransformerBatch::bytes, &finish, &after_round, stop,
+                )
+            } else {
+                let feature_set = feature_set_for(&config.architecture);
+                let to_batch = round::BatchBuilder {
+                    prepare: |records: &[CacheRecord]| batch::host_batch(records, feature_set),
+                    upload: |host: &batch::HostBatch| batch::upload(host, device),
+                };
+                let open = |budget: Budget, arm: &Arm| {
+                    let vs = tch::nn::VarStore::new(device);
+                    let network = nnue_network::Network::of(&vs.root(), feature_set, &config.architecture).with_s(config.s_pawns());
+                    let bounds = network.weight_bounds();
+                    open_one_arm(config, budget, arm, network, vs, bounds, starting_weights)
+                };
+                // The buckets were just prepared, so a failure to open them is a disk gone wrong.
+                let stream_from = |steps_done: u64| {
+                    BucketStream::open(&bucket_dir, labelling.clone(), steps_done * batch_size as u64)
+                        .unwrap_or_else(|message| panic!("{message}"))
+                };
+                training::train(
+                    config, parts, train_rows, &mut test_readers, open, stream_from, &to_batch, batch::HostBatch::bytes,
+                    &finish, &after_round, stop,
+                )
             };
-            // The buckets were just prepared, so a failure to open them is a disk gone wrong.
-            let stream_from = |steps_done: u64, _: Option<Vec<u64>>| {
-                BucketStream::open(&bucket_dir, labelling.clone(), steps_done * batch_size as u64)
-                    .unwrap_or_else(|message| panic!("{message}"))
-            };
-            train_in_lockstep(
-                config, &parts, arms, train_rows, &mut test_readers, stack_of, stream_from, &to_batch, batch::HostBatch::bytes,
-                finish, &after_round, stop,
-            )
-        };
+            if !done {
+                break;
+            }
+        }
         self.lock().view = View::None;
         if !done {
             return Ok(Ended::Stopped);

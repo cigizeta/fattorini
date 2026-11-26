@@ -36,7 +36,7 @@ use super::train_stream::{BatchSource, TrainStream};
 /// live together in the caller's own struct, and `loss` and `on_backup` borrow the other two:
 /// splitting the struct's fields is what lets all three coexist.
 ///
-/// Test-only: both tracks train a stack of arms (`main.rs`'s `Stack`). These one-network arms are what
+/// Test-only: both tracks train through `training::OneArm`. These arms, any number of them, are what
 /// the round's own tests drive.
 #[cfg(test)]
 #[allow(clippy::type_complexity)]
@@ -50,8 +50,7 @@ pub struct Trainee<'a, B> {
 }
 
 /// The arms a round trains, whatever holds them: a slice of `Trainee`s, one network and optimizer per
-/// arm (the tests'), or a stacked network, every arm in one set of tensors (`stacked_network.rs`,
-/// `stacked_transformer.rs`). The round loop sees only this.
+/// arm (the tests'), or training's one network (`training::OneArm`). The round loop sees only this.
 ///
 /// Losses come back as one `[arms]` tensor left on the device, so the loop sums them there and reads
 /// them only at a backup and at the end of the round (`run_training_steps`).
@@ -149,11 +148,15 @@ pub struct BatchBuilder<P, U> {
 /// What one completed round reports, per arm in the order of the arms: whether the arm completed
 /// its round in this call, and its losses (meaningful only where it did).
 pub struct RoundOutcome {
+    /// Read by the tests' several arms alone; one arm always completes its round.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub completed: Vec<bool>,
     pub train_loss: Vec<f64>,
     pub test_loss: Vec<f64>,
     /// The test loss per piece count (`TestLosses::by_pieces`).
     pub test_loss_by_pieces: BTreeMap<usize, Vec<f64>>,
+    /// Read by the tests alone: training derives the stream's position from the step count.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub cursors: Vec<u64>,
     pub train_duration_secs: f64,
     pub test_duration_secs: f64,
@@ -216,9 +219,8 @@ pub struct RoundResume {
 /// round's test pass, read by every later one.
 ///
 /// `arms` are trained in lockstep (lockstep-lambdas.md): every batch is built and uploaded once, then
-/// every arm steps on it (`Arms::train_step`), one after another for a slice of trainees, at once for
-/// the stacked network; the test pass likewise uploads each batch once for every arm. A single run is
-/// a one-arm slice.
+/// every arm steps on it (`Arms::train_step`), one after another; the test pass likewise uploads each
+/// batch once for every arm. Training runs one arm.
 ///
 /// Arms may stand at different step counts, as a crash between two arms' backups leaves them. The
 /// stream then stands at the lowest, and an arm steps on a batch only when its own count equals the
@@ -818,135 +820,6 @@ mod tests {
             }
             drop(trainee);
             assert_eq!(weights(&vs), weights(&stores[arm]), "arm {arm}'s weights");
-        }
-    }
-
-    #[test]
-    fn a_stack_trains_as_its_arms_would_with_one_network_each() {
-        use super::super::batch::{self, DenseBatch, HostBatch};
-        use super::super::feature_set::FeatureSet;
-        use super::super::nnue_network::Network;
-        use super::super::stacked_adamw::StackedAdamW;
-        use super::super::stacked_network::StackedNetwork;
-        use super::super::arm_slice;
-        use super::super::lockstep::{SlotFiles, Stack};
-        use fattorini::board::Board;
-        use fattorini::features::extract_canonical;
-
-        let fens = [
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-            "8/5k2/8/3P4/8/8/2K5/8 b - - 0 1",
-            "r3k2r/ppp2ppp/2n1bn2/3pp3/3PP3/2N1BN2/PPP2PPP/R3K2R w KQkq d6 0 8",
-            "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
-            "rnbqkb1r/pppp1ppp/5n2/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 2 3",
-        ];
-        let labels = [[0.1f32, 0.8], [0.9, -0.4], [-0.3, 0.6], [0.7, 0.0], [0.5, -1.0], [-0.2, 0.3]];
-        let records: Vec<CacheRecord> = fens
-            .iter()
-            .zip(labels)
-            .map(|(fen, labels)| CacheRecord {
-                canonical: extract_canonical(&Board::from_fen(fen).unwrap().0),
-                labels: labels.to_vec(),
-                progress: crate::cache::Progress::UNKNOWN,
-            })
-            .collect();
-        let to_batch = BatchBuilder {
-            prepare: |records: &[CacheRecord]| batch::host_batch(records, FeatureSet::Psq),
-            upload: |host: &HostBatch| batch::upload(host, tch::Device::Cpu),
-        };
-        let never = AtomicBool::new(false);
-        let (steps_per_round, rounds) = (3, 2);
-
-        // One network and optimizer per arm, each bounded as training bounds a psq network.
-        let stores: Vec<nn::VarStore> = (0..2).map(|_| nn::VarStore::new(tch::Device::Cpu)).collect();
-        let networks: Vec<Network> = stores.iter().map(|vs| Network::new(&vs.root(), FeatureSet::Psq, 8, &[4])).collect();
-        let mut optimizers: Vec<AdamW> = stores.iter().map(|vs| AdamW::new(vs, 1e-2)).collect();
-        for (optimizer, network) in optimizers.iter_mut().zip(&networks) {
-            for (name, bound) in network.weight_bounds() {
-                optimizer.bound(name, bound);
-            }
-        }
-
-        // The stack, from the same (already bounded) weights.
-        let network = StackedNetwork::with_shape(FeatureSet::Psq, 8, &[4], 2, tch::Device::Cpu);
-        for (arm, vs) in stores.iter().enumerate() {
-            for (name, value) in vs.variables() {
-                arm_slice::fill_slice(&network.parameters()[&name], arm as i64, &value, &name);
-            }
-        }
-        let mut optimizer = StackedAdamW::new(network.parameters(), 1e-2);
-        for (name, bound) in network.weight_bounds() {
-            optimizer.bound(name, bound);
-        }
-        // Never written: the backup interval below is longer than the test.
-        let files = (0..2)
-            .map(|arm| SlotFiles {
-                lambda: fattorini::pipeline::preprocessing_config::ArmLambda::Constant(arm as f64),
-                model_path: String::new(),
-                optimizer_path: String::new(),
-                round_progress_path: String::new(),
-            })
-            .collect();
-        let mut stack =
-            Stack { network, optimizer, columns: Tensor::from_slice(&[0i64, 1]), files, steps_per_round, persists_position: false };
-
-        let mut one_each = Vec::new();
-        let mut stacked = Vec::new();
-        {
-            let mut trainees: Vec<Trainee<DenseBatch>> = optimizers
-                .iter_mut()
-                .zip(&networks)
-                .enumerate()
-                .map(|(arm, (optimizer, network))| Trainee {
-                    optimizer,
-                    loss: Box::new(move |batch: &DenseBatch, train: bool| {
-                        if train {
-                            return network.training_loss(batch, arm);
-                        }
-                        network.test_loss(batch, arm)
-                    }),
-                    on_backup: Box::new(|_: &AdamW, _: &[u64], _: u64, _: f64, _: f64| {}),
-                })
-                .collect();
-            let mut stream = CyclingStream { records: records.clone(), next: 0 };
-            for _ in 0..rounds {
-                one_each.push(
-                    run_round(
-                        &mut trainees, &mut stream, &mut [RecordsSource(records.clone())], None, steps_per_round, 2,
-                        None, Duration::from_secs(3600), &to_batch, &mut |_: &str, _: u64, _: u64| {}, &never,
-                    )
-                    .expect("never stopped"),
-                );
-            }
-        }
-        let mut stream = CyclingStream { records: records.clone(), next: 0 };
-        for _ in 0..rounds {
-            stacked.push(
-                run_round(
-                    &mut stack, &mut stream, &mut [RecordsSource(records.clone())], None, steps_per_round, 2, None,
-                    Duration::from_secs(3600), &to_batch, &mut |_: &str, _: u64, _: u64| {}, &never,
-                )
-                .expect("never stopped"),
-            );
-        }
-
-        let close = |a: f64, b: f64| (a - b).abs() <= 1e-5 * b.abs().max(1e-3);
-        for round in 0..rounds {
-            assert_eq!(stacked[round].completed, vec![true, true]);
-            for arm in 0..2 {
-                let (stacked_train, own_train) = (stacked[round].train_loss[arm], one_each[round].train_loss[arm]);
-                let (stacked_test, own_test) = (stacked[round].test_loss[arm], one_each[round].test_loss[arm]);
-                assert!(close(stacked_train, own_train), "round {round} arm {arm} train: {stacked_train} against {own_train}");
-                assert!(close(stacked_test, own_test), "round {round} arm {arm} test: {stacked_test} against {own_test}");
-            }
-        }
-        for (arm, vs) in stores.iter().enumerate() {
-            assert_eq!(stack.step_count(arm), optimizers[arm].step_count() as u64);
-            for (name, value) in vs.variables() {
-                let slice = stack.network.parameters()[&name].get(arm as i64);
-                assert!(slice.allclose(&value, 1e-4, 1e-5, false), "arm {arm} {name}");
-            }
         }
     }
 

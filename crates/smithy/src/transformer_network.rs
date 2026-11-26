@@ -11,9 +11,7 @@
 //! `x + attention(LayerNorm(x))`, then `x + feed_forward(LayerNorm(x))`; every embedding and linear
 //! weight starts from a normal of spread `INIT_STDEV`, every bias at 0; and nothing is dropped.
 //!
-//! The binary only builds it, for the parameters `StackedTransformer` stacks and a fresh run starts
-//! from; its forward passes are the stack's test reference and inference's future entry point, so
-//! outside the tests they are unread.
+//! The transformer network training steps (`training.rs`).
 #![cfg_attr(not(test), allow(dead_code))]
 
 use tch::nn;
@@ -186,9 +184,8 @@ impl TransformerNetwork {
         TransformerNetwork { embeddings, blocks, final_norm, value_head }
     }
 
-    /// `[batch, 1]`, the evaluation in pawns, raw and unbounded. Training runs `StackedTransformer`,
-    /// every lambda at once; this one-network forward is the reference it is tested against, and
-    /// what inference will run.
+    /// `[batch, 1]`, the evaluation in pawns, raw and unbounded: what training steps and what
+    /// inference will run.
     pub fn forward(&self, batch: &TransformerBatch) -> Tensor {
         let mut hidden = self.embeddings.forward(&batch.tokens);
         for block in &self.blocks {
@@ -199,7 +196,7 @@ impl TransformerNetwork {
     }
 
     /// The loss one training step descends: `nnue_network::bce_loss` on `forward`, against label
-    /// column `column` (a one-arm batch has column `0` alone), in Elo's unit, as `StackedTransformer`'s.
+    /// column `column` (a one-arm batch has column `0` alone), in Elo's unit.
     pub fn training_loss(&self, batch: &TransformerBatch, column: usize) -> Tensor {
         bce_loss(&self.forward(batch), &batch.labels.narrow(1, column as i64, 1), S_PAWNS)
     }

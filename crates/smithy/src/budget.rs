@@ -73,7 +73,7 @@ impl Budget {
     }
 
     /// The rate step `step` trains at, the first update being step 1: the warmup's ramp to `start`,
-    /// then geometric to `end` at `total_steps`. `StackedAdamW` computes the same on the device.
+    /// then geometric to `end` at `total_steps`. `AdamW` reads it every step (`AdamW::set_budget`).
     pub fn rate(&self, step: u64) -> f64 {
         let warmup = if self.warmup_steps == 0 { 1.0 } else { (step as f64 / self.warmup_steps as f64).min(1.0) };
         warmup * self.decayed(step)
