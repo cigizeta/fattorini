@@ -36,7 +36,11 @@ never expanded, loss weight 4, fragment 0 at budget 60, +10 a fragment.
 4. Later, not today: "Inside Fattorini"'s "Opening books" page, from the plan's last section and
    its run log. That section now holds the prior art (Lincke's drop-out expansion, 2000, the
    origin of the idea) and what is Fattorini's own; read Lincke's and Fishburn's papers first.
-5. The old book code (book.rs, book_scores.rs, the arena's `score` chore, the page's Books screen)
+5. **A second book, Lc0's (lc0-book.md, designing 2026-11-26):** one Lc0 search a position, every
+   move's score read from `VerboseMoveStats`, the same commands and pipeline. Its probes (node
+   budget, processes on the GPU, the threshold and cutoffs in Lc0's unit) wait for the machine
+   with a GPU to be free of training; then its implementation plan.
+6. The old book code (book.rs, book_scores.rs, the arena's `score` chore, the page's Books screen)
    is deprecated, deleted only when the developer says so.
 
 ## 2026-11-26: the morning's list
