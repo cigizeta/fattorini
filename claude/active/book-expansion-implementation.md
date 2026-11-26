@@ -202,6 +202,10 @@ still to search, so a lower bound where not 0):
 
 Chosen (the developer, 2026-11-26): weight 4, fragment 0 at budget 60, +10 a fragment.
 
+A finished fragment's expansions that no fragment holds (searched under weight 1, or past the
+budget) move to the next fragment's progress file before its own is deleted, so they are never
+searched again.
+
 ### Fragments
 
 For "Inside Fattorini" and for deciding when to stop: per fragment, its budget, positions,

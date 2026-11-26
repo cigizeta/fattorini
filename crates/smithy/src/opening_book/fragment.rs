@@ -4,7 +4,7 @@
 //! the progress file of a fragment stopped midway, are expanded from their stored moves without a
 //! search, so the engines see only positions no file holds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -467,7 +467,16 @@ pub fn run(engine_name: &str) -> Result<(), String> {
     let path = format!("{stem}.bin");
     fs::write(&path, &bytes).map_err(|error| format!("cannot write {path}: {error}"))?;
     drop(graph);
+    // Expansions no fragment holds (searched under another loss weight, or past this budget)
+    // stay valid for the next fragments: they move to the next fragment's progress file, never
+    // searched again.
+    let in_book: HashSet<u64> = expanded.iter().map(|expanded| expanded.key).collect();
+    let next_path = format!("{}.progress.tsv", super::fragment::stem(&books, engine_name, index + 1));
+    let carried = carry_over(&progress_path, &next_path, &progress_header(&engine_id, index + 1), &in_book)?;
     let _ = fs::remove_file(&progress_path);
+    if carried > 0 {
+        println!("{carried} expansions beyond this fragment kept for the next one, in {next_path}.");
+    }
     let moves: usize = positions.iter().map(|position| position.moves.len()).sum();
     let deepest = new.iter().map(|expanded| expanded.ply).max().unwrap_or(0);
     println!(
@@ -478,6 +487,26 @@ pub fn run(engine_name: &str) -> Result<(), String> {
         started.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+/// The rows of the progress file at `from` whose positions are not in `in_book`, appended to the
+/// progress file at `to` (made with `header` if new), as they were; how many.
+fn carry_over(from: &str, to: &str, header: &str, in_book: &HashSet<u64>) -> Result<usize, String> {
+    let text = fs::read_to_string(from).map_err(|error| format!("cannot read {from}: {error}"))?;
+    let rows: Vec<&str> = text
+        .lines()
+        .skip(1)
+        .filter(|line| parse_row(line).is_some_and(|position| !in_book.contains(&position.key)))
+        .collect();
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let mut file = open_progress(to, header)?;
+    for row in &rows {
+        writeln!(file, "{row}").map_err(|error| format!("cannot write {to}: {error}"))?;
+    }
+    file.flush().map_err(|error| format!("cannot write {to}: {error}"))?;
+    Ok(rows.len())
 }
 
 fn start_engines(entry: &RegistryEntry) -> Result<Vec<Engine>, String> {
@@ -623,6 +652,22 @@ mod tests {
         assert_eq!(read[&position.key], position);
         assert!(parse_progress(&text, &progress_header("Judge 1", 4)).is_err());
         assert!(parse_progress(&text, &progress_header("Judge 2", 3)).is_err());
+    }
+
+    #[test]
+    fn expansions_beyond_the_fragment_move_to_the_next_progress_file() {
+        let directory = std::env::temp_dir().join(format!("fattorini-carry-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let (from, to) = (directory.join("f0.tsv"), directory.join("f1.tsv"));
+        let (from, to) = (from.to_str().unwrap(), to.to_str().unwrap());
+        let (root, e4) = (start(), after(&["e2e4"]));
+        let row = |board: &Board| progress_row(board, &Position { key: polyglot_key(board), eval: white(0, 50), moves: Vec::new() });
+        fs::write(from, format!("{}\n{}\n{}\n", progress_header("Judge 1", 0), row(&root), row(&e4))).unwrap();
+        let in_book = HashSet::from([polyglot_key(&root)]);
+        assert_eq!(carry_over(from, to, &progress_header("Judge 1", 1), &in_book).unwrap(), 1);
+        let carried = parse_progress(&fs::read_to_string(to).unwrap(), &progress_header("Judge 1", 1)).unwrap();
+        assert_eq!(carried.keys().copied().collect::<Vec<_>>(), [polyglot_key(&e4)]);
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
