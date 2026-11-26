@@ -4,7 +4,6 @@
 # its shape alone; compared with it, and with the scaled NNUE baselines, at the same scale.
 
 # The forge, as lc0-alpha-pieces'.
-lambda: polyline
 training_positions: 1073741824
 test_positions: 4194304
 round_robin_pairs: 400
@@ -36,7 +35,6 @@ training:
   # lc0-alpha-pieces' schedule, 3e-4 down to 1e-5: at width 64 it beat 3e-6 as the end (test loss
   # 0.6534 against 0.6584 scaled at 1/1024). A wider network may want a lower start; measured if
   # this one's loss jumps.
-  schedule: budget
   epochs: 4
   learning_rate: [3.0e-4, 1.0e-5]
   warmup_rounds: 1

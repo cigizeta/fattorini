@@ -15,21 +15,20 @@ use crate::net_config::{Architecture, ArchitectureKind, NetConfig};
 use crate::stack_head::HeadShape;
 use crate::{checkpoint_store, export, history, nnue_network};
 
-/// Exports one lambda's candidate to `gen-<g>/lambda-<l>/candidate.nnue`, with `candidate.txt`
+/// Exports the run's candidate to `gen-<g>/lambda-polyline/candidate.nnue`, with `candidate.txt`
 /// beside it naming the checkpoint. Called by `export_budget_winner` for the checkpoint the budget's
 /// round robin chose, which pruning keeps, as every candidate. `learning_rate` is the rate
 /// that round trained at, written into the `.nnue` header only: `candidate.txt` records none, as
-/// `champion.txt` does not (a run steps down through every rate; `history.tsv` keeps each round's).
+/// `champion.txt` does not (the rate falls every step; `history.tsv` keeps each round's).
 ///
-/// Written under a staging name and renamed into place, so the round robin never loads a half-written
-/// file, and `candidate.txt` last, since its presence is what marks the lambda's run as finished
+/// Written under a staging name and renamed into place, so the gate never loads a half-written
+/// file, and `candidate.txt` last, since its presence is what marks the candidate chosen
 /// (`read_candidate_step`). The `.nnue` is written for psq and psq_threats networks only: the engine
 /// has no forward pass for the other kinds yet, so for them the record alone ends the run, with a
 /// note, rather than failing a run that trained correctly or training it again when the server resumes.
 /// The line saying what was exported, for the caller to print.
 fn export_candidate(
-    config: &NetConfig, run_dir: &str, lambda: preprocessing_config::ArmLambda, checkpoints_dir: &str, learning_rate: f64, step: u64,
-    test_loss: f64,
+    config: &NetConfig, run_dir: &str, checkpoints_dir: &str, learning_rate: f64, step: u64, test_loss: f64,
 ) -> String {
     let checkpoint_path = checkpoint_store::checkpoint_path(checkpoints_dir, step);
     let output_path = generation::candidate_network_path(run_dir);
@@ -73,25 +72,25 @@ fn export_candidate(
     write_record(
         &candidate_record_path(run_dir),
         &[
-            ("lambda", preprocessing_config::lambda_text(lambda)),
+            ("lambda", preprocessing_config::POLYLINE_TEXT.to_string()),
             ("step", step.to_string()),
             ("test_loss", test_loss.to_string()),
             ("checkpoint", checkpoint_path),
         ],
     );
-    format!("candidate at lambda {lambda}: step {step} (test loss {test_loss:.7}), {exported}")
+    format!("candidate: step {step} (test loss {test_loss:.7}), {exported}")
 }
 
 /// Which checkpoint `generation::candidate_network_path` holds. Written last by the export, so its
-/// presence is what marks the lambda's run as finished.
-pub(crate) fn candidate_record_path(lambda_dir: &str) -> String {
-    generation::candidate_record_path(lambda_dir)
+/// presence is what marks the candidate chosen.
+pub(crate) fn candidate_record_path(run_dir: &str) -> String {
+    generation::candidate_record_path(run_dir)
 }
 
-/// The step of a lambda's candidate, from the `candidate.txt` its export writes: `name<TAB>value`
+/// The step of the run's candidate, from the `candidate.txt` its export writes: `name<TAB>value`
 /// lines, among them `step`. What the server's promotion reads.
-pub(crate) fn read_candidate_step(lambda_dir: &str) -> Result<u64, String> {
-    let path = candidate_record_path(lambda_dir);
+pub(crate) fn read_candidate_step(run_dir: &str) -> Result<u64, String> {
+    let path = candidate_record_path(run_dir);
     let text = std::fs::read_to_string(&path).map_err(|error| format!("failed to read {path}: {error}"))?;
     generation::record_field(&text, "step", &path)?.parse().map_err(|error| format!("{path}: invalid step: {error}"))
 }
@@ -325,17 +324,16 @@ pub(crate) fn read_budget_candidates(run_dir: &str) -> Result<Vec<BudgetCandidat
         .collect()
 }
 
-/// After a budget's round robin: its winner, the candidate at `step`, exported as the arm's
-/// `candidate.nnue` and `candidate.txt`, exactly as a patience run's best is, so the gate and the
-/// promotion read it unchanged. The line saying so.
-pub(crate) fn export_budget_winner(config: &NetConfig, run_dir: &str, lambda: preprocessing_config::ArmLambda, step: u64) -> String {
+/// After a budget's round robin: its winner, the candidate at `step`, exported as the run's
+/// `candidate.nnue` and `candidate.txt`, which the gate and the promotion read. The line saying so.
+pub(crate) fn export_budget_winner(config: &NetConfig, run_dir: &str, step: u64) -> String {
     let history_path = format!("{run_dir}/history.tsv");
     let Some(record) = history::read_all(&history_path).into_iter().find(|record| record.step == step) else {
         log::error!("{history_path} records no round at step {step}, the round robin's winner. Stop and look at the run.");
         process::exit(1);
     };
     let checkpoints_dir = format!("{run_dir}/checkpoints");
-    export_candidate(config, run_dir, lambda, &checkpoints_dir, record.learning_rate, step, record.test_loss)
+    export_candidate(config, run_dir, &checkpoints_dir, record.learning_rate, step, record.test_loss)
 }
 
 #[cfg(test)]
@@ -390,10 +388,10 @@ mod tests {
         let generation = std::env::temp_dir().join(format!("smithy-candidates-{}-candidate-record", std::process::id()));
         let generation = generation.to_str().unwrap();
         std::fs::remove_dir_all(generation).ok();
-        let dir = generation::lambda_dir(generation, fattorini::pipeline::preprocessing_config::ArmLambda::Constant(0.7));
+        let dir = generation::run_dir(generation);
         assert!(read_candidate_step(&dir).is_err(), "no candidate.txt at all");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(candidate_record_path(&dir), "lambda\t0.70\nstep\t15872\ntest_loss\t0.04\ncheckpoint\tx/step_000015872.vs\n").unwrap();
+        std::fs::write(candidate_record_path(&dir), "lambda\tpolyline\nstep\t15872\ntest_loss\t0.04\ncheckpoint\tx/step_000015872.vs\n").unwrap();
         assert_eq!(read_candidate_step(&dir), Ok(15872));
 
         std::fs::write(candidate_record_path(&dir), "learning_rate\t3e-4\n").unwrap();

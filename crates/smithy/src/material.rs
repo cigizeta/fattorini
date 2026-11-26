@@ -20,9 +20,9 @@ use fattorini::board::piece_type::PieceType;
 use fattorini::board::Board;
 use fattorini::labels::Curve;
 use fattorini::nnue::Network;
-use fattorini::pipeline::preprocessing_config::{self, ArmLambda};
+use fattorini::pipeline::preprocessing_config;
 
-use super::buckets::Labelling;
+use super::buckets::{LabelSet, Labelling};
 use super::cache::CacheRecord;
 use super::{freeze, lc0, lease, pgn_train_stream, polyline, remote};
 
@@ -37,7 +37,7 @@ const PAWNS_LIMIT: i32 = 3;
 
 /// The label sets read, in this order: Lc0's Q alone, the game's result alone, and the polyline's,
 /// what a network of Lc0's corpus trained on.
-const ARMS: [ArmLambda; 3] = [ArmLambda::Constant(0.0), ArmLambda::Constant(1.0), ArmLambda::Polyline];
+const ARMS: [LabelSet; 3] = [LabelSet::Constant(0.0), LabelSet::Constant(1.0), LabelSet::Polyline];
 
 pub(crate) fn run(args: &[String]) {
     const USAGE: &str = "usage: smithy material --network <player or .nnue file>";

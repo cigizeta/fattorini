@@ -1,4 +1,5 @@
-//! A fixed budget and a falling schedule: `training.schedule: budget` in a network's config.
+//! A fixed budget and a falling schedule, the one schedule: `training.epochs` and the two rates of
+//! `training.learning_rate` in a network's config.
 //!
 //! The run trains for `epochs` passes over its training set, in whole rounds; its rate ramps up
 //! through the warmup as under patience, then falls geometrically with the step from the config's

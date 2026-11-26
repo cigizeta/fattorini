@@ -98,7 +98,7 @@ impl TrainStream for BucketedTrainStream {
 mod tests {
     use super::*;
     use crate::pgn_stream::StreamFile;
-    use fattorini::pipeline::preprocessing_config::ArmLambda;
+    use crate::buckets::LabelSet;
     use std::sync::atomic::AtomicBool;
 
     /// Three games: a rook alone beside the kings (2 searched positions), a rook and a knight (3), and
@@ -132,7 +132,7 @@ mod tests {
     }
 
     fn labelling() -> Labelling {
-        Labelling::new(&[ArmLambda::Constant(0.5)], None).unwrap()
+        Labelling::new(&[LabelSet::Constant(0.5)], None).unwrap()
     }
 
     /// A batch as a comparable key: its positions' bytes and its labels' bits.

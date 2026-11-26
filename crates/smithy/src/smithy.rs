@@ -52,7 +52,6 @@ use fattorini::pipeline::protocol::{
     TASK_PATH, ScoreRecord,
 };
 use fattorini::pipeline::preprocessing_config;
-use fattorini::pipeline::preprocessing_config::{lambdas_text, ArmLambda};
 use fattorini::pipeline::segments::{self, SegmentMeta, META_SUFFIX};
 use fattorini::pipeline::{generation, home, players, remote};
 
@@ -77,7 +76,7 @@ use super::grouped_test_set::GroupedTestSet;
 use super::net_config::{self, ArchitectureKind, NetConfig};
 use super::{transformer_batch, transformer_network};
 use super::pgn_stream::StreamFile;
-use super::buckets::{self, BucketStream, Labelling, Prepared};
+use super::buckets::{self, BucketStream, LabelSet, Labelling, Prepared};
 use super::pgn_train_stream;
 use super::train_stream::BatchSource;
 use super::candidates::feature_set_for;
@@ -89,10 +88,6 @@ const PREFIX: &str = "smithy";
 
 /// Where the NNUE forges' buckets are scattered (`buckets.rs`): local, disposable, never on Drive.
 const BUCKETS_ROOT: &str = "data/buckets";
-
-/// The grid's size and fine step: 9 lambdas 0.01 apart, centred on the previous winner.
-const GRID: i32 = 9;
-const STEP_HUNDREDTHS: i32 = 1;
 
 const POLL: Duration = Duration::from_millis(500);
 
@@ -134,23 +129,14 @@ fn say(text: String) {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GenConfig {
-    /// How each generation's arms are labelled: the grid of constant lambdas (the default), or one
-    /// arm at the polyline, each position at its own lambda by its progress (`polyline.rs`).
-    #[serde(default)]
-    lambda: LambdaMode,
-    /// Generation 1's grid centre; later ones centre on the previous winner. A grid's alone: a
-    /// polyline attempt has none.
-    #[serde(default)]
-    grid_center: Option<f64>,
     /// Training positions a self-play generation plays, from generation 2 on: generation 1 trains on
     /// its source's whole corpus instead.
     training_positions: u64,
     /// Each teacher's frozen test set, as `training_positions`: a source's generation 1 is judged on
     /// the source's own.
     test_positions: u64,
-    /// Pairs a pairing of every round robin, a grid's among its lambdas and a budget's among its
-    /// checkpoints, so that both cost the same: 400 in the configs, for nine players 6,400 games a
-    /// candidate. A scaled attempt's shrunk by `scale::games`.
+    /// Pairs a pairing of the budget's round robin among its checkpoints: 400 in the configs, for
+    /// nine players 6,400 games a candidate. A scaled attempt's shrunk by `scale::games`.
     round_robin_pairs: u32,
     gate_elo_d: f64,
     /// The tune of each generation whose challenger passed its gate, started by hand from the page.
@@ -164,15 +150,6 @@ struct GenConfig {
     /// written as a forge key, and always there once loaded.
     #[serde(skip)]
     source: Option<Source>,
-}
-
-/// A forge config's `lambda:` key.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum LambdaMode {
-    #[default]
-    Grid,
-    Polyline,
 }
 
 impl GenConfig {
@@ -296,6 +273,32 @@ fn load_config(path: &str) -> Result<(GenConfig, NetConfig), String> {
         return Err(format!("{path} is not a forge config: it has no architecture: or labels:"));
     }
     keys.retain(|key, _| !key.as_str().is_some_and(|key| NETWORK_KEYS.contains(&key)));
+    // The grid's `lambda:` key, removed with it (2026-11-26): every run trains at the polyline. An
+    // attempt's frozen copy of its config, written before, keeps `lambda: polyline`, read and ignored
+    // so that the attempt resumes; a config in `configs/` carrying it, or any other value, is refused.
+    // `grid_center`, the grid's other key, is refused as an unknown one.
+    let committed = path == preprocessing_config::net_config_path(&config_name_of(path));
+    match keys.remove("lambda") {
+        Some(value) if !committed && value.as_str() == Some(preprocessing_config::POLYLINE_TEXT) => {}
+        Some(_) => {
+            return Err(format!("{path}: lambda: is the grid's, removed 2026-11-26: every run trains at the polyline; delete the line"))
+        }
+        None => {}
+    }
+    // `training.schedule:`, removed 2026-11-26 once the budget was the one schedule: refused in
+    // `configs/`, and in a frozen copy accepted as `budget` alone, which `net_config::read` ignores.
+    let schedule = serde_yaml::from_str::<serde_yaml::Value>(&text)
+        .ok()
+        .and_then(|all| all.get("training")?.get("schedule").cloned());
+    match schedule {
+        Some(value) if !committed && value.as_str() == Some("budget") => {}
+        Some(_) => {
+            return Err(format!(
+                "{path}: training.schedule: is removed (2026-11-26): the budget is the one schedule; delete the line"
+            ))
+        }
+        None => {}
+    }
     let mut config: GenConfig = serde_yaml::from_value(serde_yaml::Value::Mapping(keys)).map_err(|error| format!("{path}: {error}"))?;
     config.source = Some(Source::of(preprocessing_config::load_labels(path)));
     if config.test_positions == 0 || config.round_robin_pairs == 0 || config.training_positions == 0 {
@@ -304,19 +307,8 @@ fn load_config(path: &str) -> Result<(GenConfig, NetConfig), String> {
     if config.gate_elo_d <= 0.0 {
         return Err(format!("{path}: gate_elo_d must be positive"));
     }
-    match (config.lambda, config.grid_center) {
-        (LambdaMode::Grid, Some(center)) if (0.0..1.0).contains(&center) => {}
-        (LambdaMode::Grid, _) => return Err(format!("{path}: grid_center must lie in (0, 1)")),
-        (LambdaMode::Polyline, Some(_)) => return Err(format!("{path}: grid_center is a grid's; lambda: polyline has none")),
-        (LambdaMode::Polyline, None) => {}
-    }
     tune::args_of(&config.tune, PESTO).map_err(|message| format!("{path}: {message}"))?;
     let mut net = net_config::read(path)?;
-    // A budget's round robin is among one arm's checkpoints: nine arms of nine candidates each is not
-    // wanted, and the grid is deprecated.
-    if net.training.schedule == net_config::Schedule::Budget && config.lambda != LambdaMode::Polyline {
-        return Err(format!("{path}: schedule: budget trains one arm, so it needs lambda: polyline"));
-    }
     if config.scale.is_some() && path == preprocessing_config::net_config_path(&config_name_of(path)) {
         return Err(format!("{path}: scale: is an attempt's, chosen at New attempt, never a config's"));
     }
@@ -464,36 +456,6 @@ fn freeze_attempt_config(attempt: &str, config: &str, scale: Option<u64>) -> Res
     std::fs::write(&frozen, text).map_err(|error| format!("{frozen}: {error}"))
 }
 
-/// The coarse grid, 0.10 to 0.90, of the first generation on new labels: one that plays its own
-/// games after a parent trained on a source. Where its best lambda lies is not known: Lc0's
-/// deep-search scores won near 0.02, earlier shallow self-play near 0.98. The next generation is fine
-/// again, around its winner (the developer, 2026-10-30).
-const COARSE_STEP_HUNDREDTHS: i32 = 10;
-const COARSE_CENTER_HUNDREDTHS: i32 = 50;
-
-/// The 9 lambdas `step_hundredths` apart centred on `center_hundredths`, sliding so that all lie in
-/// 0.01..=0.99, in hundredths, ascending.
-fn grid(center_hundredths: i32, step_hundredths: i32) -> Vec<i32> {
-    let half = GRID / 2 * step_hundredths;
-    let center = center_hundredths.clamp(1 + half, 99 - half);
-    (0..GRID).map(|index| center - half + index * step_hundredths).collect()
-}
-
-/// The next generation's grid centre and step, once a generation won by `winner` is promoted: the
-/// coarse grid when that generation trained on a source, since the next labels are its own games'
-/// and new; the fine grid around the winner otherwise.
-fn next_grid(on_source: bool, winner: f64) -> (i32, i32) {
-    if on_source {
-        (COARSE_CENTER_HUNDREDTHS, COARSE_STEP_HUNDREDTHS)
-    } else {
-        ((winner * 100.0).round() as i32, STEP_HUNDREDTHS)
-    }
-}
-
-fn lambda_of(hundredths: i32) -> f64 {
-    f64::from(hundredths) / 100.0
-}
-
 // -- The attempt's state ----------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -540,27 +502,15 @@ struct GenState {
     /// The generation being made: 1 is taught by PeSTO.
     generation: u32,
     phase: Phase,
-    center_hundredths: i32,
-    /// The grid's step: `STEP_HUNDREDTHS`, or `COARSE_STEP_HUNDREDTHS` on new labels.
-    step_hundredths: i32,
 }
 
 impl GenState {
-    /// The generation's lambdas, in hundredths.
-    fn grid(&self) -> Vec<i32> {
-        grid(self.center_hundredths, self.step_hundredths)
-    }
-
     fn text(&self) -> String {
-        format!(
-            "generation\t{}\nphase\t{}\ncenter\t{}\nstep\t{}\n",
-            self.generation,
-            self.phase.name(),
-            self.center_hundredths,
-            self.step_hundredths
-        )
+        format!("generation\t{}\nphase\t{}\n", self.generation, self.phase.name())
     }
 
+    /// A state written under the grid, with its `center` and `step`, still parses, the two ignored,
+    /// so that a budget attempt begun then resumes.
     fn parse(text: &str) -> Result<GenState, String> {
         let map = lan::fields(text);
         if map.contains_key("attempt") || map.contains_key("failed_gates") {
@@ -569,9 +519,6 @@ impl GenState {
         Ok(GenState {
             generation: lan::field(&map, "generation", "state")?,
             phase: Phase::parse(&lan::field::<String>(&map, "phase", "state")?)?,
-            center_hundredths: lan::field(&map, "center", "state")?,
-            // A state written before the step was: the fine grid, all it knew.
-            step_hundredths: if map.contains_key("step") { lan::field(&map, "step", "state")? } else { STEP_HUNDREDTHS },
         })
     }
 }
@@ -604,8 +551,9 @@ impl Dirs {
     fn train(&self, generation: u32) -> String {
         format!("{}/train", self.generation(generation))
     }
-    fn arm(&self, generation: u32, lambda: ArmLambda) -> String {
-        generation::lambda_dir(&self.generation(generation), lambda)
+    /// The generation's training run (`generation::run_dir`).
+    fn run(&self, generation: u32) -> String {
+        generation::run_dir(&self.generation(generation))
     }
     fn round_robin(&self, generation: u32) -> String {
         format!("{}/round-robin.tsv", self.generation(generation))
@@ -725,7 +673,7 @@ fn required_tune(player: &str, needed_by: &str) -> Result<SearchParameters, Stri
 /// 1, Lc0 being no Fattorini player.
 fn teacher_player(attempt: &str, generation: u32, source: Option<Source>) -> Option<String> {
     if generation > 1 {
-        Some(players::network_player_name(attempt, generation - 1, None))
+        Some(players::network_player_name(attempt, generation - 1, false))
     } else if source == Some(Source::Pesto) {
         Some(PESTO.to_string())
     } else {
@@ -1967,11 +1915,8 @@ struct NetworkEntry {
     /// Its attempt, `None` for PeSTO, and its generation, which the page groups the networks by.
     attempt: Option<String>,
     generation: Option<u32>,
-    /// Whether it is the generation's winner, rather than its candidate at one lambda.
+    /// Whether it is the generation's winner, rather than its candidate.
     winner: bool,
-    /// Its lambda: a candidate's, as its name says, or the winner's, which its name leaves out and
-    /// the page shows beside it. `None` for PeSTO.
-    lambda: Option<ArmLambda>,
     /// Whether it has a search tune, so may play `@search-tuned`.
     tuned: bool,
     /// Whether it also has a time tune, so may play `@search-time-tuned`.
@@ -1979,7 +1924,7 @@ struct NetworkEntry {
 }
 
 /// Every network a trial may name, PeSTO first: in each attempt's generations, the winner of each
-/// generation that passed its gate, then the generation's candidates, by lambda.
+/// generation that passed its gate, then the generation's candidate.
 fn trial_networks(attempts: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry> {
     let tuned = |name: &str| {
         players::FattoriniPlayer::resolve(name)
@@ -1994,31 +1939,26 @@ fn trial_networks(attempts: &[(String, Vec<u32>, Vec<u32>)]) -> Vec<NetworkEntry
         attempt: None,
         generation: None,
         winner: false,
-        lambda: None,
         tuned: tuned(PESTO),
         time_tuned: time_tuned(PESTO),
     };
     let mut networks = vec![pesto];
     for (attempt, generations, winners) in attempts {
         for &generation in generations {
-            let entry = |name: String, winner: bool, lambda: ArmLambda| NetworkEntry {
+            let entry = |name: String, winner: bool| NetworkEntry {
                 tuned: tuned(&name),
                 time_tuned: time_tuned(&name),
                 name,
                 attempt: Some(attempt.clone()),
                 generation: Some(generation),
                 winner,
-                lambda: Some(lambda),
             };
-            if winners.contains(&generation)
-                && let Ok(winner) = players::attempt_winner(&attempt_dir(attempt), generation) {
-                    networks.push(entry(players::network_player_name(attempt, generation, None), true, winner));
-                }
+            if winners.contains(&generation) && players::attempt_winner(&attempt_dir(attempt), generation).is_ok() {
+                networks.push(entry(players::network_player_name(attempt, generation, false), true));
+            }
             let dirs = readable_dirs(attempt, generation);
-            for arm in generation_arms(&dirs, generation) {
-                if Path::new(&generation::candidate_network_path(&dirs.arm(generation, arm))).is_file() {
-                    networks.push(entry(players::network_player_name(attempt, generation, Some(arm)), false, arm));
-                }
+            if Path::new(&generation::candidate_network_path(&dirs.run(generation))).is_file() {
+                networks.push(entry(players::network_player_name(attempt, generation, true), false));
             }
         }
     }
@@ -2158,9 +2098,9 @@ fn catalog() -> Catalog {
                     let last = state.map_or(0, |state| state.generation);
                     let generations = (1..=last)
                         .filter_map(|generation| {
-                            // A generation shows once it has trained something: a lambda's directory.
-                            let trained = !generation_arms(&readable_dirs(&attempt, generation), generation).is_empty();
-                            let player = players::network_player_name(&attempt, generation, None);
+                            // A generation shows once it has trained something: its run's directory.
+                            let trained = has_run(&readable_dirs(&attempt, generation), generation);
+                            let player = players::network_player_name(&attempt, generation, false);
                             trained.then(|| GenerationEntry {
                                 generation,
                                 passed: winners.contains(&generation),
@@ -2288,10 +2228,10 @@ fn search_tune_args(player: &str) -> Result<tune::TuneArgs, String> {
     }
     let parsed = players::parse_network_name(player)?;
     let (attempt, generation) = (parsed.attempt(), parsed.generation);
-    if parsed.candidate.is_some() {
+    if parsed.candidate {
         return Err(format!(
-            "{player} is one lambda's candidate: a tune takes a generation's winner, {}",
-            players::network_player_name(&attempt, generation, None)
+            "{player} is a generation's candidate: a tune takes a generation's winner, {}",
+            players::network_player_name(&attempt, generation, false)
         ));
     }
     if !known_attempts(&parsed.config).contains(&parsed.attempt_number) {
@@ -3144,13 +3084,21 @@ fn score_view(score: &ScoreDealing) -> WorkView {
 /// latest row, and its curve (`LambdaView::curve`).
 type ArmRounds = (std::time::SystemTime, Option<RoundRow>, Vec<[f64; 4]>);
 
+/// The generation's training run as the page's table draws it, one row: its lambda, always the
+/// polyline, as the page names it.
 #[derive(Serialize)]
 struct LambdaView {
-    lambda: ArmLambda,
+    lambda: &'static str,
     last: Option<RoundRow>,
-    /// Every round as `[round, train loss, test loss, learning rate]`, for the page's loss chart: a
-    /// polyline arm's only, empty for a grid's constants, whose polls stay small.
+    /// Every round as `[round, train loss, test loss, learning rate]`, for the page's loss chart.
     curve: Vec<[f64; 4]>,
+}
+
+impl LambdaView {
+    /// The run before its first round.
+    fn not_started() -> LambdaView {
+        LambdaView { lambda: preprocessing_config::POLYLINE_TEXT, last: None, curve: Vec::new() }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -3309,7 +3257,6 @@ impl Status {
         // Read outside the lock: an attempt's files are the phase's, not the requests'.
         let forge = match (forge, &state) {
             (Some(files), Some(state)) => {
-                let lambdas = arms_of(&files.config, state);
                 // A generation closed as the job ended (promoted, or its lineage stopped) has moved to
                 // the remote: read there, as the View reads it (`readable_dirs`), so the page keeps the
                 // job's phases on screen after it ends.
@@ -3320,12 +3267,10 @@ impl Status {
                     ForgeFiles { root: remote::remote_path(&files.root), ..files }
                 };
                 let round = if state.phase == Phase::Train { rounds_display::current_pass() } else { None };
-                let view = self.forge_view(&files, state.generation, &lambdas, &work);
-                // A new attempt's training, before its first round: every lambda listed as not started,
-                // so the box is drawn whole from the frozen test set's read on, as a resumed attempt's is.
-                let training = view.training.or_else(|| {
-                    (state.phase == Phase::Train).then(|| lambdas.iter().map(|&lambda| LambdaView { lambda, last: None, curve: Vec::new() }).collect())
-                });
+                let view = self.forge_view(&files, state.generation, &work);
+                // A new attempt's training, before its first round: its run listed as not started, so
+                // the box is drawn whole from the frozen test set's read on, as a resumed attempt's is.
+                let training = view.training.or_else(|| (state.phase == Phase::Train).then(|| vec![LambdaView::not_started()]));
                 Some(ForgeView { round, training, ..view })
             }
             _ => None,
@@ -3374,25 +3319,18 @@ impl Status {
         let current = attempt_state(&attempt_home(attempt)).filter(|state| state.generation == generation);
         // A closed generation is read where the mover put it.
         let files = ForgeFiles { root: readable_dirs(attempt, generation).root, ..ForgeFiles::of(attempt, &gen_config, &net) };
-        let dirs = Dirs { root: files.root.clone() };
-        // The running generation's lambdas are its grid's, before any has a directory; an earlier
-        // generation's, those it trained.
-        let lambdas = match current {
-            Some(state) => arms_of(&gen_config, &state),
-            None => generation_arms(&dirs, generation),
-        };
         let live = {
             let shared = self.lock();
             let running = self.running.load(Ordering::SeqCst) && shared.forge.as_ref().is_some_and(|forge| forge.root == files.root);
             if current.is_some() && running { shared.work_view() } else { WorkView::Idle }
         };
-        Ok(self.forge_view(&files, generation, &lambdas, &live))
+        Ok(self.forge_view(&files, generation, &live))
     }
 
-    /// Every phase of generation `generation` of the forge in `files`, at `lambdas`, as far as its
-    /// files go, each phase that `live` shows as it runs taken from it instead: its counts are in
-    /// memory before they are in sealed segments and records.
-    fn forge_view(&self, files: &ForgeFiles, generation: u32, lambdas: &[ArmLambda], live: &WorkView) -> ForgeView {
+    /// Every phase of generation `generation` of the forge in `files`, as far as its files go, each
+    /// phase that `live` shows as it runs taken from it instead: its counts are in memory before they
+    /// are in sealed segments and records.
+    fn forge_view(&self, files: &ForgeFiles, generation: u32, live: &WorkView) -> ForgeView {
         let dirs = Dirs { root: files.root.clone() };
         let config = &files.config;
         let play = match live {
@@ -3412,36 +3350,20 @@ impl Status {
                 positions_per_game: None,
             }),
         };
-        let training: Vec<LambdaView> = lambdas
-            .iter()
-            .map(|&lambda| {
-                let history = format!("{}/history.tsv", dirs.arm(generation, lambda));
-                let (last, curve) = self.arm_rounds(&history, &files.schedule);
-                let curve = if lambda == ArmLambda::Polyline { curve } else { Vec::new() };
-                LambdaView { lambda, last, curve }
-            })
-            .collect();
+        let (last, curve) = self.arm_rounds(&format!("{}/history.tsv", dirs.run(generation)), &files.schedule);
+        let run = LambdaView { lambda: preprocessing_config::POLYLINE_TEXT, last, curve };
         let round_robin = match live {
             WorkView::RoundRobin { .. } => Some(live.clone()),
             _ => {
-                // Its players as the round robin chose them: a budget's, its arm's checkpoints in
-                // `candidates.txt`; a grid's, its constants that learned.
-                let (labels, wanted) = if config.lambda == LambdaMode::Polyline {
-                    let listed = lambdas
-                        .first()
-                        .and_then(|&arm| candidates::read_budget_candidates(&dirs.arm(generation, arm)).ok())
-                        .unwrap_or_default();
-                    let labels: Vec<String> = listed.iter().map(|candidate| epoch_label(&candidate.epoch)).collect();
-                    (labels, config.round_robin_pairs)
-                } else {
-                    let constants: Vec<f64> = lambdas.iter().filter_map(|arm| arm.constant()).collect();
-                    let learned = learned_lambdas(&dirs, generation, &constants);
-                    (learned.into_iter().map(lambda_label).collect(), config.round_robin_pairs)
-                };
+                // Its players as the round robin chose them: the run's checkpoints in `candidates.txt`.
+                let listed = candidates::read_budget_candidates(&dirs.run(generation)).unwrap_or_default();
+                let labels: Vec<String> = listed.iter().map(|candidate| epoch_label(&candidate.epoch)).collect();
                 let players = round_robin_players(labels.len());
                 let record = dirs.round_robin(generation);
                 let results = Path::new(&record).exists().then(|| recorded_pairs(&record, players.len()).ok()).flatten();
-                results.map(|results| round_robin_view(&labels, &players, &results, wanted, &recorded_times(&record), config.depth()))
+                results.map(|results| {
+                    round_robin_view(&labels, &players, &results, config.round_robin_pairs, &recorded_times(&record), config.depth())
+                })
             }
         };
         let gate = match live {
@@ -3454,14 +3376,11 @@ impl Status {
         };
         ForgeView {
             play,
-            training: training.iter().any(|lambda| lambda.last.is_some()).then_some(training),
+            training: run.last.is_some().then(|| vec![run]),
             round: None,
             round_robin,
             gate,
-            polyline: (config.lambda == LambdaMode::Polyline)
-                .then(|| polyline::read(&polyline_path(config, &dirs, generation)))
-                .flatten()
-                .map(|polyline| polyline::show(&polyline)),
+            polyline: polyline::read(&polyline_path(config, &dirs, generation)).map(|polyline| polyline::show(&polyline)),
         }
     }
 
@@ -3584,28 +3503,10 @@ fn page(status: &Status, request: &Request, control_here: bool) -> Option<Reply>
     }
 }
 
-/// The arms generation `generation` in `dirs` trained, from their directories: the constants
-/// ascending, then the polyline.
-fn generation_arms(dirs: &Dirs, generation: u32) -> Vec<ArmLambda> {
-    let mut arms: Vec<ArmLambda> = std::fs::read_dir(dirs.generation(generation))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| ArmLambda::parse(entry.file_name().to_string_lossy().strip_prefix("lambda-")?).ok())
-        .collect();
-    arms.sort_by(|a, b| match (a.constant(), b.constant()) {
-        (Some(a), Some(b)) => a.total_cmp(&b),
-        (a, b) => a.is_none().cmp(&b.is_none()),
-    });
-    arms
-}
-
-/// The arms a generation trains under `config`: the polyline's one, or `state`'s grid.
-fn arms_of(config: &GenConfig, state: &GenState) -> Vec<ArmLambda> {
-    match config.lambda {
-        LambdaMode::Polyline => vec![ArmLambda::Polyline],
-        LambdaMode::Grid => state.grid().into_iter().map(|hundredths| ArmLambda::Constant(lambda_of(hundredths))).collect(),
-    }
+/// Whether generation `generation` in `dirs` has trained, its run's directory there. A grid's
+/// generation, its constants' directories alone, has not, as far as anything reads now.
+fn has_run(dirs: &Dirs, generation: u32) -> bool {
+    Path::new(&dirs.run(generation)).is_dir()
 }
 
 /// Where generation `generation`'s polyline is kept: beside its source's corpus on the remote for a
@@ -3725,9 +3626,7 @@ impl Attempt<'_> {
             ["state.txt", "generations.tsv", "chores.txt", ATTEMPT_CONFIG, "corpus.txt"].iter().map(|name| format!("{root}/{name}")).collect();
         files.push(self.dirs.round_robin(generation));
         files.push(self.dirs.gate(generation));
-        for arm in generation_arms(&self.dirs, generation) {
-            files.push(format!("{}/history.tsv", self.dirs.arm(generation, arm)));
-        }
+        files.push(format!("{}/history.tsv", self.dirs.run(generation)));
         // A self-play generation's polyline, measured on its own games.
         files.push(format!("{}/polyline.txt", self.dirs.generation(generation)));
         for file in files.iter().filter(|file| Path::new(file).is_file()) {
@@ -3804,7 +3703,7 @@ impl Attempt<'_> {
         }
     }
 
-    fn train(&self, state: &GenState, arms: &[ArmLambda]) -> Result<Ended, String> {
+    fn train(&self, state: &GenState) -> Result<Ended, String> {
         let generation = state.generation;
         // The students start from the teacher's weights (`seed`), so a teacher trained in another unit
         // would carry it into the new training.
@@ -3868,14 +3767,9 @@ impl Attempt<'_> {
         // source's beside its corpus on the remote, shared by every full attempt of it as its frozen test
         // set is; a self-play generation's and a scaled attempt's in the generation's directory. The
         // frozen test set's polyline labels need it, so that set comes after.
-        let polyline = if arms.contains(&ArmLambda::Polyline) {
-            let path = polyline_path(self.config, &self.dirs, generation);
-            match polyline::ensure(&path, &bucket_dir, threads, &self.stop, &say)? {
-                Some(polyline) => Some(polyline),
-                None => return Ok(Ended::Stopped),
-            }
-        } else {
-            None
+        let polyline = match polyline::ensure(&polyline_path(self.config, &self.dirs, generation), &bucket_dir, threads, &self.stop, &say)? {
+            Some(polyline) => polyline,
+            None => return Ok(Ended::Stopped),
         };
         let batch_size = config.training.training_batch_size as usize;
         // A transformer cannot pad: it trains on batches of one piece count, a count's partial batch
@@ -3895,11 +3789,10 @@ impl Attempt<'_> {
         } else {
             (scattered, None)
         };
-        let labelling = Labelling::new(arms, polyline)?;
+        let labelling = Labelling::new(&[LabelSet::Polyline], Some(polyline))?;
         test.freeze(&labelling, &curve)?;
         log::info!(
-            "training: lambda {} on {} positions, {} training set files",
-            lambdas_text(arms),
+            "training: the polyline on {} positions, {} training set files",
             progress::grouped(train_rows),
             progress::grouped(files.len())
         );
@@ -3913,12 +3806,12 @@ impl Attempt<'_> {
         let mut records = test.read(&labelling)?;
         let mut test_readers = [GroupedTestSet::load(&mut records, config.training.test_batch_size as usize)];
         drop(records);
-        let lambda_dir = |lambda: ArmLambda| self.dirs.arm(generation, lambda);
+        let run_dir = self.dirs.run(generation);
         let teacher_vs = self.dirs.teacher_vs(generation);
         // No candidate yet: the round robin among these chooses it.
         let finish = |arm: &Arm, budget: &Budget| {
             let line = candidates::export_budget_candidates(config, &arm.run_dir, budget);
-            log::info!("lambda {}: its budget of {} rounds trained, {line}", arm.lambda, budget.total_rounds());
+            log::info!("training: its budget of {} rounds trained, {line}", budget.total_rounds());
         };
         let stop: &AtomicBool = &self.stop;
         // The training's state to the remote every `COPY_UP_EVERY`, between rounds, when no file is
@@ -3933,79 +3826,65 @@ impl Attempt<'_> {
                 log::warn!("{}: the training's state not copied to the remote: {message}", self.name);
             }
         };
-        // Only the batches, the stream and the network depend on the architecture. A grid's lambdas,
-        // while its code lasts, train one after another, each reading its own labels' column.
-        let mut done = true;
-        for (column, &lambda) in arms.iter().enumerate() {
-            let parts = RunParts { source: &source, lambda, run_dir: lambda_dir(lambda), column, device };
-            let starting_weights = |vs: &mut tch::nn::VarStore| self.seed(vs, &teacher_vs);
-            done = if transformer {
-                let counts = piece_counts.as_ref().expect("a transformer's piece counts are ensured above");
-                let attention = config.training.attention.expect("net_config::load requires attention for a transformer");
-                let to_batch = round::BatchBuilder {
-                    prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
-                    upload: |host: &transformer_batch::HostTransformerBatch| transformer_batch::upload(host, device),
-                };
-                let open = |budget: Budget, arm: &Arm| {
-                    let vs = tch::nn::VarStore::new(device);
-                    let network = transformer_network::TransformerNetwork::new(&vs.root(), &config.architecture);
-                    open_one_arm(config, budget, arm, network, vs, Vec::new(), starting_weights)
-                };
-                // The buckets grouped by piece count, so that every batch holds one length. They were
-                // just prepared and counted, so a failure to open them is a disk gone wrong.
-                let stream_from = |steps_done: u64| {
-                    BucketedTrainStream::open(&bucket_dir, labelling.clone(), counts, batch_size, steps_done)
-                        .unwrap_or_else(|message| panic!("{message}"))
-                };
-                training::train(
-                    config, parts, train_rows, &mut test_readers, open, stream_from, &to_batch,
-                    transformer_batch::HostTransformerBatch::bytes, &finish, &after_round, stop,
-                )
-            } else {
-                let feature_set = feature_set_for(&config.architecture);
-                let to_batch = round::BatchBuilder {
-                    prepare: |records: &[CacheRecord]| batch::host_batch(records, feature_set),
-                    upload: |host: &batch::HostBatch| batch::upload(host, device),
-                };
-                let open = |budget: Budget, arm: &Arm| {
-                    let vs = tch::nn::VarStore::new(device);
-                    let network = nnue_network::Network::of(&vs.root(), feature_set, &config.architecture).with_s(config.s_pawns());
-                    let bounds = network.weight_bounds();
-                    open_one_arm(config, budget, arm, network, vs, bounds, starting_weights)
-                };
-                // The buckets were just prepared, so a failure to open them is a disk gone wrong.
-                let stream_from = |steps_done: u64| {
-                    BucketStream::open(&bucket_dir, labelling.clone(), steps_done * batch_size as u64)
-                        .unwrap_or_else(|message| panic!("{message}"))
-                };
-                training::train(
-                    config, parts, train_rows, &mut test_readers, open, stream_from, &to_batch, batch::HostBatch::bytes,
-                    &finish, &after_round, stop,
-                )
+        // Only the batches, the stream and the network depend on the architecture.
+        let parts = RunParts { source: &source, run_dir: run_dir.clone(), device };
+        let starting_weights = |vs: &mut tch::nn::VarStore| self.seed(vs, &teacher_vs);
+        let done = if transformer {
+            let counts = piece_counts.as_ref().expect("a transformer's piece counts are ensured above");
+            let attention = config.training.attention.expect("net_config::load requires attention for a transformer");
+            let to_batch = round::BatchBuilder {
+                prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
+                upload: |host: &transformer_batch::HostTransformerBatch| transformer_batch::upload(host, device),
             };
-            if !done {
-                break;
-            }
-        }
+            let open = |budget: Budget, arm: &Arm| {
+                let vs = tch::nn::VarStore::new(device);
+                let network = transformer_network::TransformerNetwork::new(&vs.root(), &config.architecture);
+                open_one_arm(config, budget, arm, network, vs, Vec::new(), starting_weights)
+            };
+            // The buckets grouped by piece count, so that every batch holds one length. They were
+            // just prepared and counted, so a failure to open them is a disk gone wrong.
+            let stream_from = |steps_done: u64| {
+                BucketedTrainStream::open(&bucket_dir, labelling.clone(), counts, batch_size, steps_done)
+                    .unwrap_or_else(|message| panic!("{message}"))
+            };
+            training::train(
+                config, parts, train_rows, &mut test_readers, open, stream_from, &to_batch,
+                transformer_batch::HostTransformerBatch::bytes, finish, &after_round, stop,
+            )
+        } else {
+            let feature_set = feature_set_for(&config.architecture);
+            let to_batch = round::BatchBuilder {
+                prepare: |records: &[CacheRecord]| batch::host_batch(records, feature_set),
+                upload: |host: &batch::HostBatch| batch::upload(host, device),
+            };
+            let open = |budget: Budget, arm: &Arm| {
+                let vs = tch::nn::VarStore::new(device);
+                let network = nnue_network::Network::of(&vs.root(), feature_set, &config.architecture).with_s(config.s_pawns());
+                let bounds = network.weight_bounds();
+                open_one_arm(config, budget, arm, network, vs, bounds, starting_weights)
+            };
+            // The buckets were just prepared, so a failure to open them is a disk gone wrong.
+            let stream_from = |steps_done: u64| {
+                BucketStream::open(&bucket_dir, labelling.clone(), steps_done * batch_size as u64)
+                    .unwrap_or_else(|message| panic!("{message}"))
+            };
+            training::train(
+                config, parts, train_rows, &mut test_readers, open, stream_from, &to_batch, batch::HostBatch::bytes,
+                finish, &after_round, stop,
+            )
+        };
         self.lock().view = View::None;
         if !done {
             return Ok(Ended::Stopped);
         }
         log::info!("training: done in {}", minutes(started));
         // Every candidate to the remote at once, where the arenas read it: the round robin then deals
-        // nothing an arena must wait long for.
-        for &lambda in arms {
-            let candidate = generation::candidate_network_path(&lambda_dir(lambda));
-            if Path::new(&candidate).is_file() {
-                publish(&candidate)?;
-            }
-            // A budget's candidates, every quarter epoch's, all of them the round robin's. A
-            // transformer's are recorded without networks (`export_budget_candidates`): none to publish.
-            for candidate in candidates::read_budget_candidates(&lambda_dir(lambda)).unwrap_or_default() {
-                let path = candidates::budget_candidate_path(&lambda_dir(lambda), &candidate.epoch);
-                if Path::new(&path).is_file() {
-                    publish(&path)?;
-                }
+        // nothing an arena must wait long for. A transformer's are recorded without networks
+        // (`export_budget_candidates`): none to publish.
+        for candidate in candidates::read_budget_candidates(&run_dir).unwrap_or_default() {
+            let path = candidates::budget_candidate_path(&run_dir, &candidate.epoch);
+            if Path::new(&path).is_file() {
+                publish(&path)?;
             }
         }
         Ok(Ended::Done)
@@ -4055,26 +3934,15 @@ impl Attempt<'_> {
         }
     }
 
-    /// The candidate of arm `lambda` by its name, on the remote (`publish`).
-    fn candidate(&self, state: &GenState, lambda: ArmLambda) -> Result<String, String> {
-        let dir = self.dirs.arm(state.generation, lambda);
-        publish(&generation::candidate_network_path(&dir))
+    /// The generation's candidate by its name, on the remote (`publish`).
+    fn candidate(&self, state: &GenState) -> Result<String, String> {
+        publish(&generation::candidate_network_path(&self.dirs.run(state.generation)))
     }
 
-    /// A grid's round robin among its constant lambdas: the winning lambda, by points.
-    fn grid_round_robin(&self, state: &GenState, lambdas: &[f64]) -> Result<(Ended, f64), String> {
-        let candidates: Vec<(String, String)> = lambdas
-            .iter()
-            .map(|&lambda| Ok((lambda_label(lambda), self.candidate(state, ArmLambda::Constant(lambda))?)))
-            .collect::<Result<_, String>>()?;
-        let (ended, winner) = self.round_robin(state, &candidates, self.config.round_robin_pairs)?;
-        Ok((ended, lambdas[winner]))
-    }
-
-    /// A budget's round robin among its arm's checkpoints (`budget.rs`): the winner's step, exported
-    /// as the arm's candidate for the gate. Once exported, a resume finds it and plays nothing.
-    fn budget_round_robin(&self, state: &GenState, arm: ArmLambda) -> Result<Ended, String> {
-        let dir = self.dirs.arm(state.generation, arm);
+    /// The budget's round robin among the run's checkpoints (`budget.rs`): the winner's step, exported
+    /// as the run's candidate for the gate. Once exported, a resume finds it and plays nothing.
+    fn budget_round_robin(&self, state: &GenState) -> Result<Ended, String> {
+        let dir = self.dirs.run(state.generation);
         if candidates::read_candidate_step(&dir).is_ok() {
             return Ok(Ended::Done);
         }
@@ -4087,7 +3955,7 @@ impl Attempt<'_> {
         if let Ended::Stopped = ended {
             return Ok(Ended::Stopped);
         }
-        let line = candidates::export_budget_winner(self.net, &dir, arm, listed[winner].step);
+        let line = candidates::export_budget_winner(self.net, &dir, listed[winner].step);
         log::info!("round robin: epoch {} wins, {line}", listed[winner].epoch);
         publish(&generation::candidate_network_path(&dir))?;
         Ok(Ended::Done)
@@ -4131,14 +3999,14 @@ impl Attempt<'_> {
         Ok((Ended::Done, first.candidate))
     }
 
-    /// The gate: `winner`'s candidate against the teacher, an SPRT. `Some(pass)` once decided.
-    fn gate(&self, state: &GenState, winner: ArmLambda) -> Result<(Ended, bool, f64), String> {
-        let challenger = self.candidate(state, winner)?;
+    /// The gate: the generation's candidate against the teacher, an SPRT. `Some(pass)` once decided.
+    fn gate(&self, state: &GenState) -> Result<(Ended, bool, f64), String> {
+        let challenger = self.candidate(state)?;
         let teacher = self.teacher(state.generation)?;
         // Both sides the defaults, PeSTO too, untuned against untuned: the gate judges the
         // evaluations alone.
         let sides = [None, None];
-        log::info!("gate: lambda {winner} against {teacher}, SPRT at {} Elo", self.config.gate_elo_d());
+        log::info!("gate: the candidate against {teacher}, SPRT at {} Elo", self.config.gate_elo_d());
         let started = Instant::now();
         let elo_d = self.config.gate_elo_d();
         let record = self.dirs.gate(state.generation);
@@ -4428,18 +4296,13 @@ fn recorded_pairs(record: &str, count: usize) -> Result<Vec<Vec<i32>>, String> {
     Ok(results)
 }
 
-/// A grid's candidate as the round robin shows it.
-fn lambda_label(lambda: f64) -> String {
-    format!("lambda {lambda:.2}")
-}
-
 /// A budget's candidate as the round robin shows it, its epoch as `candidates.txt` spells it.
 fn epoch_label(epoch: &str) -> String {
     format!("epoch {epoch}")
 }
 
 
-/// The round robin's pairings of `count` lambdas, by index: every two, the first before the second.
+/// The round robin's pairings of `count` candidates, by index: every two, the first before the second.
 fn round_robin_players(count: usize) -> Vec<(usize, usize)> {
     (0..count).flat_map(|i| (i + 1..count).map(move |j| (i, j))).collect()
 }
@@ -4650,15 +4513,16 @@ fn readable_dirs(attempt: &str, generation: u32) -> Dirs {
     readable_of(Dirs { root: attempt_dir(attempt) }, Dirs { root: remote_attempt_dir(attempt) }, generation)
 }
 
-/// `local`'s generation while it has a folder, unless that folder trained nothing (no `lambda-*`)
-/// and `remote`'s did: then it is not the generation's copy but a tune's folder alone, fetched back
-/// to show the tune (`Tune::open`), and the generation itself is the remote's. A running generation,
-/// local and with no arm yet during its self-play, has none on the remote either, so stays local.
+/// `local`'s generation while it has a folder, unless that folder trained nothing (no run's
+/// directory) and `remote`'s did: then it is not the generation's copy but a tune's folder alone,
+/// fetched back to show the tune (`Tune::open`), and the generation itself is the remote's. A running
+/// generation, local and with no run yet during its self-play, has none on the remote either, so
+/// stays local.
 fn readable_of(local: Dirs, remote: Dirs, generation: u32) -> Dirs {
     if !Path::new(&local.generation(generation)).is_dir() {
         return remote;
     }
-    if generation_arms(&local, generation).is_empty() && !generation_arms(&remote, generation).is_empty() {
+    if !has_run(&local, generation) && has_run(&remote, generation) {
         return remote;
     }
     local
@@ -5640,14 +5504,8 @@ fn forge(status: &Status, name: &str, attempt: &str, scale: Option<u64>) -> Resu
     let mut state = match std::fs::read_to_string(dirs.state()) {
         Ok(text) => GenState::parse(&text).map_err(|message| format!("{}: {message}", dirs.state()))?,
         Err(_) => {
-            let state = GenState {
-                generation: 1,
-                // Generation 1 trains on its source's corpus, already made.
-                phase: Phase::Train,
-                // A polyline attempt has no grid: its centre is never read.
-                center_hundredths: (config.grid_center.unwrap_or(0.5) * 100.0).round() as i32,
-                step_hundredths: STEP_HUNDREDTHS,
-            };
+            // Generation 1 trains on its source's corpus, already made.
+            let state = GenState { generation: 1, phase: Phase::Train };
             write_state(&dirs, &state)?;
             std::fs::write(dirs.log(), "generation\twinner\tgate_games\tgate_share\tpassed\n")
                 .map_err(|error| format!("{}: {error}", dirs.log()))?;
@@ -5699,14 +5557,12 @@ fn attempt_generations(attempt: &Attempt, state: &mut GenState) -> Result<String
                 state.generation
             ));
         }
-        // A polyline attempt trains one arm every generation; a grid attempt its grid's.
-        let arms = arms_of(attempt.config, state);
         let training_set = if let Some(source) = attempt.config.on_source(state.generation) {
             source.corpus().to_string()
         } else {
             format!("{} positions", progress::grouped(attempt.config.training_positions()))
         };
-        log::info!("generation {}: lambda {}, {training_set}", state.generation, lambdas_text(&arms));
+        log::info!("generation {}: the polyline, {training_set}", state.generation);
         if state.phase == Phase::Play {
             if let Ended::Stopped = attempt.play(state)? {
                 return Ok(stopped());
@@ -5721,7 +5577,7 @@ fn attempt_generations(attempt: &Attempt, state: &mut GenState) -> Result<String
             }
         }
         if state.phase == Phase::Train {
-            if let Ended::Stopped = attempt.train(state, &arms)? {
+            if let Ended::Stopped = attempt.train(state)? {
                 return Ok(stopped());
             }
             // A network the engine cannot play ends at its training: no round robin, no winner.
@@ -5731,94 +5587,52 @@ fn attempt_generations(attempt: &Attempt, state: &mut GenState) -> Result<String
                 continue;
             }
         }
-        // A lambda whose best checkpoint is step 0 fell back to its teacher: nothing it trained beat the
-        // teacher's own weights, so its candidate is the teacher. It plays no round robin, whose copies
-        // of the teacher would only add noise, and a winner among them would meet itself at the gate;
-        // with none left, the generation learned nothing, a failed gate without a game (the developer,
-        // 2026-10-30).
-        let learned = learned_arms(&attempt.dirs, state.generation, &arms);
-        let (winner, pass, share, gate_games) = if learned.is_empty() {
-            log::warn!(
-                "generation {}: every lambda fell back to the teacher, its best checkpoint step 0; no round robin, no gate",
-                state.generation
-            );
-            (None, false, 0.0, 0)
-        } else {
-            let fell_back = arms.len() - learned.len();
-            if fell_back > 0 {
-                log::info!("{fell_back} of {} lambdas fell back to the teacher and play no round robin", arms.len());
-            }
-            let winner = if attempt.net.training.schedule == net_config::Schedule::Budget {
-                // A budget's one arm (`load_config`), its round robin among its own checkpoints, the
-                // winner exported as its candidate. Step 0 is never one: `learned_arms` keeps the arm.
-                if let Ended::Stopped = attempt.budget_round_robin(state, learned[0])? {
-                    return Ok(stopped());
-                }
-                learned[0]
-            } else if learned.len() == 1 {
-                log::info!("one lambda learned, {}: no round robin, straight to the gate", learned[0]);
-                learned[0]
-            } else {
-                // Two arms or more are a grid's: a polyline attempt trains one.
-                let constants: Vec<f64> = learned.iter().map(|arm| arm.constant().expect("a grid's arm is a constant")).collect();
-                let (ended, winner) = attempt.grid_round_robin(state, &constants)?;
-                if let Ended::Stopped = ended {
-                    return Ok(stopped());
-                }
-                ArmLambda::Constant(winner)
-            };
-            state.phase = Phase::Gate;
-            attempt.boundary(state)?;
-            let (ended, pass, share) = attempt.gate(state, winner)?;
-            if let Ended::Stopped = ended {
-                return Ok(stopped());
-            }
-            let gate_games = std::fs::read_to_string(attempt.dirs.gate(state.generation))
-                .map_or(0, |text| text.lines().filter(|line| !line.starts_with('#')).count() * 2);
-            (Some(winner), pass, share, gate_games)
-        };
-        let winner_text = winner.map_or("none".to_string(), |winner| winner.to_string());
+        // The budget's round robin among the run's own checkpoints, the winner exported as its
+        // candidate. Step 0 is never one: a budget never falls back to its teacher.
+        if let Ended::Stopped = attempt.budget_round_robin(state)? {
+            return Ok(stopped());
+        }
+        state.phase = Phase::Gate;
+        attempt.boundary(state)?;
+        let (ended, pass, share) = attempt.gate(state)?;
+        if let Ended::Stopped = ended {
+            return Ok(stopped());
+        }
+        let gate_games = std::fs::read_to_string(attempt.dirs.gate(state.generation))
+            .map_or(0, |text| text.lines().filter(|line| !line.starts_with('#')).count() * 2);
+        // The winner column says the polyline, as every winner since the grid (`players::attempt_winner`).
+        let winner = preprocessing_config::POLYLINE_TEXT;
         std::fs::OpenOptions::new()
             .append(true)
             .open(attempt.dirs.log())
-            .and_then(|mut file| writeln!(file, "{}\t{winner_text}\t{gate_games}\t{share:.4}\t{pass}", state.generation))
+            .and_then(|mut file| writeln!(file, "{}\t{winner}\t{gate_games}\t{share:.4}\t{pass}", state.generation))
             .map_err(|error| format!("{}: {error}", attempt.dirs.log()))?;
 
         // A scaled attempt checks the pipeline, not strength: a network trained on a sliver of the data may
         // well lose its gate, so its winner teaches the next generation all the same, the failure
-        // recorded in generations.tsv (the developer, 2026-10-30). A generation that learned nothing
-        // has no winner to promote.
-        let scaled_on = !pass && attempt.config.scale.is_some() && winner.is_some();
-        let nothing_learned = winner.is_none();
-        let winner = winner.unwrap_or(ArmLambda::Constant(0.0));
+        // recorded in generations.tsv (the developer, 2026-10-30).
+        let scaled_on = !pass && attempt.config.scale.is_some();
         if pass || scaled_on {
             // The winner becomes the next generation's teacher: its candidate network, and the
             // checkpoint it was exported from, for the next generation's warm start.
-            let lambda_dir = attempt.dirs.arm(state.generation, winner);
-            let step = candidates::read_candidate_step(&lambda_dir)?;
-            let checkpoint = checkpoint_store::checkpoint_path(&format!("{lambda_dir}/checkpoints"), step);
+            let run_dir = attempt.dirs.run(state.generation);
+            let step = candidates::read_candidate_step(&run_dir)?;
+            let checkpoint = checkpoint_store::checkpoint_path(&format!("{run_dir}/checkpoints"), step);
             let next = state.generation + 1;
             std::fs::create_dir_all(attempt.dirs.generation(next)).map_err(|error| format!("{}: {error}", attempt.dirs.generation(next)))?;
             copy(&checkpoint, &attempt.dirs.teacher_vs(next))?;
-            copy(&generation::candidate_network_path(&lambda_dir), &attempt.dirs.teacher_nnue(next))?;
+            copy(&generation::candidate_network_path(&run_dir), &attempt.dirs.teacher_nnue(next))?;
             // The new teacher on the remote at once, where the arenas will read it.
             publish(&attempt.dirs.teacher_nnue(next))?;
-            log::info!("generation {} promoted: lambda {winner} teaches generation {next}", state.generation);
-            // A polyline attempt has no grid to move: its state's centre stays, never read.
-            let (center_hundredths, step_hundredths) = match winner.constant() {
-                Some(winner) => next_grid(attempt.config.on_source(state.generation).is_some(), winner),
-                None => (state.center_hundredths, state.step_hundredths),
-            };
-            *state = GenState { generation: next, phase: Phase::Play, center_hundredths, step_hundredths };
+            log::info!("generation {} promoted: its candidate teaches generation {next}", state.generation);
+            *state = GenState { generation: next, phase: Phase::Play };
         } else {
             // A generation has one training set, so a failed gate leaves nothing to try: the lineage
             // stops, a new attempt starting over (the developer, 2026-11-02). The boundary that closes the
             // generation: the mover takes it from here.
             state.phase = Phase::Stopped;
             attempt.boundary(state)?;
-            let why = if nothing_learned {
-                "learned nothing, every lambda falling back to the teacher".to_string()
-            } else if let Some(source) = attempt.config.on_source(state.generation) {
+            let why = if let Some(source) = attempt.config.on_source(state.generation) {
                 format!("on {} failed its gate against {PESTO}, so the network is wrong", source.corpus())
             } else {
                 "failed its gate".to_string()
@@ -5830,27 +5644,14 @@ fn attempt_generations(attempt: &Attempt, state: &mut GenState) -> Result<String
         attempt.boundary(state)?;
         return Ok(if scaled_on {
             format!(
-                "generation {} failed its gate, promoted all the same in a scaled attempt, lambda {winner}: generation {} waits for Resume",
+                "generation {} failed its gate, promoted all the same in a scaled attempt: generation {} waits for Resume",
                 state.generation - 1,
                 state.generation
             )
         } else {
-            format!("generation {} promoted, lambda {winner}: generation {} waits for Resume", state.generation - 1, state.generation)
+            format!("generation {} promoted: generation {} waits for Resume", state.generation - 1, state.generation)
         });
     }
-}
-
-/// The lambdas of generation `generation` that learned something: their candidate is a checkpoint
-/// after step 0. One whose candidate record cannot be read is kept, as before this check, and its
-/// round robin says what is wrong.
-fn learned_arms(dirs: &Dirs, generation: u32, arms: &[ArmLambda]) -> Vec<ArmLambda> {
-    arms.iter().copied().filter(|&arm| candidates::read_candidate_step(&dirs.arm(generation, arm)).map_or(true, |step| step > 0)).collect()
-}
-
-/// `learned_arms` of a grid's constant lambdas.
-fn learned_lambdas(dirs: &Dirs, generation: u32, lambdas: &[f64]) -> Vec<f64> {
-    let arms: Vec<ArmLambda> = lambdas.iter().map(|&lambda| ArmLambda::Constant(lambda)).collect();
-    learned_arms(dirs, generation, &arms).into_iter().filter_map(ArmLambda::constant).collect()
 }
 
 #[cfg(test)]
@@ -5992,7 +5793,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("smithy-boundary-{}", std::process::id())).to_str().unwrap().replace('\\', "/");
         std::fs::remove_dir_all(&root).ok();
         let dirs = Dirs { root: root.clone() };
-        let state = GenState { generation: 2, phase: Phase::Train, center_hundredths: 3, step_hundredths: 1 };
+        let state = GenState { generation: 2, phase: Phase::Train };
         write_state(&dirs, &state).unwrap();
         write_state(&dirs, &state).unwrap();
         let text = std::fs::read_to_string(dirs.state()).unwrap();
@@ -6078,27 +5879,8 @@ mod tests {
     }
 
     #[test]
-    fn the_grid_is_nine_hundredths_centred_and_clamped() {
-        assert_eq!(grid(95, 1), (91..=99).collect::<Vec<_>>());
-        assert_eq!(grid(97, 1), (91..=99).collect::<Vec<_>>(), "clamped at the top");
-        assert_eq!(grid(50, 1), (46..=54).collect::<Vec<_>>());
-        assert_eq!(grid(2, 1), (1..=9).collect::<Vec<_>>(), "clamped at the bottom");
-    }
-
-    #[test]
-    fn the_coarse_grid_spans_a_tenth_to_nine_tenths() {
-        assert_eq!(grid(COARSE_CENTER_HUNDREDTHS, COARSE_STEP_HUNDREDTHS), (1..=9).map(|tenth| tenth * 10).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn a_generation_on_a_source_hands_the_coarse_grid_on_a_self_play_one_the_fine() {
-        assert_eq!(next_grid(true, 0.02), (50, 10));
-        assert_eq!(next_grid(false, 0.37), (37, 1));
-    }
-
-    #[test]
     fn a_state_reads_back_what_it_wrote() {
-        let state = GenState { generation: 3, phase: Phase::RoundRobin, center_hundredths: 96, step_hundredths: 10 };
+        let state = GenState { generation: 3, phase: Phase::RoundRobin };
         assert_eq!(GenState::parse(&state.text()), Ok(state));
         let stopped = GenState { phase: Phase::Stopped, ..state };
         assert_eq!(GenState::parse(&stopped.text()), Ok(stopped));
@@ -6111,25 +5893,9 @@ mod tests {
     }
 
     #[test]
-    fn a_lambda_whose_candidate_is_step_0_fell_back_to_its_teacher() {
-        let root = std::env::temp_dir().join(format!("smithy-learned-{}", std::process::id())).to_str().unwrap().replace('\\', "/");
-        std::fs::remove_dir_all(&root).ok();
-        let dirs = Dirs { root: root.clone() };
-        for (lambda, step) in [(0.1, "0"), (0.2, "8192"), (0.3, "0")] {
-            let dir = dirs.arm(2, ArmLambda::Constant(lambda));
-            std::fs::create_dir_all(&dir).unwrap();
-            candidates::write_record(&candidates::candidate_record_path(&dir), &[("step", step.to_string())]);
-        }
-        // 0.4 has no candidate record: kept, its round robin saying what is wrong.
-        assert_eq!(learned_lambdas(&dirs, 2, &[0.1, 0.2, 0.3, 0.4]), vec![0.2, 0.4]);
-        assert_eq!(learned_lambdas(&dirs, 2, &[0.1, 0.3]), Vec::<f64>::new(), "every one fell back: nothing learned");
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn a_state_without_a_step_reads_as_the_fine_grid() {
-        let text = "generation\t2\nphase\tplay\ncenter\t2\n";
-        assert_eq!(GenState::parse(text).map(|state| state.step_hundredths), Ok(STEP_HUNDREDTHS));
+    fn a_state_written_under_the_grid_reads_back_its_centre_and_step_ignored() {
+        let text = "generation\t2\nphase\tplay\ncenter\t2\nstep\t1\n";
+        assert_eq!(GenState::parse(text), Ok(GenState { generation: 2, phase: Phase::Play }));
     }
 
     use fattorini::pipeline::protocol::task_body;
@@ -6316,7 +6082,7 @@ mod tests {
         let network = "labels: lc0\narchitecture:\n  kind: psq\n  embedding_dim: 8\n  value_head:\n    hidden_dim: []\n\
                        training:\n  learning_rate: [0.1, 0.01]\n  training_batch_size: 1\n  test_batch_size: 1\n  steps_per_round: 1\n  \
                        warmup_rounds: 0\n  epochs: 1\n";
-        let forge = "lambda: polyline\ntest_positions: 1\nround_robin_pairs: 1\ngate_elo_d: 35\n\
+        let forge = "test_positions: 1\nround_robin_pairs: 1\ngate_elo_d: 35\n\
                      tune:\n  length: 100\n  control: {depth: 2}\n";
         let load = |name: &str, text: String| {
             let path = format!("{dir}/{name}.yaml");
@@ -6337,15 +6103,18 @@ mod tests {
         let bad_tune = format!("{without_tune}tune:\n  length: 10\ntraining_positions: 7\n{network}");
         assert!(load("bad-tune", bad_tune).unwrap_err().contains("pairs"), "tune: is checked as the words it stands for");
 
-        // A polyline attempt has no grid centre; a budget, the one schedule, trains one arm, the
-        // polyline's, never a grid.
-        assert_eq!((config.lambda, config.grid_center), (LambdaMode::Polyline, None));
-        assert_eq!(net.training.schedule, net_config::Schedule::Budget);
-        let rest = forge.strip_prefix("lambda: polyline\n").unwrap();
-        assert!(load("both", format!("grid_center: 0.05\n{forge}training_positions: 7\n{network}")).unwrap_err().contains("grid_center"));
-        let grid = format!("grid_center: 0.05\n{rest}training_positions: 7\n{network}");
-        assert!(load("grid", grid).unwrap_err().contains("lambda: polyline"));
-        assert!(load("unknown-mode", format!("lambda: curve\n{rest}training_positions: 7\n{network}")).is_err());
+        // The grid's keys, removed with it (2026-11-26), are refused by name; an attempt's frozen copy,
+        // as these files are (no config in `configs/`), keeps `lambda: polyline`, ignored. The same for
+        // `training.schedule:`, removed once the budget was the one schedule: `budget` ignored, any
+        // other value refused.
+        assert!(load("frozen-polyline", format!("lambda: polyline\n{forge}training_positions: 7\n{network}")).is_ok());
+        assert!(load("frozen-budget", format!("{forge}training_positions: 7\n{network}  schedule: budget\n")).is_ok());
+        let error = load("patience", format!("{forge}training_positions: 7\n{network}  schedule: patience\n")).unwrap_err();
+        assert!(error.contains("schedule"), "{error}");
+        for (key, line) in [("lambda", "lambda: grid"), ("grid_center", "grid_center: 0.05")] {
+            let error = load("grid", format!("{line}\n{forge}training_positions: 7\n{network}")).unwrap_err();
+            assert!(error.contains(key), "{line}: {error}");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -6845,7 +6614,6 @@ mod tests {
             attention: None,
             warmup_rounds: Some(1),
             patience_rounds: None,
-            schedule: net_config::Schedule::Budget,
             epochs: Some(4.0),
             shuffle_buffer: None,
         };

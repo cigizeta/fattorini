@@ -10,7 +10,6 @@ architecture:
 training:
   # A budget of 4 passes over the training set: after the warmup the rate falls geometrically from
   # the first rate to the second, reached at the last step.
-  schedule: budget
   epochs: 4
   learning_rate: [1.0e-3, 1.0e-5]
   training_batch_size: 1024

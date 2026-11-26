@@ -16,9 +16,8 @@
 //! - `stockfish-elo-<rating>`, rating 1320 to 3190: the same executable, limited to that calibrated
 //!   rating through `UCI_LimitStrength` and `UCI_Elo`.
 //! - Any other `kind: uci` engine of the registry, by its name, e.g. `reckless`, with its options.
-//! - `<config>-g<g>-l<lambda>-a<n>`, e.g. `pesto-psq-g1-l0.95-a1`, a forge attempt's network
-//!   (`players::parse_network_name`): Fattorini evaluating with that lambda's candidate in
-//!   generation `g`.
+//! - `<config>-g<g>-lpolyline-a<n>`, e.g. `pesto-psq-g1-lpolyline-a1`, a forge attempt's network
+//!   (`players::parse_network_name`): Fattorini evaluating with generation `g`'s candidate.
 //! - `<config>-g<g>-a<n>`, e.g. `pesto-psq-g1-a1`: generation `g`'s winner, as its `generations.tsv`
 //!   records it. This machine's copy of the attempt first, then the remote's, where its closed
 //!   generations move.
@@ -628,7 +627,7 @@ mod tests {
     #[test]
     fn a_registry_name_a_built_in_player_has_is_refused() {
         let path = test_executable();
-        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-a1", "amanda-g1-l0.70-a1", "fattorini@search-tuned"] {
+        for name in ["pesto", "stockfish-5", "stockfish-elo-1500", "amanda-g1-a1", "amanda-g1-lpolyline-a1", "fattorini@search-tuned"] {
             let entries = HashMap::from([(name.to_string(), registered(&path, &[]))]);
             assert!(Engines::from_entries(Some(entries), "test").is_err(), "{name:?}");
         }
@@ -642,14 +641,14 @@ mod tests {
         let root = root.to_str().unwrap().to_string();
         std::fs::remove_dir_all(&root).ok();
         let attempts = |attempt: &str| -> Result<String, String> { Ok(format!("{root}/attempts/{attempt}")) };
-        let candidate = format!("{root}/attempts/fine-a1/gen-1/lambda-0.05/candidate.nnue");
+        let candidate = format!("{root}/attempts/fine-a1/gen-1/lambda-polyline/candidate.nnue");
         std::fs::create_dir_all(std::path::Path::new(&candidate).parent().unwrap()).unwrap();
         fattorini::nnue::PsqNetwork::sample_for_tests(8).write(&candidate).unwrap();
         // Untuned, a network plays the defaults in its own unit.
         let pawn_percent = fattorini::nnue::Network::load(&candidate).unwrap().pawn_percent();
         let untuned = SearchParameters::DEFAULT.translated(pawn_percent);
 
-        let name = "fine-g1-l0.05-a1";
+        let name = "fine-g1-lpolyline-a1";
         let entry = resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &attempts).unwrap();
         assert_equal_footing(&entry);
         assert_eq!(entry.binary_path(), uci_player_path(&format!("{name}@untuned")));
@@ -658,7 +657,7 @@ mod tests {
         assert_eq!((entry.kind, entry.net, entry.parameters), (EngineKind::Network, Some(candidate.clone()), Some(untuned)));
         let error = resolve_player_with("other-g1-a1@untuned", false, &Engines::none(), &attempts).unwrap_err();
         assert!(error.contains("no forge attempt"), "{error}");
-        for name in ["fine", "fine-g0-a1", "fine-x", "-g1-a1", "fine-g1-l1.50-a1", "fine-g1-l0.x-a1", "fine-0001-0.05", "fine-g1-l0.5-a1", "fine-g1-l0.05-r1"] {
+        for name in ["fine", "fine-g0-a1", "fine-x", "-g1-a1", "fine-g1-l0.05-a1", "fine-g1-lpoly-a1", "fine-0001-0.05", "fine-g1-lpolyline-r1"] {
             assert!(resolve_player_with(&format!("{name}@untuned"), false, &Engines::none(), &attempts).is_err(), "{name:?}");
         }
 

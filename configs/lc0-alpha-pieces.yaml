@@ -5,9 +5,7 @@
 # round robin, no gate and no tune. A scaled attempt first, its scale chosen at New attempt, beside an
 # NNUE baseline at the same scale.
 
-# The forge. Lambda by progress, as every budgeted attempt: one arm, labelled at the polyline measured
-# on its corpus.
-lambda: polyline
+# The forge. One run, labelled at the polyline measured on its corpus, as every attempt.
 # Unused by a transformer, which plays no game; required by the forge, and kept as the budgeted
 # NNUE configs have them.
 training_positions: 1073741824
@@ -46,7 +44,6 @@ training:
   # scaled at 1/1024, 1e-5 ended at test loss 0.6534, 3e-6 at 0.6584, behind from the start, since a
   # geometric fall to a lower end lowers the rate throughout. A pass is the full batches of one piece
   # count, a count's partial batch dropped each epoch.
-  schedule: budget
   epochs: 4
   learning_rate: [3.0e-4, 1.0e-5]
   warmup_rounds: 1

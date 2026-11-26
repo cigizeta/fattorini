@@ -22,7 +22,8 @@
 //! segments added to the directory afterwards are never read. Each manifest is written last, as the
 //! mark that what it describes is complete.
 //!
-//! **Adding lambdas.** A grid whose lambdas the frozen set lacks gets them added: the segments the
+//! **Adding label sets.** A label set the frozen set lacks (the polyline's on a set first frozen
+//! before it, a check's constants beside it) gets it added: the segments the
 //! manifest names are read again, in its order, under the same seed. Which position fills which slot
 //! depends only on its index in that stream and on the seed, never on the position itself, so the
 //! same slots come out and every new label lands beside its position by construction.
@@ -36,11 +37,10 @@ use std::io::{BufReader, BufWriter, Write};
 use fattorini::features::CanonicalPosition;
 use fattorini::labels::Curve;
 use fattorini::pipeline::data_root;
-use fattorini::pipeline::preprocessing_config::{lambda_dir_name, lambdas_text, ArmLambda};
 use fattorini::pipeline::segments::SEGMENT_SUFFIX;
 use fattorini::tablebase::SyzygyTablebase;
 
-use super::buckets::{blend, Labelling};
+use super::buckets::{blend, label_sets_text, LabelSet, Labelling};
 use super::cache::{is_bare_kings, read_label, read_position, write_label, write_position, CacheHeader, CacheRecord, LabelHeader, Progress};
 use super::game_labels::{self_play_game_kept, self_play_game_labels, self_play_game_tablebase, SelfPlaySegmentReader, KEPT, TABLEBASE_LABELS};
 use super::pgn_stream::{splitmix64, StreamFile};
@@ -112,7 +112,7 @@ fn ensure_labelled(
             return Ok(());
         }
         let missing = Labelling::new(&missing, labelling.polyline().copied())?;
-        log::info!("frozen test set {dir}: adding the labels of lambda {} from {games_dir}", lambdas_text(missing.arms()));
+        log::info!("frozen test set {dir}: adding the labels of lambda {} from {games_dir}", label_sets_text(missing.arms()));
         // At the frozen size, whatever a run asks: its labels sit beside every frozen position.
         let sample = draw(games_dir, &manifest.segments, manifest.positions, manifest.rows, false, &missing, curve, tablebase);
         if (sample.games, sample.searched()) != (manifest.games, manifest.positions) {
@@ -164,7 +164,7 @@ fn ensure_labelled(
     log::info!(
         "froze {rows} of {kept} {KEPT} positions from {} games into {dir}, labelled at lambda {}",
         manifest.games,
-        lambdas_text(labelling.arms())
+        label_sets_text(labelling.arms())
     );
     Ok(())
 }
@@ -186,7 +186,7 @@ pub(crate) fn read(dir: &str, rows: u64, labelling: &Labelling) -> Result<Vec<Ca
     let kept = subset(manifest.rows, rows);
     let missing = missing(dir, labelling);
     if !missing.is_empty() {
-        return Err(format!("the frozen test set {dir} lacks lambda {}", lambdas_text(&missing)));
+        return Err(format!("the frozen test set {dir} lacks lambda {}", label_sets_text(&missing)));
     }
     check_polyline(dir, labelling)?;
     let mut positions = open_decoder(&positions_path(dir));
@@ -253,40 +253,40 @@ fn positions_path(dir: &str) -> String {
     format!("{dir}/test.positions")
 }
 
-/// A label set's directory, `lambda-0.95` or `lambda-polyline` (`lambda_dir_name`).
-fn labels_dir(dir: &str, arm: ArmLambda) -> String {
-    format!("{dir}/{}", lambda_dir_name(arm))
+/// A label set's directory, `lambda-0.95` or `lambda-polyline` (`LabelSet::dir_name`).
+fn labels_dir(dir: &str, arm: LabelSet) -> String {
+    format!("{dir}/{}", arm.dir_name())
 }
 
-fn labels_path(dir: &str, arm: ArmLambda) -> String {
+fn labels_path(dir: &str, arm: LabelSet) -> String {
     format!("{}/test.labels", labels_dir(dir, arm))
 }
 
-fn labels_manifest_path(dir: &str, arm: ArmLambda) -> String {
+fn labels_manifest_path(dir: &str, arm: LabelSet) -> String {
     format!("{}/manifest.txt", labels_dir(dir, arm))
 }
 
 /// The polyline a polyline label set was labelled at (`Polyline::values_text`), beside its labels.
 fn polyline_path(dir: &str) -> String {
-    format!("{}/polyline.txt", labels_dir(dir, ArmLambda::Polyline))
+    format!("{}/polyline.txt", labels_dir(dir, LabelSet::Polyline))
 }
 
 /// A label file's header lambda: a constant's own, and for the polyline a value no constant takes.
 const POLYLINE_HEADER_LAMBDA: f64 = -1.0;
 
-fn header_lambda(arm: ArmLambda) -> f64 {
+fn header_lambda(arm: LabelSet) -> f64 {
     arm.constant().unwrap_or(POLYLINE_HEADER_LAMBDA)
 }
 
 /// The arms of `labelling` whose label set `dir` lacks.
-fn missing(dir: &str, labelling: &Labelling) -> Vec<ArmLambda> {
+fn missing(dir: &str, labelling: &Labelling) -> Vec<LabelSet> {
     labelling.arms().iter().copied().filter(|&arm| !label_set_frozen(dir, arm)).collect()
 }
 
 /// An error when `dir` holds a polyline label set frozen at another polyline than `labelling`'s: a
 /// polyline measured again, whose set must be deleted to be frozen at the new one.
 fn check_polyline(dir: &str, labelling: &Labelling) -> Result<(), String> {
-    let (Some(polyline), true) = (labelling.polyline(), label_set_frozen(dir, ArmLambda::Polyline)) else {
+    let (Some(polyline), true) = (labelling.polyline(), label_set_frozen(dir, LabelSet::Polyline)) else {
         return Ok(());
     };
     let path = polyline_path(dir);
@@ -294,7 +294,7 @@ fn check_polyline(dir: &str, labelling: &Labelling) -> Result<(), String> {
     if frozen.replace("\r\n", "\n") != polyline.values_text() {
         return Err(format!(
             "{} was labelled at another polyline than the one measured now: delete it, and the next training labels it again",
-            labels_dir(dir, ArmLambda::Polyline)
+            labels_dir(dir, LabelSet::Polyline)
         ));
     }
     Ok(())
@@ -354,7 +354,7 @@ fn subset(frozen: u64, rows: u64) -> Vec<bool> {
 }
 
 /// Whether `arm`'s label set of `dir` is complete.
-fn label_set_frozen(dir: &str, arm: ArmLambda) -> bool {
+fn label_set_frozen(dir: &str, arm: LabelSet) -> bool {
     std::path::Path::new(&labels_manifest_path(dir, arm)).exists()
 }
 
@@ -523,10 +523,10 @@ fn draw(
                 .arms()
                 .iter()
                 .map(|&arm| match arm {
-                    ArmLambda::Constant(lambda) => self_play_game_labels(&collected, lambda, game_index, curve),
+                    LabelSet::Constant(lambda) => self_play_game_labels(&collected, lambda, game_index, curve),
                     // The direct blend is linear in lambda, so each searched position's label is the
                     // blend of its two ends at its own lambda; the final position, never kept, gets 0.
-                    ArmLambda::Polyline => {
+                    LabelSet::Polyline => {
                         let at_zero = self_play_game_labels(&collected, 0.0, game_index, curve);
                         let at_one = self_play_game_labels(&collected, 1.0, game_index, curve);
                         let n = collected.scores_pawns().len();
@@ -610,7 +610,7 @@ fn write_positions(dir: &str, positions: &[CanonicalPosition]) {
 /// polyline, before the manifest that marks it complete.
 fn write_label_sets(dir: &str, labelling: &Labelling, labels: &[Vec<f32>], manifest: &Manifest) {
     for (&arm, set) in labelling.arms().iter().zip(labels) {
-        assert_eq!(set.len() as u64, manifest.rows, "lambda {arm} has {} labels for {} positions", set.len(), manifest.rows);
+        assert_eq!(set.len() as u64, manifest.rows, "label set {} has {} labels for {} positions", arm.text(), set.len(), manifest.rows);
         let set_dir = labels_dir(dir, arm);
         std::fs::create_dir_all(&set_dir).unwrap_or_else(|error| panic!("failed to create {set_dir}: {error}"));
         let path = labels_path(dir, arm);
@@ -620,7 +620,7 @@ fn write_label_sets(dir: &str, labelling: &Labelling, labels: &[Vec<f32>], manif
             write_label(&mut encoder, label);
         }
         finish_file(&path, encoder);
-        if let (ArmLambda::Polyline, Some(polyline)) = (arm, labelling.polyline()) {
+        if let (LabelSet::Polyline, Some(polyline)) = (arm, labelling.polyline()) {
             let path = polyline_path(dir);
             std::fs::write(&path, polyline.values_text()).unwrap_or_else(|error| panic!("failed to write {path}: {error}"));
         }
@@ -733,13 +733,13 @@ mod tests {
 
     #[test]
     fn a_label_set_is_named_after_its_lambda() {
-        assert_eq!(labels_path("data/lc0/frozen", ArmLambda::Constant(0.25)), "data/lc0/frozen/lambda-0.25/test.labels");
-        assert_eq!(labels_path("data/lc0/frozen", ArmLambda::Polyline), "data/lc0/frozen/lambda-polyline/test.labels");
+        assert_eq!(labels_path("data/lc0/frozen", LabelSet::Constant(0.25)), "data/lc0/frozen/lambda-0.25/test.labels");
+        assert_eq!(labels_path("data/lc0/frozen", LabelSet::Polyline), "data/lc0/frozen/lambda-polyline/test.labels");
     }
 
-    /// Constant arms at `lambdas`, as the grid labels them.
+    /// Constant label sets at `lambdas`.
     fn at(lambdas: &[f64]) -> Labelling {
-        let arms: Vec<ArmLambda> = lambdas.iter().map(|&lambda| ArmLambda::Constant(lambda)).collect();
+        let arms: Vec<LabelSet> = lambdas.iter().map(|&lambda| LabelSet::Constant(lambda)).collect();
         Labelling::new(&arms, None).unwrap()
     }
 
@@ -752,7 +752,7 @@ mod tests {
         let dir = format!("{}/frozen", fixture_dir("polyline-set"));
         let files = write_segments(&games_dir, &[(GAMES.repeat(20), 100), (GAMES.repeat(20), 100)]);
         let polyline = Polyline::new([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]);
-        let both = Labelling::new(&[ArmLambda::Constant(0.5), ArmLambda::Polyline], Some(polyline)).unwrap();
+        let both = Labelling::new(&[LabelSet::Constant(0.5), LabelSet::Polyline], Some(polyline)).unwrap();
         ensure(&dir, &games_dir, || Ok(files.clone()), 50, &both, &LC0_CURVE).unwrap();
         assert!(is_complete(&dir, 50, &both));
         let records = read(&dir, 50, &both).unwrap();
@@ -788,7 +788,7 @@ mod tests {
         }
 
         let never = || -> Result<Vec<StreamFile>, String> { panic!("a frozen set lists no files") };
-        let other = Labelling::new(&[ArmLambda::Polyline], Some(Polyline::new([0.5; 10]))).unwrap();
+        let other = Labelling::new(&[LabelSet::Polyline], Some(Polyline::new([0.5; 10]))).unwrap();
         assert!(!is_complete(&dir, 50, &other));
         let refused = ensure(&dir, &games_dir, never, 50, &other, &LC0_CURVE).expect_err("another polyline");
         assert!(refused.contains("delete it"), "{refused}");

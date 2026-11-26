@@ -134,7 +134,7 @@ pub(crate) fn may_snapshot(player: &str) -> Result<(), String> {
         return Ok(());
     }
     let parsed = players::parse_network_name(player)?;
-    if parsed.candidate.is_some() {
+    if parsed.candidate {
         return Err(format!("{player} is a candidate: only pesto or a generation's winner is snapshotted"));
     }
     let local = players::attempt_dir(&parsed.attempt())?;
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn only_pesto_or_a_generations_winner_is_snapshotted() {
         assert!(may_snapshot("pesto").is_ok());
-        assert!(may_snapshot("fine-g1-l0.05-a1").unwrap_err().contains("candidate"));
+        assert!(may_snapshot("fine-g1-lpolyline-a1").unwrap_err().contains("candidate"));
         assert!(may_snapshot("stockfish-5").is_err());
     }
 

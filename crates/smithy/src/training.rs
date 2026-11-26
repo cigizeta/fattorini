@@ -2,13 +2,13 @@
 //! under one `AdamW`, over one stream, on a budget (`budget.rs`). `train` is the loop, for every track;
 //! what differs between the tracks comes in through its closures.
 //!
-//! It replaced the lockstep of a grid's lambdas over a stacked network (2026-11-26): no config trains a
-//! grid any more, and patience, its stages and rollbacks, went with it. A grid's lambdas, while the
-//! grid's code lasts, train one after another.
+//! It replaced the lockstep of a grid's lambdas over a stacked network (2026-11-26), with the grid
+//! itself and patience: a generation trains one run, its positions labelled at the polyline, its
+//! labels the batches' one column.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use fattorini::pipeline::preprocessing_config::{self, ArmLambda};
+use fattorini::pipeline::preprocessing_config;
 use tch::{nn, Tensor};
 
 use crate::adamw::AdamW;
@@ -22,11 +22,11 @@ use crate::{
     transformer_batch, transformer_network,
 };
 
-/// One run: its own files in `run_dir` (a lambda's directory), where it stands, and `column`, where its
-/// labels sit in every batch.
+/// The label column a run reads in every batch: the polyline's, the batches' only one.
+const COLUMN: usize = 0;
+
+/// One run: its own files in `run_dir` (`generation::run_dir`), and where it stands.
 pub(crate) struct Arm {
-    pub(crate) lambda: ArmLambda,
-    pub(crate) column: usize,
     pub(crate) run_dir: String,
     pub(crate) checkpoints_dir: String,
     pub(crate) model_path: String,
@@ -50,11 +50,7 @@ pub(crate) fn budget_of(config: &NetConfig, train_rows: u64) -> Budget {
 
 /// Opens one run's training, in `run_dir`: freezes or checks its `attempt_config.txt` and replays where
 /// it stands. Its weights are loaded later (`open_one_arm`). `source` is the dataset it trains on.
-#[allow(clippy::too_many_arguments)]
-fn open_arm(
-    config: &NetConfig, budget: &Budget, source: &str, run_dir: String, lambda: ArmLambda, column: usize, train_rows: u64,
-    test_rows: u64,
-) -> Arm {
+fn open_arm(config: &NetConfig, budget: &Budget, source: &str, run_dir: String, train_rows: u64, test_rows: u64) -> Arm {
     let warmup_rounds = config.training.warmup_rounds.expect("net_config::load already validated this is Some");
     let rates = &config.training.learning_rate;
     let steps_per_round = config.training.steps_per_round;
@@ -80,7 +76,7 @@ fn open_arm(
         ("curve", format!("{} bce", config.curve().describe())),
         // The dataset actually trained on.
         ("parent", source.to_string()),
-        ("lambda", preprocessing_config::lambda_text(lambda)),
+        ("lambda", preprocessing_config::POLYLINE_TEXT.to_string()),
         ("learning_rate", rates.iter().map(|rate| format!("{rate:e}")).collect::<Vec<String>>().join(" ")),
         ("training_batch_size", config.training.training_batch_size.to_string()),
         ("steps_per_round", steps_per_round.to_string()),
@@ -93,7 +89,7 @@ fn open_arm(
     attempt_config::freeze_or_verify(&format!("{run_dir}/{}", attempt_config::FILE), &frozen);
 
     let standing = replay(&history_path, budget);
-    Arm { lambda, column, run_dir, checkpoints_dir, model_path, optimizer_path, history_path, round_progress_path, standing }
+    Arm { run_dir, checkpoints_dir, model_path, optimizer_path, history_path, round_progress_path, standing }
 }
 
 /// A network one run trains: its losses against label column `column` of a batch.
@@ -133,8 +129,6 @@ pub(crate) struct OneArm<M: Model> {
     pub(crate) network: M,
     pub(crate) vs: nn::VarStore,
     pub(crate) optimizer: AdamW,
-    column: usize,
-    lambda: ArmLambda,
     model_path: String,
     optimizer_path: String,
     round_progress_path: String,
@@ -165,7 +159,7 @@ impl<M: Model> round::Arms<M::Batch> for OneArm<M> {
 
     fn train_step(&mut self, batch: &M::Batch, stepping: &[bool]) -> Tensor {
         assert!(stepping[0], "one arm always stands where the stream does");
-        let loss = self.network.training_loss(batch, self.column);
+        let loss = self.network.training_loss(batch, COLUMN);
         self.optimizer.zero_grad();
         loss.backward();
         self.optimizer.step();
@@ -173,7 +167,7 @@ impl<M: Model> round::Arms<M::Batch> for OneArm<M> {
     }
 
     fn test_losses(&self, batch: &M::Batch) -> Tensor {
-        self.network.test_loss(batch, self.column).reshape([1])
+        self.network.test_loss(batch, COLUMN).reshape([1])
     }
 
     // The stream's position and the rows into the round are derived from the step count on the way
@@ -186,8 +180,7 @@ impl<M: Model> round::Arms<M::Batch> for OneArm<M> {
             .save(&self.round_progress_path);
         // Not "periodic": `run_round` also calls this the moment a stop is seen.
         log::debug!(
-            "  lambda {}: backup saved ({}/{} steps into this round)",
-            self.lambda,
+            "  training: backup saved ({}/{} steps into this round)",
             self.run_step() % self.steps_per_round,
             self.steps_per_round
         );
@@ -215,8 +208,7 @@ pub(crate) fn open_one_arm<M: Model>(
         // As the round lines count: the round under way, and how far into it, as a backup says.
         let steps = optimizer.step_count() as u64;
         log::info!(
-            "lambda {}: resumed from {} in round {} ({}/{steps_per_round} steps into it)",
-            arm.lambda,
+            "training: resumed from {} in round {} ({}/{steps_per_round} steps into it)",
             arm.run_dir,
             steps / steps_per_round + 1,
             steps % steps_per_round
@@ -232,8 +224,6 @@ pub(crate) fn open_one_arm<M: Model>(
         network,
         vs,
         optimizer,
-        column: arm.column,
-        lambda: arm.lambda,
         model_path: arm.model_path.clone(),
         optimizer_path: arm.optimizer_path.clone(),
         round_progress_path: arm.round_progress_path.clone(),
@@ -245,10 +235,8 @@ pub(crate) fn open_one_arm<M: Model>(
 pub(crate) struct RunParts<'a> {
     /// The dataset trained on, as `attempt_config.txt` freezes it.
     pub(crate) source: &'a str,
-    /// The lambda trained, its run's directory, and its labels' column in every batch.
-    pub(crate) lambda: ArmLambda,
+    /// The run's directory (`generation::run_dir`).
     pub(crate) run_dir: String,
-    pub(crate) column: usize,
     pub(crate) device: tch::Device,
 }
 
@@ -270,7 +258,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
     crate::rounds_display::end_pass();
     let _pass_end = crate::rounds_display::PassEnd;
     let source = parts.source;
-    log::info!("training lambda {} on the dataset of {source}", parts.lambda);
+    log::info!("training on the dataset of {source}, labelled at the polyline");
     let warmup_rounds = config.training.warmup_rounds.expect("net_config::load already validated this is Some");
     let steps_per_round = config.training.steps_per_round;
     let batch_size = config.training.training_batch_size as usize;
@@ -301,7 +289,7 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
     );
     log::info!("device = {:?}", parts.device);
 
-    let mut arm = open_arm(config, &budget, source, parts.run_dir, parts.lambda, parts.column, train_rows, test_rows);
+    let mut arm = open_arm(config, &budget, source, parts.run_dir, train_rows, test_rows);
     // A run interrupted between meeting its budget's end and finishing finishes now.
     if arm.standing.finished {
         finish(&arm, &budget);
@@ -351,13 +339,12 @@ pub(crate) fn train<M: Model, H: Send, T: train_stream::BatchSource + Send, S: t
         );
         history::append_pieces(&pieces_path(&arm.run_dir), 0, &round::losses_of_arm(&test_losses.by_pieces, 0));
         arm.standing = replay(&arm.history_path, &budget);
-        log::info!("lambda {}: starting weights measured, test loss {loss:.6}", arm.lambda);
+        log::info!("training: starting weights measured, test loss {loss:.6}");
     }
 
     let mut train_stream = open_stream(steps_done);
     log::info!(
-        "lambda {}: training from round {} of {}, at rate {:e}",
-        arm.lambda,
+        "training from round {} of {}, at rate {:e}",
         steps_done / steps_per_round + 1,
         budget.total_rounds(),
         budget.rate(steps_done + 1)
@@ -517,7 +504,7 @@ mod tests {
     /// A fresh temporary directory named after `test`, with `config` as its `net.yaml`, and two
     /// training segments of labelled games, a rook up so that no position is K vs K, scattered into its
     /// `buckets` as the server scatters a training set: the config, the bucket directory with its 40
-    /// records, and a test set of those records at lambda 0.7, grouped by piece count.
+    /// records, and a test set of those records at the polyline, grouped by piece count.
     fn fixture(test: &str, config: &str) -> (String, NetConfig, String, GroupedTestSet) {
         let dir = std::env::temp_dir().join(format!("smithy-training-{test}-{}", std::process::id()));
         let dir = dir.to_str().unwrap().replace('\\', "/");
@@ -547,15 +534,15 @@ mod tests {
         (dir, config, buckets, grouped)
     }
 
-    const LAMBDA: ArmLambda = ArmLambda::Constant(0.7);
-
+    /// The polyline's labels, as training reads them, at a polyline of 0.7 throughout.
     fn labelling() -> crate::buckets::Labelling {
-        crate::buckets::Labelling::new(&[LAMBDA], None).unwrap()
+        let polyline = crate::polyline::Polyline::new([0.7; 10]);
+        crate::buckets::Labelling::new(&[crate::buckets::LabelSet::Polyline], Some(polyline)).unwrap()
     }
 
     /// A budget of 2 epochs over 40 rows in batches of 8, rounds of 2 steps: 5 steps an epoch, 10 in
     /// all, rounded up to 10, so 5 rounds.
-    const TRAINING: &str = "training:\n  schedule: budget\n  epochs: 2\n  learning_rate: [1.0e-2, 1.0e-4]\n  \
+    const TRAINING: &str = "training:\n  epochs: 2\n  learning_rate: [1.0e-2, 1.0e-4]\n  \
                             training_batch_size: 8\n  test_batch_size: 8\n  steps_per_round: 2\n  warmup_rounds: 1\n";
 
     /// The run ended: its history from step 0, one round every 2 steps to the budget's end, and its
@@ -586,7 +573,7 @@ mod tests {
             &format!("labels: lc0\narchitecture:\n  kind: psq\n  embedding_dim: 8\n  value_head:\n    hidden_dim: [4]\n{TRAINING}"),
         );
         let device = tch::Device::Cpu;
-        let run_dir = generation::lambda_dir(&dir, LAMBDA);
+        let run_dir = generation::run_dir(&dir);
         let to_batch = round::BatchBuilder {
             prepare: |records: &[CacheRecord]| batch::host_batch(records, FeatureSet::Psq),
             upload: |host: &batch::HostBatch| batch::upload(host, device),
@@ -602,7 +589,7 @@ mod tests {
             let finish = |arm: &Arm, budget: &Budget| {
                 export_budget_candidates(&config, &arm.run_dir, budget);
             };
-            let parts = RunParts { source: "fixture", lambda: LAMBDA, run_dir: run_dir.clone(), column: 0, device };
+            let parts = RunParts { source: "fixture", run_dir: run_dir.clone(), device };
             train(
                 &config, parts, 40, std::slice::from_mut(grouped), open, stream_from, &to_batch, batch::HostBatch::bytes, finish,
                 || {}, &AtomicBool::new(false),
@@ -630,7 +617,7 @@ mod tests {
         );
         let device = tch::Device::Cpu;
         let attention = config.training.attention.unwrap();
-        let run_dir = generation::lambda_dir(&dir, LAMBDA);
+        let run_dir = generation::run_dir(&dir);
         let to_batch = round::BatchBuilder {
             prepare: |records: &[CacheRecord]| transformer_batch::host_batch(records, attention),
             upload: |host: &transformer_batch::HostTransformerBatch| transformer_batch::upload(host, device),
@@ -647,7 +634,7 @@ mod tests {
         let finish = |arm: &Arm, budget: &Budget| {
             export_budget_candidates(&config, &arm.run_dir, budget);
         };
-        let parts = RunParts { source: "fixture", lambda: LAMBDA, run_dir: run_dir.clone(), column: 0, device };
+        let parts = RunParts { source: "fixture", run_dir: run_dir.clone(), device };
         let finished = train(
             &config, parts, train_rows, &mut [grouped], open, stream_from, &to_batch,
             transformer_batch::HostTransformerBatch::bytes, finish, || {}, &AtomicBool::new(false),

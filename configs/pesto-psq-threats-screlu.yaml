@@ -5,9 +5,8 @@
 # teacher.
 
 # The forge. Lambda by progress (2026-11-04, the polyline experiment): each generation trains one
-# arm, each position labelled at the polyline measured on its corpus, straight to the gate. The grid
-# it replaces centred generation 1 on 0.95.
-lambda: polyline
+# run, each position labelled at the polyline measured on its corpus. The grid it replaced centred
+# generation 1 on 0.95.
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
 # gate ends the attempt. Generation 1's are pesto.yaml's.
 training_positions: 1073741824
@@ -41,7 +40,6 @@ training:
   training_batch_size: 4096
   test_batch_size: 16384
   steps_per_round: 4096
-  schedule: budget
   epochs: 4
   learning_rate: [1.0e-3, 1.0e-5]
   warmup_rounds: 1

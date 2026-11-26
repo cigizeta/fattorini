@@ -1083,8 +1083,7 @@ function sideRow(label, side) {
     steps += step("attempt", distinct(ofConfig, (n) => n.attempt).map((r) => option(r, `attempt ${attemptNumber(r)}`, r === network.attempt)).join(""))
       + step("generation", distinct(ofAttempt, (n) => n.generation).map((g) => option(String(g), `generation ${g}`, g === network.generation)).join(""))
       + step("network", ofGeneration.map((n) => {
-        // The winner's lambda beside it, which its name leaves out.
-        const what = n.winner ? `winner (l${lambdaText(n.lambda)})` : `lambda ${lambdaText(n.lambda)}`;
+        const what = n.winner ? "winner" : "candidate";
         // Whether it has a tune is the parameters' select's alone, which offers "its tune" only then:
         // said here too, it read as what this side plays.
         return option(n.name, what, n.name === network.name);

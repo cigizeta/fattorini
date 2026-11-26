@@ -83,7 +83,15 @@ The budget schedule (`Rule::Budget`, its kept checkpoints, which are one arm's r
    `patience_rounds` by name; the two `examples/` configs moved to a budget; the page's patience
    bars, stage and patience columns and stage lines gone; with every config a budget, `load_config`
    already refuses any grid, so the grid is dead at the config level before 2b removes its code);
-   2b, the grid (`smithy.rs`, `ArmLambda::Constant`, `-l` names,
+   2b, the grid (written 2026-11-26: `ArmLambda` removed from the pipeline contract, the developer's
+   choice; a generation's run is `generation::run_dir`, still `lambda-polyline/`; a candidate's name
+   keeps its `-lpolyline-` spelling as a flag, `-l0.70-` refused, a grid's constant winner in
+   `generations.tsv` refused; `smithy`'s label machinery keeps its own `buckets::LabelSet`, constants
+   and the polyline, since `smithy material` reads lambdas 0 and 1 beside the polyline; the
+   fallen-back-to-the-teacher filter gone, a budget never falling back; `lambda:` refused in
+   `configs/`, an attempt's frozen copy keeping `lambda: polyline`, read and ignored, so attempts
+   resume; `grid_center` refused as unknown. For 2c: `material` needs three label columns, so labels
+   stay a matrix there, or `material` reads its sets one at a time) (`smithy.rs`, `ArmLambda::Constant`, `-l` names,
    the page's grid, `lambda:` refused); 2c, labels a scalar, then `Arms` gone and `run_round` on one
    network; 2d, DEV.md, the page's columns, module docs. The whole, as first planned: `train` on the unstacked loop; lockstep reduced to
    `training.rs`; the stack files, grid, patience, grid-era readers and their tests deleted; labels a

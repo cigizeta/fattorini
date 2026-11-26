@@ -5,9 +5,8 @@
 # lc0-halfk-threats-screlu-hidden-512 by its schedule alone, as lc0-halfk-threats-screlu-hidden-budget
 # from its own patience config.
 
-# The forge. Lambda by progress: each generation trains one arm, each position labelled at the
-# polyline measured on its corpus. A budget trains one arm: polyline only.
-lambda: polyline
+# The forge. Each generation trains one run, each position labelled at the polyline measured on its
+# corpus.
 # From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
 # gate ends the attempt. Generation 1's are Lc0's corpus (lc0.yaml).
 training_positions: 1073741824
@@ -43,7 +42,6 @@ training:
   steps_per_round: 4096
   # From 1e-3 to 1e-5 (the developer, 2026-11-17): 3e-3 was too high, the 512 attempt's loss rising after
   # 9 rounds at it. The candidates span about 1e-4 (epoch 2) to 1e-5 (epoch 4).
-  schedule: budget
   epochs: 4
   learning_rate: [1.0e-3, 1.0e-5]
   warmup_rounds: 1

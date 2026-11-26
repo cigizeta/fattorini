@@ -391,27 +391,16 @@ pub struct Training {
     /// Patience's, which is no longer trained (2026-11-26): read only so that `load` refuses a config
     /// still carrying it, naming the key, rather than ignoring it.
     pub patience_rounds: Option<u64>,
-    /// How the rate moves and when training ends: `budget`, the only one and the default, `epochs`
-    /// passes over the training set, the rate falling geometrically from `learning_rate`'s first rate
-    /// to its second, the candidate chosen afterwards by a round robin among checkpoints from half the
-    /// budget to its end (`budget.rs`). Patience is refused by name, as an unknown variant.
-    #[serde(default)]
-    pub schedule: Schedule,
-    /// The budget's length in passes over the training set; `load` requires it.
+    /// The budget's length in passes over the training set; `load` requires it. The budget is the one
+    /// schedule: the rate falls geometrically from `learning_rate`'s first rate to its second over
+    /// `epochs` passes, the candidate chosen afterwards by a round robin among checkpoints from half the
+    /// budget to its end (`budget.rs`). The former `schedule:` key is refused by the smithy's
+    /// `load_config`.
     pub epochs: Option<f64>,
     /// Read by nothing: every architecture trains on its training set fully shuffled, scattered into
     /// buckets and shuffled again every epoch, with no buffer to size. Kept so that `load` refuses
     /// the key rather than silently ignoring a value meant to take effect.
     pub shuffle_buffer: Option<u64>,
-}
-
-/// `net.yaml`'s `training.schedule` field.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Schedule {
-    /// A fixed number of epochs, the rate falling geometrically, candidates chosen by a round robin.
-    #[default]
-    Budget,
 }
 
 /// `net.yaml`'s `training.attention` field -- `full` attends every token pair, `kings-only`
@@ -560,17 +549,17 @@ pub fn read(path: &str) -> Result<NetConfig, String> {
     ensure!(
         config.training.patience_rounds.is_none(),
         "{path}: training.patience_rounds is patience's, which is no longer trained: give the config \
-         schedule: budget, its epochs and two rates, start then end"
+         the budget's epochs and two rates, start then end"
     );
     match config.training.epochs {
         Some(epochs) => {
             ensure!(epochs.is_finite() && epochs > 0.0, "{path}: training.epochs must be a positive number, got {epochs}")
         }
-        None => return Err(format!("{path}: training.epochs is missing, and schedule: budget needs it")),
+        None => return Err(format!("{path}: training.epochs is missing, and the budget needs it")),
     }
     ensure!(
         rates.len() == 2,
-        "{path}: schedule: budget takes a learning_rate of exactly two rates, start then end, got {}",
+        "{path}: the budget takes a learning_rate of exactly two rates, start then end, got {}",
         rates.len()
     );
     for rate in rates {
@@ -706,15 +695,6 @@ mod tests {
     }
 
     #[test]
-    fn load_refuses_a_patience_schedule_by_name() {
-        let path = budget_fixture("schedule-patience", "psq", "  schedule: patience\n  learning_rate: [1.0e-3, 1.0e-5]\n");
-        let result = read(path.to_str().unwrap());
-        std::fs::remove_file(&path).ok();
-        let error = result.expect_err("schedule: patience should be refused");
-        assert!(error.contains("patience"), "{error}");
-    }
-
-    #[test]
     #[should_panic(expected = "training.shuffle_buffer is read by nothing any more")]
     fn load_rejects_a_transformer_with_a_shuffle_buffer_field() {
         let pid = std::process::id();
@@ -809,7 +789,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
-    /// An NNUE fixture under `schedule: budget`, its schedule lines given verbatim.
+    /// An NNUE fixture, its budget lines given verbatim.
     fn budget_fixture(name: &str, kind: &str, schedule: &str) -> std::path::PathBuf {
         let pid = std::process::id();
         let path = std::env::temp_dir().join(format!("smithy-net-config-test-{pid}-budget-{name}.yaml"));
@@ -827,24 +807,13 @@ mod tests {
 
     #[test]
     fn load_accepts_a_budget() {
-        let path = budget_fixture("ok", "psq", "  schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n");
+        let path = budget_fixture("ok", "psq", "  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n");
 
         let config = load(path.to_str().unwrap());
 
         std::fs::remove_file(&path).ok();
-        assert_eq!(config.training.schedule, Schedule::Budget);
         assert_eq!(config.training.epochs, Some(4.0));
         assert_eq!(config.training.learning_rate, vec![1.0e-3, 1.0e-5]);
-    }
-
-    #[test]
-    fn load_defaults_the_schedule_to_the_budget() {
-        let path = nnue_fixture("default-schedule", "[1.0e-3, 1.0e-5]");
-
-        let config = load(path.to_str().unwrap());
-
-        std::fs::remove_file(&path).ok();
-        assert_eq!(config.training.schedule, Schedule::Budget);
     }
 
     /// `read`'s error for a budget fixture, which must exist.
@@ -857,27 +826,27 @@ mod tests {
 
     #[test]
     fn load_refuses_a_budget_without_epochs() {
-        let error = budget_refusal("no-epochs", "psq", "  schedule: budget\n  learning_rate: [1.0e-3, 1.0e-5]\n");
+        let error = budget_refusal("no-epochs", "psq", "  learning_rate: [1.0e-3, 1.0e-5]\n");
         assert!(error.contains("training.epochs is missing"), "{error}");
     }
 
     #[test]
     fn load_refuses_a_budget_with_a_non_positive_epochs() {
-        let error = budget_refusal("zero-epochs", "psq", "  schedule: budget\n  epochs: 0\n  learning_rate: [1.0e-3, 1.0e-5]\n");
+        let error = budget_refusal("zero-epochs", "psq", "  epochs: 0\n  learning_rate: [1.0e-3, 1.0e-5]\n");
         assert!(error.contains("must be a positive number"), "{error}");
     }
 
     #[test]
     fn load_refuses_a_budget_without_exactly_two_rates() {
         for rates in ["1.0e-3", "[1.0e-3, 1.0e-4, 1.0e-5]"] {
-            let error = budget_refusal("rates", "psq", &format!("  schedule: budget\n  epochs: 4\n  learning_rate: {rates}\n"));
+            let error = budget_refusal("rates", "psq", &format!("  epochs: 4\n  learning_rate: {rates}\n"));
             assert!(error.contains("exactly two rates"), "{rates}: {error}");
         }
     }
 
     #[test]
     fn load_refuses_a_budget_whose_rate_rises() {
-        let error = budget_refusal("rising", "psq", "  schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-5, 1.0e-3]\n");
+        let error = budget_refusal("rising", "psq", "  epochs: 4\n  learning_rate: [1.0e-5, 1.0e-3]\n");
         assert!(error.contains("strictly decreasing"), "{error}");
     }
 
@@ -886,18 +855,9 @@ mod tests {
         let error = budget_refusal(
             "patience",
             "psq",
-            "  schedule: budget\n  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n  patience_rounds: 6\n",
+            "  epochs: 4\n  learning_rate: [1.0e-3, 1.0e-5]\n  patience_rounds: 6\n",
         );
         assert!(error.contains("which is no longer trained"), "{error}");
-    }
-
-    #[test]
-    fn load_accepts_a_budget_on_a_transformer() {
-        let path = transformer_fixture_with("budget", "", "  warmup_rounds: 0\n  schedule: budget\n  epochs: 4\n");
-        let result = read(path.to_str().unwrap());
-        std::fs::remove_file(&path).ok();
-        let config = result.expect("a transformer trains under a budget, its round robin skipped");
-        assert_eq!(config.training.schedule, Schedule::Budget);
     }
 
     #[test]
@@ -1146,7 +1106,6 @@ mod tests {
         fattorini::pipeline::repository_root::enter_for_tests();
         for name in ["lc0-halfk-threats-screlu-hidden-budget", "lc0-halfk-threats-screlu-hidden-512-budget"] {
             let config = load(&format!("configs/{name}.yaml"));
-            assert_eq!(config.training.schedule, Schedule::Budget, "{name}");
             assert_eq!((config.training.epochs, config.training.learning_rate.clone()), (Some(4.0), vec![1.0e-3, 1.0e-5]), "{name}");
         }
     }

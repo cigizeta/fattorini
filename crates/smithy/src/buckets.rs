@@ -43,7 +43,7 @@ use fattorini::pipeline::data_root;
 use fattorini::labels::Curve;
 use fattorini::tablebase::SyzygyTablebase;
 
-use fattorini::pipeline::preprocessing_config::ArmLambda;
+use fattorini::pipeline::preprocessing_config::POLYLINE_TEXT;
 
 use super::cache::{self, CacheRecord, Progress};
 use super::polyline::Polyline;
@@ -164,24 +164,62 @@ fn write_record(out: &mut Vec<u8>, canonical: &CanonicalPosition, at_zero: f32, 
     out.extend_from_slice(&progress.n.to_le_bytes());
 }
 
-/// The labels of `arms`, in that order: a constant arm's at its lambda, a polyline arm's at
+/// A set of labels the buckets are read with: every position at one lambda, or each at the
+/// polyline's lambda for its progress through its game. Training reads the polyline's alone; a check
+/// such as `smithy material` reads constants beside it (Lc0's Q alone at 0, the game's result alone at
+/// 1). Spelled as the records spell it: a constant with two decimals, `0.00`, the polyline by its name.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum LabelSet {
+    Constant(f64),
+    Polyline,
+}
+
+impl LabelSet {
+    /// The constant lambda, `None` for the polyline.
+    pub(crate) fn constant(self) -> Option<f64> {
+        match self {
+            LabelSet::Constant(lambda) => Some(lambda),
+            LabelSet::Polyline => None,
+        }
+    }
+
+    /// Its spelling: `0.70`, two decimals, or `polyline`.
+    pub(crate) fn text(self) -> String {
+        match self {
+            LabelSet::Constant(lambda) => format!("{lambda:.2}"),
+            LabelSet::Polyline => POLYLINE_TEXT.to_string(),
+        }
+    }
+
+    /// Its directory in a frozen test set, `lambda-0.70` or `lambda-polyline`.
+    pub(crate) fn dir_name(self) -> String {
+        format!("lambda-{}", self.text())
+    }
+}
+
+/// A list of label sets as a message shows it: `[0.00, 1.00, polyline]`.
+pub(crate) fn label_sets_text(sets: &[LabelSet]) -> String {
+    format!("[{}]", sets.iter().map(|set| set.text()).collect::<Vec<String>>().join(", "))
+}
+
+/// The labels of `arms`, in that order: a constant set's at its lambda, the polyline's at
 /// `polyline`'s lambda for the record's progress.
 #[derive(Clone)]
 pub(crate) struct Labelling {
-    arms: Vec<ArmLambda>,
+    arms: Vec<LabelSet>,
     polyline: Option<Polyline>,
 }
 
 impl Labelling {
     /// Refused when an arm is the polyline and no polyline is given.
-    pub(crate) fn new(arms: &[ArmLambda], polyline: Option<Polyline>) -> Result<Labelling, String> {
-        if polyline.is_none() && arms.contains(&ArmLambda::Polyline) {
+    pub(crate) fn new(arms: &[LabelSet], polyline: Option<Polyline>) -> Result<Labelling, String> {
+        if polyline.is_none() && arms.contains(&LabelSet::Polyline) {
             return Err("a polyline arm without its polyline".to_string());
         }
         Ok(Labelling { arms: arms.to_vec(), polyline })
     }
 
-    pub(crate) fn arms(&self) -> &[ArmLambda] {
+    pub(crate) fn arms(&self) -> &[LabelSet] {
         &self.arms
     }
 
@@ -189,10 +227,10 @@ impl Labelling {
         self.polyline.as_ref()
     }
 
-    pub(crate) fn lambda(&self, arm: ArmLambda, progress: Progress) -> f64 {
+    pub(crate) fn lambda(&self, arm: LabelSet, progress: Progress) -> f64 {
         match arm {
-            ArmLambda::Constant(lambda) => lambda,
-            ArmLambda::Polyline => {
+            LabelSet::Constant(lambda) => lambda,
+            LabelSet::Polyline => {
                 let polyline = self.polyline.as_ref().expect("Labelling::new requires the polyline");
                 polyline.at(usize::from(progress.i), usize::from(progress.n))
             }
@@ -744,9 +782,9 @@ mod tests {
         prepare_in_batches(dir, files, threads, stop, None, say, BATCH_POSITIONS, None, LC0_CURVE)
     }
 
-    /// `dir`'s buckets labelled at constant `lambdas`, as the grid opens them.
+    /// `dir`'s buckets labelled at constant `lambdas`.
     fn open(dir: &str, lambdas: &[f64], emitted: u64) -> BucketStream {
-        let arms: Vec<ArmLambda> = lambdas.iter().map(|&lambda| ArmLambda::Constant(lambda)).collect();
+        let arms: Vec<LabelSet> = lambdas.iter().map(|&lambda| LabelSet::Constant(lambda)).collect();
         BucketStream::open(dir, Labelling::new(&arms, None).unwrap(), emitted).unwrap()
     }
 
@@ -969,7 +1007,7 @@ mod tests {
         let buckets = format!("{dir}/buckets");
         assert_eq!(prepare(&buckets, &files, 2, &AtomicBool::new(false), &quiet), Ok(Prepared::Done(25)));
         let polyline = Polyline::new([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]);
-        let labelling = Labelling::new(&[ArmLambda::Polyline, ArmLambda::Constant(0.3)], Some(polyline)).unwrap();
+        let labelling = Labelling::new(&[LabelSet::Polyline, LabelSet::Constant(0.3)], Some(polyline)).unwrap();
         let epoch = BucketStream::open(&buckets, labelling, 0).unwrap().next_batch(25);
         let as_key = |record: &CacheRecord, labels: Vec<f32>| {
             let rounded: Vec<i64> = labels.iter().map(|&label| (f64::from(label) * 1e5).round() as i64).collect();
@@ -1017,8 +1055,8 @@ mod tests {
 
     #[test]
     fn a_polyline_arm_without_its_polyline_is_refused() {
-        assert!(Labelling::new(&[ArmLambda::Constant(0.5), ArmLambda::Polyline], None).is_err());
-        assert!(Labelling::new(&[ArmLambda::Constant(0.5)], None).is_ok());
+        assert!(Labelling::new(&[LabelSet::Constant(0.5), LabelSet::Polyline], None).is_err());
+        assert!(Labelling::new(&[LabelSet::Constant(0.5)], None).is_ok());
     }
 
     /// A line written before the curve was recorded, naming the tables alone, is scattered again

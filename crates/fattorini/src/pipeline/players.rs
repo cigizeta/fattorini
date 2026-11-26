@@ -1,20 +1,21 @@
 //! What a network player's name means, for both binaries: `arena` plays it and takes its snapshot,
 //! the smithy trains and tunes it, and neither may read a name differently from the other.
 //!
-//! - `<config>-g<g>-l<lambda>-a<n>` and `<config>-g<g>-a<n>` (`NetworkName`), of attempt `<n>` of
-//!   `<config>` (`attempt_name`: `<config>-a<n>`) in `data/networks/<config>/attempt-<n>/`: that
-//!   lambda's candidate in generation `g`, or the generation's winner as its `generations.tsv` records
+//! - `<config>-g<g>-lpolyline-a<n>` and `<config>-g<g>-a<n>` (`NetworkName`), of attempt `<n>` of
+//!   `<config>` (`attempt_name`: `<config>-a<n>`) in `data/networks/<config>/attempt-<n>/`: generation
+//!   `g`'s candidate, its polyline run's, or the generation's winner as its `generations.tsv` records
 //!   it.
 //!
 //! A training run is an attempt (2026-11-19): names spelled `-r<n>` and directories `run-<n>/` from
-//! before are refused: every `data/` was migrated that day.
+//! before are refused: every `data/` was migrated that day. A grid's constant lambdas, `-l0.70-` and
+//! winners recorded as `0.70`, are refused since the grid's removal (2026-11-26): their files stay on
+//! the remote, unread.
 //!
 //! This machine's copy of an attempt first, then the remote's (`remote::remote_path`): an attempt's
 //! closed generations move there, and every machine reads them where they are.
 
 use std::path::Path;
 
-use super::preprocessing_config::ArmLambda;
 use super::{generation, preprocessing_config, remote};
 use crate::nnue::{self, Tuning, SEARCH_PARAMETERS_FILE, TIME_PARAMETERS_FILE};
 use crate::search::{SearchParameters, TimeParameters};
@@ -233,16 +234,20 @@ pub fn attempts_in(config_dir: &str) -> Vec<u32> {
 }
 
 /// A forge attempt's network, as its name says: the config, the attempt's number, the generation, and
-/// for one lambda's candidate its lambda. A generation's winner has none: a generation has at most
-/// one, so `g<g>` alone names it.
+/// whether it is the generation's candidate. A generation has one run and at most one winner, so
+/// `g<g>` alone names either.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkName {
     pub config: String,
     pub attempt_number: u32,
     pub generation: u32,
-    /// The candidate's lambda; `None` for the generation's winner.
-    pub candidate: Option<ArmLambda>,
+    /// Whether it names the generation's candidate rather than its winner.
+    pub candidate: bool,
 }
+
+/// A candidate's part of its name, `l` and its run's lambda as every record spells it: the polyline,
+/// the one a run trains at since the grid's removal.
+const CANDIDATE_PART: &str = "lpolyline";
 
 impl NetworkName {
     /// Its attempt's name (`attempt_name`).
@@ -250,22 +255,22 @@ impl NetworkName {
         attempt_name(&self.config, self.attempt_number)
     }
 
-    /// Its name: `<config>-g<g>-l<lambda>-a<n>` for a candidate, `<config>-g<g>-a<n>` for a winner,
-    /// each part marked by its letter and the attempt last. The lambda is spelled as its directory
-    /// spells it, with two decimals (`preprocessing_config::lambda_text`).
+    /// Its name: `<config>-g<g>-lpolyline-a<n>` for the candidate, `<config>-g<g>-a<n>` for the
+    /// winner, each part marked by its letter and the attempt last.
     pub fn text(&self) -> String {
         let (config, attempt, generation) = (&self.config, self.attempt_number, self.generation);
-        match self.candidate {
-            Some(lambda) => format!("{config}-g{generation}-l{}-a{attempt}", preprocessing_config::lambda_text(lambda)),
-            None => format!("{config}-g{generation}-a{attempt}"),
+        if self.candidate {
+            format!("{config}-g{generation}-{CANDIDATE_PART}-a{attempt}")
+        } else {
+            format!("{config}-g{generation}-a{attempt}")
         }
     }
 }
 
 /// The name of attempt `attempt`'s network (`NetworkName::text`) in generation `generation`: its
-/// winner when `candidate` is `None`, else its candidate at that lambda. `attempt` is an attempt's
-/// name, as `attempt_name` writes it; anything else is a bug, and panics.
-pub fn network_player_name(attempt: &str, generation: u32, candidate: Option<ArmLambda>) -> String {
+/// candidate when `candidate`, else its winner. `attempt` is an attempt's name, as `attempt_name`
+/// writes it; anything else is a bug, and panics.
+pub fn network_player_name(attempt: &str, generation: u32, candidate: bool) -> String {
     let (config, attempt_number) = parse_attempt(attempt).unwrap_or_else(|message| panic!("{message}"));
     NetworkName { config: config.to_string(), attempt_number, generation, candidate }.text()
 }
@@ -279,43 +284,35 @@ fn numbered(part: &str, letter: char) -> Option<u32> {
     digits.parse().ok().filter(|&n| n >= 1)
 }
 
-/// `part` as `l<lambda>`: a constant in `[0, 1]`, spelled with two decimals as every record spells it,
-/// so `l0.7` is refused for `l0.70`; or `lpolyline`.
-fn lambda_part(part: &str) -> Option<ArmLambda> {
-    let text = part.strip_prefix('l')?;
-    let lambda = ArmLambda::parse(text).ok()?;
-    let in_range = lambda.constant().is_none_or(|constant| (0.0..=1.0).contains(&constant));
-    (in_range && preprocessing_config::lambda_text(lambda) == text).then_some(lambda)
-}
-
 /// `NetworkName::text` read back, by its letters from the right, not by counting hyphens: `a<n>`
-/// last, then either `l<lambda>` and `g<g>`, or `g<g>` alone; the config is what is left. Any other
-/// spelling, the old `-r<n>` before attempts and `<run>-NNNN[-<lambda>]` among them, is refused.
+/// last, then either `lpolyline` and `g<g>`, or `g<g>` alone; the config is what is left. Any other
+/// spelling, the old `-r<n>` before attempts, `<run>-NNNN[-<lambda>]` and a grid's `-l0.70-` among
+/// them, is refused.
 pub fn parse_network_name(name: &str) -> Result<NetworkName, String> {
     let not_a_player = || {
         format!(
             "{name:?} is not a player: pesto, stockfish-<level>, stockfish-elo-<rating>, an engine of \
              data/engines.yaml, <config>-g<g>-a<n> (generation g's winner in attempt n) or \
-             <config>-g<g>-l<lambda>-a<n> (that lambda's candidate in generation g); a name in -r<n> \
-             is from before attempts (2026-11-19), when attempts were called runs"
+             <config>-g<g>-lpolyline-a<n> (generation g's candidate); a name in -r<n> is from before \
+             attempts (2026-11-19), when attempts were called runs, and one in -l<constant>- a grid's, \
+             no longer read (2026-11-26)"
         )
     };
     let parse = || -> Option<NetworkName> {
         let (rest, attempt) = name.rsplit_once('-')?;
         let attempt_number = numbered(attempt, 'a')?;
         let (rest, last) = rest.rsplit_once('-')?;
-        let (rest, generation_part, candidate) = match lambda_part(last) {
-            Some(lambda) => {
-                let (rest, generation_part) = rest.rsplit_once('-')?;
-                (rest, generation_part, Some(lambda))
-            }
-            None => (rest, last, None),
+        let (rest, generation_part, candidate) = if last == CANDIDATE_PART {
+            let (rest, generation_part) = rest.rsplit_once('-')?;
+            (rest, generation_part, true)
+        } else {
+            (rest, last, false)
         };
         let generation = numbered(generation_part, 'g')?;
         // A config whose last part reads as a name's own part would make a name read two ways:
-        // `betty-l0.70-g2-a1`, the lambda out of place, is refused, not read as config `betty-l0.70`.
-        let ends_as_a_part =
-            rest.rsplit_once('-').is_some_and(|(_, tail)| lambda_part(tail).is_some() || numbered(tail, 'g').is_some());
+        // `betty-lpolyline-g2-a1`, the part out of place, is refused, not read as config
+        // `betty-lpolyline`.
+        let ends_as_a_part = rest.rsplit_once('-').is_some_and(|(_, tail)| tail == CANDIDATE_PART || numbered(tail, 'g').is_some());
         if rest.is_empty() || is_attempt_suffixed(rest) || ends_as_a_part {
             return None;
         }
@@ -353,27 +350,25 @@ pub fn resolve_network_file_in(name: &str, attempt_dir: &dyn Fn(&str) -> Result<
     attempt_network_path(&dir, parsed.generation, parsed.candidate).map_err(|message| format!("{name:?}: {message}"))
 }
 
-/// The engine file an attempt's player plays with, in `attempt_dir`:
-///
-/// - a candidate named, its lambda: that lambda's candidate in generation `generation_number`;
-/// - none: the generation's winner, as `generations.tsv` records it (`attempt_winner`).
-pub fn attempt_network_path(attempt_dir: &str, generation_number: u32, candidate: Option<ArmLambda>) -> Result<String, String> {
+/// The engine file an attempt's player plays with, in `attempt_dir`: generation `generation_number`'s
+/// candidate, its run's; the winner the same file, once `generations.tsv` records the generation as
+/// passed (`attempt_winner`).
+pub fn attempt_network_path(attempt_dir: &str, generation_number: u32, candidate: bool) -> Result<String, String> {
     let generation_dir = format!("{attempt_dir}/{}", generation_dir_name(generation_number));
-    let lambda = match candidate {
-        Some(lambda) => lambda,
-        None => attempt_winner(attempt_dir, generation_number)?,
-    };
-    let path = generation::candidate_network_path(&generation::lambda_dir(&generation_dir, lambda));
+    if !candidate {
+        attempt_winner(attempt_dir, generation_number)?;
+    }
+    let path = generation::candidate_network_path(&generation::run_dir(&generation_dir));
     if !Path::new(&path).exists() {
         return Err(format!("{path} does not exist"));
     }
     Ok(path)
 }
 
-/// Generation `generation_number`'s winner in `attempt_dir`'s `generations.tsv`, its lambda: the row
-/// for it whose `passed` is `true`. A failed gate's winner is never the generation's. A constant, or
-/// the polyline (`ArmLambda::parse`).
-pub fn attempt_winner(attempt_dir: &str, generation_number: u32) -> Result<ArmLambda, String> {
+/// Whether generation `generation_number` of `attempt_dir` has a winner: a row of its
+/// `generations.tsv` for it whose `passed` is `true`, its winner the polyline. A failed gate's winner
+/// is never the generation's; a grid's, a constant, is no longer read.
+pub fn attempt_winner(attempt_dir: &str, generation_number: u32) -> Result<(), String> {
     let path = format!("{attempt_dir}/generations.tsv");
     let text = std::fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
     let rows: Vec<&str> = text.lines().skip(1).collect();
@@ -383,7 +378,10 @@ pub fn attempt_winner(attempt_dir: &str, generation_number: u32) -> Result<ArmLa
             return Err(format!("{path}: malformed line {line:?} (a log of six columns, from before 2026-11-02, is migrated by hand)"));
         };
         if generation.parse::<u32>() == Ok(generation_number) && passed == "true" {
-            return ArmLambda::parse(winner).map_err(|_| format!("{path}: malformed line {line:?}"));
+            if winner != preprocessing_config::POLYLINE_TEXT {
+                return Err(format!("{path}: generation {generation_number}'s winner is {winner}, a grid's, no longer read"));
+            }
+            return Ok(());
         }
     }
     Err(format!(
@@ -468,25 +466,21 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    fn named(config: &str, attempt_number: u32, generation: u32, candidate: Option<f64>) -> NetworkName {
-        NetworkName { config: config.to_string(), attempt_number, generation, candidate: candidate.map(ArmLambda::Constant) }
+    fn named(config: &str, attempt_number: u32, generation: u32, candidate: bool) -> NetworkName {
+        NetworkName { config: config.to_string(), attempt_number, generation, candidate }
     }
 
     #[test]
     fn a_network_name_reads_back() {
-        let constant = |lambda: f64| Some(ArmLambda::Constant(lambda));
-        assert_eq!(network_player_name("betty-a1", 2, constant(0.75)), "betty-g2-l0.75-a1");
-        assert_eq!(network_player_name("betty-a1", 2, constant(0.7)), "betty-g2-l0.70-a1");
-        assert_eq!(network_player_name("betty-a12", 2, None), "betty-g2-a12");
-        assert_eq!(network_player_name("betty-a1", 2, Some(ArmLambda::Polyline)), "betty-g2-lpolyline-a1");
-        assert_eq!(parse_network_name("betty-g2-l0.70-a1"), Ok(named("betty", 1, 2, Some(0.7))));
-        assert_eq!(parse_network_name("betty-g2-lpolyline-a1").unwrap().candidate, Some(ArmLambda::Polyline));
-        assert_eq!(parse_network_name("betty-g2-a12"), Ok(named("betty", 12, 2, None)));
+        assert_eq!(network_player_name("betty-a12", 2, false), "betty-g2-a12");
+        assert_eq!(network_player_name("betty-a1", 2, true), "betty-g2-lpolyline-a1");
+        assert_eq!(parse_network_name("betty-g2-lpolyline-a1"), Ok(named("betty", 1, 2, true)));
+        assert_eq!(parse_network_name("betty-g2-a12"), Ok(named("betty", 12, 2, false)));
         assert_eq!(parse_network_name("betty-g2-a12").unwrap().attempt(), "betty-a12");
         // A config named by its labels and architecture, hyphens and all, as the experiments are.
-        assert_eq!(parse_network_name("lc0-psq-threats-g1-l0.03-a1"), Ok(named("lc0-psq-threats", 1, 1, Some(0.03))));
-        assert_eq!(parse_network_name("lc0-psq-threats-g10-a2"), Ok(named("lc0-psq-threats", 2, 10, None)));
-        for name in ["lc0-psq-threats-g1-l0.03-a1", "lc0-psq-threats-g10-a2", "pesto-psq-g3-l1.00-a1", "pesto-psq-g3-lpolyline-a1"] {
+        assert_eq!(parse_network_name("lc0-psq-threats-g1-lpolyline-a1"), Ok(named("lc0-psq-threats", 1, 1, true)));
+        assert_eq!(parse_network_name("lc0-psq-threats-g10-a2"), Ok(named("lc0-psq-threats", 2, 10, false)));
+        for name in ["lc0-psq-threats-g10-a2", "pesto-psq-g3-lpolyline-a1"] {
             assert_eq!(parse_network_name(name).unwrap().text(), name, "one spelling, read and written");
         }
         for name in [
@@ -498,6 +492,9 @@ mod tests {
             // From before attempts (2026-11-19): migrated, never read.
             "betty-g2-r1",
             "betty-g2-l0.70-r1",
+            // A grid's constant lambdas (2026-11-26): never read.
+            "betty-g2-l0.70-a1",
+            "lc0-psq-threats-g1-l0.03-a1",
             // A part missing, misspelled or out of place.
             "betty",
             "betty-g2",
@@ -507,10 +504,9 @@ mod tests {
             "betty-g02-a1",
             "betty-g2-a0",
             "betty-g2-a01",
-            "betty-g2-l0.7-a1",
-            "betty-g2-l1.50-a1",
-            "betty-l0.70-g2-a1",
-            "betty-g2-a1-l0.70",
+            "betty-g2-lpoly-a1",
+            "betty-lpolyline-g2-a1",
+            "betty-g2-a1-lpolyline",
             // A config that reads as an attempt.
             "betty-a1-g2-a1",
         ] {
@@ -534,13 +530,12 @@ mod tests {
     }
 
     #[test]
-    fn an_attempts_player_is_a_lambda_of_its_generation_or_the_generations_winner() {
+    fn an_attempts_player_is_its_generation_s_candidate_or_its_winner() {
         let root = root("attempt");
         let attempts = |attempt: &str| -> Result<String, String> { Ok(format!("{root}/attempts/{attempt}")) };
-        let candidate =
-            |generation: u32, lambda: &str| format!("{root}/attempts/fine-a1/gen-{generation}/lambda-{lambda}/candidate.nnue");
-        for (generation, lambda) in [(1, "0.04"), (1, "0.06"), (2, "0.05")] {
-            touch(&candidate(generation, lambda));
+        let candidate = |generation: u32| format!("{root}/attempts/fine-a1/gen-{generation}/lambda-polyline/candidate.nnue");
+        for generation in [1, 2] {
+            touch(&candidate(generation));
         }
         let header = "generation\twinner\tgate_games\tgate_share\tpassed\n";
         let log = format!("{root}/attempts/fine-a1/generations.tsv");
@@ -548,18 +543,22 @@ mod tests {
 
         assert!(resolve("other-g1-a1").unwrap_err().contains("no forge attempt"));
         std::fs::write(&log, header).unwrap();
-        assert_eq!(resolve("fine-g1-l0.06-a1"), Ok(candidate(1, "0.06")));
-        assert_eq!(resolve("fine-g2-l0.05-a1"), Ok(candidate(2, "0.05")));
-        assert!(resolve("fine-g2-l0.04-a1").unwrap_err().contains("does not exist"), "not in generation 2");
+        assert_eq!(resolve("fine-g1-lpolyline-a1"), Ok(candidate(1)));
+        assert_eq!(resolve("fine-g2-lpolyline-a1"), Ok(candidate(2)));
+        assert!(resolve("fine-g3-lpolyline-a1").unwrap_err().contains("does not exist"), "no generation 3");
         assert!(resolve("fine-g1-a1").unwrap_err().contains("no winner yet"));
 
         // Generation 1 passed its gate, generation 2 failed its: only the first has a winner.
-        std::fs::write(&log, format!("{header}1\t0.06\t300\t0.5600\ttrue\n2\t0.05\t200\t0.4800\tfalse\n")).unwrap();
-        assert_eq!(resolve("fine-g1-a1"), Ok(candidate(1, "0.06")));
+        std::fs::write(&log, format!("{header}1\tpolyline\t300\t0.5600\ttrue\n2\tpolyline\t200\t0.4800\tfalse\n")).unwrap();
+        assert_eq!(resolve("fine-g1-a1"), Ok(candidate(1)));
         assert!(resolve("fine-g2-a1").unwrap_err().contains("no winner yet"));
 
+        // A grid's winner, a constant: refused, not misread.
+        std::fs::write(&log, format!("{header}1\t0.06\t300\t0.5600\ttrue\n")).unwrap();
+        assert!(resolve("fine-g1-a1").unwrap_err().contains("a grid's"));
+
         // A log from before 2026-11-02, its six columns: said, not misread.
-        std::fs::write(&log, "generation\tattempt\twinner\tgate_games\tgate_share\tpassed\n1\t1\t0.06\t300\t0.5600\ttrue\n").unwrap();
+        std::fs::write(&log, "generation\tattempt\twinner\tgate_games\tgate_share\tpassed\n1\t1\tpolyline\t300\t0.5600\ttrue\n").unwrap();
         assert!(resolve("fine-g1-a1").unwrap_err().contains("migrated by hand"));
         std::fs::remove_dir_all(&root).ok();
     }
@@ -569,16 +568,16 @@ mod tests {
         let root = root("tune");
         let local = |path: &str| format!("{root}/{path}");
         let generation_dir = local("data/networks/fine/attempt-1/gen-1");
-        touch(&format!("{generation_dir}/lambda-0.03/candidate.nnue"));
+        touch(&format!("{generation_dir}/lambda-polyline/candidate.nnue"));
         std::fs::write(
             local("data/networks/fine/attempt-1/generations.tsv"),
-            "generation\twinner\tgate_games\tgate_share\tpassed\n1\t0.03\t300\t0.5600\ttrue\n",
+            "generation\twinner\tgate_games\tgate_share\tpassed\n1\tpolyline\t300\t0.5600\ttrue\n",
         )
         .unwrap();
         let player = |name: &str| FattoriniPlayer::resolve_under(name, &local).unwrap();
         assert_eq!(player("fine-g1-a1").search_tune_dir, format!("{generation_dir}/search-tune"), "the winner's, its generation's");
         assert_eq!(player("fine-g1-a1").time_tune_dir, format!("{generation_dir}/time-tune"));
-        assert_eq!(player("fine-g1-l0.03-a1").search_tune_dir, format!("{generation_dir}/search-tune"), "a candidate has none of its own");
+        assert_eq!(player("fine-g1-lpolyline-a1").search_tune_dir, format!("{generation_dir}/search-tune"), "a candidate has none of its own");
         assert_eq!(player("fine-g1-a1").tune_paths(TuneKind::Time).1, format!("{generation_dir}/time-tune"));
         std::fs::remove_dir_all(&root).ok();
     }
