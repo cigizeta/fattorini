@@ -15,10 +15,13 @@ and Fattorini from 2026-11-07 (fattorini-rename.md). Older documents use the old
 ## 2026-11-26: next session starts here
 
 1. **Remove the grid, lockstep and patience** (remove-grid-and-lockstep.md): **written and
-   committed 2026-11-26,** its steps 1 and 2a to 2d. Left: its step 3, a short budget attempt on the
-   training machine (after `git pull`, the smithy and arenas restarted), compared with the earlier
-   attempt's first rounds; then the document to `done/`. Leftover names, optional: `training::Arm`,
-   `OneArm`, `open_one_arm`, `Labelling`'s `arms`.
+   committed 2026-11-26,** its steps 1 and 2a to 2d. **Done 2026-11-26:** step 3 was a scaled
+   attempt (1/1024) of `lc0-halfk-threats-pairwise-dual-512-8-budget`, end to end on the new code:
+   2,412 steps, the rate 1e-3 to 1e-5, test loss 0.6961 to 0.6470, the round robin's candidate the
+   last checkpoint, its gate failed (23% over 54 games, as a scaled network may) and promoted all
+   the same. No earlier attempt of that config to compare with. The document in `done/`. Leftover
+   names, optional: `training::Arm`, `OneArm`, `open_one_arm`, `Labelling`'s `arms`. The scaled
+   attempt waits at generation 2 on Drive: to delete.
 2. **The dual attempts on the training machine,** screlu dual first (Claude's recommendation, not
    yet decided), then pairwise dual, then their duels at depth 9 and 10+0.1. Before the first:
    `git pull` there, its smithy and arenas restarted. Whether they wait for step 1's removal or
