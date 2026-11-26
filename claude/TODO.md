@@ -69,6 +69,12 @@ pairwise against screlu-hidden at 512.
   `unit: elo`. Tests and clippy clean 2026-11-25 (the developer). **Next:** its attempt, when the
   training machine is free; its order against the piece-count buckets still open.
 
+- **Screlu dual, a future experiment (the developer, 2026-11-26):** the dual head on screlu's
+  transform, `halfk_threats_screlu_dual`: 1024 squares into the same 16-output first layer, then
+  pairwise dual's head unchanged (pairwise-dual-activation.md, choice 2, superseded). With castling
+  and en passant rows and `unit: elo`. Its order against pairwise dual and the buckets: decided
+  later. Neither design nor code yet; the engine needs only a `Dual` branch on the screlu path.
+
 - **The piece-count buckets on dual, written ahead (2026-11-25)** (pairwise-dual-count.md, its plan
   pairwise-dual-count-implementation.md), the developer optimistic that dual wins: 8 independent
   dual heads by `(count - 1) / 4`, the transform shared; tags 32 to 34;

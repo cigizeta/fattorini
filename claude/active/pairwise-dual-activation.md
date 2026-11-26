@@ -81,7 +81,14 @@ the shortcut carries larger values: its learning speed (the factor of 1) to watc
 2. **Which kinds get it.** The squares in the head are independent of the transform's kind, so
    screlu could have them too. Proposed: a head option for both kinds, trained first on pairwise
    (the question is whether pairwise can catch up); screlu with it only if pairwise does, so that
-   a screlu win is not just the head.
+   a screlu win is not just the head. **Superseded (the developer, 2026-11-26):** screlu dual,
+   `halfk_threats_screlu_dual`, is a future experiment whatever pairwise dual does; its order is
+   decided later. Its network is this one with the transform screlu's: 512 lanes a perspective
+   squared, 1024 squares into the same 16-output first layer, then the same head (15 clipped and
+   squared, 30 -> 32 -> 1, the 16th as the shortcut). Against pairwise dual, then, the transform's
+   kind alone differs. It must encode castling and en passant, which screlu-hidden does not, and
+   take `unit: elo`: against `-screlu-hidden-512-8-budget` it mixes the head, those rows and the
+   unit, as the pairwise duels mix the rows.
 3. **Order against the piece-count buckets.** Both change the head. Proposed: whichever runs first,
    the other is applied on top of its winner, never both in one attempt.
 
