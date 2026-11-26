@@ -197,9 +197,9 @@ impl SequentialTest for Duel {
         // So that a curtailed draw is never mistaken for one at the cap.
         if self.is_curtailed() {
             return format!(
-                "{bounds}, curtailed at {} pairs: neither can pass its bound by {}",
-                progress::grouped(pairs),
-                progress::grouped(MAX_PAIRS)
+                "{bounds}, curtailed at {} games: neither can pass its bound by {} games",
+                progress::grouped(2 * pairs),
+                progress::grouped(2 * MAX_PAIRS)
             );
         }
         bounds
@@ -323,7 +323,7 @@ mod tests {
         let first = (1..MAX_PAIRS).find(|&pairs| duel_of(&even(pairs)).outcome().is_some()).expect("curtailed before the cap");
         let duel = duel_of(&even(first));
         assert_eq!(duel.outcome(), Some(Outcome::Drawn));
-        assert!(duel.status().contains(&format!("curtailed at {} pairs", progress::grouped(first))), "{}", duel.status());
+        assert!(duel.status().contains(&format!("curtailed at {} games", progress::grouped(2 * first))), "{}", duel.status());
     }
 
     /// Curtailment never changes a verdict, only when a draw is declared: seeded duels, a +40 Elo
