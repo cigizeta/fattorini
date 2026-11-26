@@ -145,8 +145,6 @@ pairwise against screlu-hidden at 512.
   `lambda-polyline/` deleted on Drive, so the first attempt measures it on the finished buckets and
   labels the frozen set again. Test losses from here on are not comparable with the 1.2B attempts';
   only duels compare across the two corpora.
-- **A budget's round robin sized by `round_robin_pairs`** (budget-round-robin-pairs.md): 400 pairs a
-  pairing, as the grid's, not 125. Its step 4 to see on the next scaled budget attempt.
 
 ## 2026-11-20: tuned units, the shown score, the material question, the logo
 
