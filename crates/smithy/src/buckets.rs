@@ -18,9 +18,9 @@
 //! **Records carry no lambda.** A record holds its position and its labels at lambda 0 and lambda 1;
 //! the direct blend is linear between them (`labels::compute_labels_direct`: a decisive score gives
 //! the same label at both ends, the final position the result at both), so any lambda's label is
-//! computed as a batch loads, and a new grid never invalidates the buckets. Each record also holds
-//! its progress in its game (`cache::Progress`), so a polyline arm's lambda is computed per position
-//! as the batch loads (`polyline::Polyline::at`).
+//! computed as a batch loads, and a new polyline never invalidates the buckets. Each record also
+//! holds its progress in its game (`cache::Progress`), so the polyline's lambda is computed per
+//! position as the batch loads (`polyline::Polyline::at`).
 //!
 //! **The state** is `buckets.tsv` beside the files: the training files scattered, with their positions,
 //! and each bucket's committed bytes and records, written after each batch of `BATCH_POSITIONS`. A

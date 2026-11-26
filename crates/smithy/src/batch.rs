@@ -67,7 +67,7 @@ impl DenseBatch {
 
 /// A psq-form batch (psq, or psq_threats at its width) as its active rows, not dense rows: at most
 /// 37 of psq's 780 inputs a perspective are active, and about 60 of psq_threats' 4,876, so a
-/// dense transform multiplies mostly zeros. The stacked network sums the active weight columns with
+/// dense transform multiplies mostly zeros. The network sums the active weight columns with
 /// one `embedding_bag` instead, both perspectives in one call: the bags are the own rows, then the
 /// opponent's. Every active input is exactly 1.0: a row belongs to one square or one square pair,
 /// so no two features share one.

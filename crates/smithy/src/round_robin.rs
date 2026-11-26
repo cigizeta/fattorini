@@ -13,7 +13,7 @@
 //! complete every candidate has played as many games, and score and points give the same order.
 //!
 //! **Ties.** Equal scores are split by points, then by the points the tied candidates took off each
-//! other, then by the earlier lambda in the grid.
+//! other, then by the earlier candidate, the earlier checkpoint of the budget.
 //!
 //! **Noise.** Each standing carries the standard error of its score fraction, from its own pairs:
 //! a pair, one opening with colours swapped, is the unit (the pentanomial model), since its two games
@@ -23,7 +23,7 @@
 /// One candidate's place in the round robin.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Standing {
-    /// Its index in the grid.
+    /// Its index among the candidates, in the budget's order.
     pub(crate) candidate: usize,
     pub(crate) points: f64,
     pub(crate) games: u64,

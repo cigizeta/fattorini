@@ -38,7 +38,7 @@ named after it:
 
 Each also sizes its frozen test set, `test_positions`. A **forge**, `<source>-<architecture>`
 (`lc0-psq`, `pesto-psq`), is a network trained by one job of the smithy, on the GPU machine: one
-file holding its sizes from generation 2 on and its gate (`grid_center`, `training_positions`,
+file holding its sizes from generation 2 on and its gate (`training_positions`,
 `test_positions`, `round_robin_pairs`, `gate_elo_d`), its generations' `tune:`
 (below) and its network's `labels:` (its source), `architecture:` and `training:`. Every job starts
 from the smithy's page, and every game is played by the arenas, `arena start`, one on every machine,
@@ -51,14 +51,14 @@ Attempt n is named `<config>-a<n>`, the first included (`pesto-psq-a1`, `pesto-p
 is named by its config, then each part marked by a letter, the attempt always and last:
 
 - a generation's winner, `<config>-g<g>-a<n>`: `pesto-psq-g1-a1`;
-- one lambda's candidate, `<config>-g<g>-l<lambda>-a<n>`, the lambda with two decimals:
-  `pesto-psq-g1-l0.95-a1`.
+- its candidate, `<config>-g<g>-lpolyline-a<n>`: `pesto-psq-g1-lpolyline-a1`. The `lpolyline` names
+  the labels the run trains at; the grid's candidates, `-l<lambda>` with two decimals, were refused
+  when the grid was removed (2026-11-26).
 
 Attempts were called runs until 2026-11-19 (`-r<n>`, `run-<n>/`, `run_config.txt`); every `data/`
 and Drive were migrated then, and the old names are refused.
 
-A generation has at most one winner, so the winner's name leaves its lambda out; the page shows it
-beside it. A player is a network with what it plays with, always written after an `@`: `@untuned`,
+A generation has at most one winner, so the winner's name leaves the `lpolyline` out. A player is a network with what it plays with, always written after an `@`: `@untuned`,
 the defaults; `@search-tuned`, its search tune and the default clock; or `@search-time-tuned`, its
 search and time tunes (`pesto-psq-g1-a1@search-tuned`, `pesto@untuned`). A suffix whose tune is
 missing is refused. Only a generation's winner is tuned.
@@ -73,11 +73,14 @@ From **generation 2** on, each generation has a **teacher**, the last champion, 
 1. **Play.** The arenas play the teacher against itself, searching each position at depth 9: the
    test games first, then the training games, the training set (`training_positions`, 1024 x 1024 x
    1024 in every config).
-2. **Test set.** The smithy draws the fixed test set every lambda is judged on from the test games,
+2. **Test set.** The smithy draws the fixed test set the training is judged on from the test games,
    once, and keeps it on disk.
-3. **Training.** The smithy trains 9 candidates at once, one per lambda, around the last winner's.
-   Each label blends a position's search score with the game's result, weighted by lambda.
-4. **Round robin.** The arenas play the candidates against each other; the best is the winner.
+3. **Training.** The smithy trains one network on a fixed budget, `epochs` passes over the training
+   set, the rate falling geometrically between `learning_rate`'s two values. Each label blends a
+   position's search score with the game's result, weighted by lambda, which follows the polyline:
+   ten values, one per tenth of a game, measured on the corpus.
+4. **Round robin.** The arenas play the budget's kept checkpoints (every quarter epoch from half
+   the budget to its end) against each other; the best is the candidate, and the winner.
 5. **Gate.** The arenas play the winner against the teacher, an SPRT. A pass makes it the new
    champion and the next generation's teacher, which starts when the developer presses the attempt's
    Resume; a fail ends the attempt (its phase `stopped`), and a new attempt starts over.
@@ -91,7 +94,7 @@ the tar in flight, redone next time.
 ```mermaid
 flowchart TD
     play["play<br/>arenas, every machine"] --> freeze["freeze the test set"]
-    freeze --> train["train<br/>one candidate per lambda"]
+    freeze --> train["train<br/>one network, on a budget"]
     train --> rr["round robin<br/>arenas"]
     rr --> gate{"gate against the teacher<br/>arenas"}
     gate -->|fail| wait["job ends;<br/>Resume"]
@@ -303,8 +306,8 @@ offers scaled attempts alone.
 
 An NNUE forge trains on its training set fully shuffled: its training first scatters the training set into
 `data/buckets/` on the smithy's local disk: once per source for generation 1 (about 15 GB for Lc0's,
-shared by every `lc0-` forge; PeSTO's likewise), and about 15 GB per self-play generation after. A disposable cache: deleting it costs only a new scatter. Each lambda keeps one checkpoint, its best
-so far (the others are deleted after every round).
+shared by every `lc0-` forge; PeSTO's likewise), and about 15 GB per self-play generation after. A disposable cache: deleting it costs only a new scatter. The run keeps the budget's candidate checkpoints and its
+latest round's (the others are deleted after every round).
 
 ## Scaled attempts
 
@@ -312,7 +315,7 @@ For development, on any machine, a GPU or not: an attempt started with the page'
 attempt, at a fixed factor s of 1024 (`scale::DEFAULT`), every phase in minutes, nothing about
 strength. Data volumes and the work of a round divide by s, game counts by its square root, the
 search's depth loses log2(s) / 2 plies, each down to a floor that keeps its phase meaningful; the
-attempt's shape (lambdas, stages, patience, the gate's rules) stays the config's. The scale is
+attempt's shape (the budget's epochs and rates, the gate's rules) stays the config's. The scale is
 frozen into the attempt's own `config.yaml` (`scale: <s>`) and marked on the page wherever the
 attempt is named.
 
@@ -334,7 +337,7 @@ only by a tune scaled as their attempt, to debug the tune itself.
 - `duel <a> <b>`: until one is shown stronger, or 800 games (400 pairs).
 
 Each needs `--depth <d>` or `--time <base+inc>`. A player is a Fattorini player, `pesto` or a forge attempt's
-network (`pesto-psq-g1-a1`, `pesto-psq-g1-l0.95-a2`), always followed by `@untuned`,
+network (`pesto-psq-g1-a1`, `pesto-psq-g1-lpolyline-a2`), always followed by `@untuned`,
 `@search-tuned` or `@search-time-tuned`; or `stockfish-<level>` (0 to 20), `stockfish-elo-<rating>`, or another engine of
 `data/engines.yaml`, with no suffix. Against an external engine, the Fattorini player plays over
 UCI: the arena first builds it with its network and parameters embedded, as a snapshot, into

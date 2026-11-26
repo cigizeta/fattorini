@@ -1,7 +1,7 @@
 //! A scaled run's scale, chosen at New run (`GenConfig::scale`): one factor `s` shrinks a config, each
 //! size by the kind of quantity it is, down to the floor below which its phase means nothing. The shape of a run (its
-//! grid, its warm-up and patience, its rate stages, its gate) never scales, so every stage, early stop
-//! and gate rule still runs; `s = 1` is the config itself.
+//! budget's epochs and rates, its warm-up, its gate) never scales, so the budget's fall and every gate
+//! rule still run; `s = 1` is the config itself.
 //!
 //! - **Data volumes,** positions and bytes, by `1/s`: a phase's cost is about linear in them.
 //! - **Work a round,** steps and batch sizes, by `1/s`, for the same reason.

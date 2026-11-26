@@ -321,7 +321,7 @@ function work(view, waiting, stop = "") {
         + bar(going.position, total)
         + table(["rank", "candidate", "points", "games", "score"],
           // The score and its margin each in a slot of its own width, so both align whatever their digits.
-          // A candidate by its label: a grid's `lambda 0.05`, a budget's `epoch 2.25`.
+          // A candidate by its label, its checkpoint's epoch: `epoch 2.25`.
           view.standings.map((s, i) => [String(i + 1), s.label, number(s.points, 1), whole(s.games),
             { html: `<span class="share">${escape(percent(s.score))}</span> <span class="margin">±${escape(percent(s.margin))}</span>` }]));
     }
@@ -398,10 +398,9 @@ function work(view, waiting, stop = "") {
 
 // The training's progress: its budget's, whose length is known from the start. A fresh attempt, no
 // round recorded: its first round's pass alone.
-function trainingProgress(lambdas, round) {
-  const shape = lambdas.map((l) => l.last).find(Boolean);
-  if (!shape) return roundLine(round);
-  return budgetProgress(shape, round);
+function trainingProgress(last, round) {
+  if (!last) return roundLine(round);
+  return budgetProgress(last, round);
 }
 
 // A budgeted attempt's progress: its rounds of the budget's, its ETA the rounds left at the average pace of
@@ -440,49 +439,31 @@ function roundLine(round) {
     + `(${percent(round.done / Math.max(1, round.total))})${rate}${eta}</div>`;
 }
 
-// An arm's lambda: a constant's number, or the string "polyline".
-function lambdaText(lambda) {
-  return typeof lambda === "string" ? lambda : number(lambda, 2);
-}
-
-// The training's lambdas, each at its latest round, and a polyline attempt's ten values once measured.
-function training(list, round = null, polyline = null) {
-  // Rows by lambda, so each stays put, ranked by best loss; lambdas yet to record a round unranked.
-  // The polyline after every constant.
-  const key = (lambda) => (typeof lambda === "string" ? Infinity : lambda);
-  const lambdas = [...list].sort((a, b) => key(a.lambda) - key(b.lambda));
-  const ranked = lambdas.filter((l) => l.last).sort((a, b) => a.last.best_loss - b.last.best_loss);
+// The generation's one run at its latest round (`null` before the server lists it), and a polyline
+// attempt's ten values once measured.
+function training(run, round = null, polyline = null) {
   const values = polyline ? `<div class="muted">lambda for each tenth of the training: ${escape(polyline)}</div>` : "";
-  // One polyline arm: its lambda and rank say nothing, and its rounds draw a loss chart instead.
-  const single = lambdas.length === 1 && lambdas[0].lambda === "polyline";
-  const columns = single ? 2 : 0;
+  const r = run ? run.last : null;
   // The budget, under the polyline: its rate's two ends and how it falls between them.
-  const shape = lambdas.map((l) => l.last).find(Boolean);
-  const plan = shape ? shape.schedule : null;
+  const plan = r ? r.schedule : null;
   const rates = plan
     ? `<div class="muted">learning rate falling geometrically from ${escape(plan.start.toExponential(0))} `
       + `to ${escape(plan.end.toExponential(0))} over ${escape(String(plan.epochs))} epochs</div>`
     : "";
-  return `<h2>Training</h2>${values}${rates}${trainingProgress(lambdas, round)}`
-    + (lambdas.length === 0 ? "" : table(["lambda", "rank", "learning rate", "train loss", "test loss", "best loss", "round"].slice(columns),
-      lambdas.map((l) => {
-        const r = l.last;
-        if (!r) {
-          return [lambdaText(l.lambda), "", "not started", "", "", "", ""].slice(columns);
-        }
-        // Green when the best is this very round's.
-        const best = `<span class="loss${!r.finished && r.best_round === r.round ? " fresh" : ""}">${escape(number(r.best_loss, 6))}</span>`;
-        // The best's round and the latest, each in a slot of its own width, so the slashes align.
-        const round = `<span class="at">${escape(whole(r.best_round))}</span> / <span class="of">${escape(whole(r.round))}</span>`;
-        // The falling rate in three digits.
-        return [lambdaText(l.lambda), String(ranked.indexOf(l) + 1), r.learning_rate.toExponential(2), number(r.train_loss, 6), number(r.test_loss, 6),
-          { html: best }, { html: round }].slice(columns);
-      }),
-      lambdas.map((l) => l.last && l.last.finished)))
-    + (single ? lossChart(lambdas[0].curve || [], lambdas[0].last) : "");
+  const head = `<h2>Training</h2>${values}${rates}${trainingProgress(r, round)}`;
+  if (!run) return head;
+  const columns = ["learning rate", "train loss", "test loss", "best loss", "round"];
+  if (!r) return head + table(columns, [["not started", "", "", "", ""]], [false]);
+  // Green when the best is this very round's.
+  const best = `<span class="loss${!r.finished && r.best_round === r.round ? " fresh" : ""}">${escape(number(r.best_loss, 6))}</span>`;
+  // The best's round and the latest, each in a slot of its own width, so the slashes align.
+  const at = `<span class="at">${escape(whole(r.best_round))}</span> / <span class="of">${escape(whole(r.round))}</span>`;
+  // The falling rate in three digits.
+  const row = [r.learning_rate.toExponential(2), number(r.train_loss, 6), number(r.test_loss, 6), { html: best }, { html: at }];
+  return head + table(columns, [row], [r.finished]) + lossChart(run.curve || [], r);
 }
 
-// A polyline arm's losses round by round, `curve` its `[round, train, test, rate]` rows: train and
+// The run's losses round by round, `curve` its `[round, train, test, rate]` rows: train and
 // test lines and a dot at the best round. Round 0 left out: it only tests, and its loss, far above the
 // rest, would flatten the curve. Inline SVG in a fixed coordinate space, scaled to the box's width.
 // A budget knows its length, so its axis is fixed from the start at its rounds (the developer,
@@ -557,7 +538,7 @@ function phaseName(phase) {
 // A forge's generation, every phase it has reached, latest first, each in its own section; while `live`,
 // the first of them is the one under way, bordered in blue.
 function forge(view, live = false) {
-  const phases = [view.gate && work(view.gate), view.round_robin && work(view.round_robin), (view.training || view.round) && training(view.training || [], view.round, view.polyline),
+  const phases = [view.gate && work(view.gate), view.round_robin && work(view.round_robin), (view.training || view.round) && training(view.training, view.round, view.polyline),
     view.play && work(view.play)].filter(Boolean);
   return phases.map((html, i) => `<section${live && i === 0 ? ' class="current"' : ""}>${html}</section>`).join("");
 }

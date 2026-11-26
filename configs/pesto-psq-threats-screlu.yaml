@@ -1,8 +1,8 @@
 # The PeSTO route, psq_threats_screlu (2026-11-03, the identity line, replacing pesto-psq): the psq
 # line's reference network, as lc0-psq-threats-screlu. Generation 1 trains on PeSTO's corpus
 # (pesto.yaml), gated against PeSTO; from generation 2 on, each generation plays its training set
-# with the previous winner, trains its one polyline arm to convergence and gates it against its
-# teacher.
+# with the previous winner, trains its one run to its budget's end, picks its candidate by a round
+# robin and gates it against its teacher.
 
 # The forge. Lambda by progress (2026-11-04, the polyline experiment): each generation trains one
 # run, each position labelled at the polyline measured on its corpus. The grid it replaced centred

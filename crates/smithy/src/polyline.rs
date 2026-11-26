@@ -1,5 +1,5 @@
-//! Lambda by progress: the polyline a `lambda: polyline` run labels its one arm with, measured once
-//! from a corpus's own games.
+//! Lambda by progress: the polyline every run labels its positions with, measured once from a
+//! corpus's own games.
 //!
 //! Each searched position gives a pair from its side to move: `s`, the teacher's score read through
 //! the teacher's curve (its label at lambda 0), and `z`, the game's result (its label at lambda 1).

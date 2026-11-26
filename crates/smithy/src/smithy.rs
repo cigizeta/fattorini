@@ -14,10 +14,9 @@
 //!    frozen test set.
 //! 2. **Train:** `training::train`, one network on its budget, judged on the frozen test set
 //!    (`freeze.rs`), warm-started from the teacher.
-//! 3. **Round robin** among the 9 candidates.
+//! 3. **Round robin** among the budget's kept checkpoints, nine of them.
 //! 4. **Gate:** the winner against the teacher, an SPRT.
-//! 5. **Decide:** a pass promotes the winner and centres the next grid on its lambda, the next
-//!    generation waiting for the developer's Resume; a fail stops the attempt (`Phase::Stopped`), a new
+//! 5. **Decide:** a pass promotes the winner, the next generation waiting for the developer's Resume; a fail stops the attempt (`Phase::Stopped`), a new
 //!    attempt starting over. A generation has one training set, no retry with more data (the developer,
 //!    2026-11-02).
 //!
@@ -2971,7 +2970,7 @@ struct Snapshot {
 #[derive(Serialize)]
 struct ForgeView {
     play: Option<WorkView>,
-    training: Option<Vec<LambdaView>>,
+    training: Option<RunView>,
     /// The training's round under way, on the running forge's view alone (`rounds_display`).
     round: Option<rounds_display::RoundPassView>,
     round_robin: Option<WorkView>,
@@ -3081,29 +3080,27 @@ fn score_view(score: &ScoreDealing) -> WorkView {
 }
 
 /// One arm's `history.tsv` as last read (`Status::arm_rounds`): the file's modification time, its
-/// latest row, and its curve (`LambdaView::curve`).
+/// latest row, and its curve (`RunView::curve`).
 type ArmRounds = (std::time::SystemTime, Option<RoundRow>, Vec<[f64; 4]>);
 
-/// The generation's training run as the page's table draws it, one row: its lambda, always the
-/// polyline, as the page names it.
+/// The generation's training run as the page's table draws it, one row, and its loss chart.
 #[derive(Serialize)]
-struct LambdaView {
-    lambda: &'static str,
+struct RunView {
     last: Option<RoundRow>,
     /// Every round as `[round, train loss, test loss, learning rate]`, for the page's loss chart.
     curve: Vec<[f64; 4]>,
 }
 
-impl LambdaView {
+impl RunView {
     /// The run before its first round.
-    fn not_started() -> LambdaView {
-        LambdaView { lambda: preprocessing_config::POLYLINE_TEXT, last: None, curve: Vec::new() }
+    fn not_started() -> RunView {
+        RunView { last: None, curve: Vec::new() }
     }
 }
 
 #[derive(Clone, Serialize)]
 struct StandingView {
-    /// The candidate, `lambda 0.05` for a grid's, `epoch 2.25` for a budget's.
+    /// The candidate by its checkpoint's epoch: `epoch 2.25`.
     label: String,
     points: f64,
     games: u64,
@@ -3151,7 +3148,7 @@ impl Status {
     }
 
     /// The latest round of the `history.tsv` at `path`, its standing replayed on `schedule`'s budget
-    /// as training replays it, and every round's losses and rate (`LambdaView::curve`); `None` and
+    /// as training replays it, and every round's losses and rate (`RunView::curve`); `None` and
     /// none before its first. Cached by the file's modification time, so a poll reads only the
     /// files that grew.
     fn arm_rounds(&self, path: &str, schedule: &Schedule) -> (Option<RoundRow>, Vec<[f64; 4]>) {
@@ -3270,7 +3267,7 @@ impl Status {
                 let view = self.forge_view(&files, state.generation, &work);
                 // A new attempt's training, before its first round: its run listed as not started, so
                 // the box is drawn whole from the frozen test set's read on, as a resumed attempt's is.
-                let training = view.training.or_else(|| (state.phase == Phase::Train).then(|| vec![LambdaView::not_started()]));
+                let training = view.training.or_else(|| (state.phase == Phase::Train).then(RunView::not_started));
                 Some(ForgeView { round, training, ..view })
             }
             _ => None,
@@ -3351,7 +3348,7 @@ impl Status {
             }),
         };
         let (last, curve) = self.arm_rounds(&format!("{}/history.tsv", dirs.run(generation)), &files.schedule);
-        let run = LambdaView { lambda: preprocessing_config::POLYLINE_TEXT, last, curve };
+        let run = RunView { last, curve };
         let round_robin = match live {
             WorkView::RoundRobin { .. } => Some(live.clone()),
             _ => {
@@ -3376,7 +3373,7 @@ impl Status {
         };
         ForgeView {
             play,
-            training: run.last.is_some().then(|| vec![run]),
+            training: run.last.is_some().then_some(run),
             round: None,
             round_robin,
             gate,
