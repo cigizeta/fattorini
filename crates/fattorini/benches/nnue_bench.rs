@@ -262,7 +262,7 @@ use fattorini::search::choose_best_move;
 use fattorini::tablebase::SyzygyTablebase;
 use fattorini::tt::TranspositionTable;
 
-/// The forge's psq shape (the archived `pesto-psq` config's), the default when
+/// The forge's psq shape (the old `pesto-psq` config's), the default when
 /// `--width`/`--head` are not given, so the measurement with no arguments describes the network
 /// actually deployed rather than a convenient small one.
 const DEFAULT_EMBEDDING_DIM: usize = 256;
