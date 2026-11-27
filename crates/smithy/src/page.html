@@ -70,6 +70,10 @@
     .log table td:nth-child(7) { min-width: 0; }
     /* A phone's trial screen: games and results alone (the developer, 2026-11-27). */
     table.trial th:nth-child(n+3), table.trial td:nth-child(n+3) { display: none; }
+    /* A phone's round robin: rank, candidate and score alone (the developer, 2026-11-27). */
+    table.standings th, table.standings td { padding: 4px 6px; }
+    table.standings th:nth-child(3), table.standings td:nth-child(3),
+    table.standings th:nth-child(4), table.standings td:nth-child(4) { display: none; }
     table.training th:nth-child(2), table.training td:nth-child(2),
     table.training th:nth-child(3), table.training td:nth-child(3) { display: none; }
   }
@@ -329,14 +333,15 @@ function work(view, waiting, stop = "") {
       // behind first, so pairings complete only near the end. Each game counts in both its players'.
       const played = view.standings.reduce((sum, s) => sum + s.games, 0) / 2, total = view.pairings * view.wanted * 2;
       const going = gamesUnderWay("round robin", view, played, total, 2);
-      return `<h2>Round robin: ${view.wanted} pairs a pairing</h2><div class="muted">${escape(view.limit)}</div>`
+      return `<h2>Round robin: ${whole(view.wanted * 2)} games a pairing</h2><div class="muted">${escape(view.limit)}</div>`
         + `<div>${whole(played)} of ${whole(total)} games (${percent(total > 0 ? going.position / total : 0)})${times(view, false, going.eta)}</div>`
         + bar(going.position, total)
         + table(["rank", "candidate", "points", "games", "score"],
           // The score and its margin each in a slot of its own width, so both align whatever their digits.
           // A candidate by its label, its checkpoint's epoch: `epoch 2.25`.
           view.standings.map((s, i) => [String(i + 1), s.label, number(s.points, 1), whole(s.games),
-            { html: `<span class="share">${escape(percent(s.score))}</span> <span class="margin">±${escape(percent(s.margin))}</span>` }]));
+            { html: `<span class="share">${escape(percent(s.score))}</span> <span class="margin">±${escape(percent(s.margin))}</span>` }]))
+          .replace("<table>", `<table class="standings">`);
     }
     case "gate":
       // Its search, then its time, the leading comma of `times` dropped: no count before it.
