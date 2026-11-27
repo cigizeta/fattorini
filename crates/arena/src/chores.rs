@@ -355,7 +355,7 @@ struct Arena {
     dealing: Mutex<Dealing>,
     stop: Arc<AtomicBool>,
     /// Set by `arena stop` before `stop`: the stop's last line names its source, `arena stop` or
-    /// the console's Ctrl+C, the only other one, so an unexpected stop is never a guess.
+    /// a console event, the only other one, so an unexpected stop is never a guess.
     stop_asked: AtomicBool,
 }
 
@@ -508,7 +508,10 @@ impl Arena {
         match failure.into_inner().expect("no thread should have poisoned the lock") {
             Some(message) => Err(message),
             None => {
-                let by = if self.stop_asked.load(Ordering::SeqCst) { "arena stop" } else { "Ctrl+C or Ctrl+Break in its console" };
+                let by = if self.stop_asked.load(Ordering::SeqCst) { "arena stop" } else {
+                    // `ctrlc`'s Windows handler takes every console event alike, not Ctrl+C alone.
+                    "a console event (Ctrl+C, Ctrl+Break, its console closed, a logoff or a shutdown)"
+                };
                 Ok(format!("stopped by {by}: the tasks in play are never counted; start it again to join again"))
             }
         }
