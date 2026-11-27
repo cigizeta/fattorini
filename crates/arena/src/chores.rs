@@ -138,6 +138,7 @@ fn start() {
         bench_nodes: Mutex::new(HashMap::new()),
         dealing: Mutex::new(Dealing::default()),
         stop,
+        stop_asked: AtomicBool::new(false),
     });
     let control_done = Arc::new(AtomicBool::new(false));
     let mut threads = vec![{
@@ -171,6 +172,7 @@ fn answer_control(arena: &Arena, request: &Request) -> Reply {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", STATUS_PATH) => Reply::status("OK", arena.status_text().as_bytes()),
         ("POST", STOP_PATH) => {
+            arena.stop_asked.store(true, Ordering::SeqCst);
             arena.stop.store(true, Ordering::SeqCst);
             Reply::status("OK", b"")
         }
@@ -352,6 +354,9 @@ struct Arena {
     bench_nodes: Mutex<HashMap<String, u64>>,
     dealing: Mutex<Dealing>,
     stop: Arc<AtomicBool>,
+    /// Set by `arena stop` before `stop`: the stop's last line names its source, `arena stop` or
+    /// the console's Ctrl+C, the only other one, so an unexpected stop is never a guess.
+    stop_asked: AtomicBool,
 }
 
 impl Arena {
@@ -502,7 +507,10 @@ impl Arena {
         });
         match failure.into_inner().expect("no thread should have poisoned the lock") {
             Some(message) => Err(message),
-            None => Ok("stopped: the tasks in play are never counted; start it again to join again".to_string()),
+            None => {
+                let by = if self.stop_asked.load(Ordering::SeqCst) { "arena stop" } else { "Ctrl+C or Ctrl+Break in its console" };
+                Ok(format!("stopped by {by}: the tasks in play are never counted; start it again to join again"))
+            }
         }
     }
 
