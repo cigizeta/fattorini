@@ -23,7 +23,7 @@
     }
   }
   /* The polyline's loss chart: SVG drawn in the page's colors, scaled to the box's width. */
-  .chart { display: block; width: 100%; height: auto; margin-top: 12px; }
+  .chart { display: block; max-width: 100%; height: auto; margin-top: 12px; }
   .chart text { fill: var(--muted); font-size: 11px; }
   .chart .axis { stroke: var(--muted); stroke-width: 1; }
   .chart .stage { stroke: var(--line); stroke-width: 1; }  .chart .test { fill: none; stroke: var(--accent); stroke-width: 2; }
@@ -471,14 +471,21 @@ function training(run, round = null, polyline = null) {
 
 // The run's losses round by round, `curve` its `[round, train, test, rate]` rows: train and
 // test lines and a dot at the best round. Round 0 left out: it only tests, and its loss, far above the
-// rest, would flatten the curve. Inline SVG in a fixed coordinate space, scaled to the box's width.
+// rest, would flatten the curve. Inline SVG drawn at the box's own width in pixels, never scaled
+// (the developer, 2026-11-27): a phone's chart keeps its labels at their size and grows taller in
+// proportion, a wide screen's stays short. A resize redraws it.
 // A budget knows its length, so its axis is fixed from the start at its rounds (the developer,
 // 2026-11-18): a feature stays where it is round after round, and the empty width is what is left.
 // No mark at the round robin candidates' rounds (the developer, 2026-11-27): the round grid alone.
 function lossChart(curve, last) {
   const rows = curve.filter((c) => c[0] >= 1 && Number.isFinite(c[1]) && Number.isFinite(c[2]));
   if (rows.length === 0) return "";
-  const [width, height, left, right, top, bottom] = [1000, 256, 56, 12, 28, 28];
+  // The section's inner width: the page's main column less the section's padding and border.
+  const main = document.querySelector("main");
+  const width = Math.max(240, Math.floor((main ? main.clientWidth : 1000) - 30));
+  // Four fifths of the width on a phone, at least 240 pixels, never past 300 on a wide screen.
+  const height = Math.min(300, Math.max(240, Math.round(width * 0.8)));
+  const [left, right, top, bottom] = [56, 12, 28, 28];
   const plan = last ? last.schedule : null;
   const first = plan ? 1 : rows[0][0];
   const latest = plan ? Math.max(plan.total_rounds, rows[rows.length - 1][0]) : rows[rows.length - 1][0];
@@ -509,11 +516,13 @@ function lossChart(curve, last) {
   const ticks = lossTicks.map((loss) =>
     `<text x="${left - 6}" y="${(y(loss) + 4).toFixed(1)}" text-anchor="end">${loss.toFixed(decimals)}</text>`).join("");
   // Round ticks at 1, 2 or 5 times a power of ten (the developer, 2026-11-27), the smallest step
-  // giving at most eight of them, as the loss ticks are chosen.
+  // giving at most eight of them, as the loss ticks are chosen; fewer on a narrow chart, one per
+  // 60 pixels, so their labels never touch.
+  const most = Math.max(2, Math.min(8, Math.floor((width - left - right) / 60)));
   let step = 1;
   search: for (let power = 1; ; power *= 10) {
     for (const m of [1, 2, 5]) {
-      if ((latest - first) / (m * power) <= 8) { step = m * power; break search; }
+      if ((latest - first) / (m * power) <= most) { step = m * power; break search; }
     }
   }
   const rounds = [];
@@ -536,11 +545,12 @@ function lossChart(curve, last) {
     + `<text x="${end - 132}" y="14">train loss</text>`
     + `<line class="test" x1="${end - 70}" x2="${end - 50}" y1="10" y2="10"/>`
     + `<text x="${end}" y="14" text-anchor="end">test loss</text>`;
-  return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="training and test loss by round">`
+  return `<svg class="chart" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="training and test loss by round">`
     + `<defs><clipPath id="loss-plot"><rect x="${left}" y="${top}" width="${width - left - right}" height="${height - top - bottom}"/></clipPath></defs>`
     + grid
     + `<line class="axis" x1="${left}" x2="${left}" y1="${top}" y2="${height - bottom}"/>`
-    + `<line class="axis" x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}"/>`    + ticks + roundTicks
+    + `<line class="axis" x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}"/>`
+    + ticks + roundTicks
     + `<g clip-path="url(#loss-plot)"><path class="train" d="${path(1)}"/><path class="test" d="${path(2)}"/></g>`
     + best + legend + `</svg>`;
 }
@@ -1593,6 +1603,9 @@ async function pollLive() {
 // One level up: an attempt's screen to its config's, a config's to the main page.
 document.getElementById("back").onclick = () => { location.hash = currentAttempt === null ? "" : screenHash(current); };
 window.onhashchange = route;
+// The loss chart is drawn at the box's width in pixels: a resize or a phone turned redraws it at once,
+// not at the next poll.
+window.addEventListener("resize", () => { if (current !== null && viewing) drawViewBody(); });
 route();
 poll();
 setInterval(poll, 2000);
