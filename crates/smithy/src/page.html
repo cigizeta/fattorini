@@ -59,6 +59,13 @@
   td .at { min-width: 5ch; text-align: right; }
   td .of { min-width: 5ch; text-align: left; }
   th { color: var(--muted); font-weight: 600; }
+  /* A phone's training box, held upright (the developer, 2026-11-27): learning rate, best loss and
+     round alone, train and test loss left to the chart below; tighter cells, so it never scrolls. */
+  @media (max-width: 600px) {
+    table.training th, table.training td { padding: 4px 6px; }
+    table.training th:nth-child(2), table.training td:nth-child(2),
+    table.training th:nth-child(3), table.training td:nth-child(3) { display: none; }
+  }
   /* The trials' log fits the page: its long cells (what was played, the verdict) wrap, never scroll. */
   .log table { width: 100%; }
   .log td { white-space: normal; vertical-align: top; }
@@ -459,7 +466,7 @@ function training(run, round = null, polyline = null) {
   const at = `<span class="at">${escape(whole(r.best_round))}</span> / <span class="of">${escape(whole(r.round))}</span>`;
   // The falling rate in three digits.
   const row = [r.learning_rate.toExponential(2), number(r.train_loss, 6), number(r.test_loss, 6), { html: best }, { html: at }];
-  return head + table(columns, [row], [r.finished]) + lossChart(run.curve || [], r);
+  return head + table(columns, [row], [r.finished]).replace("<table>", `<table class="training">`) + lossChart(run.curve || [], r);
 }
 
 // The run's losses round by round, `curve` its `[round, train, test, rate]` rows: train and
