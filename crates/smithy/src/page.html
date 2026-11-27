@@ -52,12 +52,10 @@
   table.tune td:nth-child(2) { text-align: left; font: inherit; color: var(--muted, inherit); }
   /* Cells in the terminal's font, so columns align and bold costs no width; headers stay sans. */
   td { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; }
-  td .loss, td .at, td .of, td .share, td .margin { display: inline-block; }
+  td .loss, td .share, td .margin { display: inline-block; }
   td .share { min-width: 6ch; text-align: right; }
   td .margin { min-width: 7ch; text-align: right; }
   td .loss.fresh { color: var(--best); font-weight: 700; }
-  td .at { min-width: 5ch; text-align: right; }
-  td .of { min-width: 5ch; text-align: left; }
   th { color: var(--muted); font-weight: 600; }
   /* A phone's training box, held upright (the developer, 2026-11-27): learning rate, best loss and
      round alone, train and test loss left to the chart below; tighter cells, so it never scrolls. */
@@ -472,14 +470,14 @@ function training(run, round = null, polyline = null) {
     : "";
   const head = `<h2>Training</h2>${values}${rates}${trainingProgress(r, round)}`;
   if (!run) return head;
-  const columns = ["learning rate", "train loss", "test loss", "best loss", "round"];
+  const columns = ["learning rate", "train loss", "test loss", "best loss", "best round"];
   if (!r) return head + table(columns, [["not started", "", "", "", ""]], [false]);
   // Green when the best is this very round's.
   const best = `<span class="loss${!r.finished && r.best_round === r.round ? " fresh" : ""}">${escape(number(r.best_loss, 6))}</span>`;
-  // The best's round and the latest, each in a slot of its own width, so the slashes align.
-  const at = `<span class="at">${escape(whole(r.best_round))}</span> / <span class="of">${escape(whole(r.round))}</span>`;
+  // The best's round alone: the latest is the progress line's, and `590 / 592` read as progress
+  // (the developer, 2026-11-27).
   // The falling rate in three digits.
-  const row = [r.learning_rate.toExponential(2), number(r.train_loss, 6), number(r.test_loss, 6), { html: best }, { html: at }];
+  const row = [r.learning_rate.toExponential(2), number(r.train_loss, 6), number(r.test_loss, 6), { html: best }, whole(r.best_round)];
   return head + table(columns, [row], [r.finished]).replace("<table>", `<table class="training">`) + lossChart(run.curve || [], r);
 }
 
