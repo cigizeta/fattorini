@@ -63,6 +63,11 @@
      round alone, train and test loss left to the chart below; tighter cells, so it never scrolls. */
   @media (max-width: 600px) {
     table.training th, table.training td { padding: 4px 6px; }
+    /* A phone's trials' log: trial, what and verdict alone (the developer, 2026-11-27). */
+    .log th, .log td { padding: 4px 6px; }
+    .log th:nth-child(2), .log td:nth-child(2), .log th:nth-child(4), .log td:nth-child(4),
+    .log th:nth-child(5), .log td:nth-child(5), .log th:nth-child(6), .log td:nth-child(6) { display: none; }
+    .log table td:nth-child(7) { min-width: 0; }
     table.training th:nth-child(2), table.training td:nth-child(2),
     table.training th:nth-child(3), table.training td:nth-child(3) { display: none; }
   }
@@ -1164,11 +1169,23 @@ function trialsScreen() {
   // whole sentence. Any other verdict, a stopped trial's or another kind's, as it is.
   const short = (verdict) => verdict === "won by the challenger" ? "challenger wins"
     : verdict === "won by the champion" ? "champion wins" : verdict.startsWith("drawn") ? "draw" : verdict;
+  // The log's end time in the viewer's own zone, as `YYYY-MM-DD HH:MM CET` (the developer,
+  // 2026-11-27), from the record's `YYYY-MM-DD HH:MM UTC`; anything else as it is.
+  const local = (text) => {
+    const parts = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d) UTC$/.exec(text || "");
+    if (!parts) return text;
+    const when = new Date(Date.UTC(+parts[1], parts[2] - 1, +parts[3], +parts[4], +parts[5]));
+    const pad = (n) => String(n).padStart(2, "0");
+    const zone = new Intl.DateTimeFormat("en-GB", { timeZoneName: "short" }).formatToParts(when)
+      .find((p) => p.type === "timeZoneName");
+    return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} `
+      + `${pad(when.getHours())}:${pad(when.getMinutes())}${zone ? " " + zone.value : ""}`;
+  };
   const rows = [...catalog.trials].reverse().map((t) => [
     // A stopped trial, still kept, resumes from its pairs, on this machine: first, where it is seen.
     { html: `<span class="number">${t.number}</span> <button class="plain" data-screen-open="${t.number}">View</button>`
       + `${token && t.verdict.startsWith("stopped") ? ` <button data-resume-trial="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span>` : ""}` },
-    t.ended,
+    local(t.ended),
     trialTitle({ trial: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion }),
     // The champion's score, not the challenger's (the developer, 2026-11-27).
     t.limit, whole(t.games), t.games > 0 ? percent(1 - t.challenger_points / t.games) : "", (t.mixed ? "mixed; " : "") + short(t.verdict),
