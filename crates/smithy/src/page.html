@@ -483,19 +483,20 @@ function lossChart(curve, last) {
   // a clip rectangle, not pinned to the edge, which would draw values that never were.
   const losses = rows.slice(Math.floor(rows.length / 10)).flatMap((c) => [c[1], c[2]]);
   const dataLow = Math.min(...losses), dataHigh = Math.max(...losses);
-  // Always four loss ticks (the developer, 2026-11-26), the axis running from the first to the
-  // last: the step is 1, 2 or 5 times a power of ten, the smallest whose three steps from a multiple
+  // Always five loss ticks (the developer, 2026-11-27), the axis running from the first to the
+  // last: the step is 1, 2 or 5 times a power of ten, the smallest whose four steps from a multiple
   // of it at or below the lowest loss reach the highest. Labels in three decimals, more when the step
   // needs them, so no two read alike.
+  const steps = 4;
   let tickStep = 1e-6, base = 0;
   search: for (let power = 1e-6; ; power *= 10) {
     for (const m of [1, 2, 5]) {
       const s = m * power;
       const b = Math.floor(dataLow / s);
-      if ((b + 3) * s >= dataHigh) { tickStep = s; base = b; break search; }
+      if ((b + steps) * s >= dataHigh) { tickStep = s; base = b; break search; }
     }
   }
-  const low = base * tickStep, high = (base + 3) * tickStep;
+  const low = base * tickStep, high = (base + steps) * tickStep;
   const decimals = Math.max(3, Math.ceil(-Math.log10(tickStep) - 1e-9));
   const x = (round) => left + (latest === first ? 0 : (round - first) / (latest - first)) * (width - left - right);
   const y = (loss) => top + (high - loss) / (high - low) * (height - top - bottom);
@@ -504,7 +505,10 @@ function lossChart(curve, last) {
   const candidates = plan && Array.isArray(plan.candidate_rounds) ? plan.candidate_rounds : [];
   const passes = candidates
     .map((round) => `<line class="stage" x1="${x(round).toFixed(1)}" x2="${x(round).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("");
-  const lossTicks = [0, 1, 2, 3].map((i) => (base + i) * tickStep);
+  const lossTicks = Array.from({ length: steps + 1 }, (_, i) => i).map((i) => (base + i) * tickStep);
+  // A gray line across the plot at each loss tick, like the candidates' lines.
+  const grid = lossTicks.map((loss) =>
+    `<line class="stage" x1="${left}" x2="${width - right}" y1="${y(loss).toFixed(1)}" y2="${y(loss).toFixed(1)}"/>`).join("");
   const ticks = lossTicks.map((loss) =>
     `<text x="${left - 6}" y="${(y(loss) + 4).toFixed(1)}" text-anchor="end">${loss.toFixed(decimals)}</text>`).join("");
   // About eight round ticks: every round early on, then fives, then tens.
@@ -522,7 +526,7 @@ function lossChart(curve, last) {
     + `<text x="${width - 74}" y="${top + 26}">test loss</text>`;
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="training and test loss by round">`
     + `<defs><clipPath id="loss-plot"><rect x="${left}" y="${top}" width="${width - left - right}" height="${height - top - bottom}"/></clipPath></defs>`
-    + passes
+    + passes + grid
     + `<line class="axis" x1="${left}" x2="${left}" y1="${top}" y2="${height - bottom}"/>`
     + `<line class="axis" x1="${left}" x2="${width - right}" y1="${height - bottom}" y2="${height - bottom}"/>`
     + ticks + roundTicks
