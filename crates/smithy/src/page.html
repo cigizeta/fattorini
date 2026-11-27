@@ -485,7 +485,8 @@ function lossChart(curve, last) {
   const width = Math.max(240, Math.floor((main ? main.clientWidth : 1000) - 30));
   // Four fifths of the width on a phone, at least 240 pixels, never past 300 on a wide screen.
   const height = Math.min(300, Math.max(240, Math.round(width * 0.8)));
-  const [left, right, top, bottom] = [56, 12, 28, 28];
+  let left = 56;
+  const [right, top, bottom] = [6, 28, 28];
   const plan = last ? last.schedule : null;
   const first = plan ? 1 : rows[0][0];
   const latest = plan ? Math.max(plan.total_rounds, rows[rows.length - 1][0]) : rows[rows.length - 1][0];
@@ -509,6 +510,9 @@ function lossChart(curve, last) {
   }
   const low = base * tickStep, high = (base + steps) * tickStep;
   const decimals = Math.max(3, Math.ceil(-Math.log10(tickStep) - 1e-9));
+  // The left margin just wide enough for the loss labels: about 6.5 pixels a character at 11
+  // pixels, then the 6-pixel gap to the axis (the developer, 2026-11-27).
+  left = Math.ceil((decimals + 2) * 6.5) + 8;
   const x = (round) => left + (latest === first ? 0 : (round - first) / (latest - first)) * (width - left - right);
   const y = (loss) => top + (high - loss) / (high - low) * (height - top - bottom);
   const path = (index) => rows.map((c, i) => `${i ? "L" : "M"}${x(c[0]).toFixed(1)},${y(c[index]).toFixed(1)}`).join("");
@@ -527,7 +531,8 @@ function lossChart(curve, last) {
   }
   const rounds = [];
   for (let round = Math.ceil(first / step) * step; round <= latest; round += step) rounds.push(round);
-  const roundTicks = rounds.map((round) => `<text x="${x(round).toFixed(1)}" y="${height - 8}" text-anchor="middle">${whole(round)}</text>`).join("");
+  // A label at the axis's very end ends there, the right margin being too thin to centre it.
+  const roundTicks = rounds.map((round) => `<text x="${x(round).toFixed(1)}" y="${height - 8}" text-anchor="${x(round) > width - right - 16 ? "end" : "middle"}">${whole(round)}</text>`).join("");
   // A gray line across the plot at each loss tick and at each round tick.
   const grid = lossTicks.map((loss) =>
     `<line class="stage" x1="${left}" x2="${width - right}" y1="${y(loss).toFixed(1)}" y2="${y(loss).toFixed(1)}"/>`).join("")
