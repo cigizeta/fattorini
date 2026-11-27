@@ -1074,10 +1074,10 @@ const attemptNumber = (attempt) => Number((attempt.match(/-a(\d+)$/) || [0, 0])[
 const distinct = (list, key) => [...new Set(list.map(key))];
 
 // The network a cascade's step chooses: at `level` (config, attempt, generation), `value`'s latest attempt,
-// then its latest generation, then that generation's winner, or its first candidate without one; at
-// network, `value` itself. PeSTO is a config of its own.
+// then its latest generation, then that generation's winner, or its candidate without one. PeSTO is a
+// config of its own.
 function cascade(level, value, network) {
-  if (level === "network" || value === "pesto") return value;
+  if (value === "pesto") return value;
   const trained = catalog.networks.filter((n) => n.attempt !== null);
   let list = trained.filter((n) => configOf(n) === (level === "config" ? value : configOf(network)));
   const attempt = level === "config" ? Math.max(...list.map((n) => attemptNumber(n.attempt))) : attemptNumber(level === "attempt" ? value : network.attempt);
@@ -1089,7 +1089,7 @@ function cascade(level, value, network) {
 }
 
 // One side's choices, a cascade of short selects: the config (PeSTO among them), its attempt, the attempt's
-// generation, the generation's network, each narrowed by the one before, a new choice taking the
+// generation, each narrowed by the one before, a new choice taking the
 // latest winner below it (`cascade`); then its parameters, tuned only where it has a tune.
 function sideRow(label, side) {
   // A choice no longer offered (its network gone) falls back to PeSTO, the catalog's first.
@@ -1103,15 +1103,13 @@ function sideRow(label, side) {
   if (network.attempt !== null) {
     const ofConfig = trained.filter((n) => configOf(n) === configOf(network));
     const ofAttempt = ofConfig.filter((n) => n.attempt === network.attempt);
-    const ofGeneration = ofAttempt.filter((n) => n.generation === network.generation);
+    // No select of the generation's network (the developer, 2026-11-27): a passed generation's winner
+    // is its candidate, the same network, and a failed one has its candidate alone, so the generation
+    // decides, its winner if it passed (`cascade`), and its label says which.
+    const passed = (g) => ofAttempt.some((n) => n.generation === g && n.winner);
     steps += step("attempt", distinct(ofConfig, (n) => n.attempt).map((r) => option(r, `attempt ${attemptNumber(r)}`, r === network.attempt)).join(""))
-      + step("generation", distinct(ofAttempt, (n) => n.generation).map((g) => option(String(g), `generation ${g}`, g === network.generation)).join(""))
-      + step("network", ofGeneration.map((n) => {
-        const what = n.winner ? "winner" : "candidate";
-        // Whether it has a tune is the parameters' select's alone, which offers "its tune" only then:
-        // said here too, it read as what this side plays.
-        return option(n.name, what, n.name === network.name);
-      }).join(""));
+      + step("generation", distinct(ofAttempt, (n) => n.generation)
+        .map((g) => option(String(g), `generation ${g}${passed(g) ? ", passed" : ", candidate"}`, g === network.generation)).join(""));
   }
   // Each suffix offered only when the network has its tunes: `search-tuned` with a search tune,
   // `search-time-tuned` with both.
