@@ -68,6 +68,8 @@
     .log th:nth-child(2), .log td:nth-child(2), .log th:nth-child(4), .log td:nth-child(4),
     .log th:nth-child(5), .log td:nth-child(5), .log th:nth-child(6), .log td:nth-child(6) { display: none; }
     .log table td:nth-child(7) { min-width: 0; }
+    /* A phone's trial screen: games and results alone (the developer, 2026-11-27). */
+    table.trial th:nth-child(n+3), table.trial td:nth-child(n+3) { display: none; }
     table.training th:nth-child(2), table.training td:nth-child(2),
     table.training th:nth-child(3), table.training td:nth-child(3) { display: none; }
   }
@@ -375,6 +377,7 @@ function work(view, waiting, stop = "") {
         + table(["games", "results", "champion", "challenger", view.trial === "duel" ? "thresholds" : "state"],
           [[whole(view.games), view.wdl ? `+${view.wdl.wins} -${view.wdl.losses} =${view.wdl.draws}` : "",
             side(view.games - view.challenger_points), side(view.challenger_points), view.status]])
+          .replace("<table>", `<table class="trial">`)
         + (view.verdict ? `<div><b>${escape(view.verdict)}</b></div>` : "");
     }
     case "pairs":
