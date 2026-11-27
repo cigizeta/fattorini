@@ -1160,15 +1160,20 @@ function trialsScreen() {
       + `<div class="row"><button id="startTrial"${running ? " disabled" : ""}>Start</button><span class="said bad"></span></div>`
       + `</form></section>`
     : "";
+  // The log's verdict in a word or two (the developer, 2026-11-27); the trial's own screen keeps the
+  // whole sentence. Any other verdict, a stopped trial's or another kind's, as it is.
+  const short = (verdict) => verdict === "won by the challenger" ? "challenger wins"
+    : verdict === "won by the champion" ? "champion wins" : verdict.startsWith("drawn") ? "draw" : verdict;
   const rows = [...catalog.trials].reverse().map((t) => [
     // A stopped trial, still kept, resumes from its pairs, on this machine: first, where it is seen.
     { html: `<span class="number">${t.number}</span> <button class="plain" data-screen-open="${t.number}">View</button>`
       + `${token && t.verdict.startsWith("stopped") ? ` <button data-resume-trial="${t.number}"${running ? " disabled" : ""}>Resume</button><span class="said bad"></span>` : ""}` },
     t.ended,
     trialTitle({ trial: t.kind, settings: t.settings, challenger: t.challenger, champion: t.champion }),
-    t.limit, whole(t.games), t.games > 0 ? percent(t.challenger_points / t.games) : "", (t.mixed ? "mixed; " : "") + t.verdict,
+    // The champion's score, not the challenger's (the developer, 2026-11-27).
+    t.limit, whole(t.games), t.games > 0 ? percent(1 - t.challenger_points / t.games) : "", (t.mixed ? "mixed; " : "") + short(t.verdict),
   ]);
-  const log = rows.length > 0 ? `<div class="log">${table(["trial", "ended", "what", "search", "games", "challenger", "verdict"], rows)}</div>` : `<div class="muted">no trial yet</div>`;
+  const log = rows.length > 0 ? `<div class="log">${table(["trial", "ended", "what", "search", "games", "champion", "verdict"], rows)}</div>` : `<div class="muted">no trial yet</div>`;
   return form + `<section><h2>Trials</h2>${log}<div class="muted">the latest 20 are kept, each with its games; a stopped one may be resumed while it is kept</div></section>`;
 }
 
