@@ -454,9 +454,10 @@ function roundLine(round) {
 }
 
 // The generation's one run at its latest round (`null` before the server lists it), and a polyline
-// attempt's ten values once measured.
+// attempt's ten values once measured: lambda by a position's progress through its game, one value
+// per tenth of the game, fixed for the whole run; never a schedule over the training's rounds.
 function training(run, round = null, polyline = null) {
-  const values = polyline ? `<div class="muted">lambda for each tenth of the training: ${escape(polyline)}</div>` : "";
+  const values = polyline ? `<div class="muted">lambda for each tenth of a game: ${escape(polyline)}</div>` : "";
   const r = run ? run.last : null;
   // The budget, under the polyline: its rate's two ends and how it falls between them.
   const plan = r ? r.schedule : null;
