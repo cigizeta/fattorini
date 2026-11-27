@@ -176,6 +176,18 @@ const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;",
 const number = (value, digits) => value === null ? "" : value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const whole = (value) => value.toLocaleString();
 const percent = (value) => number(100 * value, 1) + "%";
+// A trial's time in the viewer's own zone, as `YYYY-MM-DD HH:MM CET` (the developer, 2026-11-27),
+// from the record's `YYYY-MM-DD HH:MM UTC`; anything else as it is. The log's and a trial's alike.
+const local = (text) => {
+  const parts = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d) UTC$/.exec(text || "");
+  if (!parts) return text;
+  const when = new Date(Date.UTC(+parts[1], parts[2] - 1, +parts[3], +parts[4], +parts[5]));
+  const pad = (n) => String(n).padStart(2, "0");
+  const zone = new Intl.DateTimeFormat("en-GB", { timeZoneName: "short" }).formatToParts(when)
+    .find((p) => p.type === "timeZoneName");
+  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} `
+    + `${pad(when.getHours())}:${pad(when.getMinutes())}${zone ? " " + zone.value : ""}`;
+};
 
 // `done` of `total` in the accent; with `reached`, the stretch from `done` to it lighter, progress
 // that may still be taken back.
@@ -1174,18 +1186,6 @@ function trialsScreen() {
   // whole sentence. Any other verdict, a stopped trial's or another kind's, as it is.
   const short = (verdict) => verdict === "won by the challenger" ? "challenger wins"
     : verdict === "won by the champion" ? "champion wins" : verdict.startsWith("drawn") ? "draw" : verdict;
-  // The log's end time in the viewer's own zone, as `YYYY-MM-DD HH:MM CET` (the developer,
-  // 2026-11-27), from the record's `YYYY-MM-DD HH:MM UTC`; anything else as it is.
-  const local = (text) => {
-    const parts = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d) UTC$/.exec(text || "");
-    if (!parts) return text;
-    const when = new Date(Date.UTC(+parts[1], parts[2] - 1, +parts[3], +parts[4], +parts[5]));
-    const pad = (n) => String(n).padStart(2, "0");
-    const zone = new Intl.DateTimeFormat("en-GB", { timeZoneName: "short" }).formatToParts(when)
-      .find((p) => p.type === "timeZoneName");
-    return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} `
-      + `${pad(when.getHours())}:${pad(when.getMinutes())}${zone ? " " + zone.value : ""}`;
-  };
   const rows = [...catalog.trials].reverse().map((t) => [
     // A stopped trial, still kept, resumes from its pairs, on this machine: first, where it is seen.
     { html: `<span class="number">${t.number}</span> <button class="plain" data-screen-open="${t.number}">View</button>`
@@ -1211,12 +1211,12 @@ function trialScreen() {
   // Its block as it played, rebuilt from its record, then its dates and Resume.
   if (t.view) {
     return `<section>${work(t.view)}</section>`
-      + `<section><div class="muted">started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
+      + `<section><div class="muted">started ${escape(local(t.started))}, ended ${escape(local(t.ended))}</div>`
       // A stopped trial has no verdict in its block: its stop is said here.
       + (t.verdict.startsWith("stopped") ? `<div><b>stopped</b></div>` : "") + `${resume}</section>`;
   }
   const score = t.games > 0 ? `, the champion ${percent(1 - t.challenger_points / t.games)}` : "";
-  return `<section><h2>${escape(trialTitle(view))}</h2><div class="muted">${escape(t.limit)}; started ${escape(t.started)}, ended ${escape(t.ended)}</div>`
+  return `<section><h2>${escape(trialTitle(view))}</h2><div class="muted">${escape(t.limit)}; started ${escape(local(t.started))}, ended ${escape(local(t.ended))}</div>`
     + (t.mixed ? `<div class="bad">mixed: the two sides tuned differently</div>` : "")
     + `<div>${whole(t.games)} games${score}</div><div><b>${escape(t.verdict)}</b></div>${resume}</section>`;
 }
