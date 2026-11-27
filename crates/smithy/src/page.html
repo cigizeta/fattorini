@@ -526,9 +526,10 @@ function lossChart(curve, last) {
     `<line class="stage" x1="${left}" x2="${width - right}" y1="${y(loss).toFixed(1)}" y2="${y(loss).toFixed(1)}"/>`).join("")
     + rounds.map((round) =>
       `<line class="stage" x1="${x(round).toFixed(1)}" x2="${x(round).toFixed(1)}" y1="${top}" y2="${height - bottom}"/>`).join("")
-    // The plot's frame closed in the same gray, top and right, unlabelled: an edge, not a tick, so a
-    // round tick just short of the end reads as a grid line beside it.
-    + `<rect class="stage" fill="none" x="${left}" y="${top}" width="${width - left - right}" height="${height - top - bottom}"/>`;
+    // The plot inside a rectangle (the developer, 2026-11-27): top and right in the axes' color,
+    // unlabelled, an edge darker than the grid, so a round tick just short of the end reads as a
+    // grid line beside it.
+    + `<rect class="axis" fill="none" x="${left}" y="${top}" width="${width - left - right}" height="${height - top - bottom}"/>`;
   const bestRow = last && rows.find((c) => c[0] === last.best_round);
   const best = bestRow ? `<circle class="best" cx="${x(bestRow[0]).toFixed(1)}" cy="${y(bestRow[2]).toFixed(1)}" r="5"/>` : "";
   // Above the plot, right aligned, train then test on one line (the developer, 2026-11-27).
