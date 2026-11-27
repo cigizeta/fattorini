@@ -474,8 +474,9 @@ function roundLine(round) {
 function training(run, round = null, polyline = null) {
   const values = polyline ? `<div class="muted">lambda for each tenth of a game: ${escape(polyline)}</div>` : "";
   const r = run ? run.last : null;
-  // The budget, under the polyline: its rate's two ends and how it falls between them.
-  const plan = r ? r.schedule : null;
+  // The budget, under the polyline: its rate's two ends and how it falls between them, from the
+  // config, so said before the first round too.
+  const plan = run ? run.plan : null;
   const rates = plan
     ? `<div class="muted">learning rate falling geometrically from ${escape(plan.start.toExponential(0))} `
       + `to ${escape(plan.end.toExponential(0))} over ${escape(String(plan.epochs))} epochs</div>`

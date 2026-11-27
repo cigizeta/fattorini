@@ -3089,12 +3089,31 @@ struct RunView {
     last: Option<RoundRow>,
     /// Every round as `[round, train loss, test loss, learning rate]`, for the page's loss chart.
     curve: Vec<[f64; 4]>,
+    /// The learning rate's fall, from the config: known before the first round, so the page says it
+    /// from the start (the developer, 2026-11-27), not from the first round's row. `None` unless the
+    /// config's rates are a budget's two.
+    plan: Option<RatePlan>,
+}
+
+/// A budget's learning rate, falling geometrically from `start` to `end` over `epochs`.
+#[derive(Serialize)]
+struct RatePlan {
+    start: f64,
+    end: f64,
+    epochs: f64,
+}
+
+impl RatePlan {
+    fn of(schedule: &Schedule) -> Option<RatePlan> {
+        let &[start, end] = schedule.rates.as_slice() else { return None };
+        Some(RatePlan { start, end, epochs: schedule.epochs })
+    }
 }
 
 impl RunView {
     /// The run before its first round.
-    fn not_started() -> RunView {
-        RunView { last: None, curve: Vec::new() }
+    fn not_started(schedule: &Schedule) -> RunView {
+        RunView { last: None, curve: Vec::new(), plan: RatePlan::of(schedule) }
     }
 }
 
@@ -3267,7 +3286,7 @@ impl Status {
                 let view = self.forge_view(&files, state.generation, &work);
                 // A new attempt's training, before its first round: its run listed as not started, so
                 // the box is drawn whole from the frozen test set's read on, as a resumed attempt's is.
-                let training = view.training.or_else(|| (state.phase == Phase::Train).then(RunView::not_started));
+                let training = view.training.or_else(|| (state.phase == Phase::Train).then(|| RunView::not_started(&files.schedule)));
                 Some(ForgeView { round, training, ..view })
             }
             _ => None,
@@ -3348,7 +3367,7 @@ impl Status {
             }),
         };
         let (last, curve) = self.arm_rounds(&format!("{}/history.tsv", dirs.run(generation)), &files.schedule);
-        let run = RunView { last, curve };
+        let run = RunView { last, curve, plan: RatePlan::of(&files.schedule) };
         let round_robin = match live {
             WorkView::RoundRobin { .. } => Some(live.clone()),
             _ => {
