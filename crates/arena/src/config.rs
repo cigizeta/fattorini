@@ -90,8 +90,10 @@ impl Rule {
     }
 }
 
-/// The deepest fixed depth a run may play at: self-play's own, `generation::SEARCH_DEPTH`.
-pub const MAX_DEPTH: u32 = 9;
+/// The deepest fixed depth a run may play at: 12 (the developer, 2026-11-28), from self-play's 9, so
+/// that a duel can tell a network's search at depth from its play on the clock (the dual networks:
+/// even with their twins at depth 9, beaten at 10+0.1).
+pub const MAX_DEPTH: u32 = 12;
 
 /// How every game of a run is limited, with the text `spec.txt` names it by: `depth 9`, `3+2`.
 #[derive(Debug, Clone)]
@@ -268,11 +270,11 @@ mod tests {
     }
 
     #[test]
-    fn a_control_is_a_depth_from_1_to_9_or_a_fischer_clock() {
+    fn a_control_is_a_depth_from_1_to_12_or_a_fischer_clock() {
         assert_eq!(ControlSpec::depth("1").unwrap().text, "depth 1");
-        assert_eq!(ControlSpec::depth("9").unwrap().text, "depth 9");
+        assert_eq!(ControlSpec::depth("12").unwrap().text, "depth 12");
         assert!(ControlSpec::depth("0").is_err());
-        assert!(ControlSpec::depth("10").is_err());
+        assert!(ControlSpec::depth("13").is_err());
         assert!(ControlSpec::depth("x").is_err());
         assert_eq!(ControlSpec::time("180+2").unwrap().text, "180+2");
         assert_eq!(ControlSpec::time("10+0.1").unwrap().text, "10+0.1");
