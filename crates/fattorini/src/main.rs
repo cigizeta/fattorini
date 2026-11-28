@@ -9,8 +9,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// and the third-party notices a release embeds. `pawn-scale` measures a network's pawn.
 /// `translate-tune` converts a player's old, classical tune files into its network's unit. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
-/// `bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>]` benches a network
-/// file instead.
+/// `bench-network <network> [<depth>] [--scale <factor>] [--set <name>=<value>]...` benches a
+/// network file instead.
 /// `tm-probe [<depth>]` measures the time management's factors on those positions.
 ///
 /// Any other argument stops the engine, so a typo is never silently ignored.
@@ -44,7 +44,7 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini translate-tune <player> | fattorini bench [<depth>] | fattorini bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>] | fattorini tm-probe [<depth>]");
+            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini translate-tune <player> | fattorini bench [<depth>] | fattorini bench-network <network> [<depth>] [--scale <factor>] [--set <name>=<value>]... | fattorini tm-probe [<depth>]");
             std::process::exit(2);
         }
     }
@@ -84,21 +84,23 @@ fn run_bench(depth: u32) {
     println!("{}", fattorini::bench::bench_line(nodes, seconds));
 }
 
-/// `fattorini bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>]`: `bench`
-/// with the network file at `<network>` in place of the embedded one, its tuning read beside it as
-/// the engine reads it, `aspiration_delta` overridden when asked, its output multiplied by `factor`
-/// when asked (`Network::with_output_scale`: the same evaluation in another unit's numbers). Prints the pawn percent and the parameters, then
-/// `bench`'s line, last. How two networks' cost per depth is compared (an `elo` network's narrower
-/// aspiration window, in its unit, was the reason it was added).
+/// `fattorini bench-network <network> [<depth>] [--scale <factor>] [--set <name>=<value>]...`:
+/// `bench` with the network file at `<network>` in place of the embedded one, its tuning read beside
+/// it as the engine reads it, its output multiplied by `factor` when asked
+/// (`Network::with_output_scale`: the same evaluation in another unit's numbers), then each `--set`
+/// overriding one of `SearchParameters::NAMES`. Prints the pawn percent and the parameters, then
+/// `bench`'s line, last. How two networks' cost per depth is compared, and how a unit's manual
+/// constants are calibrated against another's on one evaluation.
 fn run_bench_network(arguments: &[&str]) {
     let usage = || -> ! {
-        eprintln!("usage: fattorini bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>]");
+        eprintln!("usage: fattorini bench-network <network> [<depth>] [--scale <factor>] [--set <name>=<value>]...");
         std::process::exit(2);
     };
     let [path, rest @ ..] = arguments else { usage() };
+    let names = fattorini::search::SearchParameters::NAMES;
     let mut depth = fattorini::bench::BENCH_DEPTH;
-    let mut aspiration = None;
     let mut scale = None;
+    let mut overrides: Vec<(usize, i32)> = Vec::new();
     let mut rest = rest.iter();
     while let Some(&argument) = rest.next() {
         match argument {
@@ -106,10 +108,13 @@ fn run_bench_network(arguments: &[&str]) {
                 Some(Ok(factor)) if factor > 0.0 && scale.is_none() => scale = Some(factor),
                 _ => usage(),
             },
-            "--aspiration" => match rest.next().map(|value| value.parse::<i32>()) {
-                Some(Ok(delta)) if delta > 0 && aspiration.is_none() => aspiration = Some(delta),
-                _ => usage(),
-            },
+            "--set" => {
+                let Some((name, value)) = rest.next().and_then(|pair| pair.split_once('=')) else { usage() };
+                let (Some(index), Ok(value)) = (names.iter().position(|known| *known == name), value.parse::<i32>()) else {
+                    usage()
+                };
+                overrides.push((index, value));
+            }
             _ => match argument.parse::<u32>() {
                 Ok(value) if value > 0 && depth == fattorini::bench::BENCH_DEPTH => depth = value,
                 _ => usage(),
@@ -126,10 +131,11 @@ fn run_bench_network(arguments: &[&str]) {
             std::process::exit(1);
         }
     };
-    let mut parameters = fattorini::search::default_parameters_for(Some(&network));
-    if let Some(delta) = aspiration {
-        parameters.aspiration_delta = delta;
+    let mut values = fattorini::search::default_parameters_for(Some(&network)).values();
+    for (index, value) in overrides {
+        values[index] = value;
     }
+    let parameters = fattorini::search::SearchParameters::from_values(values);
     println!("pawn percent {}", network.pawn_percent());
     let values: Vec<String> = fattorini::search::SearchParameters::NAMES
         .iter()

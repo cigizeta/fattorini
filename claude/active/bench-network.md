@@ -113,6 +113,14 @@ integer is the usage error.
 How an arena names a player with a given parameters set: the engine reads `search-parameters.txt`
 beside the network (`read_tuning_beside`), so a copy of each dual's candidate in a folder of its own
 with the `elo`-manual set beside it would be one; tuning-suffixes.md to read first.
+**Read 2026-11-28:** no copy needed. `<network>@search-tuned` plays `search-parameters.txt` beside
+the network, and refuses a missing file; `@untuned` plays the translated defaults. So the
+`elo`-manual set, written beside each dual's `candidate.nnue` on Drive as `units\tnetwork` then one
+`name\tvalue` line per parameter, makes it `<dual>@search-tuned`. The suffix says tuned where the
+set is calibrated by hand: internal names only, said in each trial's row. The file is removed, or
+replaced, when a real tune comes.
+
+`--set` written 2026-11-28; `--aspiration` removed with it.
 
 ## Afterwards
 
