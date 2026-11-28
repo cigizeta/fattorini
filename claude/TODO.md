@@ -157,8 +157,13 @@ pairwise against screlu-hidden at 512.
   head: drawn, curtailed,** 374.5 of 798 (46.9%, about -21 Elo); its depth gap narrowed from 0.74
   and 0.89 plies to 0.52 and 0.60 (moves 1-19, 20-39), the same time spent. At equal cost a node, a
   game's tree is still larger a depth than its twin's: the evaluation's shape, through the
-  untuned pruning. **Next:** pairwise dual at 10+0.1 on the fast head. The list below, kept for
-  the record:
+  untuned pruning. **Next:** pairwise dual at 10+0.1 on the fast head. **Then:** trial 32, lost
+  after 30 games (9 points, 30%), trial 33 at depth 9 drawn (49.8%, the evaluation sound), trial 34
+  at 10+0.1 lost, 56.5 of 138 (40.9%); the middlegame's depth gap down to 0.41 and 0.48 plies. Both
+  stopped early, which favours extreme scores: with trial 29's 45.0% over 410, pairwise dual is
+  most likely about -35 Elo on the clock. The endgame's depth gap (3.5 plies) is no clue: lost games
+  give the winner the won, shallow-to-search endgames. **Verdict (2026-11-28): the dual head does not
+  pay at untuned search, on either transform.** The list below, kept for the record:
   1. Nodes at depth 9 on the bench positions, each dual against its hidden twin, on an idle machine;
      then the dual's aspiration window scaled to its unit (about 28), to see if its count falls back.
   2. If so, an audit of every search constant compared with a score, then all of them translated (a
