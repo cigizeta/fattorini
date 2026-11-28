@@ -9,7 +9,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// and the third-party notices a release embeds. `pawn-scale` measures a network's pawn.
 /// `translate-tune` converts a player's old, classical tune files into its network's unit. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
-/// `bench-network <network> [<depth>] [--aspiration <delta>]` benches a network file instead.
+/// `bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>]` benches a network
+/// file instead.
 /// `tm-probe [<depth>]` measures the time management's factors on those positions.
 ///
 /// Any other argument stops the engine, so a typo is never silently ignored.
@@ -43,7 +44,7 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini translate-tune <player> | fattorini bench [<depth>] | fattorini bench-network <network> [<depth>] [--aspiration <delta>] | fattorini tm-probe [<depth>]");
+            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini translate-tune <player> | fattorini bench [<depth>] | fattorini bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>] | fattorini tm-probe [<depth>]");
             std::process::exit(2);
         }
     }
@@ -83,22 +84,28 @@ fn run_bench(depth: u32) {
     println!("{}", fattorini::bench::bench_line(nodes, seconds));
 }
 
-/// `fattorini bench-network <network> [<depth>] [--aspiration <delta>]`: `bench` with the network
-/// file at `<network>` in place of the embedded one, its tuning read beside it as the engine reads
-/// it, `aspiration_delta` overridden when asked. Prints the pawn percent and the parameters, then
+/// `fattorini bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>]`: `bench`
+/// with the network file at `<network>` in place of the embedded one, its tuning read beside it as
+/// the engine reads it, `aspiration_delta` overridden when asked, its output multiplied by `factor`
+/// when asked (`Network::with_output_scale`: the same evaluation in another unit's numbers). Prints the pawn percent and the parameters, then
 /// `bench`'s line, last. How two networks' cost per depth is compared (an `elo` network's narrower
 /// aspiration window, in its unit, was the reason it was added).
 fn run_bench_network(arguments: &[&str]) {
     let usage = || -> ! {
-        eprintln!("usage: fattorini bench-network <network> [<depth>] [--aspiration <delta>]");
+        eprintln!("usage: fattorini bench-network <network> [<depth>] [--aspiration <delta>] [--scale <factor>]");
         std::process::exit(2);
     };
     let [path, rest @ ..] = arguments else { usage() };
     let mut depth = fattorini::bench::BENCH_DEPTH;
     let mut aspiration = None;
+    let mut scale = None;
     let mut rest = rest.iter();
     while let Some(&argument) = rest.next() {
         match argument {
+            "--scale" => match rest.next().map(|value| value.parse::<f32>()) {
+                Some(Ok(factor)) if factor > 0.0 && scale.is_none() => scale = Some(factor),
+                _ => usage(),
+            },
             "--aspiration" => match rest.next().map(|value| value.parse::<i32>()) {
                 Some(Ok(delta)) if delta > 0 && aspiration.is_none() => aspiration = Some(delta),
                 _ => usage(),
@@ -110,7 +117,10 @@ fn run_bench_network(arguments: &[&str]) {
         }
     }
     let network = match fattorini::nnue::Network::load(path) {
-        Ok(network) => network,
+        Ok(network) => match scale {
+            Some(factor) => network.with_output_scale(factor),
+            None => network,
+        },
         Err(error) => {
             eprintln!("fattorini bench-network: {error}");
             std::process::exit(1);

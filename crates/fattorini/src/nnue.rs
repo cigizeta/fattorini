@@ -1423,6 +1423,9 @@ pub struct QuantizedPsqNetwork {
     /// `TimeParameters::translated`, `spsa::translated_specs`). 100 until `Network::from_psq`
     /// measures it.
     pawn_percent: i32,
+    /// What its output is multiplied by before it becomes centipawns: 1.0, exact, except under
+    /// `fattorini bench-network --scale`, which shows a network's search in another unit's numbers.
+    output_scale: f32,
     /// The curve this network was trained to mean (`curve_of_version`), set with `pawn_percent`:
     /// what turns its output into the expected score a GUI's score is shown from.
     curve: crate::labels::Curve,
@@ -1756,6 +1759,7 @@ impl QuantizedPsqNetwork {
             transform_bias: to_i16(&network.transform_bias),
             head,
             pawn_percent: 100,
+            output_scale: 1.0,
             curve: crate::labels::LOGISTIC,
             tuning: Tuning::Untuned,
         })
@@ -1988,7 +1992,7 @@ impl QuantizedPsqNetwork {
         let own = &accumulators[side_to_move as usize];
         let opponent = &accumulators[side_to_move.opposite() as usize];
         if !self.threats {
-            return centipawns(self.evaluate_lanes(own, opponent, true, self.buckets(board)));
+            return centipawns(self.output_scale * self.evaluate_lanes(own, opponent, true, self.buckets(board)));
         }
         THREAT_SCRATCH.with(|scratch| {
             let mut scratch = scratch.borrow_mut();
@@ -2002,7 +2006,7 @@ impl QuantizedPsqNetwork {
                 // Summed in i32 and saturated: the threat rows are not in `quantize`'s bound.
                 add_rows_saturating_i16_avx2(copy, lanes, &self.transform, rows);
             }
-            centipawns(self.evaluate_lanes(own_with_threats, opponent_with_threats, true, self.buckets(board)))
+            centipawns(self.output_scale * self.evaluate_lanes(own_with_threats, opponent_with_threats, true, self.buckets(board)))
         })
     }
 
@@ -2453,7 +2457,7 @@ impl QuantizedPsqNetwork {
 
     /// `evaluate_pawns` in the engine's centipawns.
     pub fn evaluate(&self, board: &Board) -> i32 {
-        centipawns(self.evaluate_pawns(board))
+        centipawns(self.output_scale * self.evaluate_pawns(board))
     }
 
     /// The first hidden layer `board` is evaluated through, its bucket's for a bucketed head: `None`
@@ -2891,6 +2895,21 @@ impl Network {
         quantized.pawn_percent = pawn_percent;
         quantized.curve = *curve;
         Ok(Network::Psq(network, quantized))
+    }
+
+    /// This network with its output multiplied by `factor` and its pawn scale measured again, so
+    /// its untuned parameters translate as a network of that unit's would
+    /// (`fattorini bench-network --scale`).
+    pub fn with_output_scale(self, factor: f32) -> Network {
+        match self {
+            Network::Psq(network, mut quantized) => {
+                quantized.output_scale = factor;
+                let curve = quantized.curve;
+                let pawn_percent = measure_label_percent_through(|board| quantized.evaluate(board), &curve);
+                quantized.pawn_percent = pawn_percent;
+                Network::Psq(network, quantized)
+            }
+        }
     }
 
     /// A search score of this network's, in its centipawns (`100 * y`), as a GUI is shown it. A
