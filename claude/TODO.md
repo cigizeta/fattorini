@@ -126,7 +126,22 @@ pairwise against screlu-hidden at 512.
   passed, 38 games, 95.6%. **Duels against `-pairwise-hidden-512-8-budget-g1-a1`** (the head
   alone changed; the unit too, `elo` against `lc0`), both `@untuned`: **trial 24, depth 9, drawn,
   curtailed,** dual 407.5 of 774 (52.6%, about +18 Elo), leaning dual's way. **Trial 25, 10+0.1,
-  started 2026-11-28.** Won or drawn: the piece-count buckets go on dual next.
+  lost,** dual 233 of 510 (45.7%, +112 -156 =242 from its side, about -30 Elo). The same pattern as
+  screlu dual's trials 22 and 23: ahead at depth, behind on the clock.
+- **Trials 22 to 25 confounded by the unit (2026-11-28):** each duel set an `elo` dual against an
+  `lc0` network, both `@untuned`. Not the head's inference: both duals run the champion's i8 first
+  layer, the head's extra work a few f32 operations. **The suspect, unmeasured:** the aspiration
+  window, 12, is not translated by the pawn scale (`SearchParameters::translated`), so on an `elo`
+  network (a pawn about +0.70 against +0.30) it is about 2.3 times narrower: more re-searches, more
+  nodes a depth, stronger at depth 9, slower on the clock. Finer integer scores may add to it. A
+  tune fixes the tuned constants anyway (the developer); the untuned duels across units are what
+  is poisoned, those within one unit stand. **Next, in this order:**
+  1. Nodes at depth 9 on the bench positions, each dual against its hidden twin, on an idle machine;
+     then the dual's aspiration window scaled to its unit (about 28), to see if its count falls back.
+  2. If so, an audit of every search constant compared with a score, then all of them translated (a
+     design note first), then trials 23 and 25 rerun.
+  3. Either way, a duel within one unit: screlu-hidden retrained under `unit: elo` (planned
+     2026-11-25), the duals against it, which also measures the unit itself against its `lc0` twin.
 
 - **Designed and written 2026-11-25** (pairwise-dual-activation.md, its plan
   pairwise-dual-activation-implementation.md): pairwise on the transform; of the first hidden
