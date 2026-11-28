@@ -77,5 +77,16 @@ pairwise-hidden compliant now, screlu-hidden needing its castling and en passant
   their top. The rounding costs little: 4.5% of the inputs, each worth under half a step of 127,
   so finer squares are not worth a variant. Screlu reads 70% more nonzero inputs for the same
   strength, its first layer 60% dearer; the 7% a whole evaluation did not show as depth in trial 35.
-  **Next:** the width-384 screlu (768 squares, a cheaper first layer and update) is the variant
+- **2026-11-28, the two training histories** (`history.tsv`, same data, schedule, curve and
+  steps; only the transform differs): pairwise's test loss above screlu's from the first round to
+  the last, by a nearly constant gap: 0.6307 against 0.6299 at step 4096, 0.6148 against 0.6141
+  at the end (2.42M steps). Both flattening at the end. A gap there from the start and never
+  closing reads as capacity, not as slower optimization: pairwise's head reads 512 inputs,
+  screlu's 1024, from the same 512 lanes. The gap is not Elo: trial 35 is level. The crowd's
+  pairwise is a speed choice at wide transforms (1024 and up), where halving the head's input pays
+  for the width; at our width 512 it is half the input for nothing. **Then:** pairwise at width
+  768 (768 products, still a cheaper first layer than screlu's 1024 squares) asks whether
+  pairwise is worse per lane or per input: its loss at or below screlu-512's means per lane.
+
+  **Next (lanes):** the width-384 screlu (768 squares, a cheaper first layer and update) is the variant
   that tests whether screlu's idle lanes are spare: equal to today's screlu means they were.
