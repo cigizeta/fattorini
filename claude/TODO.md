@@ -124,8 +124,9 @@ pairwise against screlu-hidden at 512.
   Round robin, 400 pairs a pairing: epoch 3.750 first (test loss 0.614588), the top six, 2.750 to
   4.000, within noise of one another at mid-tournament, 2.000 and 2.250 behind at about 48%. Gate
   passed, 38 games, 95.6%. **Duels against `-pairwise-hidden-512-8-budget-g1-a1`** (the head
-  alone changed; the unit too, `elo` against `lc0`), both `@untuned`: **trial 24, depth 9, started
-  2026-11-28,** then 10+0.1. Won or drawn: the piece-count buckets go on dual next.
+  alone changed; the unit too, `elo` against `lc0`), both `@untuned`: **trial 24, depth 9, drawn,
+  curtailed,** dual 407.5 of 774 (52.6%, about +18 Elo), leaning dual's way. **Trial 25, 10+0.1,
+  started 2026-11-28.** Won or drawn: the piece-count buckets go on dual next.
 
 - **Designed and written 2026-11-25** (pairwise-dual-activation.md, its plan
   pairwise-dual-activation-implementation.md): pairwise on the transform; of the first hidden
@@ -141,6 +142,11 @@ pairwise against screlu-hidden at 512.
   later. **Written 2026-11-26** (screlu-dual-implementation.md): tags 35 to 37, the castling and en
   passant rows untied from pairwise (a halfk pairwise or dual network has them),
   `configs/lc0-halfk-threats-screlu-dual-512-8-budget.yaml`, `unit: elo`. Tests and clippy clean 2026-11-26 (the developer).
+  **Attempt 1, generation 1, trained by 2026-11-27:** epoch 3.500 the round robin's winner (test
+  loss 0.614070), gate passed, 34 games, 97.1%. Against `-screlu-hidden-512-8-budget-g1-a1`, both
+  `@untuned`: **trial 22, depth 9, drawn, curtailed,** 402.5 of 768 (52.4%, about +17 Elo); **trial
+  23, 10+0.1, lost,** 113.5 of 260 (43.7%, about -44 Elo). Equal at depth, beaten on the clock: the
+  dual head costs more time than its gain, a guess, unmeasured (a bench of both to say why).
 
 - **The piece-count buckets on dual, written ahead (2026-11-25)** (pairwise-dual-count.md, its plan
   pairwise-dual-count-implementation.md), the developer optimistic that dual wins: 8 independent
