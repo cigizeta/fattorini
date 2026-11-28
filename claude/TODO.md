@@ -142,7 +142,15 @@ pairwise against screlu-hidden at 512.
   (correction-grain.md):** the correction history's rounding to whole units; held in 256 steps a
   unit, the units search alike (11% apart at depth 13), its check duels against the old build drawn
   (50.3% at depth 9, 51.2% at 10+0.1), kept. Calibration skipped: **trials 22 to 25 to rerun on the
-  new build, both `@untuned`.** The list below, kept for the record:
+  new build, both `@untuned`.** **Rerun 2026-11-28, the same verdicts:** trial 26, screlu dual at
+  depth 9, drawn, 398.5 of 766 (52.0%); trial 27, at 10+0.1, lost, 99.5 of 228 (43.6%); trial 28,
+  pairwise dual at depth 9, drawn, 376.5 of 742 (50.7%); trial 29, at 10+0.1, lost, 184.5 of 410
+  (45.0%, +90 -131 =189 from its side). So the unit was not the cause: even at depth 9, beaten on
+  the clock, by the dual networks themselves. Screlu dual at depth 13 on the new build: 11.4M nodes
+  at 1.20M nodes/s, half its twin's tree (23.7M at 1.61M) and two thirds of its time. Its tree
+  thins faster with depth, and that seems to cost it. **Next:** screlu dual against screlu-hidden at
+  fixed depth 12, to tell the depth (its pruning) from the clock (time manager, speed). The list
+  below, kept for the record:
   1. Nodes at depth 9 on the bench positions, each dual against its hidden twin, on an idle machine;
      then the dual's aspiration window scaled to its unit (about 28), to see if its count falls back.
   2. If so, an audit of every search constant compared with a score, then all of them translated (a
