@@ -232,10 +232,12 @@ pairwise against screlu-hidden at 512.
   which a mature project will reach; every way around it (a keepalive commit, the API's re-enable, an
   external converter) was refused, and a link-only badge declined. The badge, the workflow,
   `bin/ccrl-badge` and `badges/` removed; the README's Strength section states the CCRL estimate.
-- **CCRL's entry: authors and links. Sent 2026-11-25** as a new topic in the CCRL Public forum,
-  waiting for a moderator's approval (a new account's first two posts are approved by hand). CCRL's
-  per-version page shows "Authors:" and "Links:" lines under the rating (as Stockfish 19's), and
-  Fattorini's has neither. The message, for CCRL's forum or Discord, or the tester:
+- **CCRL 40/15, the list of 2026-11-27:** 3228 +73 -73, 36 games (4 wins, 10 losses, 22 draws,
+  41.7%). The tournament ("Cloaked In Red") was 44 games for Fattorini, 19 points; the 8 left out
+  are those against Isa 4.7 and Myrddin 0.96f, which the list does not rate (4 points of 8, so
+  little effect). Why they are unrated: not known, not important (the developer, 2026-11-28).
+- **CCRL's entry: authors and links. Done by 2026-11-28:** the page shows the author and the
+  Homepage link. Sent 2026-11-25 as a new topic in the CCRL Public forum. The message, for the record:
   "Hello, thank you for testing Fattorini 2026.11.0 in Cloaked In Red. Could you add its author and
   homepage to its CCRL entry? Author: Calogero Zarba (Italy). Link: Homepage,
   https://github.com/cigizeta/fattorini. Thank you!" The country is the developer's choice
