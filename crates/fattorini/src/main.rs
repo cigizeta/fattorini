@@ -9,6 +9,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// and the third-party notices a release embeds. `pawn-scale` measures a network's pawn.
 /// `translate-tune` converts a player's old, classical tune files into its network's unit. `bench` searches a fixed set of positions and prints `<n> nodes <n> nps`
 /// last (`bench::bench`); `bench <depth>` searches them to that depth instead of the default.
+/// `bench-network <network> [<depth>] [--aspiration <delta>]` benches a network file instead.
 /// `tm-probe [<depth>]` measures the time management's factors on those positions.
 ///
 /// Any other argument stops the engine, so a typo is never silently ignored.
@@ -32,6 +33,7 @@ fn main() {
                 std::process::exit(2);
             }
         },
+        ["bench-network", rest @ ..] => run_bench_network(rest),
         ["tm-probe"] => run_tm_probe(fattorini::bench::TM_PROBE_DEPTH),
         ["tm-probe", depth] => match depth.parse::<u32>() {
             Ok(depth) if depth > 0 => run_tm_probe(depth),
@@ -41,7 +43,7 @@ fn main() {
             }
         },
         _ => {
-            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini translate-tune <player> | fattorini bench [<depth>] | fattorini tm-probe [<depth>]");
+            eprintln!("usage: fattorini [--lichess] | fattorini about | fattorini licenses | fattorini pawn-scale [<network>] | fattorini translate-tune <player> | fattorini bench [<depth>] | fattorini bench-network <network> [<depth>] [--aspiration <delta>] | fattorini tm-probe [<depth>]");
             std::process::exit(2);
         }
     }
@@ -78,6 +80,54 @@ fn run_bench(depth: u32) {
     let parameters = fattorini::uci::embedded_parameters()
         .unwrap_or_else(|| fattorini::search::default_parameters_for(evaluator.as_deref()));
     let (nodes, seconds) = fattorini::bench::bench_with(evaluator.as_deref(), parameters, depth);
+    println!("{}", fattorini::bench::bench_line(nodes, seconds));
+}
+
+/// `fattorini bench-network <network> [<depth>] [--aspiration <delta>]`: `bench` with the network
+/// file at `<network>` in place of the embedded one, its tuning read beside it as the engine reads
+/// it, `aspiration_delta` overridden when asked. Prints the pawn percent and the parameters, then
+/// `bench`'s line, last. How two networks' cost per depth is compared (an `elo` network's narrower
+/// aspiration window, in its unit, was the reason it was added).
+fn run_bench_network(arguments: &[&str]) {
+    let usage = || -> ! {
+        eprintln!("usage: fattorini bench-network <network> [<depth>] [--aspiration <delta>]");
+        std::process::exit(2);
+    };
+    let [path, rest @ ..] = arguments else { usage() };
+    let mut depth = fattorini::bench::BENCH_DEPTH;
+    let mut aspiration = None;
+    let mut rest = rest.iter();
+    while let Some(&argument) = rest.next() {
+        match argument {
+            "--aspiration" => match rest.next().map(|value| value.parse::<i32>()) {
+                Some(Ok(delta)) if delta > 0 && aspiration.is_none() => aspiration = Some(delta),
+                _ => usage(),
+            },
+            _ => match argument.parse::<u32>() {
+                Ok(value) if value > 0 && depth == fattorini::bench::BENCH_DEPTH => depth = value,
+                _ => usage(),
+            },
+        }
+    }
+    let network = match fattorini::nnue::Network::load(path) {
+        Ok(network) => network,
+        Err(error) => {
+            eprintln!("fattorini bench-network: {error}");
+            std::process::exit(1);
+        }
+    };
+    let mut parameters = fattorini::search::default_parameters_for(Some(&network));
+    if let Some(delta) = aspiration {
+        parameters.aspiration_delta = delta;
+    }
+    println!("pawn percent {}", network.pawn_percent());
+    let values: Vec<String> = fattorini::search::SearchParameters::NAMES
+        .iter()
+        .zip(parameters.values())
+        .map(|(name, value)| format!("{name} {value}"))
+        .collect();
+    println!("{}", values.join(", "));
+    let (nodes, seconds) = fattorini::bench::bench_with(Some(&network), parameters, depth);
     println!("{}", fattorini::bench::bench_line(nodes, seconds));
 }
 
