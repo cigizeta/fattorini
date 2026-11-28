@@ -119,6 +119,13 @@ pairwise against screlu-hidden at 512.
 
 ## 2026-11-25: halfk_threats_pairwise_dual
 
+- **`-pairwise-dual-512-8-budget` attempt 2, generation 1, ended 2026-11-28:** 592 rounds, 9h 27m;
+  best test loss 0.614541 at round 585 (screlu-hidden's 0.614117, pairwise-hidden's 0.614776).
+  Round robin, 400 pairs a pairing: epoch 3.750 first (test loss 0.614588), the top six, 2.750 to
+  4.000, within noise of one another at mid-tournament, 2.000 and 2.250 behind at about 48%. Gate
+  passed, 38 games, 95.6%. **Next:** its duels at depth 9 and 10+0.1, the opponent to choose
+  (pairwise-hidden at 512, the like-for-like test of the head; or screlu-hidden, the champion).
+
 - **Designed and written 2026-11-25** (pairwise-dual-activation.md, its plan
   pairwise-dual-activation-implementation.md): pairwise on the transform; of the first hidden
   layer's 16 outputs, 15 clipped and squared side by side (30) into the second layer, the 16th raw
@@ -671,11 +678,11 @@ changes).
 
 - **The round robin's results column, desktop only (the developer, 2026-11-28), later:** a
   "results" column between candidate and points, `+wins -losses =draws` from the candidate's side,
-  hidden on a phone (its rule then hides columns 3 to 5). Not computable today: a pairing's results
-  are pair sums in -2..=2, and 0 is a win and a loss or two draws. So first, wins, draws and losses
-  counted per pairing as games end, persisted beside the pair sums; carried in `Standing` and
-  `StandingView`; a tournament stored before the change shows `--`. Where the pair results are
-  written and persisted: to find when designed.
+  hidden on a phone (its rule then hides columns 3 to 5). `standings` reads only the pair sums
+  (-2..=2, where 0 is a win and a loss or two draws), but `round-robin.tsv` already stores each
+  pair's three game counts in its last column (as `0,2,0` for a pair sum of 2), so most likely no new
+  recording: the counts carried into `Standing` and `StandingView`. To check when designed: the
+  column's order and every reader of the file.
 
 - **A test's Stop once did nothing** (2026-11-13, test 6): clicked on the test's screen, opened
   before the smithy restarted, it sent no request the smithy logged (no "stop asked from the
