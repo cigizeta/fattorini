@@ -669,6 +669,14 @@ changes).
 
 ## Data and tools
 
+- **The round robin's results column, desktop only (the developer, 2026-11-28), later:** a
+  "results" column between candidate and points, `+wins -losses =draws` from the candidate's side,
+  hidden on a phone (its rule then hides columns 3 to 5). Not computable today: a pairing's results
+  are pair sums in -2..=2, and 0 is a win and a loss or two draws. So first, wins, draws and losses
+  counted per pairing as games end, persisted beside the pair sums; carried in `Standing` and
+  `StandingView`; a tournament stored before the change shows `--`. Where the pair results are
+  written and persisted: to find when designed.
+
 - **A test's Stop once did nothing** (2026-11-13, test 6): clicked on the test's screen, opened
   before the smithy restarted, it sent no request the smithy logged (no "stop asked from the
   page"); a reload, then Stop, worked. **Fixed 2026-11-19, not reproduced first** (the developer):
