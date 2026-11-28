@@ -70,6 +70,13 @@ width: 768 lanes a perspective, 1536 squares into the same 16 -> 32 -> 1. Its fi
 twice pairwise-768's inputs (about 300 ns at today's 209 for 1024), so its loss is weighed against
 its cost: the duel decides, not the loss.
 
+**Then, a candidate (the developer, 2026-11-28): pairwise at 1024,** lifting the 768 cap for this
+one experiment, only if pairwise-768 wins its duel against screlu-hidden clearly on the clock. A
+draw means the speed ate the loss gain, and 1024 would fare worse. Its cost predicted first from
+768's `nnue_bench` against 512's (the transform update and threat rows linear in the width, the
+first layer at 1024 products as screlu-512's, the refresh cache about 256 KB a thread); training
+about 105 s a round, 17 to 18 hours. After screlu-768.
+
 ## Decision this informs
 
 The base for the piece-count buckets. Until the steps say otherwise, both remain candidates:
@@ -82,6 +89,9 @@ pairwise-hidden compliant now, screlu-hidden needing its castling and en passant
   below both in every one of the ten rounds, its lead over screlu growing (level at round 2).
   Pairwise at 512 lacked inputs, not quality per input. Final loss, `nnue_bench` and the duel to
   come.
+- **Round 59:** rounds 50 to 59 (steps 204,800 to 241,664) 0.61784, against screlu-512's 0.61843
+  (+0.00059, up from +0.00034) and pairwise-512's 0.61883 (+0.00098): further ahead of screlu than
+  screlu ever was of pairwise-512.
 
 - **2026-11-28, `nnue_bench --first-layer` on trial 35's 91,428 positions, one machine:**
 
