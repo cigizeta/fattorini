@@ -32,6 +32,11 @@ tolerance covers f32's last bits). New: `padded_dual_second` puts every weight w
 input meets it (a second layer of known weights, its value over a padded input equal to the
 unpadded one's).
 
+## Run log
+
+- **2026-11-28, `nnue_bench`, back to back on one machine:** screlu-hidden's head 320.1 ns, a node
+  390.2; screlu dual's head 319.9 ns, a node 395.2 (from 416.9 and 487.2). The gap is closed.
+
 ## Then
 
 `nnue_bench` again on both networks: the dual's head near screlu-hidden's. Then trials 27 and 29
