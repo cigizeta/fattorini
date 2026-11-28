@@ -40,6 +40,7 @@ mod match_player;
 mod memory;
 mod pairing;
 mod pgn;
+mod pgn_stats;
 mod player;
 mod random_book;
 mod release;
@@ -86,6 +87,7 @@ fn main() {
         "start" | "stop" | "status" => chores::run(&first, &args.collect::<Vec<String>>()),
         "snapshot" => snapshot::command(&args.collect::<Vec<String>>()),
         "release" => release::command(&args.collect::<Vec<String>>()),
+        "pgn-stats" => pgn_stats::command(&args.collect::<Vec<String>>()),
         "match" | "sprt" | "duel" => {
             let rest: Vec<String> = args.collect();
             let versus = parse_versus_args(&first, &rest).unwrap_or_else(|message| {
@@ -103,6 +105,7 @@ fn print_usage_and_exit() -> ! {
     eprintln!("       arena sprt  <champion> <challenger> <elo_d>    (--depth <d> | --time <clock>) [--hash <MB>]");
     eprintln!("       arena duel  <champion> <challenger>            (--depth <d> | --time <clock>) [--hash <MB>]");
     eprintln!("       arena start | stop | status");
+    eprintln!("       arena pgn-stats <pgn>                            (each player's time and depth a move)");
     eprintln!("       arena <tournament-id>");
     eprintln!("  match plays a best of n games, n even, {MATCH_GAMES} by default: the first side with more than n/2 points");
     eprintln!("        wins, n/2 each after all n is drawn; with --full all n are played even once the match is decided");
