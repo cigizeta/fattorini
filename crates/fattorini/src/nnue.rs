@@ -1556,6 +1556,30 @@ impl QuantizedRows {
     }
 }
 
+/// A dual head's second layer with its input padded to an even half each side: the `2 * width`
+/// columns (`width` clipped values, then their squares) laid out as `[clipped, 0, squared, 0]` up to
+/// the next multiple of 16, the padding's weights 0, so that `second_layer_and_output` reads it
+/// eight rows at a time. Measured 2026-11-28: at 30 inputs it took the scalar fallback, and screlu
+/// dual's head cost 417 ns against screlu-hidden's 321. `dual_head_value` fills the same layout.
+fn padded_dual_second(second: &Layer) -> Layer {
+    let width = second.in_dim / 2;
+    let half = padded_dual_half(width);
+    let mut weight = vec![0.0f32; second.out_dim * 2 * half];
+    for row in 0..second.out_dim {
+        let from = &second.weight[row * second.in_dim..(row + 1) * second.in_dim];
+        let to = &mut weight[row * 2 * half..(row + 1) * 2 * half];
+        to[..width].copy_from_slice(&from[..width]);
+        to[half..half + width].copy_from_slice(&from[width..]);
+    }
+    Layer { in_dim: 2 * half, out_dim: second.out_dim, weight, bias: second.bias.clone() }
+}
+
+/// Half of a dual head's padded second-layer input: `width` rounded up to a multiple of 8, so the
+/// whole is a multiple of 16.
+fn padded_dual_half(width: usize) -> usize {
+    width.div_ceil(8) * 8
+}
+
 /// A head's second hidden layer and its output in f32, from the first layer's clipped `values`.
 /// Eight rows at a time where its shape allows, one reduction per eight outputs instead of a
 /// horizontal sum per output: the values are already in [0, 1], so the kernel's clamp of its input
@@ -1681,7 +1705,11 @@ impl QuantizedPsqNetwork {
             [] if network.dual_count() => {
                 let stack = network.stack.as_ref().expect("checked");
                 let first = stack.l1.iter().map(|layer| QuantizedRows::quantize(layer, input_one)).collect::<Result<Vec<_>, _>>()?;
-                QuantizedHead::DualCount { first, second: stack.l2.clone(), output: stack.output.clone() }
+                QuantizedHead::DualCount {
+                    first,
+                    second: stack.l2.iter().map(padded_dual_second).collect(),
+                    output: stack.output.clone(),
+                }
             }
             [] if network.screlu && network.stack.is_some() => {
                 let stack = network.stack.as_ref().expect("checked");
@@ -1714,7 +1742,7 @@ impl QuantizedPsqNetwork {
             }
             [first, second] if network.dual() => QuantizedHead::Dual {
                 first: QuantizedRows::quantize(first, input_one)?,
-                second: second.clone(),
+                second: padded_dual_second(second),
                 output: network.output.clone(),
             },
             // Halfk's, over the squares or the products alike; psq pairwise's two layers are `Hidden`.
@@ -2395,15 +2423,29 @@ impl QuantizedPsqNetwork {
         let mut sums = [0i32; MAX_HIDDEN_OUTPUTS];
         let sums = &mut sums[..out_dim];
         first_layer_sums(products, vectorized && out_dim.is_multiple_of(8), first, sums);
+        // Every row's clipped value, eight at a time where the rows allow (by shape alone, so both
+        // paths agree; `hidden_values_avx2` equals `hidden_value` bit for bit); the last row's is
+        // replaced by its raw value below.
+        let mut values = [0.0f32; MAX_HIDDEN_OUTPUTS];
+        let values = &mut values[..out_dim];
+        if out_dim.is_multiple_of(8) {
+            hidden_values_avx2(sums, &first.denominators, &first.biases, values);
+        } else {
+            for row in 0..out_dim {
+                values[row] = hidden_value(first.biases[row], sums[row], first.scales[row], PRODUCT_ONE);
+            }
+        }
         let width = out_dim - 1;
-        let mut doubled = [0.0f32; 2 * MAX_HIDDEN_OUTPUTS];
-        let (clipped, squared) = doubled[..2 * width].split_at_mut(width);
-        for (row, (value, square)) in clipped.iter_mut().zip(squared.iter_mut()).enumerate() {
-            *value = hidden_value(first.biases[row], sums[row], first.scales[row], PRODUCT_ONE);
-            *square = *value * *value;
+        // `padded_dual_second`'s layout: `[clipped, 0, squared, 0]`, each half `half` long.
+        let half = padded_dual_half(width);
+        let mut doubled = [0.0f32; 2 * MAX_HIDDEN_OUTPUTS + 16];
+        let (clipped, squared) = doubled[..2 * half].split_at_mut(half);
+        for row in 0..width {
+            clipped[row] = values[row];
+            squared[row] = values[row] * values[row];
         }
         let shortcut = first.biases[width] + sums[width] as f32 / (PRODUCT_ONE * first.scales[width]);
-        second_layer_and_output(&doubled[..2 * width], second, output) + shortcut
+        second_layer_and_output(&doubled[..2 * half], second, output) + shortcut
     }
 
     /// A head with a hidden layer, from its first layer's integer sums: their values, bit for bit
@@ -3361,6 +3403,33 @@ impl<'a> Reader<'a> {
 pub(crate) mod tests {
     use super::*;
     use crate::stack_buckets::{count_bucket_of_board, material_bucket_of_board, phase_bucket_of_board};
+
+    /// A dual head's second layer padded to `[clipped, 0, squared, 0]` gives the same value over the
+    /// padded input as the unpadded layer over its own (`padded_dual_second`), within f32's rounding:
+    /// every weight sits where its input lands, and the padding adds nothing.
+    #[test]
+    fn a_padded_dual_second_layer_reads_its_inputs_where_they_land() {
+        let (width, out_dim) = (15, 32);
+        let in_dim = 2 * width;
+        let weight: Vec<f32> = (0..out_dim * in_dim).map(|i| ((i * 37 % 101) as f32 - 50.0) / 400.0).collect();
+        let bias: Vec<f32> = (0..out_dim).map(|i| (i as f32 - 16.0) / 64.0).collect();
+        let second = Layer { in_dim, out_dim, weight, bias };
+        let output = Layer { in_dim: out_dim, out_dim: 1, weight: (0..out_dim).map(|i| (i as f32 - 10.0) / 20.0).collect(), bias: vec![0.125] };
+        let values: Vec<f32> = (0..width).map(|i| (i as f32 * 0.37).fract()).collect();
+        let doubled: Vec<f32> = values.iter().copied().chain(values.iter().map(|value| value * value)).collect();
+
+        let padded = padded_dual_second(&second);
+        let half = padded_dual_half(width);
+        assert_eq!((padded.in_dim, half), (32, 16));
+        let mut laid = vec![0.0f32; 2 * half];
+        for (row, value) in values.iter().enumerate() {
+            laid[row] = *value;
+            laid[half + row] = value * value;
+        }
+        let expected = second_layer_and_output(&doubled, &second, &output);
+        let got = second_layer_and_output(&laid, &padded, &output);
+        assert!((expected - got).abs() < 1e-5, "{expected} against {got}");
+    }
 
     /// Every legal move and every reply, from positions holding every kind (castling both ways, en
     /// passant, promotions plain and capturing, captures of a rook that could castle): the rows read
