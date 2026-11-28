@@ -1,0 +1,47 @@
+# lc0-halfk-threats-pairwise-hidden-512-8-budget at width 768 (2026-11-28), nothing else changed:
+# Reckless's transform. At 512 pairwise's test loss stayed above screlu-hidden's by a nearly
+# constant gap from the first round (0.6148 against 0.6141 at the end), its head reading 512
+# products where screlu's reads 1024 squares from the same lanes; this run reads 768 and asks
+# whether pairwise is worse per lane or per input: a loss at or below 0.6141 means per lane.
+
+# The forge. Each generation trains one run, each position labelled at the polyline measured on its
+# corpus.
+# From generation 2 on: 1024 x 1024 x 1024 training positions a generation plays, once: a failed
+# gate ends the attempt. Generation 1's are Lc0's corpus (lc0.yaml).
+training_positions: 1073741824
+# From generation 2 on: 4 x 1024 x 1024, each teacher's frozen test set. Generation 1's is lc0.yaml's.
+test_positions: 4194304
+# Pairs a pairing of the round robin among the budget's checkpoints: for nine, 6,400
+# games a candidate, 28,800 in all.
+round_robin_pairs: 400
+gate_elo_d: 35
+
+# The tune of each generation that passed its gate, started by hand, at 10+0.1: the default
+# length, 32,768 pairs, from its teacher's tune (generation 1's from the defaults); the next
+# generation's self-play plays it.
+tune:
+  length: default
+  control: 10+0.1
+
+# The network: (9740 -> 768) x 2, each perspective's halves multiplied, -> 16 -> 32 -> 1; in
+# training 10444 rows, halfk's, the factor's, then the 12 castling and en passant rows.
+# The networks' unit: the old S, Lc0's slope at equality, files of format version 2, as its
+# 512 twin's, so that their losses compare.
+unit: lc0
+labels: lc0
+
+architecture:
+  kind: halfk_threats_pairwise_hidden
+  king_buckets: 8
+  embedding_dim: 768
+  value_head:
+    hidden_dim: [16, 32]
+
+training:
+  training_batch_size: 8192
+  test_batch_size: 16384
+  steps_per_round: 4096
+  # From 1e-3 to 1e-5, as at batch 4096: the rate is chosen regardless of the batch.
+  epochs: 4
+  learning_rate: [1.0e-3, 1.0e-5]
+  warmup_rounds: 1

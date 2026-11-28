@@ -5964,6 +5964,7 @@ mod tests {
         for (name, source) in [("pesto-psq-threats-screlu", Some(Source::Pesto)), ("pesto-halfk-threats-screlu", Some(Source::Pesto)),
             ("lc0-halfk-threats-screlu-hidden-512-8-budget", Some(Source::Lc0)),
             ("lc0-halfk-threats-pairwise-hidden-512-8-budget", Some(Source::Lc0)), ("lc0-halfk-threats-pairwise-dual-512-8-budget", Some(Source::Lc0)),
+            ("lc0-halfk-threats-pairwise-hidden-768-8-budget", Some(Source::Lc0)),
             ("lc0-halfk-threats-pairwise-dual-count-512-8-budget", Some(Source::Lc0)),
             ("lc0-halfk-threats-screlu-dual-512-8-budget", Some(Source::Lc0))]
         {
