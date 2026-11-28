@@ -149,8 +149,16 @@ pairwise against screlu-hidden at 512.
   the clock, by the dual networks themselves. Screlu dual at depth 13 on the new build: 11.4M nodes
   at 1.20M nodes/s, half its twin's tree (23.7M at 1.61M) and two thirds of its time. Its tree
   thins faster with depth, and that seems to cost it. **Next:** screlu dual against screlu-hidden at
-  fixed depth 12, to tell the depth (its pruning) from the clock (time manager, speed). The list
-  below, kept for the record:
+  fixed depth 12, to tell the depth (its pruning) from the clock (time manager, speed). **Then,
+  2026-11-28:** trial 30, depth 12, drawn, 374.5 of 744 (50.3%): sound at depth. `arena pgn-stats`
+  (pgn-stats.md) on trials 27 and 29: the same time a move, about 0.75 plies less, so speed.
+  `nnue_bench`: the dual head 417 ns against 321, the second layer's 30 inputs off the fast path;
+  padded to 32 (dual-head-speed.md), 320 against 320. **Trial 31, screlu dual at 10+0.1 on the fast
+  head: drawn, curtailed,** 374.5 of 798 (46.9%, about -21 Elo); its depth gap narrowed from 0.74
+  and 0.89 plies to 0.52 and 0.60 (moves 1-19, 20-39), the same time spent. At equal cost a node, a
+  game's tree is still larger a depth than its twin's: the evaluation's shape, through the
+  untuned pruning. **Next:** pairwise dual at 10+0.1 on the fast head. The list below, kept for
+  the record:
   1. Nodes at depth 9 on the bench positions, each dual against its hidden twin, on an idle machine;
      then the dual's aspiration window scaled to its unit (about 28), to see if its count falls back.
   2. If so, an audit of every search constant compared with a score, then all of them translated (a
