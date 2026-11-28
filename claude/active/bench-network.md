@@ -82,6 +82,12 @@ every other network evaluates bit for bit as before. To remove once read, unless
   pair. Next: the same with `--aspiration 25`, the window at depth 13 (only depth 9 was tried).
 - **2026-11-28, through Elo's curve, `--aspiration 25`:** 43,946,271 nodes, 1,733,190 nodes/s:
   fewer still, not back towards 118.0M. The window is cleared at depth 13 too.
+- **2026-11-28, the correction history off (`correction_cap=0`), depth 13:** unscaled 34,688,671
+  nodes (1,755,403 nodes/s), scaled through Elo's curve 44,680,294 (1,760,418). With it on: 118.0M
+  and 54.9M. So the correction history triples the `lc0` tree and adds a fifth to the `elo` one:
+  it is the unit-sensitive part, and its arithmetic, not a constant, is what differs. Without it the
+  scaled tree is 29% larger, the rest (the pawn's rounding, 90 against 86.5, widens its margins
+  about 4%; the evaluation's finer integers).
 
 ## Manual constants per unit (the developer, 2026-11-28)
 

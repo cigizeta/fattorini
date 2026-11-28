@@ -1507,7 +1507,8 @@ struct Search<'a> {
     /// reused, where a `Vec` per node allocated at every node that searched a quiet move.
     quiets: Vec<Move>,
     /// The correction history (`corr`): per key and side to move, a running average of the
-    /// search's error against the static evaluation, in the evaluator's units. Indexed by
+    /// search's error against the static evaluation, in `CORRECTION_GRAIN` steps per unit of the
+    /// evaluator's. Indexed by
     /// `correction_index`; carried from one iteration to the next as the histories are.
     correction_history: Vec<i32>,
 }
@@ -1527,6 +1528,13 @@ const CORRECTION_HISTORY_LEN: usize = 3 * 2 * CORRECTION_ENTRIES;
 /// witness; 8 is a round cap, and a depth 9 search's nodes rarely sit deeper than that below them.
 const CORRECTION_DEPTH_CAP: u32 = 8;
 const CORRECTION_WEIGHT_DIVISOR: i32 = 16;
+
+/// The correction history's fixed point: its entries hold `CORRECTION_GRAIN` steps per unit of
+/// evaluation, so an update's truncated step is lost below 1/256 of a unit, not below one. Measured
+/// 2026-11-28: held in whole units, the share lost depended on the size of the evaluator's numbers,
+/// and the same evaluation in `elo` numbers (2.47 times larger) searched a tree half as large at
+/// depth 13 as in `lc0` numbers (118.0M nodes against 54.9M), with the caps translated alike.
+const CORRECTION_GRAIN: i32 = 256;
 
 /// Moves per row of `PvTable`, and its number of rows. The row at `MAX_PLY` is only ever cleared,
 /// never written, and a row holds at most one move more than the row after it, so the row at
@@ -1740,7 +1748,7 @@ impl<'a> Search<'a> {
     /// 2026-10-31 after its duels: drawn, but about +17 Elo on the clock with both networks.
     fn correction(&self, board: &Board) -> i32 {
         let sum: i32 = Self::correction_indices(board).iter().map(|&index| self.correction_history[index]).sum();
-        (sum / 3).clamp(-self.eval_margins.correction_cap, self.eval_margins.correction_cap)
+        (sum / (3 * CORRECTION_GRAIN)).clamp(-self.eval_margins.correction_cap, self.eval_margins.correction_cap)
     }
 
     /// Teaches the correction history that a search of `depth` found `score` where the static
@@ -1748,7 +1756,8 @@ impl<'a> Search<'a> {
     /// is. Only a sign the bound proves: a fail high only shows the score at least `score`, so it
     /// may raise an entry, never lower it, a fail low the reverse. The error is clamped to two pawns:
     /// a larger one is a tactic, not the evaluation's bias. Each entry moves toward the error by
-    /// `min(depth, CORRECTION_DEPTH_CAP) / CORRECTION_WEIGHT_DIVISOR` of the gap.
+    /// `min(depth, CORRECTION_DEPTH_CAP) / CORRECTION_WEIGHT_DIVISOR` of the gap, in
+    /// `CORRECTION_GRAIN` steps per unit, so a step under one unit still moves it.
     fn update_correction(&mut self, board: &Board, depth: u32, static_eval: i32, score: i32, bound: Bound) {
         let error = score - static_eval;
         let proven = match bound {
@@ -1759,7 +1768,8 @@ impl<'a> Search<'a> {
         if !proven {
             return;
         }
-        let error = error.clamp(-2 * self.eval_margins.correction_cap, 2 * self.eval_margins.correction_cap);
+        let error =
+            error.clamp(-2 * self.eval_margins.correction_cap, 2 * self.eval_margins.correction_cap) * CORRECTION_GRAIN;
         let weight = depth.min(CORRECTION_DEPTH_CAP) as i32;
         for index in Self::correction_indices(board) {
             let entry = &mut self.correction_history[index];
@@ -7957,13 +7967,49 @@ mod tests {
         search.update_correction(&board, 1, 0, 36, Bound::Exact);
         assert_eq!(search.correction(&board), 21, "depth 1: a sixteenth of the gap");
         search.update_correction(&board, 20, 0, -40, Bound::Upper);
-        // 21 + (-40 - 21) * 8 / 16 = 21 - 30, the division truncating toward zero.
+        // In grains: 5376 + (-10240 - 5376) * 8 / 16 = -2432, which is -9.5 units, truncated to -9.
         assert_eq!(search.correction(&board), -9, "depth 20 counts as 8");
 
         for _ in 0..20 {
             search.update_correction(&board, 8, 0, 10 * pawn, Bound::Exact);
         }
         assert_eq!(search.correction(&board), pawn, "the error clamped to two pawns, the correction to one");
+    }
+
+    /// A step under one unit still moves an entry: at depth 1 an error of 10 is 10/16 of a unit, lost
+    /// whole when entries were held in units, kept in `CORRECTION_GRAIN` steps; two of them add up
+    /// to more than one unit.
+    #[test]
+    fn the_correction_history_keeps_a_step_under_one_unit() {
+        let (board, _) = Board::from_fen("4k3/pp6/8/8/8/8/PP6/4K3 w - - 0 1").unwrap();
+        let tt = TranspositionTable::new(1);
+        let stop_signal = AtomicBool::new(false);
+        let mut search = quiescence_search(&tt, &stop_signal);
+        search.update_correction(&board, 1, 0, 10, Bound::Exact);
+        let index = Search::correction_indices(&board)[0];
+        assert_eq!(search.correction_history[index], 10 * CORRECTION_GRAIN / 16);
+        search.update_correction(&board, 1, 0, 10, Bound::Exact);
+        assert_eq!(search.correction(&board), 1, "two sub-unit steps add up to a unit");
+    }
+
+    /// The point of the grain: the same samples in numbers 2.5 times larger, with the cap scaled
+    /// alike, give a correction 2.5 times larger within one unit, whatever the scale.
+    #[test]
+    fn the_correction_history_scales_with_the_evaluators_numbers() {
+        let (board, _) = Board::from_fen("4k3/pp6/8/8/8/8/PP6/4K3 w - - 0 1").unwrap();
+        let tt = TranspositionTable::new(1);
+        let stop_signal = AtomicBool::new(false);
+        let samples = [(1, 7), (2, -5), (1, 12), (3, 9), (1, 4), (5, -11), (1, 6), (8, 14)];
+        let corrections = [2, 5].map(|scale| {
+            let mut search = quiescence_search(&tt, &stop_signal);
+            search.eval_margins.correction_cap *= scale;
+            for (depth, error) in samples {
+                search.update_correction(&board, depth, 0, error * scale, Bound::Exact);
+            }
+            search.correction(&board)
+        });
+        // Each correction truncated by under one unit: |c5 - 2.5 * c2| < 1 + 2.5, so twice it < 7.
+        assert!((corrections[1] * 2 - corrections[0] * 5).abs() < 7, "{corrections:?}");
     }
 
     #[test]
@@ -8148,12 +8194,15 @@ mod tests {
     /// pawn, the aspiration window 10, the good-quiet threshold -140): 16,896 nodes in all against
     /// 24,154, the same move in four positions of six. Re-recorded when PV nodes stopped taking TT
     /// cutoffs (2026-11-16): a few nodes more or less per position, every score and move the same.
+    /// Re-recorded when the correction history took a fine grain (`CORRECTION_GRAIN`, 2026-11-28):
+    /// 15,897 nodes in all against 16,885; the first position's move from g1f3 to e2e4, the
+    /// other moves the same.
     const FIXED_SEARCH_EXPECTED: &[(u64, i32, &str)] = &[
-        (807, 22, "Some(Move { from: G1, to: F3, promotion: None, kind: Quiet })"),
+        (1193, 9, "Some(Move { from: E2, to: E4, promotion: None, kind: DoublePawnPush })"),
         (4704, -37, "Some(Move { from: E2, to: A6, promotion: None, kind: Quiet })"),
-        (4620, 101, "Some(Move { from: F5, to: D3, promotion: None, kind: Quiet })"),
-        (4691, -51, "Some(Move { from: H2, to: H3, promotion: None, kind: Quiet })"),
-        (832, -80, "Some(Move { from: E4, to: D6, promotion: None, kind: Quiet })"),
+        (3131, 46, "Some(Move { from: F5, to: D3, promotion: None, kind: Quiet })"),
+        (4824, -36, "Some(Move { from: H2, to: H3, promotion: None, kind: Quiet })"),
+        (814, -79, "Some(Move { from: E4, to: D6, promotion: None, kind: Quiet })"),
         (1231, 76, "Some(Move { from: B4, to: F4, promotion: None, kind: Quiet })"),
     ];
 

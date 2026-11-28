@@ -41,6 +41,16 @@ Nothing else changes: the caps, the weights, the keys, the tables' size. The doc
 - The existing correction tests kept, their expected values recomputed where the grain moves them.
 - The search's node-count tests whose counts move: updated, the change being the reason.
 
+## Run log
+
+- **Written 2026-11-28.** The fixed-depth search test re-recorded (PeSTO's six positions: 15,897
+  nodes against 16,885, the first position's move g1f3 to e2e4).
+- **2026-11-28, depth 13, screlu-hidden:** unscaled 23,724,654 nodes (1,608,449 nodes/s), scaled
+  through Elo's curve 26,286,491 (1,733,774): 11% apart, from 118.0M against 54.9M before. The units
+  now search alike, as with the correction history off (34.7M and 44.7M, 29% apart). The `lc0`
+  tree itself shrank fivefold (118.0M to 23.7M): today's whole-unit rounding was making the
+  correction history far from what it was meant to be, under `lc0` most, so the check duel matters.
+
 ## Measured, then checked
 
 1. Bench at depth 13, screlu-hidden unscaled and at `--scale 2.47`: the two trees close to one
