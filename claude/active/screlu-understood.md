@@ -65,12 +65,23 @@ itself instead of by its partner.
 - **Then:** `nnue_bench --first-layer` (a cheaper first layer than screlu-512's, a dearer update),
   and a duel against screlu-hidden at 10+0.1, both `@untuned`.
 
+**After it (the developer, 2026-11-28): screlu-hidden at 768 too,** for the fair pair at equal
+width: 768 lanes a perspective, 1536 squares into the same 16 -> 32 -> 1. Its first layer reads
+twice pairwise-768's inputs (about 300 ns at today's 209 for 1024), so its loss is weighed against
+its cost: the duel decides, not the loss.
+
 ## Decision this informs
 
 The base for the piece-count buckets. Until the steps say otherwise, both remain candidates:
 pairwise-hidden compliant now, screlu-hidden needing its castling and en passant rows.
 
 ## Run log
+
+- **2026-11-28, pairwise-768 at round 17:** the mean test loss over rounds 8 to 17 (steps 28,672
+  to 65,536) 0.62079, against screlu-512's 0.62112 and pairwise-512's 0.62169 at the same steps,
+  below both in every one of the ten rounds, its lead over screlu growing (level at round 2).
+  Pairwise at 512 lacked inputs, not quality per input. Final loss, `nnue_bench` and the duel to
+  come.
 
 - **2026-11-28, `nnue_bench --first-layer` on trial 35's 91,428 positions, one machine:**
 
