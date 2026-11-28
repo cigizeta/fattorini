@@ -135,7 +135,11 @@ pairwise against screlu-hidden at 512.
   network (a pawn about +0.70 against +0.30) it is about 2.3 times narrower: more re-searches, more
   nodes a depth, stronger at depth 9, slower on the clock. Finer integer scores may add to it. A
   tune fixes the tuned constants anyway (the developer); the untuned duels across units are what
-  is poisoned, those within one unit stand. **Next, in this order:**
+  is poisoned, those within one unit stand. **Superseded the same day (bench-network.md):** the
+  aspiration window measured and cleared; the unit alone halves screlu-hidden's tree at depth 13
+  (`--scale 2.47`). The plan now: manual constants per unit (`lc0`, `elo`, later PeSTO's), the
+  `elo` set calibrated by the bench, then the duals duelled with it. The list below, kept for the
+  record:
   1. Nodes at depth 9 on the bench positions, each dual against its hidden twin, on an idle machine;
      then the dual's aspiration window scaled to its unit (about 28), to see if its count falls back.
   2. If so, an audit of every search constant compared with a score, then all of them translated (a

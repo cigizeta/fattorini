@@ -2897,13 +2897,16 @@ impl Network {
         Ok(Network::Psq(network, quantized))
     }
 
-    /// This network with its output multiplied by `factor` and its pawn scale measured again, so
-    /// its untuned parameters translate as a network of that unit's would
-    /// (`fattorini bench-network --scale`).
+    /// This network with its output multiplied by `factor`, read through Elo's curve, and its pawn
+    /// scale measured again: an `lc0` network at 2.47 (173.72 / 70.37) is the same expected scores in
+    /// the `elo` unit's numbers, its untuned parameters translated as a real `elo` network's
+    /// (`fattorini bench-network --scale`). The curve matters: the pawn is a fit in label space, so
+    /// the old curve over the scaled output measured 65% where an `elo` network measures about 86%.
     pub fn with_output_scale(self, factor: f32) -> Network {
         match self {
             Network::Psq(network, mut quantized) => {
                 quantized.output_scale = factor;
+                quantized.curve = crate::labels::LOGISTIC;
                 let curve = quantized.curve;
                 let pawn_percent = measure_label_percent_through(|board| quantized.evaluate(board), &curve);
                 quantized.pawn_percent = pawn_percent;

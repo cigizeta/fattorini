@@ -69,6 +69,51 @@ A field of `QuantizedPsqNetwork`, `output_scale`, 1.0 except here, applied where
 become centipawns (from scratch and from the accumulators). A multiplication by 1.0 is exact, so
 every other network evaluates bit for bit as before. To remove once read, unless it proves useful.
 
+### Its run log
+
+- **2026-11-28, first run, flawed:** screlu-hidden at `--scale 2.47`, depth 13: 27,967,726 nodes
+  (from 118.0M), 1,729,318 nodes/s. But its pawn measured 65%, not about 86%: the scale kept the
+  `lc0` curve, and the pawn is a fit in label space. Its margins were narrower in pawns than a real
+  `elo` network's, so part of the shrinkage is the flaw. Fixed: `--scale` now reads the network
+  through Elo's curve too. To run again.
+- **2026-11-28, through Elo's curve:** pawn 90%, depth 13: 54,851,497 nodes (from 118.0M, about
+  half), 1,664,516 nodes/s. The unit alone halves the tree, the evaluation the same; the duals'
+  trees are 10x and 1.6x below their twins', so the unit is part of it, not all, in the screlu
+  pair. Next: the same with `--aspiration 25`, the window at depth 13 (only depth 9 was tried).
+- **2026-11-28, through Elo's curve, `--aspiration 25`:** 43,946,271 nodes, 1,733,190 nodes/s:
+  fewer still, not back towards 118.0M. The window is cleared at depth 13 too.
+
+## Manual constants per unit (the developer, 2026-11-28)
+
+The search's constants are hand-set per unit, not translated from PeSTO's pawn: `lc0`-manual for
+the `lc0` networks, `elo`-manual for the `elo` ones, and, when PeSTO's turn comes, PeSTO-manual for
+PeSTO (left alone for now). Every duel plays each side with its own unit's set.
+
+- **`lc0`-manual:** today's `@untuned` at a pawn of 35, as every `lc0` duel has played it: the
+  16k tune's values, hand-rounded, so in effect tuned for `lc0`. Nothing to do.
+- **`elo`-manual:** calibrated on one evaluation in both units. Screlu-hidden at `--scale 2.47` is
+  its own evaluation in `elo` numbers; its constants are moved until its bench at depth 13 matches
+  the unscaled network's (118.0M nodes; the per-position counts alike too, not only the total).
+  The set that matches searches that evaluation as `lc0`-manual does. Start: today's translation at
+  a pawn of 90 (razoring 135, reverse futility 90, futility 180, null move 180, delta 180, victim
+  90%, correction cap 90, aspiration 25). The correction history's integer step is tested first
+  (`correction_cap` at 0, both units): if it is what halves the tree, its fix belongs to the design
+  rather than to the constants, since no constant reaches it.
+- **The duels:** each dual with `elo`-manual against its `lc0` twin at `@untuned`, at depth 9 and
+  10+0.1. Their result is then the networks' (the head, and training under `elo`), not the search's.
+
+### `--set <name>=<value>`
+
+`bench-network` overrides any of `SearchParameters::NAMES` by name, repeatable; `--aspiration`
+goes, `--set aspiration_delta=<delta>` replacing it. An unknown name or a value that is not an
+integer is the usage error.
+
+### To settle before the duels
+
+How an arena names a player with a given parameters set: the engine reads `search-parameters.txt`
+beside the network (`read_tuning_beside`), so a copy of each dual's candidate in a folder of its own
+with the `elo`-manual set beside it would be one; tuning-suffixes.md to read first.
+
 ## Afterwards
 
 The command stays: it is how any network's cost per depth is compared from now on.
