@@ -92,6 +92,9 @@ pairwise-hidden compliant now, screlu-hidden needing its castling and en passant
 - **Round 59:** rounds 50 to 59 (steps 204,800 to 241,664) 0.61784, against screlu-512's 0.61843
   (+0.00059, up from +0.00034) and pairwise-512's 0.61883 (+0.00098): further ahead of screlu than
   screlu ever was of pairwise-512.
+- **Round 95:** rounds 86 to 95 (steps 352,256 to 389,120) 0.61688, against screlu-512's 0.61747
+  (+0.00059, level with round 59) and pairwise-512's 0.61789 (+0.00101), below screlu in all ten
+  rounds: the lead over screlu has stopped growing but holds.
 
 - **2026-11-28, `nnue_bench --first-layer` on trial 35's 91,428 positions, one machine:**
 
