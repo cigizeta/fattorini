@@ -138,8 +138,11 @@ pairwise against screlu-hidden at 512.
   is poisoned, those within one unit stand. **Superseded the same day (bench-network.md):** the
   aspiration window measured and cleared; the unit alone halves screlu-hidden's tree at depth 13
   (`--scale 2.47`). The plan now: manual constants per unit (`lc0`, `elo`, later PeSTO's), the
-  `elo` set calibrated by the bench, then the duals duelled with it. The list below, kept for the
-  record:
+  `elo` set calibrated by the bench, then the duals duelled with it. **Then the cause found
+  (correction-grain.md):** the correction history's rounding to whole units; held in 256 steps a
+  unit, the units search alike (11% apart at depth 13), its check duels against the old build drawn
+  (50.3% at depth 9, 51.2% at 10+0.1), kept. Calibration skipped: **trials 22 to 25 to rerun on the
+  new build, both `@untuned`.** The list below, kept for the record:
   1. Nodes at depth 9 on the bench positions, each dual against its hidden twin, on an idle machine;
      then the dual's aspiration window scaled to its unit (about 28), to see if its count falls back.
   2. If so, an audit of every search constant compared with a score, then all of them translated (a

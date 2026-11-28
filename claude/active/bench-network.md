@@ -108,6 +108,12 @@ PeSTO (left alone for now). Every duel plays each side with its own unit's set.
 - **The duels:** each dual with `elo`-manual against its `lc0` twin at `@untuned`, at depth 9 and
   10+0.1. Their result is then the networks' (the head, and training under `elo`), not the search's.
 
+**The calibration skipped (2026-11-28, Claude's recommendation, the developer agreeing):** with the
+correction history in a fine grain (correction-grain.md), the same evaluation in both units'
+numbers searches within 11% at depth 13 (23.7M and 26.3M nodes), part of it the pawn's rounding
+(90 against 86.5). So the translated defaults are close to an `elo`-manual set already: the dual
+duels are rerun at `@untuned` on the new build, both sides. Hand-set constants wait for the tune.
+
 ### `--set <name>=<value>`
 
 `bench-network` overrides any of `SearchParameters::NAMES` by name, repeatable; `--aspiration`
