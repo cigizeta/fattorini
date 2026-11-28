@@ -50,6 +50,13 @@ Nothing else changes: the caps, the weights, the keys, the tables' size. The doc
   now search alike, as with the correction history off (34.7M and 44.7M, 29% apart). The `lc0`
   tree itself shrank fivefold (118.0M to 23.7M): today's whole-unit rounding was making the
   correction history far from what it was meant to be, under `lc0` most, so the check duel matters.
+- **The check duel, depth 9 (2026-11-28, `arena duel` from the command line):** the old build, a
+  snapshot of screlu-hidden `@untuned` from 0befde7 registered as `screlu-hidden-old-corr`, against
+  the same network on the new build: **drawn, curtailed,** the new build 371.5 of 738 (50.3%,
+  +222 -217 =299 from its side). Equal strength a depth on a far smaller tree.
+- **The check duel, 10+0.1 (2026-11-28):** **drawn, curtailed,** the new build 391 of 764 (51.2%,
+  +191 -173 =400 from its side, about +8 Elo), leaning its way. The old build played over UCI, a
+  slight handicap. **Kept,** as the plan says for a draw.
 
 ## Measured, then checked
 
