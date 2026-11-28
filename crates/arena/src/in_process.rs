@@ -4,7 +4,7 @@
 //! the identical search so that the evaluation function is the only thing that differs, and driving
 //! Fattorini over UCI would instead compare two whole engine builds.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use fattorini::nnue::Network;
@@ -83,14 +83,21 @@ impl Player for InProcessPlayer {
     /// Under a clock it plans its time exactly as `go wtime btime winc binc` does (`time_limit`), with
     /// the default `Move Overhead`, as a release keeps it, and the game's full-move number, so a
     /// timed match plays as one does, and
-    /// searches against its own stop flag, fresh each move: the search raises the flag it is given
-    /// when its time manager declines the next depth, and raising the match's Ctrl+C flag would end
-    /// the whole run after the first timed move. Ctrl+C is still seen by the game loop before every
-    /// ply, within one move's thinking time.
+    /// searches against its own stop flag, fresh each move, at a fixed depth too: the search raises
+    /// the flag it is given when its time manager declines the next depth (a forced move's cap at a
+    /// fixed depth included), and raising the match's Ctrl+C flag would end the whole run. The flag
+    /// starts as the match's stands, so a move asked after a stop still stops short. Ctrl+C is
+    /// still seen by the game loop before every ply, within one move's thinking time.
     fn choose_move(&mut self, request: &MoveRequest, stop_requested: &Arc<AtomicBool>) -> Result<MoveOutcome, Fault> {
-        let own_stop = AtomicBool::new(false);
+        // Set already if the match was asked to stop before this move, so such a search still stops
+        // short; never raised back on the match's flag.
+        let own_stop = AtomicBool::new(stop_requested.load(Ordering::SeqCst));
         let (depth, limit, stop) = match request.limit {
-            MoveLimit::FixedDepth(depth) => (depth, None, stop_requested.as_ref()),
+            // Its own flag at a fixed depth too: a forced move gets `SINGLE_MOVE_CAP_MS` beside the
+            // depth, and a search ended by that cap raises the flag it searches against. On the
+            // match's flag, the first forced move whose search outlasted the cap stopped the whole
+            // arena (2026-11-28, at depth 12; depth 9 always finished within it).
+            MoveLimit::FixedDepth(depth) => (depth, None, &own_stop),
             MoveLimit::Clock { white_remaining, black_remaining, increment, moves_to_go } => {
                 let milliseconds = |duration: std::time::Duration| Some(duration.as_millis() as u64);
                 let limit = time_limit(
@@ -191,6 +198,35 @@ mod tests {
             MoveOutcome::Interrupted => panic!("nothing asked it to stop"),
         }
         assert!(started.elapsed() < remaining, "took {:?} of a {remaining:?} clock", started.elapsed());
+        assert!(!stop.load(Ordering::Relaxed), "the match's stop flag was raised");
+    }
+
+    /// A forced move at a fixed depth is searched under the single-move cap, and a search the cap
+    /// ends raises the flag it searches against: never the match's, which stopped whole arenas at
+    /// depth 12 (2026-11-28). Here, after f3 and e5, the check Qh4+ leaves g3 alone, and depth 40
+    /// cannot finish within the cap.
+    #[test]
+    fn a_forced_move_at_a_fixed_depth_leaves_the_matchs_stop_flag_alone() {
+        let fen = "rnb1kbnr/pppp1ppp/8/4p3/7q/5P2/PPPPP1PP/RNBQKBNR w KQkq - 1 3";
+        let (board, _) = Board::from_fen(fen).unwrap();
+        assert_eq!(fattorini::movegen::legal::legal_moves(&board, board.side_to_move()).len(), 1, "g3 alone");
+        let mut player = InProcessPlayer::new(None, Arc::new(SyzygyTablebase::new()), 16, None, TimeParameters::DEFAULT);
+        player.new_game().expect("an in-process player never faults");
+        let ancestors = vec![board.hash()];
+        let request = MoveRequest {
+            starting_fen: fen,
+            moves_uci: &[],
+            board: &board,
+            ancestors: &ancestors,
+            limit: MoveLimit::FixedDepth(40),
+            fullmove: 3,
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        match player.choose_move(&request, &stop).expect("never faults") {
+            MoveOutcome::Move(report) => assert_eq!(report.best_move_uci, "g2g3"),
+            MoveOutcome::TimedOut => panic!("an in-process player never reports a timeout itself"),
+            MoveOutcome::Interrupted => panic!("nothing asked it to stop"),
+        }
         assert!(!stop.load(Ordering::Relaxed), "the match's stop flag was raised");
     }
 
