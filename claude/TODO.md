@@ -163,7 +163,10 @@ pairwise against screlu-hidden at 512.
   stopped early, which favours extreme scores: with trial 29's 45.0% over 410, pairwise dual is
   most likely about -35 Elo on the clock. The endgame's depth gap (3.5 plies) is no clue: lost games
   give the winner the won, shallow-to-search endgames. **Verdict (2026-11-28): the dual head does not
-  pay at untuned search, on either transform.** The list below, kept for the record:
+  pay at untuned search, on either transform.** **Trial 35 (2026-11-28, 10+0.1, both `@untuned`,
+  the new build): pairwise-hidden against screlu-hidden drawn, curtailed,** 370.5 of 762 (48.6%,
+  about -10 Elo); the same time a move, depth equal within 0.1 ply in every phase. The two hidden
+  networks are level on the clock (51.0% before the grain fix). The list below, kept for the record:
   1. Nodes at depth 9 on the bench positions, each dual against its hidden twin, on an idle machine;
      then the dual's aspiration window scaled to its unit (about 28), to see if its count falls back.
   2. If so, an audit of every search constant compared with a score, then all of them translated (a
