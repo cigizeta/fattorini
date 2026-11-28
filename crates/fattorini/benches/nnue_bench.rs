@@ -2333,6 +2333,10 @@ fn zero_squares(quantized: &QuantizedPsqNetwork, boards: &[Board], pairwise: boo
     let rounding = if shift == 0 { 0 } else { 1 << (shift - 1) };
     let (mut zeros, mut all, mut zero_blocks, mut blocks) = (0usize, 0usize, 0usize, 0usize);
     let (mut zero_pairs, mut pairs) = (0usize, 0usize);
+    // Why our screlu is level with pairwise (the developer, 2026-11-28): the inputs rounded to zero
+    // although their lanes are active (a square below about 0.09 of the range, a product of two small
+    // halves), the lanes active and saturated, and the mean nonzero input, in `0..=127`.
+    let (mut rounded_away, mut lanes, mut active, mut saturated, mut nonzero_sum) = (0usize, 0usize, 0usize, 0usize, 0usize);
     for board in boards {
         for perspective in [Color::White, Color::Black] {
             let activations: Vec<i32> =
@@ -2341,6 +2345,11 @@ fn zero_squares(quantized: &QuantizedPsqNetwork, boards: &[Board], pairwise: boo
             let squares: Vec<i32> = a.iter().zip(b).map(|(a, b)| (a * b + 256) >> 9).collect();
             zeros += squares.iter().filter(|&&square| square == 0).count();
             all += squares.len();
+            rounded_away += a.iter().zip(b).zip(&squares).filter(|&((&a, &b), &square)| a > 0 && b > 0 && square == 0).count();
+            nonzero_sum += squares.iter().map(|&square| square as usize).sum::<usize>();
+            lanes += activations.len();
+            active += activations.iter().filter(|&&activation| activation > 0).count();
+            saturated += activations.iter().filter(|&&activation| activation >= 255).count();
             // Reckless skips 4-byte chunks, four squares at a time, that are all zero.
             for chunk in squares.chunks(4) {
                 zero_blocks += chunk.iter().all(|&square| square == 0) as usize;
@@ -2358,6 +2367,13 @@ fn zero_squares(quantized: &QuantizedPsqNetwork, boards: &[Board], pairwise: boo
         100.0 * zeros as f64 / all as f64,
         100.0 * zero_pairs as f64 / pairs as f64,
         100.0 * zero_blocks as f64 / blocks as f64
+    );
+    println!(
+        "  rounded to zero from active lanes: {:.1}% of the inputs; lanes active {:.1}%, saturated {:.1}%; mean nonzero input {:.1} of 127",
+        100.0 * rounded_away as f64 / all as f64,
+        100.0 * active as f64 / lanes as f64,
+        100.0 * saturated as f64 / lanes as f64,
+        nonzero_sum as f64 / (all - zeros).max(1) as f64
     );
 }
 

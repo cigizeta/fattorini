@@ -40,8 +40,10 @@ itself instead of by its partner.
 
 1. **Statistics, no training.** On a sample of the bench and validation positions, for both
    networks: the share of the head's inputs that are 0, the share rounded to 0 from a nonzero
-   lane (screlu's squares, pairwise's products), and the first layer's nnz. A small read-only
-   command or a `nnue_bench` mode; a design line of its own before it is written.
+   lane (screlu's squares, pairwise's products), and the first layer's nnz. **Done in
+   `nnue_bench --first-layer`** (2026-11-28): its zero shares already there, `zero_squares` adds the
+   inputs rounded to zero from active lanes, the lanes active and saturated, and the mean nonzero
+   input.
 2. **Controlled variants, only if step 1 points at something.** The transform width is capped at
    768 (512 + 256, the developer, 2026-11-28); 1024 is too much. Both variants feed the head
    768 inputs, so they compare a square with a product at equal head input:
@@ -57,4 +59,23 @@ pairwise-hidden compliant now, screlu-hidden needing its castling and en passant
 
 ## Run log
 
-(empty)
+- **2026-11-28, `nnue_bench --first-layer` on trial 35's 91,428 positions, one machine:**
+
+  | | screlu-hidden | pairwise-hidden |
+  |---|---|---|
+  | whole evaluation | 461.7 ns | 431.0 ns |
+  | first layer | 209.3 ns (45.3%), 1024 inputs | 130.1 ns (30.2%), 512 inputs |
+  | inputs zero | 76.4% | 72.0% |
+  | rounded to zero from active lanes | 4.5% | 1.2% |
+  | lanes active | 28.1% | 53.3% |
+  | lanes saturated | 0.2% | 7.3% |
+  | mean nonzero input (of 127) | 17.6 | 24.8 |
+  | nonzero inputs a position | about 242 | about 143 |
+
+  Read: screlu's transform is mostly idle (72% of lanes clipped to 0) and its active lanes small
+  (almost none reach 1, a typical one about 0.37); pairwise uses its lanes twice as often and to
+  their top. The rounding costs little: 4.5% of the inputs, each worth under half a step of 127,
+  so finer squares are not worth a variant. Screlu reads 70% more nonzero inputs for the same
+  strength, its first layer 60% dearer; the 7% a whole evaluation did not show as depth in trial 35.
+  **Next:** the width-384 screlu (768 squares, a cheaper first layer and update) is the variant
+  that tests whether screlu's idle lanes are spare: equal to today's screlu means they were.
