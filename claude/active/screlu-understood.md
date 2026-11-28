@@ -52,6 +52,19 @@ itself instead of by its partner.
    Each duelled against today's two at 10+0.1, `@untuned`. Step 1 may instead suggest squares at a
    finer scale (fewer rounded to 0), at width 512 unchanged.
 
+## The next experiment (agreed 2026-11-28)
+
+- **Network:** `lc0-halfk-threats-pairwise-hidden-768-8-budget`, pairwise-hidden-512-8-budget's
+  config with `embedding_dim` 768 and nothing else changed.
+- **Shape:** 768 lanes a perspective, two perspectives; each perspective's halves multiplied, 384
+  products, 768 in all; then 16 -> 32 -> 1, clipped; dense i8 first layer (sparse closed,
+  sparse-i8-first-layer.md); 8 king buckets; no piece-count buckets; `unit: lc0`. Reckless's body
+  less its two extra king buckets and its output buckets.
+- **Question:** is pairwise worse per lane or per input? Its final test loss against screlu-512's
+  0.6141 and pairwise-512's 0.6148: at or below 0.6141 means per lane.
+- **Then:** `nnue_bench --first-layer` (a cheaper first layer than screlu-512's, a dearer update),
+  and a duel against screlu-hidden at 10+0.1, both `@untuned`.
+
 ## Decision this informs
 
 The base for the piece-count buckets. Until the steps say otherwise, both remain candidates:
