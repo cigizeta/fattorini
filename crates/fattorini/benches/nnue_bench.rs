@@ -148,7 +148,9 @@
 //!
 //! `--first-layer [dir]` times a network's first hidden layer against its whole evaluation
 //! (the developer, 2026-11-26), then prints the zero squares or products, pairs
-//! and blocks of four, on the positions of the games under `dir`, or the seven above:
+//! and blocks of four, and the sparse i8 kernel's time against the dense one's, on the inputs as
+//! they are and reordered (2026-11-28; one first layer, the first position's, so not for a
+//! bucketed head), on the positions of the games under `dir`, or the seven above:
 //!
 //! `dir` a folder of subfolders each with a `games.pgn` (an arena's `data/tournaments/`), or one PGN
 //! file; an absolute path, as cargo runs the bench from the crate's folder:
@@ -2431,6 +2433,26 @@ fn first_layer(network: &PsqNetwork, quantized: &QuantizedPsqNetwork, boards: &[
         200.0 * zero_pairs as f64 / all as f64,
         400.0 * zero_blocks as f64 / all as f64
     );
+
+    // The sparse i8 kernel (2026-11-28): only the blocks of four inputs not all zero, as Reckless and
+    // Stockfish skip them, on the inputs as they are and reordered, the weights permuted alike. Each
+    // checked equal to the dense sums on every position before it is timed.
+    let kernel = if std::arch::is_x86_feature_detected!("avxvnni") { "VNNI" } else { "AVX2" };
+    let full_order: Vec<usize> = order.iter().copied().chain(order.iter().map(|&index| index + per_perspective)).collect();
+    for (label, order, positions) in [("sparse", None, &inputs), ("sparse, reordered", Some(&full_order[..]), &reordered)] {
+        let (blocks, _) = quantized.first_layer_blocks_for_bench(&boards[0], order);
+        let mut sparse_sums = [0i32; 64];
+        for (index, position) in positions.iter().enumerate() {
+            quantized.first_layer_sums_for_bench(&inputs[index], &boards[index], &mut sums);
+            quantized.first_layer_sparse_sums_for_bench(position, &blocks, &mut sparse_sums[..out_dim]);
+            assert_eq!(sparse_sums[..out_dim], sums[..out_dim], "{label} equals dense, position {index}");
+        }
+        let time = time_per_item(boards.len(), |index| {
+            quantized.first_layer_sparse_sums_for_bench(black_box(&positions[index]), &blocks, &mut sparse_sums[..out_dim]);
+            black_box(&sparse_sums);
+        });
+        println!("    {label:<17} {time:7.1} ns  {:.2}x dense's {layer:.1} ({kernel})", layer / time);
+    }
 }
 
 /// `--threat-parts`: a psq_threats network's evaluation split into its parts, on `boards`, and

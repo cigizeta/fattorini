@@ -736,6 +736,211 @@ unsafe fn dots_i8_8_vnni(rows: &[i8], packed: &[u8]) -> [i32; 8] {
     reduce_8_epi32(sums)
 }
 
+/// For each 8-bit mask, the positions of its set bits, lowest first, then zeros: the nonzero blocks
+/// among eight, as Stockfish's `find_nnz` reads them. A `static`, so that a lookup reads it in place
+/// rather than a copy of the whole table.
+static NONZERO_POSITIONS: [[u16; 8]; 256] = nonzero_positions();
+
+const fn nonzero_positions() -> [[u16; 8]; 256] {
+    let mut table = [[0u16; 8]; 256];
+    let mut mask = 0;
+    while mask < 256 {
+        let (mut bit, mut count) = (0, 0);
+        while bit < 8 {
+            if mask & (1 << bit) != 0 {
+                table[mask][count] = bit as u16;
+                count += 1;
+            }
+            bit += 1;
+        }
+        mask += 1;
+    }
+    table
+}
+
+/// The blocks of four bytes of `packed` (a first layer's u8 inputs, a multiple of 32 long) that are
+/// not all zero, their indices in order into `indices`, which must hold `packed.len() / 4`;
+/// returns how many. Eight blocks a step: compared with zero, the mask's positions looked up and
+/// stored unaligned, eight at a time, the count advanced by the mask's popcount (a store reaches at
+/// most the step's own last block, so `indices` needs no slack).
+pub(crate) fn nonzero_blocks_avx2(packed: &[u8], indices: &mut [u16]) -> usize {
+    use std::arch::x86_64::{
+        __m128i, __m256i, _mm_add_epi16, _mm_loadu_si128, _mm_set1_epi16, _mm_storeu_si128, _mm256_castsi256_ps, _mm256_cmpeq_epi32,
+        _mm256_loadu_si256, _mm256_movemask_ps, _mm256_setzero_si256,
+    };
+
+    assert_eq!(packed.len() % 32, 0, "a multiple of 32 bytes");
+    assert!(indices.len() >= packed.len() / 4, "room for every block");
+    let mut count = 0;
+    for step in 0..packed.len() / 32 {
+        unsafe {
+            let bytes = _mm256_loadu_si256(packed.as_ptr().add(step * 32) as *const __m256i);
+            let zero = _mm256_cmpeq_epi32(bytes, _mm256_setzero_si256());
+            let mask = !_mm256_movemask_ps(_mm256_castsi256_ps(zero)) as usize & 0xFF;
+            let positions = _mm_loadu_si128(NONZERO_POSITIONS[mask].as_ptr() as *const __m128i);
+            let found = _mm_add_epi16(positions, _mm_set1_epi16((step * 8) as i16));
+            // `count <= 8 * step`, so the eight stored end by `8 * step + 8 <= indices.len()`.
+            _mm_storeu_si128(indices.as_mut_ptr().add(count) as *mut __m128i, found);
+            count += mask.count_ones() as usize;
+        }
+    }
+    count
+}
+
+/// A first layer's integer sums over only the blocks of `packed` that `indices` lists
+/// (`nonzero_blocks_avx2`), from `blocks`, its i8 weights block-major (`[block][out][4]`):
+/// `sums.len()` outputs, a multiple of 8, at most 64. Each listed block's four bytes broadcast and
+/// multiplied with its weights, eight outputs a register, accumulated in i32: the same integers as
+/// `dots_i8_8` over every block, exact. `dpbusd` with AVX-VNNI, `maddubs` then `madd` otherwise.
+pub(crate) fn sparse_sums_i8(packed: &[u8], indices: &[u16], blocks: &[i8], sums: &mut [i32]) {
+    let out_dim = sums.len();
+    assert!(out_dim.is_multiple_of(8) && out_dim <= 64, "outputs a multiple of 8, at most 64");
+    assert_eq!(blocks.len(), packed.len() * out_dim, "a block's weights for every output");
+    if std::arch::is_x86_feature_detected!("avxvnni") {
+        // Safety: the CPU has just reported AVX-VNNI.
+        unsafe {
+            match out_dim {
+                8 => sparse_sums_i8_vnni_sets::<1>(packed, indices, blocks, sums),
+                16 => sparse_sums_i8_vnni_sets::<2>(packed, indices, blocks, sums),
+                32 => sparse_sums_i8_vnni_sets::<4>(packed, indices, blocks, sums),
+                _ => sparse_sums_i8_vnni(packed, indices, blocks, sums),
+            }
+        }
+    } else {
+        sparse_sums_i8_avx2(packed, indices, blocks, sums)
+    }
+}
+
+/// How many independent accumulator sets `sparse_sums_i8_vnni_sets` rotates over: a `dpbusd`'s
+/// latency is about five cycles, so one set, each block waiting on the last (the first version,
+/// 2.5x slower than dense, 2026-11-28), runs at a fraction of the throughput.
+const SPARSE_SETS: usize = 4;
+
+/// `sparse_sums_i8_vnni` with `REGISTERS` (`out_dim / 8`) known, so the accumulators stay in
+/// registers, and `SPARSE_SETS` sets of them over consecutive blocks, added at the end: the same
+/// integers, wrapping addition being order-free.
+///
+/// # Safety
+/// The CPU must have AVX-VNNI.
+#[target_feature(enable = "avxvnni")]
+#[allow(clippy::needless_range_loop)] // constant bounds, indexing two arrays in step: unrolled
+unsafe fn sparse_sums_i8_vnni_sets<const REGISTERS: usize>(packed: &[u8], indices: &[u16], blocks: &[i8], sums: &mut [i32]) {
+    use std::arch::x86_64::{
+        __m256i, _mm256_add_epi32, _mm256_dpbusd_avx_epi32, _mm256_loadu_si256, _mm256_set1_epi32, _mm256_setzero_si256, _mm256_storeu_si256,
+    };
+
+    assert_eq!(sums.len(), 8 * REGISTERS);
+    let stride = 32 * REGISTERS;
+    let mut sets = [[_mm256_setzero_si256(); REGISTERS]; SPARSE_SETS];
+    // Blocks `SPARSE_SETS` at a time, the `s`-th into set `s`, the rest into set 0. Every loop
+    // bound is a constant, so the loops unroll and the sets stay in registers (a macro, not a
+    // closure: a closure would not inherit the target feature).
+    macro_rules! add_block {
+        ($set:expr, $index:expr) => {{
+            let index = $index as usize;
+            let block = i32::from_le_bytes(packed[4 * index..4 * index + 4].try_into().expect("four bytes"));
+            let weights = &blocks[index * stride..(index + 1) * stride];
+            let input = _mm256_set1_epi32(block);
+            for register in 0..REGISTERS {
+                unsafe {
+                    let weight = _mm256_loadu_si256(weights.as_ptr().add(32 * register) as *const __m256i);
+                    $set[register] = _mm256_dpbusd_avx_epi32($set[register], input, weight);
+                }
+            }
+        }};
+    }
+    let chunks = indices.chunks_exact(SPARSE_SETS);
+    let remainder = chunks.remainder();
+    for chunk in chunks {
+        for set in 0..SPARSE_SETS {
+            add_block!(sets[set], chunk[set]);
+        }
+    }
+    for &index in remainder {
+        add_block!(sets[0], index);
+    }
+    for register in 0..REGISTERS {
+        let mut total = sets[0][register];
+        for set in &sets[1..] {
+            total = _mm256_add_epi32(total, set[register]);
+        }
+        unsafe { _mm256_storeu_si256(sums.as_mut_ptr().add(8 * register) as *mut __m256i, total) };
+    }
+}
+
+/// `sparse_sums_i8` by `maddubs` then `madd` with ones.
+fn sparse_sums_i8_avx2(packed: &[u8], indices: &[u16], blocks: &[i8], sums: &mut [i32]) {
+    use std::arch::x86_64::{
+        __m256i, _mm256_add_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16, _mm256_set1_epi16, _mm256_set1_epi32,
+        _mm256_setzero_si256, _mm256_storeu_si256,
+    };
+
+    let out_dim = sums.len();
+    let registers = out_dim / 8;
+    let stride = 4 * out_dim;
+    let mut accumulators = [unsafe { _mm256_setzero_si256() }; 8];
+    for &index in indices {
+        let index = index as usize;
+        let block = i32::from_le_bytes(packed[4 * index..4 * index + 4].try_into().expect("four bytes"));
+        let weights = &blocks[index * stride..(index + 1) * stride];
+        unsafe {
+            let input = _mm256_set1_epi32(block);
+            for (register, accumulator) in accumulators[..registers].iter_mut().enumerate() {
+                let weight = _mm256_loadu_si256(weights.as_ptr().add(32 * register) as *const __m256i);
+                let pairs = _mm256_maddubs_epi16(input, weight);
+                *accumulator = _mm256_add_epi32(*accumulator, _mm256_madd_epi16(pairs, _mm256_set1_epi16(1)));
+            }
+        }
+    }
+    for (register, accumulator) in accumulators[..registers].iter().enumerate() {
+        unsafe { _mm256_storeu_si256(sums.as_mut_ptr().add(8 * register) as *mut __m256i, *accumulator) };
+    }
+}
+
+/// `sparse_sums_i8` by `dpbusd`.
+///
+/// # Safety
+/// The CPU must have AVX-VNNI.
+#[target_feature(enable = "avxvnni")]
+unsafe fn sparse_sums_i8_vnni(packed: &[u8], indices: &[u16], blocks: &[i8], sums: &mut [i32]) {
+    use std::arch::x86_64::{__m256i, _mm256_dpbusd_avx_epi32, _mm256_loadu_si256, _mm256_set1_epi32, _mm256_setzero_si256, _mm256_storeu_si256};
+
+    let out_dim = sums.len();
+    let registers = out_dim / 8;
+    let stride = 4 * out_dim;
+    let mut accumulators = [_mm256_setzero_si256(); 8];
+    for &index in indices {
+        let index = index as usize;
+        let block = i32::from_le_bytes(packed[4 * index..4 * index + 4].try_into().expect("four bytes"));
+        let weights = &blocks[index * stride..(index + 1) * stride];
+        let input = _mm256_set1_epi32(block);
+        for (register, accumulator) in accumulators[..registers].iter_mut().enumerate() {
+            unsafe {
+                let weight = _mm256_loadu_si256(weights.as_ptr().add(32 * register) as *const __m256i);
+                *accumulator = _mm256_dpbusd_avx_epi32(*accumulator, input, weight);
+            }
+        }
+    }
+    for (register, accumulator) in accumulators[..registers].iter().enumerate() {
+        unsafe { _mm256_storeu_si256(sums.as_mut_ptr().add(8 * register) as *mut __m256i, *accumulator) };
+    }
+}
+
+/// A layer's row-major i8 weights (`[out][in]`, `in_dim` a multiple of 4) laid out block-major for
+/// `sparse_sums_i8`: block `b`, output `o`, byte `k` at `(b * out_dim + o) * 4 + k`.
+pub(crate) fn block_major(weight: &[i8], in_dim: usize, out_dim: usize) -> Vec<i8> {
+    assert!(in_dim.is_multiple_of(4) && weight.len() == in_dim * out_dim, "whole blocks of four");
+    let mut blocks = vec![0i8; weight.len()];
+    for block in 0..in_dim / 4 {
+        for output in 0..out_dim {
+            for k in 0..4 {
+                blocks[(block * out_dim + output) * 4 + k] = weight[output * in_dim + 4 * block + k];
+            }
+        }
+    }
+    blocks
+}
+
 /// Eight registers of `i32` lanes reduced to their eight sums, in order: the same reduction as
 /// `clipped_dot_products_8_avx2`'s, on `i32` lanes.
 fn reduce_8_epi32(sums: [std::arch::x86_64::__m256i; 8]) -> [i32; 8] {
@@ -1124,6 +1329,66 @@ mod tests {
                 if std::arch::is_x86_feature_detected!("avxvnni") {
                     // Safety: checked just above.
                     assert_eq!(unsafe { dots_i8_8_vnni(rows, &packed) }[..], expected[..], "VNNI, {in_dim} inputs");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_nonzero_blocks_are_found_in_order() {
+        for (zero_percent, seed) in [(0, 1), (50, 2), (90, 3), (100, 4)] {
+            for length in [32, 512, 1024] {
+                let inputs = sparse_inputs(length, zero_percent, seed);
+                let mut packed = vec![0u8; length];
+                pack_u8_avx2(&inputs, &mut packed);
+                let expected: Vec<u16> =
+                    packed.chunks(4).enumerate().filter(|(_, block)| block.iter().any(|&byte| byte != 0)).map(|(index, _)| index as u16).collect();
+                let mut indices = vec![0u16; length / 4];
+                let count = nonzero_blocks_avx2(&packed, &mut indices);
+                assert_eq!(&indices[..count], &expected[..], "{zero_percent}% zero, {length} inputs");
+            }
+        }
+    }
+
+    /// The sparse sums over the found blocks equal the dense kernel's and the scalar sums, at several
+    /// densities and widths, with a single nonzero block first and last, and at the extremes.
+    #[test]
+    fn the_sparse_i8_sums_equal_the_dense_ones_exactly() {
+        let weights = |count: usize, seed: usize| -> Vec<i8> { (0..count).map(|i| ((((i + seed) * 7919) % 255) as i32 - 127) as i8).collect() };
+        let mut cases: Vec<Vec<i16>> = [(0, 1), (30, 2), (75, 3), (95, 4), (100, 5)]
+            .iter()
+            .flat_map(|&(zero_percent, seed)| [32, 512, 768, 1024].map(|length| sparse_inputs(length, zero_percent, seed)))
+            .collect();
+        cases.push(vec![127; 512]);
+        let mut first = vec![0i16; 512];
+        first[1] = 99;
+        let mut last = vec![0i16; 512];
+        last[511] = 127;
+        cases.extend([first, last]);
+        for inputs in &cases {
+            let in_dim = inputs.len();
+            let mut packed = vec![0u8; in_dim];
+            pack_u8_avx2(inputs, &mut packed);
+            let mut indices = vec![0u16; in_dim / 4];
+            let count = nonzero_blocks_avx2(&packed, &mut indices);
+            for out_dim in [8, 16, 32] {
+                for rows in [weights(out_dim * in_dim, in_dim + out_dim), vec![127; out_dim * in_dim], vec![-127; out_dim * in_dim]] {
+                    let expected: Vec<i32> = (0..out_dim)
+                        .map(|row| inputs.iter().zip(&rows[row * in_dim..(row + 1) * in_dim]).map(|(&x, &w)| x as i32 * w as i32).sum())
+                        .collect();
+                    let dense: Vec<i32> = rows.chunks(8 * in_dim).flat_map(|group| dots_i8_8(group, &packed)).collect();
+                    assert_eq!(dense, expected, "dense, {in_dim} into {out_dim}");
+                    let blocks = block_major(&rows, in_dim, out_dim);
+                    let mut sums = vec![0i32; out_dim];
+                    sparse_sums_i8_avx2(&packed, &indices[..count], &blocks, &mut sums);
+                    assert_eq!(sums, expected, "AVX2, {in_dim} into {out_dim}");
+                    sparse_sums_i8(&packed, &indices[..count], &blocks, &mut sums);
+                    assert_eq!(sums, expected, "dispatched, {in_dim} into {out_dim}");
+                    if std::arch::is_x86_feature_detected!("avxvnni") {
+                        // Safety: checked just above.
+                        unsafe { sparse_sums_i8_vnni(&packed, &indices[..count], &blocks, &mut sums) };
+                        assert_eq!(sums, expected, "VNNI, {in_dim} into {out_dim}");
+                    }
                 }
             }
         }

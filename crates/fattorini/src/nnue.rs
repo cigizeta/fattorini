@@ -1364,6 +1364,10 @@ thread_local! {
     /// The first hidden layer's inputs packed to u8 (`pack_u8_avx2`), per thread as
     /// `ACTIVATION_SCRATCH`.
     static BYTE_SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+
+    /// The nonzero blocks of the packed inputs (`nonzero_blocks_avx2`), per thread as
+    /// `ACTIVATION_SCRATCH`.
+    static INDEX_SCRATCH: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The output of a head with no hidden layer from its integer sum, the same arithmetic on every
@@ -1517,10 +1521,13 @@ fn split_skip(output: &Layer, head_inputs: usize) -> (Vec<i16>, f32, Layer) {
 }
 
 /// A first hidden layer quantized: `i8` weights, row `r` on `scales[r]`, `denominators[r]` its
-/// input 1.0 times `scales[r]` (`hidden_value`), and the f32 biases.
+/// input 1.0 times `scales[r]` (`hidden_value`), and the f32 biases. `blocks` holds the same
+/// weights block-major (`simd::block_major`), for the sparse kernel (`sparse_sums_i8`), measured in
+/// the bench before the engine uses it (2026-11-28); empty when the inputs are not whole blocks of 4.
 #[derive(Debug, Clone, PartialEq)]
 struct QuantizedRows {
     weight: Vec<i8>,
+    blocks: Vec<i8>,
     scales: Vec<f32>,
     denominators: Vec<f32>,
     biases: Vec<f32>,
@@ -1552,7 +1559,10 @@ impl QuantizedRows {
         }
         let (weight, scales) = quantize_rows(layer, i8::MAX as f32);
         let denominators = scales.iter().map(|&scale| input_one * scale).collect();
-        Ok(QuantizedRows { weight: weight.into_iter().map(|weight| weight as i8).collect(), scales, denominators, biases: layer.bias.clone() })
+        let weight: Vec<i8> = weight.into_iter().map(|weight| weight as i8).collect();
+        let blocks =
+            if layer.in_dim.is_multiple_of(4) { crate::simd::block_major(&weight, layer.in_dim, layer.out_dim) } else { Vec::new() };
+        Ok(QuantizedRows { weight, blocks, scales, denominators, biases: layer.bias.clone() })
     }
 }
 
@@ -2549,6 +2559,42 @@ impl QuantizedPsqNetwork {
         let vectorized = inputs.len().is_multiple_of(16) && out_dim.is_multiple_of(8);
         first_layer_sums(inputs, vectorized, first, &mut sums[..out_dim]);
         out_dim
+    }
+
+    /// For the bench only: the first layer `board` selects, block-major for the sparse kernel, its
+    /// inputs permuted by `order` (input `i` of the permuted layer is input `order[i]` of the
+    /// layer's), or as it is with `None`; with the layer's out_dim. Empty for a head without one.
+    #[doc(hidden)]
+    pub fn first_layer_blocks_for_bench(&self, board: &Board, order: Option<&[usize]>) -> (Vec<i8>, usize) {
+        let Some(first) = self.first_layer_of(board) else {
+            return (Vec::new(), 0);
+        };
+        let out_dim = first.biases.len();
+        let Some(order) = order else {
+            return (first.blocks.clone(), out_dim);
+        };
+        let in_dim = first.weight.len() / out_dim;
+        assert_eq!(order.len(), in_dim, "a permutation of every input");
+        let permuted: Vec<i8> =
+            (0..out_dim).flat_map(|row| order.iter().map(move |&input| first.weight[row * in_dim + input])).collect();
+        (crate::simd::block_major(&permuted, in_dim, out_dim), out_dim)
+    }
+
+    /// For the bench only: `first_layer_sums_for_bench` by the sparse kernel over `blocks`
+    /// (`first_layer_blocks_for_bench`): `inputs` packed to u8, the nonzero blocks found, then
+    /// summed into `sums[..out_dim]`. Exact: equal to the dense sums over the same inputs and weights.
+    #[doc(hidden)]
+    pub fn first_layer_sparse_sums_for_bench(&self, inputs: &[i16], blocks: &[i8], sums: &mut [i32]) {
+        BYTE_SCRATCH.with(|scratch| {
+            INDEX_SCRATCH.with(|indices| {
+                let (mut packed, mut indices) = (scratch.borrow_mut(), indices.borrow_mut());
+                packed.resize(inputs.len(), 0);
+                indices.resize(inputs.len() / 4, 0);
+                crate::simd::pack_u8_avx2(inputs, &mut packed);
+                let count = crate::simd::nonzero_blocks_avx2(&packed, &mut indices);
+                crate::simd::sparse_sums_i8(&packed, &indices[..count], blocks, sums);
+            })
+        });
     }
 }
 
